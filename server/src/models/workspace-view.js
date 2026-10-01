@@ -54,9 +54,17 @@ function includesLiteral(value, query) {
   return text(value).includes(text(query));
 }
 
+// A query that is one address also matches a field holding that address in
+// another spelling: AAAA values and address rows are stored canonical
+// ('2001:db8::5'), and '2001:db8:0:0:0:0:0:5' is the same address.
 function anyFieldMatches(row, fields, query) {
   if (!query) return true;
-  return fields.some((field) => includesLiteral(row[field], query));
+  const exact = canonicalizeIp(String(query));
+  return fields.some(
+    (field) =>
+      includesLiteral(row[field], query) ||
+      (exact !== null && typeof row[field] === 'string' && canonicalizeIp(row[field]) === exact),
+  );
 }
 
 function enabledMatches(value, expected) {

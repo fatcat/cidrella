@@ -21,33 +21,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 
 ### Networks and the IP lifecycle
 
-#### IPV6-03: An IPv6 gateway is stored in the spelling the user typed, so the listing and summary show and count it twice and the policy is misclassified
-
-**medium**, confirmed. `server/src/routes/subnets.js:1755`
-
-- **What happens:** Configure fd00:1::/64 with gateway_address 'FD00:1:0:0::1'. The stored values are gateway_address 'FD00:1:0:0::1', gateway_policy 'custom' (it should be 'first') and Gateway range start_ip 'FD00:1:0:0::1', while ip_addresses holds the canonical 'fd00:1::1'. GET /:id/ips then lists [fd00:1::(system), fd00:1::1(gateway), fd00:1::1(gateway)], a duplicate virtual row. GET /:id/summary reports assigned_count 3 instead of 2. String comparisons such as gatewayClaimConflicts (`gateways.has(row.ip_address)`) also miss. (IPv4 accepts '10.0.0.01' through the same path, but IPv6 has far more spellings: case, zero compression, leading zeros.)
-- **Why:** validateGatewayForSubnet only checks gateway_address by value (familyAddress). The raw string then flows into resolveGatewayAddress, configureSubnet (subnets.gateway_address), createSystemRanges (the Gateway range start_ip) and reconcileTopologyAddresses. The same happens in POST /configuration-preview, PUT /:id and the divide plan's custom gateway override. gatewayPolicyForAddress (services/subnet-topology.js:122) compares strings (`gatewayAddress === parsed.firstUsable`). The IPv6 listing (routes/subnets.js:2279-2284) and summarizeCanonicalSubnetIps (models/subnet-ip-read.js:101-109) add subnet.gateway_address to a Map keyed by the canonical ip_address. routes/ranges.js POST stores start_ip and end_ip raw through Range.createRange as well.
-- **Verifier:** Reproduced. Configuring fd00:1::/64 with gateway_address 'FD00:1:0:0::1' stores subnets.gateway_address 'FD00:1:0:0::1', gateway_policy 'custom' (should be 'first') and a Gateway range start_ip 'FD00:1:0:0::1', while ip_addresses holds the canonical 'fd00:1::1'. GET /ips lists [fd00:1:: system, fd00:1::1 gateway, fd00:1::1 gateway], a duplicate row. GET /summary reports assigned_count 3. validateGatewayForSubnet checks the value only, and the raw string is persisted. gatewayPolicyForAddress compares strings.
-- **Fix:** Canonicalize every address input at the route boundary with canonicalizeIp: gateway_address in POST /configuration-preview, PUT /:id, /configure and divide target_gateways, and start_ip/end_ip in the range POST and PUT. Optionally make the two protected-address maps compare by addressToBig value. Add an IPv6 test with an upper-case or expanded gateway.
-
-#### IPV6-04: Searching an IPv6 network for an available address, or for a stored one in a non-canonical spelling, returns nothing
-
-**medium**, confirmed. `server/src/routes/subnets.js:2276`
-
-- **What happens:** On fd00:1::/64, GET /api/subnets/:id/ips?search=fd00:1::5 returns 0 rows, although fd00:1::5 is a valid available address of the network. search=fd00:1:0:0::1 (the persisted gateway in another spelling) also returns 0 rows. On 10.9.0.0/24, search=10.9.0.5 returns 10.9.0.5.
-- **Why:** The IPv6 branch of GET /:id/ips filters persisted rows with matchesSearch, a substring test on row.ip_address. exactExplorerSearch is computed above it but the v6 branch never uses it. The IPv4 path uses it to synthesize the virtual row for an exact in-subnet address (mayMatchVirtual and exactSearchIps).
-- **Verifier:** Reproduced. On fd00:1::/64, search=fd00:1::5 returns 0 rows, and search=fd00:1:0:0::1 (the gateway in another spelling) also returns 0. The IPv6 branch (routes/subnets.js:2276-2315) filters only persisted and protected rows with the substring matchesSearch and never uses exactExplorerSearch. The IPv4 branch synthesizes the virtual row for an exact in-subnet address. This is a display parity gap, not wrong data. The non-canonical-spelling half is partly shared with IPv4, but IPv6 has far more spellings.
-- **Fix:** In the v6 branch, when search (or table_search) is a single valid address inside the prefix, canonicalize it and look it up by value. Return the persisted row, or projectVirtualSubnetIpRow when there is none, then apply the other filters. Add an IPv6 search test for both cases.
-
-#### IPV6-05: With the IPv6 switch off, IPv6 networks can still be divided and merged, addresses reserved, and ranges and gateways created
-
-**medium**, confirmed. `server/src/routes/subnets.js:1364`
-
-- **What happens:** Create and configure fd00:4::/63 while IPv6 is on, then switch it off. PUT /api/subnets/:id/ips/fd00:4::50/allocation {allocation_state:'reserved'} returns 200 and creates an IPv6 reservation. POST /api/subnets/:id/ranges with a DHCP Scope range fd00:4::100-200 returns 201. POST /:id/divide {new_prefix:64, force:true} returns 200 and creates two new IPv6 networks (fd00:4::/64, fd00:4:0:1::/64), which configure the same network on each child. PUT /:id {gateway_policy:'last'} returns 200 and re-projects the IPv6 gateway.
-- **Why:** refuseIpv6Unless is called only in POST / (line 482) and POST /:id/configure (line 1751). Divide and carve (1364, preview at 954), merge (617), PUT /:id with a gateway change (749), PUT /:id/ips/:ip/allocation (2809), bulk-allocation (2753), the scan-enabled routes and routes/ranges.js POST and PUT (line 40) have no family gate. utils/ipv6-support.js says 'every route that would create an IPv6 object refuses'; only reads and deletes should work while it is off.
-- **Verifier:** Reproduced with ipv6_enabled set to false after configuring fd00:4::/63. PUT /ips/fd00:4::50/allocation {reserved} returns 200, POST /ranges fd00:4::100-200 returns 201, PUT /:id {gateway_policy:'last'} returns 200, and POST /divide {new_prefix:64, force:true} returns 200 and creates fd00:4::/64 and fd00:4:0:1::/64. refuseIpv6Unless appears in routes/subnets.js only at lines 482 and 1751, and not at all in routes/ranges.js. This contradicts the contract in utils/ipv6-support.js. ipv6-gate.test.js does not cover these routes.
-- **Fix:** Add `if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;` to divide, carve, merge (any source of family 6), PUT /:id when it changes the gateway, the single and bulk allocation routes, the scan-enabled routes, and the ranges POST and PUT. Extend tests/integration/routes/ipv6-gate.test.js to cover them.
-
 #### IPV6-06: The network address of an IPv6 /127 (and /128) is treated as a protected system address, contradicting topologyAddresses and RFC 6164
 
 **low**, confirmed. `server/src/services/ip-lifecycle-service.js:40`
@@ -56,15 +29,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Why:** protectedAddress returns SYSTEM whenever value === parsed.networkBig, with no prefix check. ipAllocationRejectionReason (routes/subnets.js:2710) and buildVirtualSubnetIpRow (models/ip-view.js:117) do the same. topologyAddresses and parseNetwork say 'Point-to-point and host prefixes reserve nothing' (on /127 and /128 firstUsable is the network address), and createSystemRanges and reconcileTopologyAddresses create no system row there. RFC 6164 makes both /127 addresses usable, with no subnet-router anycast. The same inconsistency applies to IPv4 /31 and /32 (both endpoints protected), so it is not v6-only.
 - **Verifier:** Reproduced. fd00:3::/127 with gateway_policy none configures with no ip_addresses rows. PUT /ips/fd00:3::/allocation {reserved} returns 400 'The network address is managed by subnet topology', and GET /ips/fd00:3:: reads allocation_state 'system'. This contradicts utils/cidr.js:89-91 ('except on /127 and /128') and :351 ('Point-to-point and host prefixes reserve nothing'). protectedAddress (ip-lifecycle-service.js:54) and buildVirtualSubnetIpRow have no prefix check. IPv4 /31 and /32 have the same inconsistency, so this is not IPv6-specific. The impact is limited to point-to-point links.
 - **Fix:** Derive the protected set from topologyAddresses(parsed) in all three places (protectedAddress, ipAllocationRejectionReason, buildVirtualSubnetIpRow) instead of comparing networkBig and lastBig directly. Add /127 and /31 tests.
-
-#### IPV6-07: DNS record and zone search matches IPv6 text literally, without canonicalizing
-
-**low**, confirmed. `server/src/models/workspace-view.js:59`
-
-- **What happens:** Searching the DNS records for '2001:db8:0:0:0:0:0:5' or 'fd00:0006::10' finds no record. The stored values are 2001:db8::5 and fd00:6::10. The Networks search finds the containing network for the same text.
-- **Why:** getWorkspaceDnsRecords and getWorkspaceDnsZones filter q/table_q through anyFieldMatches (`includesLiteral`, a lowercase substring match) on value/ip_address. AAAA values are stored compressed (canonicalizeIp in routes/dns.js). networkMatches in the same file does canonicalize an exact IP (`canonicalizeIp(query)`, line 122), and the client sends q unchanged.
-- **Verifier:** workspace-view.js getWorkspaceDnsRecords (the q and tableQ filters around lines 307-308) and getWorkspaceDnsZones (around lines 381-387) use anyFieldMatches/includesLiteral, a lowercased substring match. AAAA values are stored compressed, so an expanded spelling such as '2001:db8:0:0:0:0:0:5' or 'fd00:0006::10' matches nothing. networkMatches in the same file canonicalizes an exact-IP query (line 122). Case is handled because text() lowercases. Only display and search are affected.
-- **Fix:** In the DNS matchers, when canonicalizeIp(query) is non-null, also compare it for equality against ip_address/value, the same way networkMatches does.
 
 #### IPV6-08: Default network name template truncates IPv6 to the first four hextets, so sibling /65+ networks get identical, misleading names
 
@@ -86,24 +50,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Verifier:** nd-cache.js:48 `table.set(ip, ...)` keys on the canonical address only, so a second `fe80::1 dev ethX` line overwrites the first, despite the file header saying the interface is identity for link-local. ra-monitor.js:180 `table.get(router.address)` and dhcpv6-probe.js:397 `neighbors.get(adv.sourceIp)` read that collapsed entry. classifyRouter (ra-monitor.js:115-123) compares authorized.ips and gatewayMacs with no interface, so a rogue fe80::1 on one link can inherit a trusted router's MAC, and an allowlisted fe80::1 is trusted on every link. This needs a multi-interface appliance with colliding link-locals but different MACs, so medium is right.
 - **Fix:** Key the neighbor table by `${ip}%${interface}` for link-local addresses (or return all entries per IP), look up by (address, iface) in ra-monitor and dhcpv6-probe, and include iface in the rogue event identity for link-local server_ip values. Optionally allow a zone on allowlisted link-local IPs.
 
-#### IPV6-17: DHCPv6 option, custom-option and scope-option writes are accepted while IPv6 support is off
-
-**low**, confirmed. `server/src/routes/dhcp.js:1303`
-
-- **What happens:** With ipv6_enabled=false (verified): PUT /api/dhcp/options/defaults {family:6, options:[{code:23,value:'fd00::53'}]} returns 200, and POST /api/dhcp/options/custom {address_family:6, code:200, label:'x'} returns 201. Neither gives the IPV6_DISABLED_ERROR.
-- **Why:** PUT /options/defaults with family 6 (line 1303) and POST /options/custom with address_family 6 (line 1225) never call refuseIpv6Unless. PUT /scopes/:id (lines 440-446) gates only v6_mode, start_ip, end_ip and gateway on a v6 scope, so options, dns_servers, ntp_servers, domain_search and lease_time are written. ipv6-support.js says 'every route that would create an IPv6 object refuses'.
-- **Verifier:** routes/dhcp.js PUT /options/defaults (~line 1303) and POST /options/custom (~line 1225) never call refuseIpv6Unless for family 6. ipv6-support.js says every route that would create an IPv6 object refuses, and a family-6 custom option row is such an object. The scope PUT (lines 440-446) leaving options and lease_time open is deliberate per its comment ('can still be described, enabled or disabled'), but options go beyond that. No dnsmasq effect while off (no v6 scopes are written), so low.
-- **Fix:** Call `if (family === 6 && refuseIpv6Unless(res)) return;` in both option routes, and extend the PUT /scopes/:id gate to options and the legacy option columns on a v6 scope. Add these cases to tests/integration/routes/ipv6-gate.test.js.
-
-#### IPV6-19: PUT /dhcp/scopes/:id stores IPv6 pool bounds in whatever spelling the client sent
-
-**low**, confirmed. `server/src/routes/dhcp.js:469`
-
-- **What happens:** PUT /api/dhcp/scopes/1 {start_ip:'FD00:B::0010', end_ip:'fd00:b::00ff'} returns 200 and stores pools[0].start_ip = 'FD00:B::0010' (reproduced). Text comparisons, such as network-dhcp-diagnostics.js:180 `pool.range_start_ip !== pool.start_ip`, and the displayed and exported values then disagree with the canonical 'fd00:b::10' used elsewhere.
-- **Why:** start_ip and end_ip are only checked with isValidAddress, then passed through to updateScope (models/dhcp-scope.js:463) without canonicalizeIp. /configure (routes/subnets.js:1811) and the reservation routes do canonicalize.
-- **Verifier:** Reproduced: PUT /api/dhcp/scopes/1 {start_ip:'FD00:B::0010', end_ip:'fd00:b::00ff'} returns 200, and pools[0].start_ip is stored as 'FD00:B::0010'. routes/dhcp.js validates with isValidAddress only and never canonicalizes, unlike /configure. Numeric comparisons (addressToBig) still work, so the impact is display/export and string compares only. (The same PUT also lets a slaac scope's display range be edited, which is related.)
-- **Fix:** Canonicalize start_ip/end_ip with canonicalizeIp before storing, and check that each one's family matches the scope's family.
-
 #### IPV6-20: Passive device fingerprinting only understands DHCPv4, so DHCPv6-only or SLAAC-only devices are never classified
 
 **low**, confirmed. `server/src/utils/dhcp-fingerprint.js:81`
@@ -112,15 +58,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Why:** A transaction is finalized only on `DHCPACK`, with the regex `/^DHCP(DISCOVER|REQUEST|ACK|INFORM)\b/`, and identity is a MAC parsed from the line. DHCPv6 transactions (identified by DUID, ending in DHCPREPLY, with vendor class option 16 and ORO option 6) never finalize, so nothing is persisted. A DHCPv6 DHCPREQUEST line does match, and extractMac runs on the DUID, but that partial transaction is discarded as stale. This is not wrong data, but it means IPv6-only hosts get no device_type or os_family. If v6 support is added, the ORO codes must not be mixed into the option-55 (DHCPv4) fingerprint namespace.
 - **Verifier:** ingestLine (server/src/utils/dhcp-fingerprint.js:81-99) sets ackSeen only on DHCPACK, and drainFinalized requires ackSeen. A DHCPv6 exchange ends in DHCPREPLY, so it never finalizes and the stale sweep drops it. No v6 traffic leaks into the option-55 namespace, because nothing is persisted. This is a parity gap only: IPv6-only hosts get no device_type or os_family. Low.
 - **Fix:** Either document this as DHCPv4-only (with a comment, per AGENTS.md), or add a DHCPv6 path keyed by the lease's DUID/ND MAC that records ORO and option 16 in separate fields from opt55. Also stop the DHCPv4 regex from matching DHCPv6 DHCPREQUEST lines.
-
-#### IPV6-21: DHCP scope gateway, dns_servers and ntp_servers accept either family, are not gated, and the wrong family is silently dropped from config
-
-**low**, plausible. `server/src/routes/dhcp.js:333`
-
-- **What happens:** POST /api/dhcp/scopes for 10.0.0.0/24 with gateway '2001:db8::1' and IPv6 switched OFF returns 201. The effective-options view shows router 2001:db8::1, but no dhcp-option 3 line is written and suppressRouter is not set, so dnsmasq advertises its own address as the router. In the same way, dns_servers '["192.168.1.1","fd00::53"]' on a v4 scope silently loses fd00::53. On a v6 scope the IPv4 entries are silently dropped from option 23/56.
-- **Why:** Scope create and update validate `gateway` with `isValidAddress(gateway)` (333, 453) and the server lists with `parseIpList` -> `servers.every(isValidAddress)` (124-131). isValidAddress accepts both families. Nothing compares the value's family to subnet.address_family, and nothing calls refuseIpv6Unless for an IPv6 literal on an IPv4 scope. At config time, utils/dhcp.js renderOptionValue -> resolveToIp(value, 4) returns null for a v6 literal (`addressFamily(value) === family ? value : null`, dhcp.js:40), and the option is skipped (`if (emitValue == null) continue;`). Meanwhile models/dhcp-scope.js still reports option 3 as set (`set(3, scope.gateway, 'legacy_scope')`).
-- **Verifier:** The gateway scenario is wrong. In models/dhcp-scope.js:310-337, resolveEffectiveScopeOptions sets 3 from scope.gateway, then line 326 overwrites it with the network gateway. When the network has none, line 328 deletes it and router_suppressed becomes true. So an IPv4 scope never shows or emits the legacy IPv6 gateway, and dnsmasq never falls back to advertising itself as router. What remains is real but minor. parseIpList and validateScopeOption (routes/dhcp.js:98-131) never check that an address literal matches the scope family. renderOptionValue then drops it silently through resolveToIp (utils/dhcp.js:40): an IPv6 literal in ntp_servers (42) on an IPv4 scope, or IPv4 entries in dns_servers/ntp_servers (23/56) on an IPv6 scope. Nothing gates the switch for IPv6 literals in those lists. ScopeDialog does not send the legacy columns, so only API callers can reach this. I did not check dns_servers on IPv4: the IPv4 effective resolver never reads it.
-- **Fix:** Validate each address against the scope's family: addressFamily(x) === (subnet.address_family === 6 ? 6 : 4). Return 400 naming the field when it does not match. Also call refuseIpv6Unless before accepting any IPv6 literal. Canonicalize stored values with canonicalizeIp.
 
 #### IPV6-22: DHCPv6 leases and reservations get no MAC, so no vendor fallback name, although DUID-LLT/LL embed the link-layer address
 
@@ -178,15 +115,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Verifier:** PTR names are validated only by isValidPtrName (dnsmasq-escape.js:39): /^[0-9a-f]+(\.[0-9a-f]+)*$/ with up to 63 characters. It applies no per-zone nibble or label-count check, so 'ff.1' or '7' is accepted in an ip6.arpa zone. This laxity is not IPv6-specific, though: the same check accepts 'ff' or '999' in an in-addr.arpa zone. Only the uppercase-nibble 400 is v6-specific. The regex still blocks injection, so this is a validation gap with low impact.
 - **Fix:** For reverse zones, check ipForPtrRecord(name, zone.name) !== null (32 single nibbles for ip6.arpa, 4 octets for in-addr.arpa), and lowercase the name before validating.
 
-#### IPV6-30: POST /api/dns/forwarders/test accepts IPv6 while the switch is off
-
-**low**, confirmed. `server/src/routes/dns.js:1169`
-
-- **What happens:** With ipv6_enabled=false, POST /api/dns/forwarders/test {ip:'2606:4700:4700::1111'} sends DNS traffic over IPv6 and reports reachable instead of returning IPV6_DISABLED_ERROR.
-- **Why:** The handler checks only `isValidAddress(ip)` and then calls testDnsForwarder(ip), which sends a query to it. PUT /forwarders and PUT /encryption both call refuseIpv6Unless for family 6, but this route does not.
-- **Verifier:** routes/dns.js:1169-1176 checks only isValidAddress(ip) and then calls testDnsForwarder(ip), with no refuseIpv6Unless call. The sibling PUT /forwarders and PUT /encryption routes do gate IPv6. With the switch off, a v6 address is probed instead of being refused with IPV6_DISABLED_ERROR. The route is read-only (it sends one test query and persists nothing), so this is a gating inconsistency with low impact.
-- **Fix:** Add `if (addressFamily(ip) === 6 && refuseIpv6Unless(res)) return;` and cover it in ipv6-gate.test.js.
-
 ### Scanning, liveness, rogue and anomaly detection
 
 #### IPV6-32: IPv6 rows the sparse scan never probes are still treated as 'scanner covered', so they stay online forever
@@ -225,15 +153,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Verifier:** resolveIdentity (server/src/models/anomaly.js:24-26) and resolve_device_key (server/anomaly/storage.py) both key on dhcp_leases.mac_address. parseLeaseLine stores DHCPv6 leases with mac: null (utils/dhcp.js:482), so every IPv6 client resolves to its address, while an IPv4 lease holder resolves to its MAC. BACKLOG.md:187 lists 'IPv6 anomaly identities' as landed, so this is a gap against a stated feature, not an intended difference. Training history is per client_ip with MIN_TRAINING_HOURS=48 (config.py:21), so a rotating RFC 8981 temporary address plausibly never leaves learning. Note that per-IP history also resets on an IPv4 renumbering; rotation is what makes it routine on IPv6. The dual-stack allowlist scenario is real, but DUID and MAC are different identities, so a fix would need ND MAC correlation, not just DUID.
 - **Fix:** Resolve IPv6 identity from the DHCPv6 lease DUID, or from ip_addresses.last_seen_mac (populated from the ND table) and the EUI-64 interface ID, in both resolveIdentity and resolve_device_key. Key the history and training queries on identity (all client_ips mapped to it) rather than on one address.
 
-#### IPV6-36: API probe of a non-canonical IPv6 spelling flags an assigned address as rogue
-
-**medium**, confirmed. `server/src/routes/scans.js:108`
-
-- **What happens:** Confirmed with a scratch vitest. On stateful network fd00:6::/64 with a static_dns row 'fd00:6::77', probing targetIps ['FD00:6::77'] completes, and row fd00:6::77 ends up allocation_state static_dns, is_rogue=1, rogue_reason 'Rogue device (IP not assigned)'. A non-responding probe with that spelling records nothing at all.
-- **Why:** `const targets = many ? [...new Set(ips)] : [ip];`. The targets are validated with isValidAddress but never canonicalized before `startScan(..., { targetIps: targets })`. In the scanner, `assignmentMap.get(result.ip)` is an exact string lookup against canonical ip_address values, so it misses and the address is classed 'Rogue device (IP not assigned)'. updateFromScan also misses on its exact-string `existing` lookup, so addressClaim never clears the conflict. upsert then canonicalizes and writes is_rogue=1 onto the real row. The Set dedupe also lets 'fd00::1' and 'FD00::1' be probed twice.
-- **Verifier:** Reproduced. A targeted scan with targetIps ['FD00:6::77'] against canonical static_dns row 'fd00:6::77' completes with conflicts_found 1, and the real row ends is_rogue=1 with rogue_reason 'Rogue device (IP not assigned)' while still static_dns. routes/scans.js:108 never canonicalizes the targets. scanner.js:322 and updateFromScan (ip-address.js:790) both look up by exact string, so the assignment and the claim check both miss before upsert canonicalizes. This is wrong data on an admin-declared row, but it is triggered only by an API caller or typed input with a non-canonical spelling. The UI probably sends stored canonical strings, which is why this stays medium rather than high.
-- **Fix:** Canonicalize every target with canonicalizeIp in the probe route (and defensively in startScan for targetIps) before dedupe, the containment check, and the scan.
-
 #### IPV6-37: DHCPv6 traffic is miscounted in DHCP metrics: requests counted, replies never, so every DHCPv6 exchange looks unanswered
 
 **medium**, confirmed. `server/src/utils/metrics-aggregator.js:32`
@@ -242,15 +161,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Why:** `DHCP_CLIENT_RE = /\bDHCP(?:DISCOVER|REQUEST|RELEASE|INFORM|DECLINE)\b/` and `DHCP_SERVER_RE = /\bDHCP(?:OFFER|ACK|NAK)\b/`. These are DHCPv4 message names. dnsmasq logs DHCPv6 as DHCPSOLICIT/DHCPADVERTISE/DHCPREQUEST/DHCPREPLY/DHCPRENEW/DHCPREBIND/DHCPCONFIRM/DHCPINFORMATION-REQUEST, and only REQUEST/RELEASE/DECLINE overlap. The comment says the two counts exist 'so the dashboard can show a request the server never answered'.
 - **Verifier:** The regexes at server/src/utils/metrics-aggregator.js:32-33 hold DHCPv4 names only. The dnsmasq rfc3315.c source in the scratch dir logs DHCPv6 as DHCPSOLICIT, DHCPADVERTISE, DHCPREQUEST, DHCPREPLY, DHCPRENEW, DHCPREBIND, DHCPCONFIRM and DHCPINFORMATION-REQUEST. Of these, only REQUEST, RELEASE and DECLINE match the client regex. INFORMATION-REQUEST does not, because there is no word boundary after INFORM. Nothing matches the server regex. client/src/views/Dashboard.vue shows the client/server split, so a healthy DHCPv6 network displays as unanswered requests. Re-rated to medium as a wrong display.
 - **Fix:** Add the DHCPv6 message names to the client regex (SOLICIT, RENEW, REBIND, CONFIRM, INFORMATION-REQUEST) and the server regex (ADVERTISE, REPLY), and add an IPv6 test case to the parseLogLines test.
-
-#### IPV6-38: POST /api/scans accepts an IPv6 network while the switch is off (201, then the scan fails in the background)
-
-**low**, confirmed. `server/src/routes/scans.js:66`
-
-- **What happens:** With ipv6_enabled=false and an existing allocated fd00:7::/64 network, POST /api/scans {subnet_id} returns 201 with a pending scan, and the scan history then shows a failed run plus 'Unhandled promise rejection' in the log. The documented contract is a 400 carrying IPV6_DISABLED_ERROR.
-- **Why:** The route checks status and the IPv4 size cap (`subnet.address_family !== 6 && ...`) but never calls `refuseIpv6Unless(res)`. It creates a pending scan and calls `startScan(db, scanId, subnet_id)` unawaited. startScan then marks the scan failed and throws IPV6_DISABLED_ERROR, which ends up in the global unhandledRejection logger. /probe instead turns the same error into a 500 'Probe failed: ...' and leaves the failed scan row behind. ipv6-gate.test.js has no scan case.
-- **Verifier:** POST / in server/src/routes/scans.js:36-71 never calls refuseIpv6Unless; it creates the pending scan and calls startScan without awaiting it. With the switch off, startScan (scanner.js:164-167) marks the scan failed and then throws inside an async function, so the rejection is unhandled. BACKLOG says the switch gates 'scan scheduling and creation', and every other IPv6 route returns a 400 carrying IPV6_DISABLED_ERROR. /probe has the same gap and turns the error into a 500. No data is corrupted, so this stays low.
-- **Fix:** In both POST / and /probe, call `if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;` before creating the scan record, and add the case to ipv6-gate.test.js.
 
 ### Imports, address helpers and outbound URLs
 
@@ -262,15 +172,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Why:** `else if (net.isIP(parsed.hostname) === 6) return { ok: false, reason: 'IPv6 URLs are not allowed' }`. Hostnames are resolved with `dns.promises.lookup(hostname, { family: 4 })`, and the pinned requests use `lookup: ... cb(null, check.ip, 4)`. The header comment says 'IPv6 is blocked entirely (simpler + our target feeds are all v4)', which predates the switch. isBlockedIpv6 already exists in the same file and would make an IPv6 path safe.
 - **Verifier:** url-guard.js:108 refuses IPv6 literal URLs, and line 112 resolves only with family:4, regardless of the IPv6 switch. On an IPv6-only host, or for a feed host with only an AAAA record, outbound fetches (blocklists, Pi-hole, mac-vendor) fail. The header comment documents this as a deliberate choice that predates the switch, so it is a parity gap and not a correctness bug. isBlockedIpv6 already exists, so an IPv6 path could be added safely.
 - **Fix:** When ipv6Enabled(), allow an IPv6 literal or AAAA result that passes isBlockedIpv6. Pin with the address's real family, and use the array-form lookup (see the DoH finding). Keep IPv4-only behaviour when the switch is off.
-
-#### IPV6-41: parseIp accepts '::' standing for zero groups, so an invalid spelling canonicalizes to a valid address
-
-**low**, confirmed. `server/src/utils/address.js:89`
-
-- **What happens:** canonicalizeIp('1::2:3:4:5:6:7:8') returns '1:2:3:4:5:6:7:8', and so does canonicalizeIp('1:2:3:4:5:6::7:8'). net.isIP returns 0 for both. Malformed input is accepted by isValidAddress, the AAAA validator and the GeoIP allowlist, and is stored under a different address's spelling.
-- **Why:** In parseV6, `const fill = groupCount - parts.length; if (fill < 0) return null;` allows fill === 0. RFC 4291 2.2 says '::' represents one or more groups of zeros. node's net.isIP rejects these strings. The behaviour came from the pre-refactor cidr-match parser (fixtures/cidr-match-pre-address-refactor.js:19), so it is long-standing.
-- **Verifier:** I ran this against the real helper. canonicalizeIp('1::2:3:4:5:6:7:8') and canonicalizeIp('1:2:3:4:5:6::7:8') both return '1:2:3:4:5:6:7:8', and isValidAddress returns true, while net.isIP returns 0. The cause is that `fill < 0` in address.js allows fill === 0. Stored values are canonicalized, so this does not split storage across two spellings. It does mean malformed input is accepted without an error. A strictness issue, low.
-- **Fix:** Require `fill >= 1` when hasDoubleColon. Update cidr-match-equivalence if it pins this case, and add the two strings to address.test.js as invalid.
 
 ### Client UI
 
@@ -345,15 +246,6 @@ Where two auditors found the same bug from different sides it is one entry with 
 - **Why:** `else if (isValidIpv4(parent.gateway_address) && isIpInSubnet(parent.gateway_address, cidr)) { next[cidr] = { policy: 'custom', address: parent.gateway_address }; } else next[cidr] = { policy: 'none', address: null };`. isValidIpv4 and isIpInSubnet (parseCidr) are IPv4-only, so an IPv6 parent always falls to 'none'.
 - **Verifier:** NetworkDialogs.vue:2055 short-circuits on isValidIpv4, so every IPv6 child of a parent with a custom gateway defaults to policy 'none'. divideTargetGateways (2065-2068) sends those policies to the server as explicit overrides. buildDividePlan (network-transformation-plan.js:278-289) applies them through targetGateway, so the server does not re-derive 'custom' for the child that holds the gateway. The operator can probably still change the per-child policy in the preview, which is why this stays low.
 - **Fix:** Use isValidAddress plus networkContains(cidr, parent.gateway_address), which are family-aware and return false across families.
-
-#### IPV6-51: DNS forwarders stay 'dirty' after saving a non-canonical IPv6 spelling
-
-**low**, confirmed. `client/src/views/DNS.vue:476`
-
-- **What happens:** With IPv6 on, enter forwarder '2606:4700:4700:0:0:0:0:1111' or '2001:DB8::1' and Save. The server stores '2606:4700:4700::1111'. The Save button stays enabled and the card reports unsaved changes until the page reloads, and saving again sends the same request.
-- **Why:** saveUpstream sets `savedForwarders.value = [...(res.servers || servers)]`. The server (routes/dns.js PUT /forwarders) returns the canonicalized list from canonicalizeIp. The inputs in `forwarders.value` keep the typed text. forwardersDirty (line 332) compares the trimmed input with saved[i] by string equality, so a typed IPv6 spelling that differs from the canonical one never matches.
-- **Verifier:** routes/dns.js:994 stores canonicalizeIp(s) for each server and :1017 returns that canonical list. Checked: canonicalizeIp('2001:DB8::1') returns '2001:db8::1', and canonicalizeIp('2606:4700:4700:0:0:0:0:1111') returns '2606:4700:4700::1111'. DNS.vue:476 copies res.servers into savedForwarders but leaves forwarders.value as the typed text, and forwardersDirty (line 331-337) compares the two strictly as strings. The card therefore stays dirty after a successful save until reload. The impact is cosmetic plus redundant re-saves.
-- **Fix:** After a successful save, rewrite forwarders.value from res.servers (keeping each status), or compare canonicalizeIp(input) with saved.
 
 #### IPV6-52: IPv6 networks never show utilization, even where the server sends a countable total
 

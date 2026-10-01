@@ -6,6 +6,8 @@ import { getNextScanTime } from '../utils/scan-scheduler.js';
 import { networkContains, isValidAddress } from '../utils/ip.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
 import * as ScanRun from '../models/scan-run.js';
+import { addressFamily, canonicalizeIp } from '../utils/address.js';
+import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 
 const router = Router();
 
@@ -45,6 +47,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   if (subnet.status !== 'allocated') {
     return res.status(400).json({ error: 'Can only scan allocated subnets' });
   }
+  if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
   // Limit scan size to prevent excessive load. IPv6 networks are never
   // swept, so the cap does not apply to them.
@@ -105,7 +108,10 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
   } else if (!ip || !isValidAddress(ip)) {
     return res.status(400).json({ error: 'Valid IP address is required' });
   }
-  const targets = many ? [...new Set(ips)] : [ip];
+  // Canonical before anything compares them: the scan looks addresses up by
+  // their stored spelling, and 'FD00::1' must not read as an unknown host.
+  const targets = [...new Set((many ? ips : [ip]).map((item) => canonicalizeIp(item)))];
+  if (targets.some((target) => addressFamily(target) === 6) && refuseIpv6Unless(res)) return;
 
   const db = getDb();
 
@@ -126,7 +132,7 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
   } else {
     const subnets = db.prepare("SELECT id, cidr FROM subnets WHERE status = 'allocated'").all();
     for (const s of subnets) {
-      if (networkContains(s.cidr, ip)) {
+      if (networkContains(s.cidr, targets[0])) {
         resolvedSubnetId = s.id;
         break;
       }

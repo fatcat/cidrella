@@ -561,6 +561,37 @@ first on a 0.4.17 host.
   had already been imported. IPv6 DHCP host lines are counted and left out,
   since a DHCPv6 reservation needs the client's DUID and Pi-hole gives a MAC.
 
+- An address typed in any spelling is stored in one. A gateway entered as
+  `FD00:1:0:0::1` used to be stored as typed beside the canonical address
+  row, so the network listed the gateway twice, counted it twice and called
+  its policy custom instead of first. Gateways, range bounds and DHCP scope
+  pool bounds and server lists are now stored canonical, and a probe of
+  `FD00::77` is a probe of `fd00::77` rather than of an unknown rogue host.
+
+- Searching an IPv6 network for one address finds it: an available address
+  is listed, as on IPv4, and a stored one is found in any spelling. DNS
+  record and zone searches also match an AAAA address however it is written.
+
+- With IPv6 switched off, every route that would add or change IPv6
+  configuration refuses it with the one IPv6-disabled message: dividing,
+  merging, reserving, ranges, a gateway change, scan settings and scans of an
+  IPv6 network, DHCPv6 options and custom options, a DHCPv6 scope's options,
+  and testing an IPv6 forwarder. Starting a scan of an IPv6 network used to
+  be accepted and then fail in the background. An IPv6 network can still be
+  renamed and described, and deleted.
+
+- A DHCP scope refuses a DNS or NTP server, or a gateway, of the other
+  family, naming the field. They used to be accepted and silently left out
+  of the configuration.
+
+- An IPv6 address whose `::` stands for no zero groups at all, such as
+  `1::2:3:4:5:6:7:8`, is refused as invalid. It used to be accepted as a
+  different address.
+
+- The DNS forwarders card shows a saved IPv6 forwarder in its stored
+  spelling and no longer reports unsaved changes after saving one typed
+  differently.
+
 - Two backups started in the same second, a scheduled one and a click, keep
   both archives. The second used to overwrite the first archive and then
   fail. The later one now takes a `-2` suffix.

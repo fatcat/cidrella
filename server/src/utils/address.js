@@ -86,7 +86,10 @@ function parseV6(str, embeddedV4) {
   const groupCount = trailing === null ? 8 : 6;
   if (hasDoubleColon) {
     const fill = groupCount - parts.length;
-    if (fill < 0) return null;
+    // RFC 4291 2.2: "::" stands for ONE or more zero groups. With none left
+    // to fill, "1::2:3:4:5:6:7:8" would canonicalize to a different, valid
+    // spelling while net.isIP refuses it.
+    if (fill < 1) return null;
     parts = [
       ...parts.slice(0, headParts.length),
       ...Array(fill).fill('0'),

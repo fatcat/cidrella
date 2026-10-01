@@ -1,7 +1,7 @@
 import os from 'os';
 import { execFile } from 'child_process';
 import { parseNetwork, longToIp, parsedNetworkContains } from './ip.js';
-import { addressFamily } from './address.js';
+import { addressFamily, canonicalizeIp } from './address.js';
 import { parseArpingMac, readArpCache } from './arp-cache.js';
 import { readNdCache } from './nd-cache.js';
 import { observeIpv6Presence } from '../services/ip-lifecycle-service.js';
@@ -200,8 +200,9 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   let totalIps;
   const policy = parsed.family === 6 ? ipv6DiscoveryPolicy(db, subnetId) : null;
   if (isTargeted) {
-    ipsToScan = targetIps;
-    totalIps = targetIps.length;
+    // Every lookup below is by the stored (canonical) spelling.
+    ipsToScan = [...new Set(targetIps.map((ip) => canonicalizeIp(ip) ?? ip))];
+    totalIps = ipsToScan.length;
   } else if (parsed.family === 6) {
     const discovered = await discoverIpv6Hosts(parsed);
     // Neighbor Discovery is liveness evidence in its own right and, on a

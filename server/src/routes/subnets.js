@@ -235,6 +235,13 @@ function validateGatewayForSubnet(parsed, gateway) {
   return null;
 }
 
+// An address typed into a request is stored in its canonical spelling, so it
+// is one string with the ip_addresses row for it. Anything that is not an
+// address is passed through for the validators to refuse.
+function canonicalAddressInput(value) {
+  return typeof value === 'string' ? (canonicalizeIp(value.trim()) ?? value) : value;
+}
+
 // Helper: detect whether the given `vlan_id` is already assigned to one or
 // more other subnets. Same VLAN on different L3 subnets is legal in some
 // topologies (e.g. a VLAN spanning multiple IP supernets), but in practice
@@ -375,7 +382,8 @@ router.post(
   '/configuration-preview',
   requirePerm('subnets:read'),
   asyncHandler((req, res) => {
-    const { cidr, gateway_policy, gateway_address } = req.body || {};
+    const { cidr, gateway_policy } = req.body || {};
+    const gateway_address = canonicalAddressInput(req.body?.gateway_address);
     if (typeof cidr !== 'string' || !cidr.trim()) {
       return res.status(400).json({ error: 'CIDR is required' });
     }
@@ -632,6 +640,7 @@ router.post(
     if (subnets.length !== subnet_ids.length) {
       return res.status(404).json({ error: 'One or more subnets not found' });
     }
+    if (subnets.some((s) => s.address_family === 6) && refuseIpv6Unless(res)) return;
 
     const parentId = subnets[0].parent_id;
     if (!parentId || !subnets.every((s) => s.parent_id === parentId)) {
@@ -757,7 +766,6 @@ router.put(
       name,
       description,
       vlan_id,
-      gateway_address,
       gateway_policy,
       scan_interval,
       folder_id,
@@ -765,6 +773,7 @@ router.put(
       scan_enabled,
       cidr,
     } = body;
+    const gateway_address = canonicalAddressInput(body.gateway_address);
 
     // v0.4.15 type guards. gateway_address as a number in v0.4.14 crashed
     // `ip.split is not a function`; the remaining fields fell into the same
@@ -900,6 +909,10 @@ router.put(
     // DHCP pool: dnsmasq would hand out the gateway IP as a dynamic lease and
     // clients would conflict with the router. Force the user to shrink the
     // pool first (or pick a gateway outside it).
+    // A gateway is IPv6 configuration on an IPv6 network; the rest of the
+    // row (name, folder, description) stays editable with the switch off.
+    if (gatewayChanged && subnet.address_family === 6 && refuseIpv6Unless(res)) return;
+
     if (gatewayChanged) {
       const pools = db
         .prepare(
@@ -1380,6 +1393,7 @@ router.post(
     const db = getDb();
     const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!parent) return res.status(404).json({ error: 'Subnet not found' });
+    if (parent.address_family === 6 && refuseIpv6Unless(res)) return;
 
     // Must be a leaf
     const childCount = db
@@ -1671,7 +1685,6 @@ router.post(
       name,
       description,
       vlan_id,
-      gateway_address,
       gateway_policy,
       create_dhcp_scope,
       create_reverse_dns,
@@ -1683,6 +1696,7 @@ router.post(
       scan_interval,
       scan_enabled,
     } = req.body;
+    const gateway_address = canonicalAddressInput(req.body.gateway_address);
 
     if (typeof name !== 'string' || !name.trim())
       return res.status(400).json({ error: 'Name is required' });
@@ -2227,8 +2241,13 @@ router.get(
         .json({ error: 'allocation_source_type must be at most 64 characters' });
     }
 
+    // A query that is one address matches that address in any spelling
+    // ('fd00:1:0:0::1' is the row 'fd00:1::1'); any other text is a
+    // substring search over the row's fields.
     function matchesSearch(row, query) {
       if (!query) return true;
+      const exact = canonicalizeIp(query);
+      if (exact && row.ip_address === exact) return true;
       return [
         row.ip_address,
         row.hostname,
@@ -2295,6 +2314,13 @@ router.get(
       const protectedAddresses = [parsed.network];
       if (subnet.gateway_address && parsedNetworkContains(parsed, subnet.gateway_address)) {
         protectedAddresses.push(subnet.gateway_address);
+      }
+      // An exact address searched for is listed even when nothing is stored
+      // for it, as the IPv4 listing does: an available address is a row.
+      for (const term of [search, tableSearch]) {
+        if (term && isValidAddress(term) && parsedNetworkContains(parsed, term)) {
+          protectedAddresses.push(canonicalizeIp(term));
+        }
       }
       for (const ip of protectedAddresses) {
         if (!rowsByAddress.has(ip)) rowsByAddress.set(ip, makeVirtualIpRow(ip));
@@ -2773,6 +2799,7 @@ router.put(
     const db = getDb();
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
     const { start_ip, end_ip, allocation_state, note } = req.body;
     const range = bulkRange(subnet, req.body);
@@ -2829,6 +2856,7 @@ router.put(
     const db = getDb();
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
     const { allocation_state, note } = req.body;
     if (!isValidAddress(req.params.ip))
@@ -2874,6 +2902,7 @@ router.put(
     const db = getDb();
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
     const { scan_enabled } = req.body;
     if (!isValidAddress(req.params.ip))
@@ -2900,6 +2929,7 @@ router.put(
     const db = getDb();
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
     const range = bulkRange(subnet, req.body);
     if (range.error) return res.status(400).json({ error: range.error });
     const { scan_enabled } = req.body;

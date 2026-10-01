@@ -305,7 +305,7 @@ import Checkbox from '../ui/Checkbox.js';
 import StatusDot from '../components/StatusDot.vue';
 import { useDnsStore } from '../stores/dns.js';
 import { apiError } from '../utils/format.js';
-import { isValidIpv4, isValidIpv6 } from '../utils/ip.js';
+import { isValidIpv4, isValidIpv6, canonicalizeIp } from '../utils/ip.js';
 import { useFeatures } from '../composables/useFeatures.js';
 
 const store = useDnsStore();
@@ -334,7 +334,8 @@ const forwardersDirty = computed(() => {
   const current = forwarders.value.map((f) => f.ip.trim()).filter(Boolean);
   const saved = savedForwarders.value;
   if (current.length !== saved.length) return true;
-  return current.some((ip, i) => ip !== saved[i]);
+  // The server stores the canonical spelling; '2001:DB8::1' is not a change.
+  return current.some((ip, i) => (canonicalizeIp(ip) ?? ip) !== saved[i]);
 });
 
 // Starts empty and is filled from GET /api/dns/soa-defaults on load. These used
@@ -474,6 +475,12 @@ async function saveUpstream() {
       const servers = forwarders.value.map((f) => f.ip.trim()).filter(Boolean);
       const res = await store.updateForwarders(servers, noRecursion.value);
       savedForwarders.value = [...(res.servers || servers)];
+      // Show what was stored (the canonical spelling), keeping each status.
+      const typed = forwarders.value.filter((f) => f.ip.trim());
+      forwarders.value = savedForwarders.value.map((ip, i) => ({
+        ip,
+        status: typed[i]?.status ?? null,
+      }));
       savedNoRecursion.value = !!res.no_recursion;
       savedFwd = true;
     }

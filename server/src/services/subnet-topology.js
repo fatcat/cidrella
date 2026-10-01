@@ -5,6 +5,7 @@ import {
   networkNameFromTemplate,
   topologyAddresses,
 } from '../utils/ip.js';
+import { canonicalizeIp } from '../utils/address.js';
 import {
   lifecycleRepository as IpAddress,
   reconcileStaticDnsAllocations,
@@ -119,17 +120,21 @@ export function repairDerivedNetworkDhcpState(db) {
   return repair();
 }
 
+// Both compare and return the canonical spelling: 'FD00:1:0:0::1' is the
+// first usable address of fd00:1::/64, and a gateway stored as typed would be
+// a second string for one address everywhere the canonical rows are keyed.
 export function gatewayPolicyForAddress(parsed, gatewayAddress) {
   if (!gatewayAddress) return 'none';
-  if (gatewayAddress === parsed.firstUsable) return 'first';
-  if (gatewayAddress === parsed.lastUsable) return 'last';
+  const canonical = canonicalizeIp(gatewayAddress) ?? gatewayAddress;
+  if (canonical === parsed.firstUsable) return 'first';
+  if (canonical === parsed.lastUsable) return 'last';
   return 'custom';
 }
 
 export function resolveGatewayAddress(parsed, policy, customAddress = null) {
   if (policy === 'none') return null;
   if (policy === 'last') return parsed.lastUsable;
-  if (policy === 'custom') return customAddress;
+  if (policy === 'custom') return customAddress && (canonicalizeIp(customAddress) ?? customAddress);
   return parsed.firstUsable;
 }
 

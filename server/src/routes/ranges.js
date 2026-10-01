@@ -16,6 +16,8 @@ function selectionFor(startIp, endIp) {
 }
 import * as Range from '../models/range.js';
 import { dynamicPoolConflict } from '../models/dhcp-scope.js';
+import { canonicalizeIp } from '../utils/address.js';
+import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 
 const router = Router({ mergeParams: true });
 
@@ -39,7 +41,8 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
 // POST /api/subnets/:subnetId/ranges
 router.post('/', requirePerm('subnets:write'), (req, res) => {
   const body = req.body || {};
-  const { range_type_id, start_ip, end_ip, description, force } = body;
+  const { range_type_id, description, force } = body;
+  let { start_ip, end_ip } = body;
   const subnetId = req.params.subnetId;
 
   if (!range_type_id || !start_ip || !end_ip) {
@@ -55,6 +58,9 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   if (!isValidAddress(start_ip) || !isValidAddress(end_ip)) {
     return res.status(400).json({ error: 'start_ip and end_ip must be valid IP addresses' });
   }
+  // Stored in the canonical spelling, one string with the address rows.
+  start_ip = canonicalizeIp(start_ip);
+  end_ip = canonicalizeIp(end_ip);
   if (!Number.isInteger(range_type_id)) {
     return res.status(400).json({ error: 'range_type_id must be an integer' });
   }
@@ -66,6 +72,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+  if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
   // Validate IPs are within subnet
   if (!networkContains(subnet.cidr, start_ip) || !networkContains(subnet.cidr, end_ip)) {
@@ -173,6 +180,7 @@ router.put('/set-type', requirePerm('subnets:write'), (req, res) => {
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+  if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
   const rangeType = db.prepare('SELECT * FROM range_types WHERE id = ?').get(range_type_id);
   if (!rangeType) return res.status(404).json({ error: 'Network range type not found' });
@@ -281,13 +289,14 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     if (derr) return res.status(400).json({ error: `description ${derr}` });
   }
 
-  const newStart = start_ip ?? range.start_ip;
-  const newEnd = end_ip ?? range.end_ip;
-  if (!isValidAddress(newStart) || !isValidAddress(newEnd)) {
+  if (!isValidAddress(start_ip ?? range.start_ip) || !isValidAddress(end_ip ?? range.end_ip)) {
     return res.status(400).json({ error: 'start_ip and end_ip must be valid IP addresses' });
   }
+  const newStart = canonicalizeIp(start_ip ?? range.start_ip);
+  const newEnd = canonicalizeIp(end_ip ?? range.end_ip);
 
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.subnetId);
+  if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
   let newRangeType = null;
   if (range_type_id !== undefined) {
     newRangeType = db.prepare('SELECT * FROM range_types WHERE id = ?').get(range_type_id);

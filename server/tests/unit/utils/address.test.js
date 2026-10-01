@@ -119,6 +119,30 @@ describe('parseIp: IPv4-mapped addresses', () => {
   });
 });
 
+describe('"::" stands for at least one zero group (RFC 4291 2.2)', () => {
+  it('rejects a "::" with nothing left to fill', () => {
+    for (const bad of [
+      '1::2:3:4:5:6:7:8',
+      '1:2:3:4:5:6::7:8',
+      '::1:2:3:4:5:6:7:8',
+      '1:2:3:4:5:6:7:8::',
+    ]) {
+      expect(parseIp(bad)).toBeNull();
+      expect(canonicalizeIp(bad)).toBeNull();
+      expect(isValidIp(bad)).toBe(false);
+      expect(isValidIpv6(bad)).toBe(false);
+    }
+    expect(parseIp('1::2:3:4:5:6:1.2.3.4')).toBeNull();
+  });
+
+  it('still accepts a "::" standing for exactly one group', () => {
+    expect(canonicalizeIp('1::3:4:5:6:7:8')).toBe('1:0:3:4:5:6:7:8');
+    expect(canonicalizeIp('1:2:3:4:5:6:7::')).toBe('1:2:3:4:5:6:7:0');
+    expect(canonicalizeIp('::2:3:4:5:6:7:8')).toBe('0:2:3:4:5:6:7:8');
+    expect(canonicalizeIp('1::3:4:5:6:1.2.3.4')).toBe('1:0:3:4:5:6:102:304');
+  });
+});
+
 describe('formatIp: RFC 5952', () => {
   it('compresses the longest zero run', () => {
     expect(canonicalizeIp('2001:db8:0:0:0:0:0:1')).toBe('2001:db8::1');

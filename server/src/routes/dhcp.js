@@ -119,18 +119,31 @@ function validateDefaultOption(opt, family = 4) {
   return validateScopeOption(opt, family);
 }
 
-// Helper: parse and validate a JSON IP array field
-// Returns { servers } on success or { error } on failure
-function parseIpList(jsonStr, fieldName) {
+// Helper: parse and validate a JSON IP array field for a scope of `family`.
+// Returns { servers, json } on success, the addresses canonical and json the
+// field to store, or { error } on failure. An address of the other family is
+// refused rather than stored: the config writer can only drop it, so the
+// option would read as set and never be served.
+function parseIpList(jsonStr, fieldName, family) {
+  let servers;
   try {
-    const servers = JSON.parse(jsonStr);
-    if (!Array.isArray(servers) || !servers.every(isValidAddress)) {
-      return { error: `${fieldName} must be a JSON array of valid IPs` };
-    }
-    return { servers };
+    servers = JSON.parse(jsonStr);
   } catch {
     return { error: `${fieldName} must be a valid JSON array` };
   }
+  if (!Array.isArray(servers) || !servers.every(isValidAddress)) {
+    return { error: `${fieldName} must be a JSON array of valid IPs` };
+  }
+  if (servers.some((ip) => addressFamily(ip) !== family)) {
+    return { error: `${fieldName} must list IPv${family} addresses on an IPv${family} scope` };
+  }
+  const canonical = servers.map((ip) => canonicalizeIp(ip));
+  return { servers: canonical, json: JSON.stringify(canonical) };
+}
+
+// The family a scope on this network serves.
+function scopeFamily(subnet) {
+  return Number(subnet.address_family) === 6 ? 6 : 4;
 }
 
 // ─── Scopes ──────────────────────────────────────────────
@@ -296,6 +309,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
 
   const v6 = resolveV6Mode(subnet, v6_mode, subnet.address_family === 6 ? null : undefined);
   if (v6.error) return res.status(400).json({ error: v6.error });
+  const family = scopeFamily(subnet);
 
   // Only a pool that hands out addresses can conflict with them. Under slaac
   // and stateless the range is a display projection of the prefix.
@@ -320,9 +334,11 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   }
 
   // Validate DNS servers
+  let dnsServers = dns_servers;
   if (dns_servers) {
-    const { error: dnsErr } = parseIpList(dns_servers, 'dns_servers');
+    const { error: dnsErr, json } = parseIpList(dns_servers, 'dns_servers', family);
     if (dnsErr) return res.status(400).json({ error: dnsErr });
+    dnsServers = json;
   }
 
   // Validate gateway. DHCPv6 never carries a router: clients learn it from
@@ -330,14 +346,16 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   if (gateway && subnet.address_family === 6) {
     return res.status(400).json({ error: 'DHCPv6 scopes take no gateway; routers come from RA' });
   }
-  if (gateway && !isValidAddress(gateway)) {
-    return res.status(400).json({ error: 'Invalid gateway IP address' });
+  if (gateway && (!isValidAddress(gateway) || addressFamily(gateway) !== 4)) {
+    return res.status(400).json({ error: 'Invalid gateway IP address: an IPv4 scope needs IPv4' });
   }
 
   // Validate NTP servers
+  let ntpServers = ntp_servers;
   if (ntp_servers) {
-    const { error: ntpErr } = parseIpList(ntp_servers, 'ntp_servers');
+    const { error: ntpErr, json } = parseIpList(ntp_servers, 'ntp_servers', family);
     if (ntpErr) return res.status(400).json({ error: ntpErr });
+    ntpServers = json;
   }
 
   const { options } = body;
@@ -360,10 +378,10 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
       range_id,
       subnet_id,
       lease_time,
-      dns_servers,
+      dns_servers: dnsServers,
       domain_name,
-      gateway,
-      ntp_servers,
+      gateway: gateway ? canonicalizeIp(gateway) : gateway,
+      ntp_servers: ntpServers,
       domain_search,
       description,
       options,
@@ -428,21 +446,24 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid lease time format' });
   }
 
-  if (dns_servers !== undefined && dns_servers !== null) {
-    const { error: dnsErr } = parseIpList(dns_servers, 'dns_servers');
-    if (dnsErr) return res.status(400).json({ error: dnsErr });
-  }
-
   const range = db.prepare('SELECT * FROM ranges WHERE id = ?').get(scope.range_id);
   const scopeSubnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(scope.subnet_id);
+  const family = scopeFamily(scopeSubnet);
   // With IPv6 off an existing v6 scope can still be described, enabled or
-  // disabled; its mode, pool and gateway are IPv6 configuration.
+  // disabled; everything else on it is IPv6 configuration.
   if (
-    scopeSubnet.address_family === 6 &&
-    [v6_mode, start_ip, end_ip, gateway].some((v) => v !== undefined) &&
+    family === 6 &&
+    Object.keys(body).some((key) => !['description', 'enabled'].includes(key)) &&
     refuseIpv6Unless(res)
   ) {
     return;
+  }
+
+  let dnsServers = dns_servers;
+  if (dns_servers !== undefined && dns_servers !== null) {
+    const { error: dnsErr, json } = parseIpList(dns_servers, 'dns_servers', family);
+    if (dnsErr) return res.status(400).json({ error: dnsErr });
+    dnsServers = json;
   }
   const v6 = resolveV6Mode(scopeSubnet, v6_mode, scope.v6_mode);
   if (v6.error) return res.status(400).json({ error: v6.error });
@@ -450,24 +471,34 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   if (gateway && scopeSubnet.address_family === 6) {
     return res.status(400).json({ error: 'DHCPv6 scopes take no gateway; routers come from RA' });
   }
-  if (gateway !== undefined && gateway !== null && gateway !== '' && !isValidAddress(gateway)) {
-    return res.status(400).json({ error: 'Invalid gateway IP address' });
+  if (
+    gateway !== undefined &&
+    gateway !== null &&
+    gateway !== '' &&
+    (!isValidAddress(gateway) || addressFamily(gateway) !== 4)
+  ) {
+    return res.status(400).json({ error: 'Invalid gateway IP address: an IPv4 scope needs IPv4' });
   }
 
+  let ntpServers = ntp_servers;
   if (ntp_servers !== undefined && ntp_servers !== null) {
-    const { error: ntpErr } = parseIpList(ntp_servers, 'ntp_servers');
+    const { error: ntpErr, json } = parseIpList(ntp_servers, 'ntp_servers', family);
     if (ntpErr) return res.status(400).json({ error: ntpErr });
+    ntpServers = json;
   }
 
-  // Validate start_ip / end_ip if provided
+  // Validate start_ip / end_ip if provided, and store them canonical: the
+  // pool bounds are compared as strings against the range and address rows.
   if (start_ip !== undefined && !isValidAddress(start_ip)) {
     return res.status(400).json({ error: 'Invalid start IP address' });
   }
   if (end_ip !== undefined && !isValidAddress(end_ip)) {
     return res.status(400).json({ error: 'Invalid end IP address' });
   }
-  const newStart = start_ip || range.start_ip;
-  const newEnd = end_ip || range.end_ip;
+  const startIp = start_ip === undefined ? undefined : canonicalizeIp(start_ip);
+  const endIp = end_ip === undefined ? undefined : canonicalizeIp(end_ip);
+  const newStart = startIp || range.start_ip;
+  const newEnd = endIp || range.end_ip;
   if (start_ip !== undefined || end_ip !== undefined) {
     if (
       !networkContains(scopeSubnet.cidr, newStart) ||
@@ -520,15 +551,15 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     scope,
     {
       lease_time,
-      dns_servers,
+      dns_servers: dnsServers,
       domain_name,
-      gateway,
-      ntp_servers,
+      gateway: gateway ? canonicalizeIp(gateway) : gateway,
+      ntp_servers: ntpServers,
       domain_search,
       enabled,
       description,
-      start_ip,
-      end_ip,
+      start_ip: startIp,
+      end_ip: endIp,
       options,
       v6_mode: v6.mode,
     },
@@ -1227,6 +1258,7 @@ router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
   const { code, name, label, type, description } = req.body;
   const family = familyParam(req.body.address_family);
   if (family === null) return res.status(400).json({ error: 'address_family must be 4 or 6' });
+  if (family === 6 && refuseIpv6Unless(res)) return;
   const catalogFor = optionCatalogFor(family);
   const [minCode, maxCode] = catalogFor.customRange;
 
@@ -1304,6 +1336,7 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   const { options, enabledDefaults } = req.body;
   const family = familyParam(req.body.family);
   if (family === null) return res.status(400).json({ error: FAMILY_PARAM_ERROR });
+  if (family === 6 && refuseIpv6Unless(res)) return;
   const { maxCode } = optionCatalogFor(family);
   if (!Array.isArray(options)) {
     return res.status(400).json({ error: 'options must be an array of { code, value }' });

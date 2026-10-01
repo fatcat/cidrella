@@ -1171,6 +1171,8 @@ router.post('/forwarders/test', requirePerm('dns:read'), async (req, res) => {
   if (!ip || !isValidAddress(ip)) {
     return res.status(400).json({ error: 'Valid IP address required' });
   }
+  // A test sends a real query, so with the switch off it sends none over IPv6.
+  if (addressFamily(ip) === 6 && refuseIpv6Unless(res)) return;
 
   const result = await testDnsForwarder(ip);
   res.json({ ip, ...result });

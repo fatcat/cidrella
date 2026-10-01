@@ -32,13 +32,15 @@ beforeAll(async () => {
   const setup = await setupTestDb();
   tmpDir = setup.tmpDir;
   db = setup.db;
-  const [subnets, dns, dhcp, blocklists, interfaces, features] = await Promise.all([
+  const [subnets, dns, dhcp, blocklists, interfaces, features, ranges, scans] = await Promise.all([
     import('../../../src/routes/subnets.js'),
     import('../../../src/routes/dns.js'),
     import('../../../src/routes/dhcp.js'),
     import('../../../src/routes/blocklists.js'),
     import('../../../src/routes/interfaces.js'),
     import('../../../src/routes/features.js'),
+    import('../../../src/routes/ranges.js'),
+    import('../../../src/routes/scans.js'),
   ]);
   app = createMultiRouterApp([
     { prefix: '/api/subnets', router: subnets.default },
@@ -47,6 +49,8 @@ beforeAll(async () => {
     { prefix: '/api/blocklists', router: blocklists.default },
     { prefix: '/api/interfaces', router: interfaces.default },
     { prefix: '/api/features', router: features.default },
+    { prefix: '/api/subnets/:subnetId/ranges', router: ranges.default },
+    { prefix: '/api/scans', router: scans.default },
   ]);
 });
 
@@ -200,7 +204,63 @@ describe('switching on, creating IPv6 objects, switching off', () => {
     expect(reservation.status).toBe(400);
     expect(reservation.body.error).toBe(DISABLED);
 
+    // Every other write that would add or change IPv6 configuration
+    // (IPV6-05, 17, 30, 38).
+    const dhcpRangeType = db
+      .prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'")
+      .get().id;
+    const range = db.prepare('SELECT range_id FROM dhcp_scopes WHERE id = ?').get(scopeId).range_id;
+    const refused = [
+      ['put', `/api/subnets/${netId}/ips/fd00:9::50/allocation`, { allocation_state: 'reserved' }],
+      [
+        'put',
+        `/api/subnets/${netId}/ips/bulk-allocation`,
+        { start_ip: 'fd00:9::50', end_ip: 'fd00:9::51', allocation_state: 'reserved' },
+      ],
+      ['put', `/api/subnets/${netId}/ips/fd00:9::50/scan-enabled`, { scan_enabled: false }],
+      [
+        'put',
+        `/api/subnets/${netId}/ips/bulk-scan-enabled`,
+        { start_ip: 'fd00:9::50', end_ip: 'fd00:9::51', scan_enabled: false },
+      ],
+      [
+        'post',
+        `/api/subnets/${netId}/ranges`,
+        { range_type_id: dhcpRangeType, start_ip: 'fd00:9::100', end_ip: 'fd00:9::200' },
+      ],
+      ['put', `/api/subnets/${netId}/ranges/${range}`, { description: 'x' }],
+      ['post', `/api/subnets/${netId}/divide`, { new_prefix: 65, force: true }],
+      ['post', '/api/subnets/merge', { subnet_ids: [netId, netId] }],
+      ['put', `/api/subnets/${netId}`, { gateway_policy: 'last' }],
+      ['put', `/api/dhcp/scopes/${scopeId}`, { options: [{ code: 23, value: 'fd00:9::53' }] }],
+      ['put', `/api/dhcp/scopes/${scopeId}`, { lease_time: '2h' }],
+      [
+        'put',
+        '/api/dhcp/options/defaults',
+        { family: 6, options: [{ code: 23, value: 'fd00::53' }] },
+      ],
+      ['post', '/api/dhcp/options/custom', { address_family: 6, code: 200, label: 'x' }],
+      ['post', '/api/dns/forwarders/test', { ip: '2606:4700:4700::1111' }],
+      ['post', '/api/scans', { subnet_id: netId }],
+      ['post', '/api/scans/probe', { ip: 'fd00:9::10' }],
+      ['post', '/api/scans/probe', { ips: ['fd00:9::10'], subnet_id: netId }],
+    ];
+    for (const [method, url, body] of refused) {
+      const res = await request(app)[method](url).send(body);
+      expect([url, res.status, res.body.error]).toEqual([url, 400, DISABLED]);
+    }
+    expect(db.prepare('SELECT COUNT(*) AS c FROM network_scans').get().c).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) AS c FROM subnets WHERE parent_id = ?').get(netId).c).toBe(
+      0,
+    );
+
     // Still operable for non-IPv6 fields.
+    const rename = await request(app).put(`/api/subnets/${netId}`).send({ description: 'kept' });
+    expect(rename.status).toBe(200);
+    const defaults4 = await request(app)
+      .put('/api/dhcp/options/defaults')
+      .send({ family: 4, options: [] });
+    expect(defaults4.status).toBe(200);
     const describe6 = await request(app)
       .put(`/api/dhcp/scopes/${scopeId}`)
       .send({ description: 'kept', enabled: false });

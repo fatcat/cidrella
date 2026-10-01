@@ -158,6 +158,24 @@ describe('IPv6 scan', () => {
     });
   });
 
+  it('probes an allocated address typed in another spelling as that address', async () => {
+    db.prepare(
+      `INSERT INTO ip_addresses (subnet_id, ip_address, allocation_state, address_family, address_sort_key)
+       VALUES (?, 'fd00:6::77', 'static_dns', 6, 'x')`,
+    ).run(nets.stateful);
+    neighbors = new Map();
+    responders.clear();
+    responders.add('fd00:6::77');
+    const scanId = ScanRun.createPending(db, nets.stateful);
+    await startScan(db, scanId, nets.stateful, { targetIps: ['FD00:6::77', 'fd00:6:0:0::77'] });
+    expect(db.prepare('SELECT * FROM network_scans WHERE id = ?').get(scanId)).toMatchObject({
+      status: 'completed',
+      conflicts_found: 0,
+    });
+    expect(ScanRun.getResultForIp(db, scanId, 'fd00:6::77')).toMatchObject({ is_conflict: 0 });
+    expect(row('fd00:6::77')).toMatchObject({ allocation_state: 'static_dns', is_rogue: 0 });
+  });
+
   it('echoes every persisted allocated address so a quiet static host goes offline', async () => {
     db.prepare(
       `INSERT INTO ip_addresses (subnet_id, ip_address, allocation_state, address_family, address_sort_key, is_online)

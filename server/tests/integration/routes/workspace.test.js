@@ -298,6 +298,30 @@ describe('workspace read routes', () => {
     }
   });
 
+  it('finds an AAAA record and its zone by the address in any spelling (IPV6-07)', async () => {
+    db.prepare(
+      `INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+       VALUES (?, 'spelled-v6', 'AAAA', '2001:db8::5', 'manual', 1)`,
+    ).run(zoneId);
+    try {
+      for (const query of [{ q: '2001:db8:0:0:0:0:0:5' }, { table_q: '2001:DB8:0::0005' }]) {
+        const res = await request(app)
+          .get('/api/workspace/dns-records')
+          .query({ zone_id: zoneId, ...query });
+        expect(res.body.items.map((row) => row.name)).toEqual(['spelled-v6']);
+      }
+      const zones = await request(app).get('/api/dns/zones').query({ q: '2001:db8:0:0:0:0:0:5' });
+      expect(zones.body.map((zone) => zone.id)).toEqual([zoneId]);
+      // A fragment is still a substring search, and IPv4 is unchanged.
+      const fragment = await request(app)
+        .get('/api/workspace/dns-records')
+        .query({ zone_id: zoneId, table_q: 'db8::5' });
+      expect(fragment.body.items.map((row) => row.name)).toEqual(['spelled-v6']);
+    } finally {
+      db.prepare("DELETE FROM dns_records WHERE name = 'spelled-v6'").run();
+    }
+  });
+
   it('uses zone and related-network membership for folder DNS filters', async () => {
     const response = await request(app)
       .get('/api/workspace/dns-records')
