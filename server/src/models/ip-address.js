@@ -749,36 +749,27 @@ export function ensureAddresses(db, subnetId, entries) {
 }
 
 /**
- * Bulk clear rogue for all IPs in a subnet, except those in the provided set.
- * Used after a scan to clear rogue on IPs that are no longer conflicting.
+ * Clear rogue on the addresses a full scan re-checked and did not flag, and
+ * on nothing else: the IPv4 sweep probes every scannable address, but an
+ * IPv6 scan probes a sparse set, and a rogue it never looked at stays one.
+ * Each cleared row gets a rogue_cleared event, as the per-row paths emit.
  */
-export function clearRogueForSubnet(db, subnetId, exceptIps = new Set()) {
-  if (exceptIps.size === 0) {
-    return db
-      .prepare(
-        `
-      UPDATE ip_addresses SET
-        is_rogue = 0, rogue_reason = NULL,
-        updated_at = datetime('now')
-      WHERE subnet_id = ? AND is_rogue = 1
-    `,
-      )
-      .run(subnetId);
-  }
-
-  // Build placeholders for the exception list
-  const placeholders = [...exceptIps].map(() => '?').join(', ');
-  return db
-    .prepare(
-      `
+export function clearRogueAfterScan(db, subnetId, { probedIps, exceptIps = new Set() }) {
+  const rows = db
+    .prepare('SELECT id, ip_address FROM ip_addresses WHERE subnet_id = ? AND is_rogue = 1')
+    .all(subnetId)
+    .filter((row) => probedIps.has(row.ip_address) && !exceptIps.has(row.ip_address));
+  const clear = db.prepare(`
     UPDATE ip_addresses SET
       is_rogue = 0, rogue_reason = NULL,
       updated_at = datetime('now')
-    WHERE subnet_id = ? AND is_rogue = 1
-      AND ip_address NOT IN (${placeholders})
-  `,
-    )
-    .run(subnetId, ...exceptIps);
+    WHERE id = ?
+  `);
+  for (const row of rows) {
+    emit(db, row.id, subnetId, row.ip_address, 'rogue_cleared', { source: 'scan' });
+    clear.run(row.id);
+  }
+  return { changes: rows.length };
 }
 
 /**

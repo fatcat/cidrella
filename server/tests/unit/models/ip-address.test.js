@@ -503,7 +503,7 @@ describe('isAdminDeclared', () => {
   });
 });
 
-// ── setRogue / clearRogue / clearRogueForSubnet ─────────
+// ── setRogue / clearRogue / clearRogueAfterScan ─────────
 
 describe('rogue management', () => {
   it('setRogue marks an IP as rogue', () => {
@@ -524,27 +524,32 @@ describe('rogue management', () => {
     expect(row.rogue_reason).toBeNull();
   });
 
-  it('clearRogueForSubnet clears all except listed IPs', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.42', { is_rogue: 1, rogue_reason: 'a' });
-    IpAddress.upsert(db, subnetId, '10.0.1.43', { is_rogue: 1, rogue_reason: 'b' });
-    IpAddress.upsert(db, subnetId, '10.0.1.44', { is_rogue: 1, rogue_reason: 'c' });
+  it('clearRogueAfterScan clears only probed, unflagged rows and records each', () => {
+    for (const [ip, reason] of [
+      ['10.0.1.42', 'a'],
+      ['10.0.1.43', 'b'],
+      ['10.0.1.44', 'c'],
+    ]) {
+      IpAddress.upsert(db, subnetId, ip, { is_rogue: 1, rogue_reason: reason });
+    }
 
-    // Keep .43 as rogue, clear the rest
-    IpAddress.clearRogueForSubnet(db, subnetId, new Set(['10.0.1.43']));
+    // .42 was probed and clean, .43 probed and flagged again, .44 never probed.
+    const result = IpAddress.clearRogueAfterScan(db, subnetId, {
+      probedIps: new Set(['10.0.1.42', '10.0.1.43']),
+      exceptIps: new Set(['10.0.1.43']),
+    });
 
+    expect(result.changes).toBe(1);
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.42').is_rogue).toBe(0);
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.43').is_rogue).toBe(1);
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.44').is_rogue).toBe(0);
-  });
-
-  it('clearRogueForSubnet with empty set clears all', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.45', { is_rogue: 1, rogue_reason: 'x' });
-    IpAddress.upsert(db, subnetId, '10.0.1.46', { is_rogue: 1, rogue_reason: 'y' });
-
-    IpAddress.clearRogueForSubnet(db, subnetId);
-
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.45').is_rogue).toBe(0);
-    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.46').is_rogue).toBe(0);
+    expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.44').is_rogue).toBe(1);
+    const events = db
+      .prepare(
+        "SELECT ip_address FROM ip_events WHERE event_type = 'rogue_cleared' AND ip_address LIKE '10.0.1.4%'",
+      )
+      .all()
+      .map((row) => row.ip_address);
+    expect(events).toEqual(['10.0.1.42']);
   });
 });
 

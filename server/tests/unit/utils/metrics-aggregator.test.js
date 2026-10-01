@@ -2,6 +2,23 @@ import { describe, expect, it } from 'vitest';
 import { parseLogLines } from '../../../src/utils/metrics-aggregator.js';
 
 describe('parseLogLines', () => {
+  it('counts both halves of a DHCPv6 conversation', () => {
+    const duid = '00:01:00:01:2c:5e:7b:11:38:8a:06:92:26:ce';
+    const lines = [
+      `Sep 20 21:00:02 dnsmasq-dhcp[12]: DHCPSOLICIT(eth0) ${duid}`,
+      `Sep 20 21:00:02 dnsmasq-dhcp[12]: DHCPADVERTISE(eth0) fd00:6::22 ${duid}`,
+      `Sep 20 21:00:02 dnsmasq-dhcp[12]: DHCPREQUEST(eth0) ${duid}`,
+      `Sep 20 21:00:02 dnsmasq-dhcp[12]: DHCPREPLY(eth0) fd00:6::22 ${duid} S24-Ultra`,
+      `Sep 20 21:30:02 dnsmasq-dhcp[12]: DHCPRENEW(eth0) ${duid}`,
+      `Sep 20 21:30:02 dnsmasq-dhcp[12]: DHCPREPLY(eth0) fd00:6::22 ${duid}`,
+      `Sep 20 21:31:00 dnsmasq-dhcp[12]: DHCPREBIND(eth0) ${duid}`,
+      `Sep 20 21:31:05 dnsmasq-dhcp[12]: DHCPCONFIRM(eth0) ${duid}`,
+      `Sep 20 21:32:00 dnsmasq-dhcp[12]: DHCPINFORMATION-REQUEST(eth0) ${duid}`,
+      `Sep 20 21:32:00 dnsmasq-dhcp[12]: DHCPREPLY(eth0) ${duid}`,
+    ];
+    expect(parseLogLines(lines)).toEqual({ dnsQueries: 0, dhcpClientMsgs: 6, dhcpServerMsgs: 4 });
+  });
+
   it('counts DNS queries and both halves of the DHCP conversation apart', () => {
     const lines = [
       'Sep 20 21:00:01 dnsmasq[12]: query[A] apple.com from 10.0.0.22',

@@ -16,12 +16,13 @@ const execFile = vi.fn((cmd, args, opts, cb) => {
 vi.mock('child_process', () => ({ execFile: (...a) => execFile(...a), execFileSync: vi.fn() }));
 
 let neighbors = new Map();
-vi.mock('../../src/utils/nd-cache.js', () => ({
+vi.mock('../../src/utils/nd-cache.js', async (importOriginal) => ({
+  ...(await importOriginal()),
   readNdCache: () => neighbors,
   lookupNdEntry: (ip) => neighbors.get(ip) || null,
 }));
 
-const { startScan } = await import('../../src/utils/scanner.js');
+const { startScan, confirmByNeighborDiscovery } = await import('../../src/utils/scanner.js');
 const { parseNetwork } = await import('../../src/utils/cidr.js');
 const { insertSubnet, configureSubnet } = await import('../../src/services/subnet-topology.js');
 const ScanRun = await import('../../src/models/scan-run.js');
@@ -91,6 +92,7 @@ describe('IPv6 scan', () => {
     ]);
     responders.clear();
     responders.add('fd00:5::a1');
+    responders.add('fe80::a1%eth0');
     const run = await scan(nets.slaac);
     expect(run.status).toBe('completed');
     expect(run.conflicts_found).toBe(0);
@@ -108,10 +110,15 @@ describe('IPv6 scan', () => {
       is_online: 1,
       interface_id: 'eth0',
     });
-    // The prefix was never swept: the discovered global host and the one
-    // allocated address (the gateway) got an echo, nothing else.
+    // The prefix was never swept: the discovered hosts and the one allocated
+    // address (the gateway) got an echo, nothing else; the link-local one on
+    // its interface.
     const pinged = execFile.mock.calls.filter((c) => c[0] === 'ping').map((c) => c[1].at(-1));
-    expect(pinged.filter((t) => !t.startsWith('ff02')).sort()).toEqual(['fd00:5::1', 'fd00:5::a1']);
+    expect(pinged.filter((t) => !t.startsWith('ff02')).sort()).toEqual([
+      'fd00:5::1',
+      'fd00:5::a1',
+      'fe80::a1%eth0',
+    ]);
   });
 
   it('flags an unclaimed host as rogue on a stateful network', async () => {
@@ -191,6 +198,134 @@ describe('IPv6 scan', () => {
     expect(pinged).not.toContain('fd00:5::');
     expect(row('fd00:5::5000')).toMatchObject({ is_online: 0, allocation_state: 'static_dns' });
     expect(row('fd00:5::5000').offline_since_at).toBeTruthy();
+  });
+});
+
+describe('a scan answers for every address it reports (IPV6-32, 33, 34)', () => {
+  const insert = (subnetId, ip, fields = {}) => {
+    const columns = { allocation_state: 'unassigned', is_online: 0, is_rogue: 0, ...fields };
+    const names = Object.keys(columns);
+    db.prepare(
+      `INSERT INTO ip_addresses (subnet_id, ip_address, address_family, address_sort_key, ${names.join(', ')})
+       VALUES (?, ?, 6, 'x', ${names.map(() => '?').join(', ')})`,
+    ).run(subnetId, ip, ...Object.values(columns));
+  };
+  let stateful;
+  beforeAll(() => {
+    stateful = network('fd00:8::/64', 'stateful');
+  });
+
+  it('counts a REACHABLE neighbor as an answer when the host drops echo', async () => {
+    insert(stateful, 'fd00:8::50', { allocation_state: 'static_dns', is_online: 1 });
+    insert(stateful, 'fd00:8::51', { allocation_state: 'static_dns', is_online: 1 });
+    neighbors = new Map([
+      ['fd00:8::50', { mac: 'aa:bb:cc:dd:ee:50', interface: 'eth0', state: 'REACHABLE' }],
+      // STALE is what the kernel remembers of a host, not an answer.
+      ['fd00:8::51', { mac: 'aa:bb:cc:dd:ee:51', interface: 'eth0', state: 'STALE' }],
+    ]);
+    responders.clear();
+    const run = await scan(stateful);
+    expect(run.status).toBe('completed');
+    expect(row('fd00:8::50')).toMatchObject({ is_online: 1, last_seen_mac: 'aa:bb:cc:dd:ee:50' });
+    expect(row('fd00:8::51')).toMatchObject({ is_online: 0 });
+  });
+
+  it('echoes an online host nobody allocated, so one that left goes offline', async () => {
+    neighbors = new Map([
+      ['fd00:8::c2', { mac: 'aa:bb:cc:dd:ee:c2', interface: 'eth0', state: 'REACHABLE' }],
+      ['fe80::c2', { mac: 'aa:bb:cc:dd:ee:c2', interface: 'eth0', state: 'REACHABLE' }],
+    ]);
+    responders.clear();
+    responders.add('fd00:8::c2');
+    await scan(stateful);
+    expect(row('fd00:8::c2')).toMatchObject({ is_online: 1, is_rogue: 1 });
+
+    // The host leaves: nothing in the neighbor table, no echo reply.
+    neighbors = new Map();
+    responders.clear();
+    execFile.mockClear();
+    const run = await scan(stateful);
+    expect(run.status).toBe('completed');
+    const pinged = execFile.mock.calls.filter((c) => c[0] === 'ping').map((c) => c[1].at(-1));
+    expect(pinged).toContain('fd00:8::c2');
+    expect(row('fd00:8::c2')).toMatchObject({ is_online: 0, is_rogue: 0 });
+  });
+
+  it('keeps a rogue flag the scan did not re-check, and records the ones it clears', async () => {
+    insert(stateful, 'fd00:8::e1', { is_rogue: 1, rogue_reason: 'Rogue device (IP not assigned)' });
+    neighbors = new Map();
+    responders.clear();
+    const run = await scan(stateful);
+    expect(run.status).toBe('completed');
+    // Offline, so not echoed, so still a rogue.
+    expect(row('fd00:8::e1')).toMatchObject({ is_rogue: 1 });
+    const cleared = db
+      .prepare(
+        "SELECT ip_address FROM ip_events WHERE event_type = 'rogue_cleared' AND ip_address = ?",
+      )
+      .all('fd00:8::c2');
+    expect(cleared.length).toBeGreaterThan(0);
+  });
+
+  it('leaves only the rows the scan never echoes to the stale sweep', async () => {
+    const { markStalePassiveAddresses } =
+      await import('../../src/services/ip-lifecycle-service.js');
+    db.prepare("UPDATE subnets SET scan_interval = '1h', scan_enabled = 1 WHERE id = ?").run(
+      stateful,
+    );
+    db.prepare(
+      "UPDATE ip_addresses SET is_online = 1, last_seen_at = datetime('now', '-3 hours') WHERE subnet_id = ? AND ip_address = 'fd00:8::'",
+    ).run(stateful);
+    insert(stateful, 'fd00:8::d2', { allocation_state: 'static_dns', is_online: 1 });
+    db.prepare(
+      "UPDATE ip_addresses SET last_seen_at = datetime('now', '-3 hours') WHERE ip_address = 'fd00:8::d2'",
+    ).run();
+    markStalePassiveAddresses(db, 60);
+    // Nothing echoes the anycast address, so the sweep ages it out; the scan
+    // echoes fd00:8::d2, so the sweep leaves it to the scan.
+    expect(row('fd00:8::')).toMatchObject({ is_online: 0 });
+    expect(row('fd00:8::d2')).toMatchObject({ is_online: 1 });
+  });
+});
+
+describe('confirmByNeighborDiscovery', () => {
+  it('waits for a settling entry and refuses a stale or failed one', async () => {
+    const reads = [
+      new Map([
+        ['fd00::1', { ip: 'fd00::1', mac: 'aa:00:00:00:00:01', interface: 'eth0', state: 'DELAY' }],
+        ['fd00::2', { ip: 'fd00::2', mac: 'aa:00:00:00:00:02', interface: 'eth0', state: 'STALE' }],
+        ['fd00::3', { ip: 'fd00::3', mac: 'aa:00:00:00:00:03', interface: 'eth0', state: 'PROBE' }],
+        [
+          'fe80::4%eth1',
+          { ip: 'fe80::4', mac: 'aa:00:00:00:00:04', interface: 'eth1', state: 'REACHABLE' },
+        ],
+      ]),
+      new Map([
+        [
+          'fd00::1',
+          { ip: 'fd00::1', mac: 'aa:00:00:00:00:01', interface: 'eth0', state: 'REACHABLE' },
+        ],
+        // fd00::3's probes failed, so the kernel dropped it from what we read.
+      ]),
+    ];
+    const wait = vi.fn(async () => {});
+    const results = [
+      { ip: 'fd00::1', iface: null, responded: false, mac: null, method: 'icmpv6' },
+      { ip: 'fd00::2', iface: null, responded: false, mac: null, method: 'icmpv6' },
+      { ip: 'fd00::3', iface: null, responded: false, mac: null, method: 'icmpv6' },
+      { ip: 'fe80::4', iface: 'eth1', responded: false, mac: null, method: 'icmpv6' },
+      { ip: 'fd00::5', iface: null, responded: true, mac: null, method: 'icmpv6' },
+    ];
+    await confirmByNeighborDiscovery(results, { read: () => reads.shift() ?? new Map(), wait });
+    expect(results.map((r) => [r.ip, r.responded, r.method])).toEqual([
+      ['fd00::1', true, 'ndp'],
+      ['fd00::2', false, 'icmpv6'],
+      ['fd00::3', false, 'icmpv6'],
+      ['fe80::4', true, 'ndp'],
+      ['fd00::5', true, 'icmpv6'],
+    ]);
+    expect(results[0].mac).toBe('aa:00:00:00:00:01');
+    expect(wait).toHaveBeenCalledTimes(1);
   });
 });
 

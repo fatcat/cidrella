@@ -169,5 +169,17 @@ export function scannerCoveredSql(subnetAlias = 's', ipAlias = 'ip') {
       )
     )
     AND (${ipAlias}.scan_enabled IS NULL OR ${ipAlias}.scan_enabled != 0)
+    AND ${ipv6ProbedSql(subnetAlias, ipAlias)}
   )`;
+}
+
+/**
+ * An IPv6 network is never swept: the scan echoes the addresses it knows,
+ * every online row among them (utils/scanner.js startScan), except the
+ * network's anycast address, so that one is left to the stale sweep. (A
+ * link-local row always carries the interface it is echoed on; the schema
+ * requires it.) IPv4 rows pass unchanged.
+ */
+function ipv6ProbedSql(subnetAlias, ipAlias) {
+  return `(${subnetAlias}.address_family != 6 OR ${ipAlias}.allocation_state != 'system')`;
 }

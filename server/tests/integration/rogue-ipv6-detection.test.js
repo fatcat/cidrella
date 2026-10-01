@@ -222,6 +222,48 @@ default via fe80::5 dev eth9 proto ra metric 1024 expires 1700sec hoplimit 64 pr
     }
   });
 
+  it("reads each router's MAC on its own link when two links share a link-local (IPV6-14)", async () => {
+    const { parseNeighTable } = await import('../../src/utils/nd-cache.js');
+    const subnet = db
+      .prepare(
+        `INSERT INTO subnets (cidr, name, network_address, last_address, prefix_length,
+          address_family, status, depth, gateway_address, gateway_policy)
+         VALUES ('fd00:1234::/64', 'lab6', 'fd00:1234::', 'fd00:1234:0:0:ffff:ffff:ffff:ffff',
+          64, 6, 'allocated', 0, 'fd00:1234::1', 'first')`,
+      )
+      .run().lastInsertRowid;
+    db.prepare(
+      `INSERT INTO ip_addresses (subnet_id, ip_address, allocation_state, address_family,
+        address_sort_key, mac_address) VALUES (?, 'fd00:1234::1', 'gateway', 6, ?, 'cc:cc:cc:cc:cc:cc')`,
+    ).run(subnet, '6' + 'fd001234'.padEnd(32, '0'));
+    try {
+      // The trusted router is fe80::1 on eth1; a rogue uses fe80::1 on eth0.
+      // The eth1 line is read last, so a table keyed by address alone handed
+      // its MAC to the eth0 rogue too.
+      const result = check({
+        routes: parseRaRoutes(
+          [
+            'default via fe80::1 dev eth0 proto ra metric 1024 pref medium',
+            'default via fe80::1 dev eth1 proto ra metric 1024 pref medium',
+          ].join('\n'),
+        ),
+        interfaces: ['eth0', 'eth1'],
+        neighbors: parseNeighTable(
+          [
+            'fe80::1 dev eth0 lladdr 66:66:66:66:66:66 router REACHABLE',
+            'fe80::1 dev eth1 lladdr cc:cc:cc:cc:cc:cc router REACHABLE',
+          ].join('\n'),
+        ),
+      });
+      expect(result.rogues.map((r) => [r.server_ip, r.iface, r.server_mac])).toEqual([
+        ['fe80::1', 'eth0', '66:66:66:66:66:66'],
+      ]);
+    } finally {
+      db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnet);
+      db.prepare('DELETE FROM subnets WHERE id = ?').run(subnet);
+    }
+  });
+
   it('trusts an allowlisted router by link-local or MAC', () => {
     RogueDhcp.addAuthorized(db, { server_ip: 'fe80::1' });
     RogueDhcp.addAuthorized(db, { server_mac: 'de:ad:be:ef:00:02' });

@@ -24,13 +24,18 @@ const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
 // Matches: "query[A] example.com from 192.168.1.100"
 const QUERY_RE = /\bquery\[.+?\]\s+\S+\s+from\s+/;
-// DHCP conversation halves. Clients send DISCOVER, REQUEST, RELEASE, INFORM
-// and DECLINE; the server answers with OFFER, ACK and NAK. dnsmasq logs one
-// line per message with the type as the first word after the tag. The two
-// counts are kept apart so the dashboard can show a request the server never
-// answered. dhcp_requests, the column older readers use, stays as the sum.
-const DHCP_CLIENT_RE = /\bDHCP(?:DISCOVER|REQUEST|RELEASE|INFORM|DECLINE)\b/;
-const DHCP_SERVER_RE = /\bDHCP(?:OFFER|ACK|NAK)\b/;
+// DHCP conversation halves. DHCPv4 clients send DISCOVER, REQUEST, RELEASE,
+// INFORM and DECLINE; the server answers with OFFER, ACK and NAK. DHCPv6
+// (RFC 8415, as dnsmasq's rfc3315.c logs it) has its own names: clients send
+// SOLICIT, REQUEST, RENEW, REBIND, CONFIRM, RELEASE, DECLINE and
+// INFORMATION-REQUEST, and the server answers with ADVERTISE and REPLY.
+// dnsmasq logs one line per message with the type as the first word after the
+// tag. The two counts are kept apart so the dashboard can show a request the
+// server never answered. dhcp_requests, the column older readers use, stays
+// as the sum.
+const DHCP_CLIENT_RE =
+  /\bDHCP(?:DISCOVER|REQUEST|RELEASE|INFORM|DECLINE|SOLICIT|RENEW|REBIND|CONFIRM|INFORMATION-REQUEST)\b/;
+const DHCP_SERVER_RE = /\bDHCP(?:OFFER|ACK|NAK|ADVERTISE|REPLY)\b/;
 
 let db = null;
 let timer = null;

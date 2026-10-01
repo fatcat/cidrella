@@ -21,7 +21,7 @@ import fs from 'fs';
 import { execFileSync } from 'child_process';
 import { selectProbeInterfaceNames } from './dhcp-probe.js';
 import { localAddressSet } from './local-addresses.js';
-import { readNdCache } from './nd-cache.js';
+import { findNeighbor, readNdCache } from './nd-cache.js';
 import { canonicalizeIp } from './address.js';
 import { upsertRogueEvent, authorizedSets, configuredGatewayMacSet } from '../models/rogue-dhcp.js';
 
@@ -177,7 +177,8 @@ export function checkRouterAdvertisements(
 
     const rogues = [];
     for (const router of routers) {
-      const mac = table.get(router.address)?.mac || null;
+      // A router's link-local address is only unique on its interface.
+      const mac = findNeighbor(table, router.address, router.iface)?.mac || null;
       const verdict = classifyRouter(router, { mac, ...trusted });
       if (!verdict.rogue) continue;
       rogues.push({

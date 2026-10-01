@@ -592,6 +592,31 @@ first on a 0.4.17 host.
   spelling and no longer reports unsaved changes after saving one typed
   differently.
 
+- An IPv6 host the scan reported online can be reported gone. The scan now
+  echoes every online address of the network, including ones nobody
+  allocated and link-local ones (on their interface). Before, a departed
+  unassigned host or a rotated privacy address stayed online forever,
+  because the stale sweep leaves scanned networks to the scanner and the
+  scanner never looked at them again.
+
+- An IPv6 host whose firewall drops ping (Windows does by default) is
+  online when it answers Neighbor Discovery, the IPv6 counterpart of the
+  ARP probe IPv4 uses. It used to be marked offline on every scan, and on a
+  SLAAC network it flipped online and offline each time.
+
+- A scan clears the rogue flag only on addresses it actually re-checked, and
+  records a "rogue cleared" event for each. An IPv6 scan probes a sparse set,
+  so a rogue reported from DNS traffic was silently cleared by the next scan
+  that never looked at it.
+
+- The DHCP figures count DHCPv6. The DHCPv6 messages (SOLICIT, ADVERTISE,
+  RENEW, REPLY and the rest) were not recognised, so a healthy DHCPv6
+  network showed requests the server never answered.
+
+- Router Advertisement and DHCPv6 server checks read each router's MAC on its
+  own link. Two links using the same link-local address (fe80::1 is common)
+  used to share one MAC, so a rogue router could inherit a trusted one's.
+
 - Two backups started in the same second, a scheduled one and a click, keep
   both archives. The second used to overwrite the first archive and then
   fail. The later one now takes a `-2` suffix.

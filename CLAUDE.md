@@ -151,7 +151,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   hosts runs rows through it too), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
   stateless one; anything treating a scope as a dynamic pool asks it), `utils/dnsmasq-lease-file.js`
-  (`LEASE_FILE`, `readServerDuid`), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
+  (`LEASE_FILE`, `readServerDuid`), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
+  lookup: a link-local address is keyed with its interface, so look it up with one), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
   record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
   this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6

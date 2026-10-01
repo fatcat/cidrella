@@ -3,7 +3,7 @@ import { execFile } from 'child_process';
 import { parseNetwork, longToIp, parsedNetworkContains } from './ip.js';
 import { addressFamily, canonicalizeIp } from './address.js';
 import { parseArpingMac, readArpCache } from './arp-cache.js';
-import { readNdCache } from './nd-cache.js';
+import { findNeighbor, readNdCache } from './nd-cache.js';
 import { observeIpv6Presence } from '../services/ip-lifecycle-service.js';
 import { ipv6DiscoveryPolicy } from '../models/dhcp-scope.js';
 import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
@@ -58,12 +58,13 @@ function pingIp(ip, { count = 1 } = {}) {
  * callers insert one scan_results row and emit one "scanned" event per IP.
  * ARP is cheap and captures MAC addresses on directly-connected networks;
  * ICMP is the fallback for hosts that do not answer ARP or are off-link.
- * IPv6 has no ARP: an ICMPv6 echo populates the kernel's neighbor table,
- * which the batch loop reads back for the MAC.
+ * IPv6 has no ARP (it is IPv4-only): an ICMPv6 echo makes the kernel resolve
+ * the neighbor, and confirmByNeighborDiscovery reads that back. A link-local
+ * address is only reachable through its interface, so it is pinged zoned.
  */
-async function probeIp(ip) {
+async function probeIp(ip, iface = null) {
   if (addressFamily(ip) === 6) {
-    const icmp = await pingIp(ip);
+    const icmp = await pingIp(iface ? `${ip}%${iface}` : ip);
     return { ...icmp, method: 'icmpv6' };
   }
   const arp = await arpingIp(ip);
@@ -71,6 +72,46 @@ async function probeIp(ip) {
 
   const icmp = await pingIp(ip);
   return { ...icmp, method: 'icmp' };
+}
+
+// Neighbor Discovery is the IPv6 counterpart of arping here. The echo makes
+// the kernel solicit the neighbor, and a Neighbor Advertisement is answered
+// by hosts whose firewall drops echo (Windows does by default). REACHABLE is
+// a confirmation the kernel got within the last reachable time. DELAY and
+// PROBE mean it is still confirming a STALE entry, so those are re-read until
+// they settle; a plain STALE entry is old news and proves nothing.
+const ND_CONFIRMED = 'REACHABLE';
+const ND_SETTLING = new Set(['DELAY', 'PROBE']);
+export const ND_SETTLE_POLL_MS = 1000;
+const ND_SETTLE_POLLS = 8; // DELAY_FIRST_PROBE_TIME 5s plus three 1s probes
+
+/**
+ * Mark an IPv6 echo non-responder as responded (method 'ndp') when the
+ * neighbor table confirms it. `results` are { ip, iface, responded, mac }.
+ */
+export async function confirmByNeighborDiscovery(
+  results,
+  { read = readNdCache, wait = (ms) => new Promise((r) => setTimeout(r, ms)) } = {},
+) {
+  let pending = results.filter((r) => !r.responded);
+  for (let poll = 0; pending.length > 0; poll++) {
+    const table = read({ force: true });
+    const settling = [];
+    for (const result of pending) {
+      const entry = findNeighbor(table, result.ip, result.iface);
+      if (entry?.state === ND_CONFIRMED) {
+        result.responded = true;
+        result.mac = result.mac || entry.mac || null;
+        result.method = 'ndp';
+      } else if (entry && ND_SETTLING.has(entry.state)) {
+        settling.push(result);
+      }
+    }
+    pending = settling;
+    if (pending.length === 0 || poll >= ND_SETTLE_POLLS) break;
+    await wait(ND_SETTLE_POLL_MS);
+  }
+  return results;
 }
 
 /**
@@ -104,7 +145,8 @@ export async function discoverIpv6Hosts(parsed, { neighbors = readNdCache } = {}
     await pingIp(`ff02::1%${name}`, { count: 2 });
   }
   const found = [];
-  for (const [ip, entry] of neighbors({ force: true })) {
+  for (const [key, entry] of neighbors({ force: true })) {
+    const ip = entry.ip ?? key;
     const onLink = /^fe[89ab]/i.test(ip) && interfaces.includes(entry.interface);
     if (!onLink && !parsedNetworkContains(parsed, ip)) continue;
     found.push({ ip, mac: entry.mac, interface: entry.interface });
@@ -198,6 +240,8 @@ export async function startScan(db, scanId, subnetId, options = {}) {
   // host still gets an echo and can go offline.
   let ipsToScan;
   let totalIps;
+  // The interface a link-local address is probed on.
+  const probeInterfaces = new Map();
   const policy = parsed.family === 6 ? ipv6DiscoveryPolicy(db, subnetId) : null;
   if (isTargeted) {
     // Every lookup below is by the stored (canonical) spelling.
@@ -219,16 +263,32 @@ export async function startScan(db, scanId, subnetId, options = {}) {
         });
       }
     }
-    const allocated = db
+    // Echo what the link answered, every allocated address, and every row
+    // that is online now, unassigned and link-local ones included: anything
+    // the scan reports online it must also be able to report gone, or the
+    // stale sweep (which leaves scanned networks to the scanner) never will.
+    // A link-local row is pinged on its interface.
+    const persisted = db
       .prepare(
-        `SELECT ip_address FROM ip_addresses
-         WHERE subnet_id = ? AND allocation_state NOT IN ('unassigned', 'system')
-           AND interface_id IS NULL`,
+        `SELECT ip_address, interface_id FROM ip_addresses
+         WHERE subnet_id = ? AND allocation_state != 'system'
+           AND ((allocation_state != 'unassigned' AND interface_id IS NULL) OR is_online = 1)`,
       )
-      .all(subnetId)
-      .map((row) => row.ip_address);
+      .all(subnetId);
+    for (const row of persisted) {
+      if (/^fe[89ab]/i.test(row.ip_address)) {
+        if (row.interface_id) probeInterfaces.set(row.ip_address, row.interface_id);
+      }
+    }
     const globals = discovered.hosts.map((host) => host.ip).filter((ip) => !/^fe[89ab]/i.test(ip));
-    ipsToScan = [...new Set([...globals, ...allocated])];
+    ipsToScan = [
+      ...new Set([
+        ...globals,
+        ...persisted
+          .map((row) => row.ip_address)
+          .filter((ip) => !/^fe[89ab]/i.test(ip) || probeInterfaces.has(ip)),
+      ]),
+    ];
     totalIps = ipsToScan.length;
   } else {
     const startIpLong = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
@@ -286,12 +346,14 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           }
         }
 
-        promises.push(probeIp(ip).then((result) => ({ ip, ...result })));
+        const iface = probeInterfaces.get(ip) || null;
+        promises.push(probeIp(ip, iface).then((result) => ({ ip, iface, ...result })));
       }
 
       if (promises.length === 0) continue;
 
       const results = await Promise.all(promises);
+      if (parsed.family === 6) await confirmByNeighborDiscovery(results);
 
       // Read the neighbor tables to capture MACs the kernel learned from ping
       // responses. Forced, because the point is to see entries these probes
@@ -309,7 +371,7 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           result.mac = arpCache.get(result.ip) || null;
         }
         if (result.responded && !result.mac && ndCache) {
-          result.mac = ndCache.get(result.ip)?.mac || null;
+          result.mac = findNeighbor(ndCache, result.ip, result.iface)?.mac || null;
         }
 
         let isConflict = 0;
@@ -320,7 +382,9 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           // An unassigned address answering is a rogue on IPv4 and on a
           // stateful DHCPv6 network. Where hosts assign themselves (SLAAC
           // modes) or nothing hands out addresses, it is simply a host.
-          const rogueMeaningful = parsed.family === 4 || policy?.mode === 'stateful';
+          // A link-local address is never handed out, so it is never a rogue.
+          const rogueMeaningful =
+            parsed.family === 4 || (policy?.mode === 'stateful' && !/^fe[89ab]/i.test(result.ip));
           if (!assignment && rogueMeaningful) {
             isConflict = 1;
             conflictReason = 'Rogue device (IP not assigned)';
@@ -372,10 +436,13 @@ export async function startScan(db, scanId, subnetId, options = {}) {
         if (sr.is_conflict) conflictIps.add(sr.ip_address);
       }
 
-      // Clear rogue on IPs in this subnet that weren't flagged in this scan
-      // (only for full subnet scans, targeted probes shouldn't clear other IPs)
+      // Clear rogue on the addresses this scan re-checked and did not flag
+      // (only for full subnet scans, targeted probes shouldn't clear other
+      // IPs). Only those: an IPv6 scan probes a sparse set, and a rogue it
+      // never looked at is still a rogue.
       if (!isTargeted) {
-        reconcileScanRogues(db, subnetId, conflictIps);
+        const probed = new Set(scanResults.map((sr) => sr.ip_address));
+        reconcileScanRogues(db, subnetId, conflictIps, probed);
       }
     }
 

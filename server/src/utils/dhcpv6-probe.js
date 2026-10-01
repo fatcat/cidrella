@@ -25,7 +25,7 @@ import dgram from 'dgram';
 import os from 'os';
 import { selectProbeInterfaceNames } from './dhcp-probe.js';
 import { localAddressSet } from './local-addresses.js';
-import { readNdCache } from './nd-cache.js';
+import { findNeighbor, readNdCache } from './nd-cache.js';
 import { canonicalizeIp, formatIp, IPV6_BITS } from './address.js';
 import { duidFromBytes } from './duid.js';
 import { LEASE_FILE, readServerDuid } from './dnsmasq-lease-file.js';
@@ -382,7 +382,8 @@ export function runProbe6(
       const neighbors = seen.size > 0 ? readNdCache({ force: true }) : new Map();
       const rogues = [];
       for (const adv of seen.values()) {
-        const mac = neighbors.get(adv.sourceIp)?.mac || null;
+        // A server answers from its link-local address, unique only per link.
+        const mac = findNeighbor(neighbors, adv.sourceIp, adv.iface)?.mac || null;
         const verdict = classifyAdvertise(adv, { selfIps, selfDuid, authorized, mac });
         if (!verdict.rogue) continue;
         rogues.push({

@@ -648,8 +648,8 @@ export function observeScanResult(db, subnetId, ip, result) {
   return IpAddress.updateFromScan(db, subnetId, ip, result);
 }
 
-export function reconcileScanRogues(db, subnetId, exceptIps) {
-  return IpAddress.clearRogueForSubnet(db, subnetId, exceptIps);
+export function reconcileScanRogues(db, subnetId, exceptIps, probedIps) {
+  return IpAddress.clearRogueAfterScan(db, subnetId, { probedIps, exceptIps });
 }
 
 export function markStalePassiveAddresses(db, staleMinutes) {
