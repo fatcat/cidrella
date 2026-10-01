@@ -11,8 +11,8 @@ Related files and what they are for:
 - [TODO.md](TODO.md): not started, no context yet.
 - [PLAN.md](PLAN.md): phase history and shipped release trains.
 - [RELEASE-NOTES.md](RELEASE-NOTES.md): canonical record of what actually shipped.
-- `REVIEW.md` (untracked): the review-agent ledger, including per-commit history. Findings
-  that stay open past their review graduate to here.
+- [REVIEW.md](REVIEW.md): known issues not fixed yet (tracked since 2026-10-01; it was
+  untracked before and was lost once). An entry moves here once work on it starts and stalls.
 
 Consolidated 2026-08-19 from four places that had drifted apart: `REVIEW.md` Active Findings,
 `PLAN.md` "Backlog (deferred)", `docs/SESSION-STATUS.md` "Next Resume", and the memory

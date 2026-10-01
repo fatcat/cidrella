@@ -94,8 +94,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   completeness) and `scripts/check-release-version.js` (version == release-notes heading) run
   during the build and fail it on violation. Releases are built and signed by the maintainer
   (`scripts/build-release.sh`); signing requires an interactive TTY.
-- **Review findings** accumulate in `REVIEW.md`. When an item is fixed, mark it with
-  ~~strikethrough~~ and a `[FIXED]` tag rather than deleting it.
+- **Review findings** live in `REVIEW.md` (tracked) until they are fixed; the rules are in
+  `AGENTS.md` (Review findings). A fixed finding is deleted in the commit that fixes it, which
+  names its ID.
 - **Work tracking is split by how far along the work is, and the split is deliberate.**
   `TODO.md` is for things that have NOT begun: an idea, no context yet. `BACKLOG.md` is for
   work IN FLIGHT: started, deferred, or blocked, where thought or code has already been spent
@@ -103,8 +104,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   graduates from TODO to BACKLOG when it acquires that context. `BACKLOG.md` is the ONLY
   backlog: it was consolidated from four scattered locations on 2026-08-19, and `REVIEW.md`,
   `PLAN.md` and `docs/SESSION-STATUS.md` now point at it rather than carrying their own lists.
-  Do not start a fifth. A `REVIEW.md` finding that will not be fixed in the current pass
-  graduates to `BACKLOG.md`; findings marked FIXED stay in `REVIEW.md` as history.
+  Do not start a fifth. `REVIEW.md` lists known issues, not work: a finding moves to
+  `BACKLOG.md` only once work on it has started and stalled.
 - **Screenshots and throwaway prototypes** go in `screenshots/` (gitignored), never the repo
   root.
 - **Git**: the maintainer runs all commits, tags, and pushes. Claude prepares changes and
