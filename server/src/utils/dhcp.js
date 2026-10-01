@@ -23,6 +23,7 @@ import { findSubnetForIp } from './ip-sync.js';
 import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
+import { LEASE_FILE } from './dnsmasq-lease-file.js';
 import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
 import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { upsertServerDnsDefault } from '../models/dhcp-option.js';
@@ -55,7 +56,6 @@ function resolveToIp(value, family = 4) {
 }
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
-const LEASE_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.leases');
 
 /**
  * Generate dnsmasq config for a single DHCP scope.
@@ -241,7 +241,8 @@ const RA_OPTION_CODES = new Set([23, 24]);
  * the link: `slaac` sends Router Advertisements only, carrying the DNS
  * servers and search list, `stateless` adds a stateless DHCPv6 service for
  * every option, `stateful` hands out addresses from the pool. Routers are
- * never an option: clients learn them from the RA.
+ * never an option: clients learn them from the network router's own RA, and
+ * CIDRella's RAs announce a router lifetime of 0.
  *
  * `scopeOptions` is the effective list from resolveEffectiveScopeOptions
  * (global IPv6 defaults, the scope's own rows, legacy columns and the
@@ -259,13 +260,28 @@ export function generateScopeConfigV6(
   const catalog = optionCatalogFor(6);
   const parsed = parseNetwork(scope.subnet_cidr);
   const mode = scope.v6_mode || 'stateful';
-  const lines = [`# DHCPv6 scope for ${scope.subnet_cidr} (${mode})`, 'enable-ra'];
   const leaseTime = scope.lease_time;
+  const lines = [
+    `# DHCPv6 scope for ${scope.subnet_cidr} (${mode})`,
+    'enable-ra',
+    // Router lifetime 0 on every interface: CIDRella's Router Advertisements
+    // carry the prefix, DNS servers and search list, but never offer this
+    // host as a default router. The network's router advertises itself; left
+    // at dnsmasq's default (three times the interval) every client would also
+    // route through CIDRella, which does not forward. IPV6-12.
+    'ra-param=*,0,0',
+  ];
+  // The lease time is the valid lifetime the RA gives the prefix, the one the
+  // lifecycle times a SLAAC address by (IPV6-15); without it dnsmasq would
+  // advertise its own default instead.
+  const raLifetime = leaseTime ? `,${leaseTime}` : '';
 
   if (mode === 'slaac') {
-    lines.push(`dhcp-range=set:${tag},${parsed.network},ra-only,${parsed.prefix}`);
+    lines.push(`dhcp-range=set:${tag},${parsed.network},ra-only,${parsed.prefix}${raLifetime}`);
   } else if (mode === 'stateless') {
-    lines.push(`dhcp-range=set:${tag},${parsed.network},ra-stateless,ra-names,${parsed.prefix}`);
+    lines.push(
+      `dhcp-range=set:${tag},${parsed.network},ra-stateless,ra-names,${parsed.prefix}${raLifetime}`,
+    );
   } else {
     for (const [start, end] of dynamicRangeSegmentsV6(scope, excludedIps)) {
       lines.push(

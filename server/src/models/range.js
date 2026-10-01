@@ -17,7 +17,8 @@ export function listSubnetDetailRanges(db, subnetId) {
     .prepare(
       `
     SELECT r.*, rt.name as range_type_name, rt.color as range_type_color,
-      rt.is_system as range_type_is_system, ds.id as dhcp_scope_id
+      rt.is_system as range_type_is_system, ds.id as dhcp_scope_id,
+      ds.address_family as dhcp_address_family, ds.v6_mode as dhcp_v6_mode
     FROM ranges r
     JOIN range_types rt ON r.range_type_id = rt.id
     LEFT JOIN dhcp_scopes ds ON ds.range_id = r.id

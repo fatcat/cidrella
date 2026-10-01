@@ -75,7 +75,9 @@ describe('subnet configuration preview', () => {
     expect(outside.status).toBe(400);
   });
 
-  it('names the DHCPv6 modes the prefix allows: all three on a /64, stateful elsewhere', async () => {
+  // IPV6-01: all three on a /64, stateful on a longer prefix, none on a shorter
+  // one (dnsmasq refuses a DHCPv6 range shorter than /64).
+  it('names the DHCPv6 modes the prefix allows', async () => {
     const sixtyFour = await request(app)
       .post('/api/subnets/configuration-preview')
       .send({ cidr: 'fd00:9:0:1::/64' });
@@ -86,7 +88,11 @@ describe('subnet configuration preview', () => {
     const fortyEight = await request(app)
       .post('/api/subnets/configuration-preview')
       .send({ cidr: 'fd00:9::/48' });
-    expect(fortyEight.body.dhcp_v6_modes).toEqual(['stateful']);
+    expect(fortyEight.body.dhcp_v6_modes).toEqual([]);
+    const small = await request(app)
+      .post('/api/subnets/configuration-preview')
+      .send({ cidr: 'fd00:9:0:2::/120' });
+    expect(small.body.dhcp_v6_modes).toEqual(['stateful']);
     // This suite's template dashes its groups, so no colon rule applies.
     expect(fortyEight.body.suggested_name).toBe('fd00-9-0-0-48');
   });

@@ -34,9 +34,11 @@ beforeAll(async () => {
     await import('../../../src/utils/dhcp.js'));
   const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
   const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');
+  const { default: dnsRouter } = await import('../../../src/routes/dns.js');
   app = createMultiRouterApp([
     { prefix: '/api/subnets', router: subnetRouter },
     { prefix: '/api/dhcp', router: dhcpRouter },
+    { prefix: '/api/dns', router: dnsRouter },
   ]);
   for (const [key, cidr, mode] of [
     ['stateful', 'fd00:a::/64', 'stateful'],
@@ -117,6 +119,173 @@ describe('DHCPv6 scopes', () => {
     await request(app).put(`/api/dhcp/scopes/${scope.id}`).send({ v6_mode: 'stateful' });
   });
 
+  // IPV6-01: dnsmasq refuses a DHCPv6 range on a prefix shorter than /64, and
+  // the refused line failed every later configuration write.
+  it('offers no DHCPv6 scope on a prefix shorter than /64', async () => {
+    for (const cidr of ['fd00:56::/56', 'fd00:48::/48']) {
+      const created = await request(app).post('/api/subnets').send({ cidr });
+      const preview = await request(app)
+        .post('/api/subnets/configuration-preview')
+        .send({ cidr, gateway_policy: 'first' });
+      expect(preview.body).toMatchObject({ dhcp_v6_modes: [], default_dhcp_pool: null });
+      for (const mode of [undefined, 'stateful', 'slaac']) {
+        const res = await request(app)
+          .post(`/api/subnets/${created.body.id}/configure`)
+          .send({ name: cidr, create_dhcp_scope: true, dhcp_v6_mode: mode });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/\/64 or longer|requires a \/64/);
+      }
+      expect(scopeFor(created.body.id)).toBeUndefined();
+    }
+  });
+
+  // IPV6-13: the derived pool steps around the gateway, as the IPv4 one does,
+  // instead of failing the configure with a 500.
+  it('shapes a derived stateful pool around the gateway', async () => {
+    const small = await request(app).post('/api/subnets').send({ cidr: 'fd00:7::/120' });
+    const first = await request(app).post(`/api/subnets/${small.body.id}/configure`).send({
+      name: 'small',
+      gateway_policy: 'first',
+      create_dhcp_scope: true,
+      dhcp_v6_mode: 'stateful',
+    });
+    expect(first.status).toBe(200);
+    const pool = (subnetId) =>
+      db
+        .prepare('SELECT start_ip, end_ip FROM dhcp_scope_pools WHERE scope_id = ?')
+        .get(scopeFor(subnetId).id);
+    expect(pool(small.body.id)).toEqual({ start_ip: 'fd00:7::2', end_ip: 'fd00:7::ff' });
+
+    const custom = await request(app).post('/api/subnets').send({ cidr: 'fd00:17::/64' });
+    const middle = await request(app).post(`/api/subnets/${custom.body.id}/configure`).send({
+      name: 'custom',
+      gateway_policy: 'custom',
+      gateway_address: 'fd00:17::1500',
+      create_dhcp_scope: true,
+      dhcp_v6_mode: 'stateful',
+    });
+    expect(middle.status).toBe(200);
+    // The larger side of the default ::1000-::1fff is kept.
+    expect(pool(custom.body.id)).toEqual({ start_ip: 'fd00:17::1501', end_ip: 'fd00:17::1fff' });
+
+    const preview = await request(app)
+      .post('/api/subnets/configuration-preview')
+      .send({ cidr: 'fd00:27::/120', gateway_policy: 'first' });
+    expect(preview.body.default_dhcp_pool).toEqual({
+      start_ip: 'fd00:27::2',
+      end_ip: 'fd00:27::ff',
+    });
+
+    // IPv4 has always stepped around the gateway.
+    const v4 = await request(app).post('/api/subnets').send({ cidr: '10.77.7.0/29' });
+    const v4Configured = await request(app).post(`/api/subnets/${v4.body.id}/configure`).send({
+      name: 'v4 small',
+      gateway_policy: 'first',
+      create_dhcp_scope: true,
+    });
+    expect(v4Configured.status).toBe(200);
+    expect(pool(v4.body.id)).toEqual({ start_ip: '10.77.7.2', end_ip: '10.77.7.2' });
+  });
+
+  // IPV6-09, 02, 18: a slaac or stateless scope's range is the prefix kept for
+  // display, not a pool. Only a stateful pool (and every IPv4 pool) is one.
+  it('treats only a stateful DHCPv6 scope as an address pool', async () => {
+    const zoneId = (name) => db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(name).id;
+    const aaaa = (zone, name, value) =>
+      request(app)
+        .post(`/api/dns/zones/${zoneId(zone)}/records`)
+        .send({ name, type: 'AAAA', value });
+    const status = async (subnetId, ip) =>
+      (await request(app).get(`/api/subnets/${subnetId}/ips/${ip}`)).body.ip?.ip_display_status;
+
+    for (const mode of ['slaac', 'stateless']) {
+      const prefix = mode === 'slaac' ? 'fd00:b::' : 'fd00:c::';
+      // A static AAAA anywhere in the /64.
+      const created = await aaaa(`${mode}.test`, 'srv', `${prefix}10`);
+      expect(created.status, created.body.error).toBe(201);
+      // A free address is available, not "DHCP Scope".
+      expect(await status(subnets[mode], `${prefix}20`)).toBe('available');
+      // The gateway can move.
+      const moved = await request(app)
+        .put(`/api/subnets/${subnets[mode]}`)
+        .send({ gateway_policy: 'last' });
+      expect(moved.status, moved.body.error).toBe(200);
+      await request(app).put(`/api/subnets/${subnets[mode]}`).send({ gateway_policy: 'first' });
+    }
+
+    // A stateful pool still is one, as every IPv4 pool is.
+    const inPool = await aaaa('stateful.test', 'pooled', 'fd00:a::1100');
+    expect(inPool.status).toBe(409);
+    expect(await status(subnets.stateful, 'fd00:a::1200')).toBe('DHCP Scope');
+    expect(await status(subnets.stateful, 'fd00:a::20')).toBe('available');
+
+    const { getNetworkDhcpDiagnostics } =
+      await import('../../../src/utils/network-dhcp-diagnostics.js');
+    const slaacScopes = new Set([scopeFor(subnets.slaac).id, scopeFor(subnets.stateless).id]);
+    const flagged = getNetworkDhcpDiagnostics(db).issues.filter((issue) =>
+      slaacScopes.has(issue.scope_id),
+    );
+    expect(flagged).toEqual([]);
+  });
+
+  // IPV6-10: divide and merge used to drop every DHCPv6 scope.
+  it('carries a DHCPv6 scope through a divide and a merge where its mode fits', async () => {
+    const pools = (subnetId) =>
+      db
+        .prepare(
+          `SELECT s.v6_mode, p.start_ip, p.end_ip FROM dhcp_scopes s
+           JOIN dhcp_scope_pools p ON p.scope_id = s.id WHERE s.subnet_id = ?`,
+        )
+        .all(subnetId);
+    const make = async (cidr, mode) => {
+      const created = await request(app).post('/api/subnets').send({ cidr });
+      const configured = await request(app)
+        .post(`/api/subnets/${created.body.id}/configure`)
+        .send({ name: cidr, gateway_policy: 'first', create_dhcp_scope: true, dhcp_v6_mode: mode });
+      expect(configured.status, configured.body.error).toBe(200);
+      return created.body.id;
+    };
+
+    const statefulId = await make('fd00:62::/64', 'stateful');
+    const preview = await request(app)
+      .post(`/api/subnets/${statefulId}/divide/preview`)
+      .send({ new_prefix: 65 });
+    expect(preview.status).toBe(200);
+    const plannedScopes = preview.body.plan.targets.map((target) => target.scopes.length);
+    expect(plannedScopes).toEqual([1, 1]);
+    const divided = await request(app)
+      .post(`/api/subnets/${statefulId}/divide`)
+      .send({ new_prefix: 65, force: true });
+    expect(divided.status, divided.body.error).toBe(200);
+    const [low, high] = divided.body.children;
+    expect(pools(low.id)).toEqual([
+      { v6_mode: 'stateful', start_ip: 'fd00:62::1000', end_ip: 'fd00:62::1fff' },
+    ]);
+    expect(pools(high.id)).toEqual([
+      {
+        v6_mode: 'stateful',
+        start_ip: 'fd00:62::8000:0:0:1000',
+        end_ip: 'fd00:62::8000:0:0:1fff',
+      },
+    ]);
+
+    const merged = await request(app)
+      .post('/api/subnets/merge')
+      .send({ subnet_ids: [low.id, high.id] });
+    expect(merged.status, merged.body.error).toBe(200);
+    const whole = db.prepare("SELECT id FROM subnets WHERE cidr = 'fd00:62::/64'").get();
+    expect(pools(whole.id)).toEqual([
+      { v6_mode: 'stateful', start_ip: 'fd00:62::1000', end_ip: 'fd00:62::1fff' },
+    ]);
+
+    // SLAAC needs a /64, so it cannot follow the halves, and the preview says so.
+    const slaacId = await make('fd00:63::/64', 'slaac');
+    const slaacPreview = await request(app)
+      .post(`/api/subnets/${slaacId}/divide/preview`)
+      .send({ new_prefix: 65 });
+    expect(slaacPreview.body.plan.targets.map((target) => target.scopes.length)).toEqual([0, 0]);
+  });
+
   it('emits the dnsmasq lines for each mode', () => {
     const confDir = path.join(tmpDir, 'dnsmasq', 'conf.d');
     regenerateScopeConfigs(db, { confDir });
@@ -126,14 +295,23 @@ describe('DHCPv6 scopes', () => {
     const stateful = read(subnets.stateful);
     const tag = `scope${scopeFor(subnets.stateful).id}`;
     expect(stateful).toContain('enable-ra');
+    // IPV6-12: CIDRella's RAs never offer this host as a default router.
+    for (const key of ['stateful', 'slaac', 'stateless']) {
+      expect(read(subnets[key])).toContain('ra-param=*,0,0');
+    }
     expect(stateful).toContain(`dhcp-range=set:${tag},fd00:a::1000,fd00:a::1fff,64,`);
     expect(stateful).toContain(`dhcp-option=tag:${tag},option6:domain-search,stateful.test`);
     expect(stateful).not.toContain('option6:dns-server,[fd00:a::1]');
     expect(stateful).not.toMatch(/dhcp-option=tag:scope\d+,3/);
 
+    // IPV6-15: the lease time is the prefix's advertised valid lifetime.
+    const slaacScope = scopeFor(subnets.slaac);
     const slaac = read(subnets.slaac);
-    expect(slaac).toContain(
-      `dhcp-range=set:scope${scopeFor(subnets.slaac).id},fd00:b::,ra-only,64`,
+    expect(slaac).toMatch(
+      new RegExp(
+        `^dhcp-range=set:scope${slaacScope.id},fd00:b::,ra-only,64,${slaacScope.lease_time}$`,
+        'm',
+      ),
     );
     // SLAAC writes only what dnsmasq carries in its Router Advertisements.
     expect(slaac).toContain(
@@ -141,9 +319,13 @@ describe('DHCPv6 scopes', () => {
     );
     expect(slaac).not.toContain('option6:ntp-server');
 
+    const statelessScope = scopeFor(subnets.stateless);
     const stateless = read(subnets.stateless);
-    expect(stateless).toContain(
-      `dhcp-range=set:scope${scopeFor(subnets.stateless).id},fd00:c::,ra-stateless,ra-names,64`,
+    expect(stateless).toMatch(
+      new RegExp(
+        `^dhcp-range=set:scope${statelessScope.id},fd00:c::,ra-stateless,ra-names,64,${statelessScope.lease_time}$`,
+        'm',
+      ),
     );
     expect(stateless).toContain('option6:domain-search,stateless.test');
   });

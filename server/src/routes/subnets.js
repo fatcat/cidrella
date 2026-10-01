@@ -36,6 +36,7 @@ import {
   isValidIpv4,
   DHCP_V6_MODES,
   dhcpV6ModesFor,
+  dhcpV6ModeError,
 } from '../utils/ip.js';
 import { canonicalizeIp, sortKey } from '../utils/address.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
@@ -65,6 +66,7 @@ import {
   gatewayInPoolConflict,
   gatewayInPoolError,
   dynamicPoolConflict,
+  addressPoolScopeSql,
 } from '../models/dhcp-scope.js';
 
 // One page of an address read. The table pages at 32 to 512; the grid asks
@@ -406,7 +408,7 @@ router.post(
     );
     const pool =
       parsed.family === 6
-        ? DhcpTopology.defaultDhcpV6PoolForSubnet(parsed)
+        ? DhcpTopology.defaultDhcpV6PoolForSubnet(parsed, resolvedGateway)
         : DhcpTopology.defaultDhcpPoolForSubnet(parsed, resolvedGateway);
 
     res.json({
@@ -424,7 +426,7 @@ router.post(
         ? null
         : 'No automatic DHCP pool fits this prefix. Configure a supported pool explicitly if needed.',
       // The modes this prefix can use, the same rule resolveV6Mode enforces
-      // on configure: the SLAAC modes need a /64, stateful works anywhere.
+      // on configure: the SLAAC modes need a /64, stateful a /64 or longer.
       dhcp_v6_modes: parsed.family === 6 ? dhcpV6ModesFor(parsed.prefix) : null,
     });
   }),
@@ -904,7 +906,7 @@ router.put(
           `
       SELECT r.start_ip, r.end_ip FROM dhcp_scopes s
       JOIN ranges r ON s.range_id = r.id
-      WHERE s.subnet_id = ?
+      WHERE s.subnet_id = ? AND ${addressPoolScopeSql('s')}
     `,
         )
         .all(subnet.id);
@@ -1789,14 +1791,20 @@ router.post(
     if (create_dhcp_scope && parsed.family === 6) {
       // Omitted, the mode is the one a new scope is offered first.
       const mode = dhcp_v6_mode || dhcpV6ModesFor(parsed.prefix)[0];
-      if (mode !== 'stateful' && parsed.prefix !== 64) {
-        return res.status(400).json({
-          error: `dhcp_v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)`,
-        });
-      }
+      const modeError = dhcpV6ModeError(parsed.prefix, mode);
+      if (modeError) return res.status(400).json({ error: modeError });
       let pool = null;
+      if (mode === 'stateful' && !dhcp_start_ip && !dhcp_end_ip) {
+        // The derived pool steps around the gateway, as the IPv4 one does.
+        pool = DhcpTopology.defaultDhcpV6PoolForSubnet(parsed, gw);
+        if (!pool) {
+          return res.status(400).json({
+            error: `No DHCPv6 pool fits a /${parsed.prefix}; give one explicitly or skip the scope`,
+          });
+        }
+      }
       if (mode === 'stateful' && (dhcp_start_ip || dhcp_end_ip)) {
-        const defaults = DhcpTopology.defaultDhcpV6PoolForSubnet(parsed);
+        const defaults = DhcpTopology.defaultDhcpV6PoolForSubnet(parsed, gw);
         const startIp = dhcp_start_ip || defaults?.start_ip || parsed.firstUsable;
         const endIp = dhcp_end_ip || defaults?.end_ip || parsed.lastUsable;
         const error = validateDhcpScopeBounds(parsed, startIp, endIp);
@@ -1869,21 +1877,29 @@ router.post(
       }
     }
 
-    const updated = SubnetTopology.configureSubnet(db, subnet, parsed, {
-      name,
-      description,
-      vlan_id,
-      gateway: gw,
-      gateway_policy: resolvedPolicy,
-      create_reverse_dns,
-      domain_name,
-      folder_id,
-      scan_interval,
-      scan_enabled,
-      create_dhcp_scope,
-      dhcpPool,
-      dhcpV6,
-    });
+    let updated;
+    try {
+      updated = SubnetTopology.configureSubnet(db, subnet, parsed, {
+        name,
+        description,
+        vlan_id,
+        gateway: gw,
+        gateway_policy: resolvedPolicy,
+        create_reverse_dns,
+        domain_name,
+        folder_id,
+        scan_interval,
+        scan_enabled,
+        create_dhcp_scope,
+        dhcpPool,
+        dhcpV6,
+      });
+    } catch (err) {
+      // A pool that collides with what the network already holds is the
+      // operator's to resolve; the transaction has rolled back.
+      if (err.status === 409) return res.status(409).json({ error: err.message });
+      throw err;
+    }
 
     audit(req.user.id, 'subnet_configured', 'subnet', subnet.id, {
       name,

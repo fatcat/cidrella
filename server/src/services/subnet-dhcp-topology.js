@@ -5,10 +5,13 @@ import {
   ipToLong,
   longToIp,
   addressToBig,
+  bigToAddress,
   addressAtOffset,
   getServerIpForSubnet,
 } from '../utils/ip.js';
+import { addressFamily } from '../utils/address.js';
 import { dynamicPoolConflict } from '../models/dhcp-scope.js';
+import { dhcpV6ModesFor } from '../utils/cidr.js';
 
 function nearestPow2(n) {
   if (n <= 1) return 1;
@@ -43,16 +46,34 @@ export function defaultDhcpPoolForSubnet(parsed, gateway = null) {
 /**
  * The default stateful DHCPv6 pool: 4096 addresses starting at offset 0x1000
  * of the prefix, well clear of the low addresses operators hand out by hand.
- * A prefix too small to hold that offset gets its whole usable range.
+ * A prefix too small to hold that offset gets its whole usable range. A
+ * prefix shorter than /64 gets none (no DHCPv6 scope fits it, see
+ * dhcpV6ModesFor). Like the IPv4 default, the pool is shaped around the
+ * gateway rather than refused for containing it: at an end it steps past it,
+ * in the middle it keeps the larger side.
  */
-export function defaultDhcpV6PoolForSubnet(parsed) {
+export function defaultDhcpV6PoolForSubnet(parsed, gateway = null) {
   if (parsed.family !== 6) return null;
-  if (parsed.prefix >= parsed.bits - 1) return null;
-  const size = parsed.sizeBig;
-  if (size > 0x2000n) {
-    return { start_ip: addressAtOffset(parsed, 0x1000), end_ip: addressAtOffset(parsed, 0x1fff) };
+  if (parsed.prefix < 64 || parsed.prefix >= parsed.bits - 1) return null;
+  const pool =
+    parsed.sizeBig > 0x2000n
+      ? {
+          start: addressToBig(addressAtOffset(parsed, 0x1000)).value,
+          end: addressToBig(addressAtOffset(parsed, 0x1fff)).value,
+        }
+      : {
+          start: addressToBig(parsed.firstUsable).value,
+          end: addressToBig(parsed.lastUsable).value,
+        };
+  const gw = gateway && addressFamily(gateway) === 6 ? addressToBig(gateway).value : null;
+  if (gw !== null && gw >= pool.start && gw <= pool.end) {
+    if (gw === pool.start) pool.start += 1n;
+    else if (gw === pool.end) pool.end -= 1n;
+    else if (pool.end - gw >= gw - pool.start) pool.start = gw + 1n;
+    else pool.end = gw - 1n;
   }
-  return { start_ip: parsed.firstUsable, end_ip: parsed.lastUsable };
+  if (pool.start > pool.end) return null;
+  return { start_ip: bigToAddress(pool.start, 6), end_ip: bigToAddress(pool.end, 6) };
 }
 
 /**
@@ -69,12 +90,13 @@ export function createAutoScopeV6(db, subnetId, parsed, domainName, { mode, pool
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
   const interval =
     mode === 'stateful'
-      ? pool || defaultDhcpV6PoolForSubnet(parsed)
+      ? pool || defaultDhcpV6PoolForSubnet(parsed, subnet.gateway_address)
       : { start_ip: parsed.firstUsable, end_ip: parsed.lastUsable };
   if (!interval) return null;
   if (mode === 'stateful') {
     const conflict = dynamicPoolConflict(db, subnet, interval.start_ip, interval.end_ip);
-    if (conflict) throw new Error(conflict.error);
+    // A conflict is the operator's to resolve (409), not a server fault.
+    if (conflict) throw Object.assign(new Error(conflict.error), { status: 409 });
   }
 
   const rangeResult = db
@@ -291,9 +313,32 @@ function firstScopeForSubnets(db, subnetIds) {
   };
 }
 
+/**
+ * The DHCPv6 scope a divide or merge target gets from its source scope: the
+ * source's mode when the target's prefix allows it, with a default pool for
+ * stateful; none when it does not (a SLAAC scope cannot follow a /64 split
+ * into /65s, and no DHCPv6 scope fits a prefix shorter than /64). Mirrors the
+ * IPv4 rule that a target too small for a default pool gets no scope.
+ */
+export function defaultV6ScopeForTarget(sourceMode, parsed, gateway) {
+  if (!dhcpV6ModesFor(parsed.prefix).includes(sourceMode)) return null;
+  if (sourceMode !== 'stateful') {
+    return {
+      mode: sourceMode,
+      pool: null,
+      interval: { start_ip: parsed.firstUsable, end_ip: parsed.lastUsable },
+    };
+  }
+  const pool = defaultDhcpV6PoolForSubnet(parsed, gateway);
+  return pool ? { mode: 'stateful', pool, interval: pool } : null;
+}
+
 function createDefaultScopeFromSource(db, source, targetId, parsed, gateway) {
+  if (!source) return null;
+  if (parsed.family === 6)
+    return createDefaultV6ScopeFromSource(db, source, targetId, parsed, gateway);
   const pool = defaultDhcpPoolForSubnet(parsed, gateway);
-  if (!source || !pool) return null;
+  if (!pool) return null;
   const scopeId = createAutoScope(db, targetId, parsed, gateway, source.domain_name, pool);
   db.prepare(
     `
@@ -321,7 +366,38 @@ function createDefaultScopeFromSource(db, source, targetId, parsed, gateway) {
     insertOption.run(scopeId, option.option_code, option.value);
   }
   rebaseScopeTopologyOptions(db, scopeId, parsed, gateway);
-  return { scopeId, pool };
+  return {
+    scopeId,
+    interval: { start_ip: longToIp(pool.startLong), end_ip: longToIp(pool.endLong) },
+  };
+}
+
+// IPV6-10: divide and merge used to drop a DHCPv6 scope, because the IPv4
+// default pool exists only for IPv4.
+function createDefaultV6ScopeFromSource(db, source, targetId, parsed, gateway) {
+  const plan = defaultV6ScopeForTarget(source.v6_mode, parsed, gateway);
+  if (!plan) return null;
+  const scopeId = createAutoScopeV6(db, targetId, parsed, source.domain_name, {
+    mode: plan.mode,
+    pool: plan.pool,
+  });
+  if (!scopeId) return null;
+  db.prepare(
+    `
+    UPDATE dhcp_scopes SET lease_time = ?, domain_name = ?, enabled = ?, description = ?,
+      updated_at = datetime('now')
+    WHERE id = ?
+  `,
+  ).run(source.lease_time, source.domain_name, source.enabled, source.description, scopeId);
+  // The source's DHCPv6 options, in their own namespace, replace the defaults.
+  db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scopeId);
+  const insertOption = db.prepare(
+    'INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)',
+  );
+  for (const option of source.options || []) {
+    insertOption.run(scopeId, option.option_code, option.value);
+  }
+  return { scopeId, interval: plan.interval, mode: plan.mode };
 }
 
 export function createDefaultScopeForChild(db, parentId, childId, childParsed, childGw) {
@@ -335,10 +411,7 @@ export function createDefaultScopeForChild(db, parentId, childId, childParsed, c
       gateway: childGw,
       reason: 'default_scope_created',
       pool_was: null,
-      pool_now: {
-        start_ip: longToIp(created.pool.startLong),
-        end_ip: longToIp(created.pool.endLong),
-      },
+      pool_now: created.interval,
       additional_pools: [],
     },
   ];

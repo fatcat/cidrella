@@ -11,7 +11,7 @@ import {
 } from '../utils/ip.js';
 import { canonicalizeIp } from '../utils/address.js';
 import { resolveGatewayAddress } from './subnet-topology.js';
-import { defaultDhcpPoolForSubnet } from './subnet-dhcp-topology.js';
+import { defaultDhcpPoolForSubnet, defaultV6ScopeForTarget } from './subnet-dhcp-topology.js';
 
 function stableRows(db, sql, ids) {
   if (!ids.length) return [];
@@ -115,8 +115,19 @@ function defaultScopesForTarget(db, sourceIds, target) {
   );
   if (!scopes.length) return [];
   const source = scopes[0];
-  const pool = defaultDhcpPoolForSubnet(parsed, target.gateway.address);
-  if (!pool) return [];
+  let interval;
+  let mode = null;
+  if (parsed.family === 6) {
+    // The same rule the divide and merge apply (defaultV6ScopeForTarget).
+    const plan = defaultV6ScopeForTarget(source.v6_mode, parsed, target.gateway.address);
+    if (!plan) return [];
+    interval = plan.interval;
+    mode = plan.mode;
+  } else {
+    const pool = defaultDhcpPoolForSubnet(parsed, target.gateway.address);
+    if (!pool) return [];
+    interval = { start_ip: longToIp(pool.startLong), end_ip: longToIp(pool.endLong) };
+  }
   return [
     {
       source_scope_id: source.id,
@@ -124,13 +135,8 @@ function defaultScopesForTarget(db, sourceIds, target) {
       reason: 'source_scope_present',
       enabled: !!source.enabled,
       lease_time: source.lease_time,
-      intervals: [
-        {
-          source_pool_id: null,
-          start_ip: longToIp(pool.startLong),
-          end_ip: longToIp(pool.endLong),
-        },
-      ],
+      ...(mode ? { v6_mode: mode } : {}),
+      intervals: [{ source_pool_id: null, ...interval }],
     },
   ];
 }

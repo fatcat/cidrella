@@ -3,10 +3,22 @@ import { addressToBig, parseNetwork, parsedNetworkContains } from '../utils/ip.j
 import { staticDnsClaimSql } from './dns-record.js';
 import { ADDRESS_TYPE, buildVirtualSubnetIpRow, enrichIpViewRows } from './ip-view.js';
 import * as Range from './range.js';
+import { isAddressPoolScope } from './dhcp-scope.js';
 
+// The system ranges an address can fall in. A SLAAC or stateless DHCPv6
+// scope's range is the prefix shown for display, not a pool: an address in
+// it is not "DHCP Scope".
 function functionalRangeLookup(ranges) {
   return ranges
     .filter((range) => range.range_type_is_system)
+    .filter(
+      (range) =>
+        !range.dhcp_scope_id ||
+        isAddressPoolScope({
+          address_family: range.dhcp_address_family,
+          v6_mode: range.dhcp_v6_mode,
+        }),
+    )
     .map((range) => ({
       ...range,
       start: addressToBig(range.start_ip).value,

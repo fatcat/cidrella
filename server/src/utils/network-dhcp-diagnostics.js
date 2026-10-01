@@ -7,6 +7,7 @@ import {
   parsedNetworkContains,
   topologyAddresses,
 } from './ip.js';
+import { addressPoolScopeSql, isAddressPoolScope } from '../models/dhcp-scope.js';
 
 export function getNetworkDhcpDiagnostics(db) {
   const issues = [];
@@ -109,7 +110,7 @@ export function getNetworkDhcpDiagnostics(db) {
   const scopes = db
     .prepare(
       `
-    SELECT scope.id, scope.subnet_id, scope.gateway,
+    SELECT scope.id, scope.subnet_id, scope.gateway, scope.address_family, scope.v6_mode,
       subnet.cidr, subnet.gateway_address,
       (SELECT value FROM dhcp_scope_options option
        WHERE option.scope_id = scope.id AND option.option_code = 3) AS router_option
@@ -145,7 +146,10 @@ export function getNetworkDhcpDiagnostics(db) {
         safe_repair: false,
       });
     }
-    for (const pool of pools) {
+    // A SLAAC or stateless scope's range is the prefix kept for display, so
+    // the pool checks (usable range, gateway inside) do not apply to it.
+    const poolChecks = isAddressPoolScope(scope);
+    for (const pool of poolChecks ? pools : []) {
       const start = addressToBig(pool.start_ip);
       const end = addressToBig(pool.end_ip);
       const lastHost = parsed.family === 4 ? parsed.lastBig - 1n : parsed.lastBig;
@@ -207,7 +211,8 @@ export function getNetworkDhcpDiagnostics(db) {
       `
     SELECT pool.id, pool.scope_id, scope.subnet_id, pool.start_ip, pool.end_ip
     FROM dhcp_scope_pools pool JOIN dhcp_scopes scope ON scope.id = pool.scope_id
-    WHERE scope.enabled = 1 ORDER BY scope.subnet_id, pool.id
+    WHERE scope.enabled = 1 AND ${addressPoolScopeSql('scope')}
+    ORDER BY scope.subnet_id, pool.id
   `,
     )
     .all();

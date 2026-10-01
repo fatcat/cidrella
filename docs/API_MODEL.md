@@ -92,7 +92,14 @@ Reservation, or system-owned address inside a DHCP scope.
 DHCPv6 is configured per network through `dhcp_scopes.v6_mode`: `slaac`
 (Router Advertisement only), `stateless` (SLAAC plus stateless DHCPv6 for
 options), or `stateful` (managed addresses from a pool). The SLAAC modes require
-a /64. Only `stateful` scopes issue leases and accept reservations. IPv6
+a /64, and `stateful` a /64 or longer: no DHCPv6 scope exists on a shorter
+prefix, since dnsmasq refuses its range. Only `stateful` scopes issue leases and
+accept reservations, and only they are address pools: a `slaac` or `stateless`
+scope's range is the prefix kept for display, so a static AAAA record, an IP
+Reservation or the gateway may sit anywhere in it and a free address in it is
+`available`, not `DHCP Scope`. CIDRella's Router Advertisements announce a
+router lifetime of 0 (clients take their router from the network router's own
+RA), and give the prefix the scope's lease time as its valid lifetime. IPv6
 reservations and leases are keyed by `duid` (with optional `iaid`) instead of a
 MAC; the MAC, when present, is learned metadata. Rogue detection covers three
 kinds of finding under `/api/dhcp/rogue`: `dhcp` (a DHCPv4 server answered a

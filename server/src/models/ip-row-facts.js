@@ -9,7 +9,7 @@
  * Attached as nested objects, `dns_record` and `dhcp`, so a DHCP row's own
  * `enabled` never collides with a record's.
  */
-import { getScopePools } from './dhcp-scope.js';
+import { getScopePools, isAddressPoolScope } from './dhcp-scope.js';
 import { fqdnForRecordName } from './dns-record.js';
 import { addressInRange, isValidAddress } from '../utils/ip.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
@@ -34,11 +34,14 @@ export function allScopes(db) {
   return scopes;
 }
 
+// The scopes whose pools hold `ip`. A SLAAC or stateless DHCPv6 scope has no
+// pool to hold it (isAddressPoolScope).
 export function scopesForAddress(scopes, subnetId, ip) {
   if (!isValidAddress(ip)) return [];
   return scopes.filter(
     (scope) =>
       scope.subnet_id === subnetId &&
+      isAddressPoolScope(scope) &&
       scope.pools.some((pool) => addressInRange(ip, pool.start_ip, pool.end_ip)),
   );
 }

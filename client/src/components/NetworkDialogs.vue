@@ -232,7 +232,7 @@
           <Checkbox v-model="wizardNet.scan_enabled" binary />
           Include hosts in liveness scans by default
         </label>
-        <label class="toggle-label">
+        <label v-if="wizardFamily !== 6 || wizardDhcpV6ModeOptions.length" class="toggle-label">
           <Checkbox v-model="wizardNet.create_dhcp_scope" binary />
           Create DHCP scope
         </label>
@@ -955,7 +955,12 @@
             Create reverse DNS zone
           </label>
         </div>
-        <div class="field" v-if="dialogAddressFamily === 6 || effectivePrefixLength <= 29">
+        <div
+          class="field"
+          v-if="
+            dialogAddressFamily === 6 ? dhcpV6ModeOptions.length > 0 : effectivePrefixLength <= 29
+          "
+        >
           <label class="toggle-label">
             <Checkbox v-model="networkForm.create_dhcp_scope" binary />
             Create DHCP scope
@@ -1496,8 +1501,10 @@ watch([wizardFamily, wizardDhcpV6ModeOptions], ([family, options]) => {
     wizardNet.value.dhcp_v6_mode = null;
     return;
   }
+  // A prefix shorter than /64 has no DHCPv6 mode, so no scope to create.
+  if (!options.length) wizardNet.value.create_dhcp_scope = false;
   if (!options.some((option) => option.value === wizardNet.value.dhcp_v6_mode)) {
-    wizardNet.value.dhcp_v6_mode = options[0]?.value || 'stateful';
+    wizardNet.value.dhcp_v6_mode = options[0]?.value ?? null;
   }
 });
 
@@ -2488,8 +2495,12 @@ watch([dialogAddressFamily, dhcpV6ModeOptions], ([family, options]) => {
     if (networkForm.value.dhcp_v6_mode !== null) networkForm.value.dhcp_v6_mode = null;
     return;
   }
+  // A prefix shorter than /64 has no DHCPv6 mode, so no scope to create.
+  if (!options.length && networkForm.value.create_dhcp_scope) {
+    networkForm.value.create_dhcp_scope = false;
+  }
   if (!options.some((option) => option.value === networkForm.value.dhcp_v6_mode)) {
-    networkForm.value.dhcp_v6_mode = options[0]?.value || 'stateful';
+    networkForm.value.dhcp_v6_mode = options[0]?.value ?? null;
   }
 });
 

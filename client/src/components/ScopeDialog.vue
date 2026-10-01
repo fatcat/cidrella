@@ -266,6 +266,7 @@ import {
   dhcpPoolErrorForNetwork,
   cidrFamily,
   dhcpV6ModesFor,
+  dhcpV6ModeError,
   DHCP_V6_MODE_LABELS,
   parseNetwork,
 } from '../utils/ip.js';
@@ -412,9 +413,21 @@ watch([scopeFamily, v6ModeOptions], ([family, options]) => {
     return;
   }
   if (!options.some((option) => option.value === form.value.v6_mode)) {
-    form.value.v6_mode = options[0]?.value || 'stateful';
+    form.value.v6_mode = options[0]?.value ?? null;
   }
 });
+// The mode a new scope opens on. The watch above cannot be relied on for
+// this: it runs while the options load, before the form is replaced, or not
+// at all when the network has not changed since the last open, and a null
+// mode used to save a stateful pool over the whole prefix (IPV6-42). A pool
+// the caller chose means stateful; otherwise the prefix's first mode. A
+// prefix shorter than /64 has none.
+function initialV6Mode(callerPool) {
+  if (scopeFamily.value !== 6) return null;
+  const modes = v6ModeOptions.value.map((option) => option.value);
+  if (callerPool && modes.includes('stateful')) return 'stateful';
+  return modes[0] ?? null;
+}
 
 // One catalog per family, fetched on first use. DHCPv4 and DHCPv6 codes are
 // separate namespaces, so the dialog swaps the whole set (catalog, default
@@ -795,7 +808,20 @@ async function save() {
       enabled: form.value.enabled,
       options,
     };
-    if (scopeFamily.value === 6) payload.v6_mode = form.value.v6_mode || 'stateful';
+    if (scopeFamily.value === 6) {
+      // Never guess: a scope saved with the wrong mode hands out (or stops
+      // handing out) every address on the link.
+      if (!form.value.v6_mode) {
+        toast.add({
+          severity: 'error',
+          summary: dhcpV6ModeError(contextPrefix.value, null) || 'Choose a DHCPv6 mode',
+          life: 5000,
+        });
+        saving.value = false;
+        return;
+      }
+      payload.v6_mode = form.value.v6_mode;
+    }
 
     if (editing.value) {
       if (!multiPool.value) {
@@ -996,6 +1022,7 @@ async function openNewWithPicker(subnetCtx) {
 
   form.value = {
     ...emptyForm(),
+    v6_mode: initialV6Mode(Boolean(subnetCtx?.start_ip && subnetCtx?.end_ip)),
     subnet_id: subnetCtx?.id || null,
     start_ip: autoStartIp,
     end_ip: autoEndIp,
@@ -1055,6 +1082,8 @@ async function openNewForRange(opts) {
 
   form.value = {
     ...emptyForm(),
+    // A range was chosen, so it is the pool.
+    v6_mode: initialV6Mode(true),
     range_id: opts.rangeId,
     subnet_id: opts.subnetId,
     selectedOptions: autoSelected,

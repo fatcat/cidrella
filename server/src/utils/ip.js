@@ -20,6 +20,7 @@ import {
 export {
   DHCP_V6_MODES,
   dhcpV6ModesFor,
+  dhcpV6ModeError,
   ipToLong,
   longToIp,
   parseCidr,

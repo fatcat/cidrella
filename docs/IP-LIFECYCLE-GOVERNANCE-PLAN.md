@@ -142,8 +142,13 @@ desired model use the same words differently.
     materializes an IPv6 prefix, and reverse projection writes PTR rows only
     for allocated IPv6 addresses.
 11. **DHCPv6 mode.** Each IPv6 network chooses `slaac`, `stateless`, or
-    `stateful`. Only a `stateful` scope creates `dynamic_dhcp` claims from
-    DHCPv6 leases and accepts DHCP Reservations, both keyed by DUID and IAID.
+    `stateful` (the SLAAC modes on a /64, `stateful` on a /64 or longer; a
+    shorter prefix has no DHCPv6 scope). Only a `stateful` scope creates
+    `dynamic_dhcp` claims from DHCPv6 leases and accepts DHCP Reservations,
+    both keyed by DUID and IAID, and only it is a dynamic pool: a `slaac` or
+    `stateless` scope's range is a display projection of the prefix and never
+    blocks a static claim. A divide or merge carries a scope to each target
+    whose prefix allows its mode, as IPv4 carries one where a default pool fits.
     SLAAC observations under any mode become `slaac` claims with their
     lifetimes. Rogue DHCPv6 servers are found by an active SOLICIT probe and
     identified by DUID; rogue routers by the default routes the kernel learned

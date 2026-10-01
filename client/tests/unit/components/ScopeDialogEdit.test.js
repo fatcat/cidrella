@@ -266,6 +266,61 @@ describe('ScopeDialog on an IPv6 network', () => {
     });
   });
 
+  // IPV6-42: a new scope opened from a network left the mode null, and the
+  // save then wrote a stateful pool over the whole prefix.
+  describe('a new DHCPv6 scope', () => {
+    const network6 = { id: 12, name: 'Lab v6', cidr: 'fd00:1234::/64', domain_name: 'lab.test' };
+    beforeEach(() => {
+      subnetStore.getRangeTypes.mockResolvedValue([{ id: 9, name: 'DHCP Scope', is_system: 1 }]);
+      subnetStore.createRange.mockImplementation((subnetId, range) =>
+        Promise.resolve({ id: 77, ...range }),
+      );
+      dhcpStore.createScope.mockResolvedValue({ id: 62 });
+    });
+
+    it('keeps the run the operator picked as a stateful pool', async () => {
+      const wrapper = mountDialog();
+      // As the workspace's Create DHCP Scope on a selected run sends it.
+      await wrapper.vm.openNewWithPicker({
+        ...network6,
+        start_ip: 'fd00:1234::10',
+        end_ip: 'fd00:1234::20',
+      });
+      await flushPromises();
+      expect(wrapper.vm.form.v6_mode).toBe('stateful');
+
+      await saveButton(wrapper).trigger('click');
+      await flushPromises();
+      expect(subnetStore.createRange).toHaveBeenCalledWith(
+        12,
+        expect.objectContaining({ start_ip: 'fd00:1234::10', end_ip: 'fd00:1234::20' }),
+      );
+      expect(dhcpStore.createScope).toHaveBeenCalledWith(
+        expect.objectContaining({ v6_mode: 'stateful' }),
+      );
+    });
+
+    it("opens on the prefix's first mode without a picked pool", async () => {
+      const wrapper = mountDialog();
+      await wrapper.vm.openNewWithPicker(network6);
+      await flushPromises();
+      expect(wrapper.vm.form.v6_mode).toBe('stateless');
+    });
+
+    it('refuses to save on a prefix shorter than /64 rather than guess', async () => {
+      const wrapper = mountDialog();
+      await wrapper.vm.openNewWithPicker({ ...network6, cidr: 'fd00:1234::/56' });
+      await flushPromises();
+      expect(wrapper.vm.form.v6_mode).toBeNull();
+      await saveButton(wrapper).trigger('click');
+      await flushPromises();
+      expect(dhcpStore.createScope).not.toHaveBeenCalled();
+      expect(toast.add).toHaveBeenCalledWith(
+        expect.objectContaining({ summary: expect.stringContaining('/64 or longer') }),
+      );
+    });
+  });
+
   it('never offers the mode picker on an IPv4 scope', async () => {
     const wrapper = mountDialog();
     await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });

@@ -28,6 +28,21 @@ export function gatewayInPoolError(conflict) {
   );
 }
 
+/**
+ * Whether a scope hands out addresses from its pools. Every DHCPv4 scope does,
+ * and a `stateful` DHCPv6 one. A `slaac` or `stateless` scope does not: hosts
+ * choose their own addresses, and its range is the prefix kept for display,
+ * so nothing may treat it as a dynamic pool (refuse a static AAAA inside it,
+ * call an address in it "DHCP Scope", keep a gateway out of it).
+ */
+export function isAddressPoolScope(scope) {
+  return Number(scope.address_family) !== 6 || scope.v6_mode === 'stateful';
+}
+/** isAddressPoolScope as a SQL condition on the dhcp_scopes row `alias`. */
+export function addressPoolScopeSql(alias) {
+  return `(${alias}.address_family IS NOT 6 OR ${alias}.v6_mode = 'stateful')`;
+}
+
 export function findEnabledScopeForIp(db, subnetId, ipAddress) {
   const address = addressToBig(ipAddress);
   const scopes = db
@@ -36,7 +51,7 @@ export function findEnabledScopeForIp(db, subnetId, ipAddress) {
     SELECT s.id, s.subnet_id, p.start_ip, p.end_ip
     FROM dhcp_scopes s
     JOIN dhcp_scope_pools p ON p.scope_id = s.id
-    WHERE s.subnet_id = ? AND s.enabled = 1
+    WHERE s.subnet_id = ? AND s.enabled = 1 AND ${addressPoolScopeSql('s')}
   `,
     )
     .all(subnetId);

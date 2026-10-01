@@ -51,7 +51,10 @@ describe('family helpers', () => {
 
   it('allow the SLAAC modes on a /64 only', () => {
     expect(dhcpV6ModesFor(64)).toEqual(['stateless', 'slaac', 'stateful']);
-    expect(dhcpV6ModesFor(56)).toEqual(['stateful']);
+    // dnsmasq refuses a DHCPv6 range shorter than /64 (IPV6-01); longer ones are stateful only.
+    expect(dhcpV6ModesFor(56)).toEqual([]);
+    expect(dhcpV6ModesFor(48)).toEqual([]);
+    expect(dhcpV6ModesFor(120)).toEqual(['stateful']);
     expect(dhcpV6ModesFor('64')).toEqual(['stateless', 'slaac', 'stateful']);
   });
 

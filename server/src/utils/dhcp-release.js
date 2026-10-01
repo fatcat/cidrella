@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process';
 import { isValidIpv4, isValidAddress } from './ip.js';
 import { isValidIpv6 } from './address.js';
-import { localAddressSet } from './local-addresses.js';
+import { readServerDuid } from './dnsmasq-lease-file.js';
 
 const MAC_RE = /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
 const INTERFACE_RE = /^[A-Za-z0-9_.:-]+$/;
@@ -57,10 +57,15 @@ export function releaseDnsmasqLease(lease) {
 
 const DUID_RE = /^([0-9a-f]{2}:){1,129}[0-9a-f]{2}$/i;
 
+// dhcp_release6 retries five times a second apart before giving up; bound it
+// so a release that gets no answer cannot hold the event loop past that.
+const RELEASE_TIMEOUT_MS = 8000;
+
 /**
  * The DHCPv6 counterpart. dhcp_release6 sends a RELEASE on the client's behalf
- * and needs the server's own address on the same link, the client DUID and
- * the IAID. Without those, or without the utility, the lease is left alone.
+ * and needs dnsmasq's server DUID (its --server-id; dnsmasq drops a RELEASE
+ * whose server id is not its own), the client DUID and the IAID. Without
+ * those, or without the utility, the lease is left alone.
  */
 function releaseDnsmasqLease6(lease) {
   const duid = lease?.duid || lease?.client_id;
@@ -72,8 +77,8 @@ function releaseDnsmasqLease6(lease) {
   }
   const interfaceName = routeInterfaceForIp(lease.ip_address);
   if (!interfaceName) return { released: false, skipped: 'no-route-interface' };
-  const server = [...localAddressSet()].find((ip) => isValidIpv6(ip) && !/^fe[89ab]/i.test(ip));
-  if (!server) return { released: false, skipped: 'no-server-address' };
+  const serverDuid = readServerDuid();
+  if (!serverDuid) return { released: false, skipped: 'no-server-duid' };
 
   try {
     execFileSync(
@@ -82,7 +87,7 @@ function releaseDnsmasqLease6(lease) {
         '--iface',
         interfaceName,
         '--server-id',
-        server,
+        serverDuid,
         '--client-id',
         duid,
         '--iaid',
@@ -90,7 +95,7 @@ function releaseDnsmasqLease6(lease) {
         '--ip',
         lease.ip_address,
       ],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
+      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: RELEASE_TIMEOUT_MS },
     );
     return { released: true, interface: interfaceName };
   } catch (err) {

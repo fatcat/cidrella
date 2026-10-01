@@ -504,6 +504,41 @@ first on a 0.4.17 host.
   as long as the tab stayed open, or, if an update finished meanwhile, a
   page reload wherever you had gone.
 
+- A SLAAC or stateless IPv6 network accepts static AAAA records, IP
+  Reservations and a gateway anywhere in the /64, and its free addresses read
+  available. Its scope used to count as a DHCP pool covering the whole prefix,
+  so every AAAA was refused, every address read "DHCP Scope", the gateway
+  could not be changed and the network health check flagged it. Only a
+  stateful DHCPv6 scope is a pool.
+
+- No DHCPv6 scope is offered on a prefix shorter than /64. A stateful one was,
+  and was the default, but dnsmasq refuses it, and the refused line then made
+  every later DHCP change fail until the scope was removed.
+
+- A stateful DHCPv6 scope's default pool steps around the gateway, as the
+  IPv4 one does. On a small network (a /120) it used to contain the gateway
+  and the configure failed with a server error.
+
+- Dividing or merging an IPv6 network carries its DHCPv6 scope, mode, lease
+  time and options to every new network whose prefix allows the mode (a
+  SLAAC scope cannot follow a /64 split into /65s). It used to drop the scope
+  without saying so.
+
+- CIDRella's IPv6 Router Advertisements no longer offer the appliance as a
+  default router (router lifetime 0); clients take their router from the
+  network router's own advertisements. The SLAAC and stateless modes now
+  advertise the scope's lease time as the prefix's valid lifetime.
+
+- Releasing an offline DHCPv6 lease works: dhcp_release6 is given dnsmasq's
+  server DUID, which it needs, instead of an address, which made dnsmasq
+  ignore every release and blocked the server for about five seconds each
+  time. The server DUID is read from anywhere in the lease file, not only its
+  first line, which on a dual-stack appliance it never is.
+
+- Creating a DHCP scope from a selection on an IPv6 network keeps the
+  addresses you selected as a stateful pool. The dialog used to open with no
+  DHCPv6 mode and save a stateful pool over the whole /64.
+
 - Two backups started in the same second, a scheduled one and a click, keep
   both archives. The second used to overwrite the first archive and then
   fail. The later one now takes a `-2` suffix.

@@ -53,6 +53,7 @@ export {
   validateNetworkBounds,
   isValidAddress,
   dhcpV6ModesFor,
+  dhcpV6ModeError,
 } from '@shared/cidr.js';
 export { sortKey, addressFamily, isValidIp, isValidIpv6, canonicalizeIp } from '@shared/address.js';
 export { isValidDomain } from '@shared/ip.js';

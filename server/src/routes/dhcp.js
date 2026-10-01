@@ -14,6 +14,7 @@ import {
   isValidDomain,
   validateDisplayString,
   DHCP_V6_MODES,
+  dhcpV6ModeError,
 } from '../utils/ip.js';
 import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
@@ -56,7 +57,8 @@ const LEASE_TIME_RE = /^\d+[smhd]?$/;
 // the two-byte type prefix, at most the 130 bytes RFC 8415 allows.
 
 // The DHCPv6 mode for a scope on `subnet`, or an error message. IPv4 scopes
-// carry no mode; slaac and stateless need a /64 because SLAAC does.
+// carry no mode; slaac and stateless need a /64 because SLAAC does, and no
+// DHCPv6 scope fits a prefix shorter than /64 (dnsmasq refuses it).
 function resolveV6Mode(subnet, requested, current = null) {
   if (subnet.address_family !== 6) {
     if (requested !== undefined && requested !== null) {
@@ -68,10 +70,8 @@ function resolveV6Mode(subnet, requested, current = null) {
   if (!DHCP_V6_MODES.includes(mode)) {
     return { error: `v6_mode must be one of: ${DHCP_V6_MODES.join(', ')}` };
   }
-  if (mode !== 'stateful' && subnet.prefix_length !== 64) {
-    return { error: `v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)` };
-  }
-  return { mode };
+  const error = dhcpV6ModeError(subnet.prefix_length, mode);
+  return error ? { error } : { mode };
 }
 
 // v0.4.15: validate each scope option value before it reaches the scope-

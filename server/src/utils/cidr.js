@@ -515,9 +515,29 @@ export const DHCP_V6_MODES = Object.freeze(['stateless', 'slaac', 'stateful']);
 
 /**
  * The DHCPv6 modes a network of this prefix can use, the default first.
- * SLAAC needs a /64, so the stateless and slaac modes exist only there;
- * stateful works anywhere.
+ * SLAAC needs a /64, so the stateless and slaac modes exist only there.
+ * Stateful works on a /64 or longer: dnsmasq refuses a DHCPv6 range on a
+ * shorter prefix ("prefix length must be at least 64"), and one refused line
+ * fails every later configuration write. A shorter prefix has no DHCPv6 mode;
+ * divide it into /64s first.
  */
 export function dhcpV6ModesFor(prefix) {
-  return Number(prefix) === 64 ? [...DHCP_V6_MODES] : ['stateful'];
+  const length = Number(prefix);
+  if (length === 64) return [...DHCP_V6_MODES];
+  return length > 64 ? ['stateful'] : [];
+}
+
+/**
+ * Why `mode` cannot be the DHCPv6 mode of a /`prefix` network, or null when it
+ * can. The one wording for the routes and the dialogs.
+ */
+export function dhcpV6ModeError(prefix, mode) {
+  const length = Number(prefix);
+  if (length < 64) {
+    return `A DHCPv6 scope needs a /64 or longer prefix; divide this /${length} into /64 networks first`;
+  }
+  if (!dhcpV6ModesFor(length).includes(mode)) {
+    return `DHCPv6 mode ${mode} requires a /64 network (SLAAC needs 64 host bits)`;
+  }
+  return null;
 }

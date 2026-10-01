@@ -22,15 +22,16 @@
 // Binding 546 needs the same privilege as :68 and :53, which the service has.
 
 import dgram from 'dgram';
-import fs from 'fs';
 import os from 'os';
-import path from 'path';
-import { DATA_DIR } from '../config/defaults.js';
 import { selectProbeInterfaceNames } from './dhcp-probe.js';
 import { localAddressSet } from './local-addresses.js';
 import { readNdCache } from './nd-cache.js';
 import { canonicalizeIp, formatIp, IPV6_BITS } from './address.js';
-import { duidFromBytes, normalizeDuid } from './duid.js';
+import { duidFromBytes } from './duid.js';
+import { LEASE_FILE, readServerDuid } from './dnsmasq-lease-file.js';
+
+// Re-exported for the callers that found it here first.
+export { readServerDuid };
 import { upsertRogueEvent, authorizedSets } from '../models/rogue-dhcp.js';
 
 const DHCPV6_SERVER_PORT = 547;
@@ -39,7 +40,6 @@ const ALL_DHCP_SERVERS = 'ff02::1:2';
 const PROBE_WINDOW_MS = 4000;
 const PROBE_WATCHDOG_GRACE_MS = 15 * 1000;
 const PROBE_STUCK_MS = 5 * 60 * 1000;
-const LEASE_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.leases');
 
 // Message types (RFC 8415 section 7.3).
 const MSG_SOLICIT = 1;
@@ -250,18 +250,6 @@ export function classifyAdvertise(adv, { selfIps, selfDuid, authorized, mac = nu
     return { rogue: false, reason: 'authorized' };
   }
   return { rogue: true, reason: 'unauthorized' };
-}
-
-// dnsmasq writes its own server DUID as the first line of the lease file
-// (`duid 00:01:00:01:...`) once it has served DHCPv6. Null until then.
-export function readServerDuid({ leaseFile = LEASE_FILE } = {}) {
-  try {
-    const head = fs.readFileSync(leaseFile, 'utf8').split('\n', 1)[0] || '';
-    const match = head.match(/^duid\s+(\S+)/i);
-    return match ? normalizeDuid(match[1]) : null;
-  } catch {
-    return null;
-  }
 }
 
 // Interfaces to solicit on: the DHCP-serving selection shared with the v4
