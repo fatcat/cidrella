@@ -81,7 +81,7 @@ describe('subnet configuration preview', () => {
       .send({ cidr: 'fd00:9:0:1::/64' });
     expect(sixtyFour.status).toBe(200);
     expect(sixtyFour.body.address_family).toBe(6);
-    expect(sixtyFour.body.dhcp_v6_modes).toEqual(['slaac', 'stateless', 'stateful']);
+    expect(sixtyFour.body.dhcp_v6_modes).toEqual(['stateless', 'slaac', 'stateful']);
 
     const fortyEight = await request(app)
       .post('/api/subnets/configuration-preview')

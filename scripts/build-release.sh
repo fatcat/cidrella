@@ -531,7 +531,7 @@ run_release_health_check() {
 
 refresh_ntp_defaults() {
   if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] Would check baked DHCP NTP defaults and refresh stale values from pool.ntp.org."
+    echo "[DRY RUN] Would check baked DHCP NTP defaults and refresh stale values from pool.ntp.org (IPv4) and 2.pool.ntp.org (IPv6)."
     return 0
   fi
 
@@ -548,7 +548,7 @@ refresh_ntp_defaults() {
   fi
   if [ "$rc" -ne 0 ]; then
     echo ""
-    echo "WARNING: Could not refresh DHCP NTP defaults from pool.ntp.org."
+    echo "WARNING: Could not refresh DHCP NTP defaults from pool.ntp.org and 2.pool.ntp.org."
     if ! confirm_yn "Proceed with the existing baked NTP defaults?" "n"; then
       echo "Build stopped so DHCP NTP defaults can be refreshed."
       exit 1

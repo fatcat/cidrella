@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import * as DhcpOption from '../../../src/models/dhcp-option.js';
+import { DHCP6_DEFAULT_NTP_SERVERS } from '../../../src/config/defaults.js';
 
 let db;
 let tmpDir;
@@ -153,6 +154,7 @@ describe('DHCP option ownership', () => {
     expect(v6()).toEqual([
       { option_code: 23, value: null, enabled_by_default: 1 },
       { option_code: 24, value: null, enabled_by_default: 1 },
+      { option_code: 56, value: DHCP6_DEFAULT_NTP_SERVERS, enabled_by_default: 1 },
     ]);
 
     db.prepare(

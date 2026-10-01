@@ -13,6 +13,7 @@ import {
   isClientMac,
   isValidDomain,
   validateDisplayString,
+  DHCP_V6_MODES,
 } from '../utils/ip.js';
 import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
@@ -51,7 +52,6 @@ import { UNGROUPED } from '../utils/validation.js';
 
 const router = Router();
 const LEASE_TIME_RE = /^\d+[smhd]?$/;
-const V6_MODES = ['slaac', 'stateless', 'stateful'];
 // A DHCPv6 DUID as dnsmasq prints it: colon-separated hex bytes, at least
 // the two-byte type prefix, at most the 130 bytes RFC 8415 allows.
 
@@ -65,8 +65,8 @@ function resolveV6Mode(subnet, requested, current = null) {
     return { mode: null };
   }
   const mode = requested === undefined ? current : requested;
-  if (!V6_MODES.includes(mode)) {
-    return { error: `v6_mode must be one of: ${V6_MODES.join(', ')}` };
+  if (!DHCP_V6_MODES.includes(mode)) {
+    return { error: `v6_mode must be one of: ${DHCP_V6_MODES.join(', ')}` };
   }
   if (mode !== 'stateful' && subnet.prefix_length !== 64) {
     return { error: `v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)` };

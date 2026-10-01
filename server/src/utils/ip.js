@@ -18,6 +18,8 @@ import {
 // The pure CIDR arithmetic lives in cidr.js so the client can share it; every
 // server caller keeps importing it from here.
 export {
+  DHCP_V6_MODES,
+  dhcpV6ModesFor,
   ipToLong,
   longToIp,
   parseCidr,

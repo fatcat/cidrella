@@ -1,4 +1,4 @@
-import { DHCP_DEFAULT_NTP_SERVERS } from '../config/defaults.js';
+import { DHCP_DEFAULT_NTP_SERVERS, DHCP6_DEFAULT_NTP_SERVERS } from '../config/defaults.js';
 
 // DHCPv4 and DHCPv6 option codes are separate namespaces, so every table here
 // is keyed by (address_family, code). Callers that never learned about
@@ -81,8 +81,8 @@ export function replaceDefaultOptions(db, options, enabledDefaults, family = 4) 
  * Seed the enabled-by-default rows both families start with. IPv4: mask,
  * router, DNS, domain, search list and the baked NTP pool. IPv6: DNS servers
  * (23) and the search list (24), both without a value, so a new scope gets
- * CIDRella's own address on the network and the network's domain. No NTP
- * default for IPv6: the baked pool is IPv4 literals.
+ * CIDRella's own address on the network and the network's domain, and the
+ * baked IPv6 NTP pool (56). A row an install already has keeps its value.
  */
 export function seedDefaultOptions(db) {
   const seed = db.transaction(() => {
@@ -104,6 +104,7 @@ export function seedDefaultOptions(db) {
     for (const code of [23, 24]) {
       insert.run(code, null, 1, 6);
     }
+    insert.run(56, DHCP6_DEFAULT_NTP_SERVERS, 1, 6);
   });
 
   seed();

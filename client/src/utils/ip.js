@@ -52,6 +52,7 @@ export {
   networkNameFromTemplate,
   validateNetworkBounds,
   isValidAddress,
+  dhcpV6ModesFor,
 } from '@shared/cidr.js';
 export { sortKey, addressFamily, isValidIp, isValidIpv6, canonicalizeIp } from '@shared/address.js';
 export { isValidDomain } from '@shared/ip.js';
@@ -223,14 +224,6 @@ export function cidrFamily(cidr) {
   } catch {
     return null;
   }
-}
-
-/**
- * The DHCPv6 modes a network of this prefix can use. SLAAC needs a /64, so
- * the stateless and slaac modes exist only there; stateful works anywhere.
- */
-export function dhcpV6ModesFor(prefix) {
-  return Number(prefix) === 64 ? ['slaac', 'stateless', 'stateful'] : ['stateful'];
 }
 
 export const DHCP_V6_MODE_LABELS = Object.freeze({

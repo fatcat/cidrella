@@ -505,3 +505,19 @@ export function subtractCidr(parentCidr, childCidr) {
   parseCidr(childCidr);
   return subtractNetwork(parentCidr, childCidr);
 }
+
+// The DHCPv6 modes, in the order a new scope is offered them: stateless
+// first, since it is the one that serves every client on a /64. Addresses come
+// from SLAAC, which Android requires (it has no DHCPv6 addressing), and
+// DHCPv6 adds NTP and the other options, while the router advertisement still
+// carries the DNS server and search list.
+export const DHCP_V6_MODES = Object.freeze(['stateless', 'slaac', 'stateful']);
+
+/**
+ * The DHCPv6 modes a network of this prefix can use, the default first.
+ * SLAAC needs a /64, so the stateless and slaac modes exist only there;
+ * stateful works anywhere.
+ */
+export function dhcpV6ModesFor(prefix) {
+  return Number(prefix) === 64 ? [...DHCP_V6_MODES] : ['stateful'];
+}

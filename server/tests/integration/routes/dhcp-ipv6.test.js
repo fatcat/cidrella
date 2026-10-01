@@ -8,6 +8,7 @@ import fs from 'fs';
 import path from 'path';
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
+import { DHCP6_DEFAULT_NTP_SERVERS } from '../../../src/config/defaults.js';
 
 vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), execFile: vi.fn() }));
 
@@ -71,15 +72,19 @@ describe('DHCPv6 scopes', () => {
       .prepare('SELECT start_ip, end_ip FROM dhcp_scope_pools WHERE scope_id = ?')
       .get(stateful.id);
     expect(pool).toEqual({ start_ip: 'fd00:a::1000', end_ip: 'fd00:a::1fff' });
-    // Inherited IPv6 defaults only: the search list from the network domain
-    // (DNS Servers stays unset because the test host has no address in the
-    // prefix) and never the IPv4 mask, router or broadcast codes.
+    // Inherited IPv6 defaults only: the search list from the network domain,
+    // the baked IPv6 NTP pool (DNS Servers stays unset because the test host
+    // has no address in the prefix), and never the IPv4 mask, router or
+    // broadcast codes.
     const options = db
       .prepare(
         'SELECT option_code, value, address_family FROM dhcp_scope_options WHERE scope_id = ?',
       )
       .all(stateful.id);
-    expect(options).toEqual([{ option_code: 24, value: 'stateful.test', address_family: 6 }]);
+    expect(options).toEqual([
+      { option_code: 24, value: 'stateful.test', address_family: 6 },
+      { option_code: 56, value: DHCP6_DEFAULT_NTP_SERVERS, address_family: 6 },
+    ]);
     expect(scopeFor(subnets.slaac)).toMatchObject({ v6_mode: 'slaac' });
     expect(scopeFor(subnets.stateless)).toMatchObject({ v6_mode: 'stateless' });
   });
@@ -130,7 +135,11 @@ describe('DHCPv6 scopes', () => {
     expect(slaac).toContain(
       `dhcp-range=set:scope${scopeFor(subnets.slaac).id},fd00:b::,ra-only,64`,
     );
-    expect(slaac).not.toContain('dhcp-option');
+    // SLAAC writes only what dnsmasq carries in its Router Advertisements.
+    expect(slaac).toContain(
+      `dhcp-option=tag:scope${scopeFor(subnets.slaac).id},option6:domain-search,slaac.test`,
+    );
+    expect(slaac).not.toContain('option6:ntp-server');
 
     const stateless = read(subnets.stateless);
     expect(stateless).toContain(
@@ -334,7 +343,7 @@ describe('DHCPv6 option defaults and scope options', () => {
     expect(res.status).toBe(200);
     expect(res.body.family).toBe(6);
     expect(res.body.customRange).toEqual([1, 65535]);
-    expect(res.body.enabledDefaults).toEqual([23, 24]);
+    expect(res.body.enabledDefaults).toEqual([23, 24, 56]);
     const codes = res.body.catalog.map((o) => o.code);
     expect(codes).toContain(23);
     expect(codes).toContain(56);
@@ -474,12 +483,19 @@ describe('DHCPv6 option defaults and scope options', () => {
     expect(conf).not.toContain('option:router');
     expect(conf).not.toContain(`dhcp-option=${tag},23,`);
 
-    // slaac: Router Advertisements only, so no option lines at all.
+    // slaac: Router Advertisements only, which carry the DNS servers and the
+    // search list and nothing else, so NTP and the rest are left out.
     const slaac = fs.readFileSync(
       path.join(confDir, `dhcp-scope-${scopeFor(subnets.slaac).id}.conf`),
       'utf8',
     );
-    expect(slaac).not.toContain('dhcp-option=');
+    expect(slaac).not.toContain('option6:ntp-server');
+    expect(
+      slaac
+        .split('\n')
+        .filter((line) => line.startsWith('dhcp-option='))
+        .every((line) => /option6:(dns-server|domain-search),/.test(line)),
+    ).toBe(true);
     expect(
       db
         .prepare('SELECT COUNT(*) AS c FROM dhcp_scope_options WHERE scope_id = ?')

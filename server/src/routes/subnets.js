@@ -34,6 +34,8 @@ import {
   isValidDomain,
   validateDisplayString,
   isValidIpv4,
+  DHCP_V6_MODES,
+  dhcpV6ModesFor,
 } from '../utils/ip.js';
 import { canonicalizeIp, sortKey } from '../utils/address.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
@@ -423,12 +425,7 @@ router.post(
         : 'No automatic DHCP pool fits this prefix. Configure a supported pool explicitly if needed.',
       // The modes this prefix can use, the same rule resolveV6Mode enforces
       // on configure: the SLAAC modes need a /64, stateful works anywhere.
-      dhcp_v6_modes:
-        parsed.family === 6
-          ? parsed.prefix === 64
-            ? ['slaac', 'stateless', 'stateful']
-            : ['stateful']
-          : null,
+      dhcp_v6_modes: parsed.family === 6 ? dhcpV6ModesFor(parsed.prefix) : null,
     });
   }),
 );
@@ -1690,9 +1687,11 @@ router.post(
     if (
       dhcp_v6_mode !== undefined &&
       dhcp_v6_mode !== null &&
-      !['slaac', 'stateless', 'stateful'].includes(dhcp_v6_mode)
+      !DHCP_V6_MODES.includes(dhcp_v6_mode)
     ) {
-      return res.status(400).json({ error: 'dhcp_v6_mode must be slaac, stateless, or stateful' });
+      return res
+        .status(400)
+        .json({ error: `dhcp_v6_mode must be one of: ${DHCP_V6_MODES.join(', ')}` });
     }
     {
       const err = validateDisplayString(name, { maxLength: 255 });
@@ -1788,7 +1787,8 @@ router.post(
     let dhcpPool = null;
     let dhcpV6 = null;
     if (create_dhcp_scope && parsed.family === 6) {
-      const mode = dhcp_v6_mode || 'stateful';
+      // Omitted, the mode is the one a new scope is offered first.
+      const mode = dhcp_v6_mode || dhcpV6ModesFor(parsed.prefix)[0];
       if (mode !== 'stateful' && parsed.prefix !== 64) {
         return res.status(400).json({
           error: `dhcp_v6_mode ${mode} requires a /64 network (SLAAC needs 64 host bits)`,

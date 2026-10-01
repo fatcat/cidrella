@@ -290,6 +290,19 @@ first on a 0.4.17 host.
 
 ### Changed
 
+- **DHCPv6 defaults.** A new /64 scope now defaults to stateless DHCPv6:
+  addresses still come from SLAAC (which Android needs; it has no DHCPv6
+  addressing), and DHCPv6 adds NTP and the other options. SLAAC stays
+  available, first among the alternatives. The configure API takes the same
+  default when `dhcp_v6_mode` is left out.
+- **IPv6 NTP default.** DHCPv6 option 56 now has a default, like option 42:
+  four IPv6 servers from `2.pool.ntp.org`, the only pool name that answers
+  with IPv6 addresses. Because global defaults apply to every scope that does
+  not set its own value, existing stateless and stateful IPv6 scopes start
+  offering it after the upgrade too; clear it in Settings > DHCP to opt out.
+  The release build refreshes both lists, so `scripts/refresh-ntp-defaults.js`
+  now updates `DHCP6_DEFAULT_NTP_SERVERS` as well.
+
 - Checking rows no longer opens a bar above the table. The bar pushed the
   rows down as it appeared, so the row under the pointer moved and the
   selection looked wrong. A checked selection is acted on from its
@@ -377,6 +390,16 @@ first on a 0.4.17 host.
   slider are the toolkit's `Checkbox` and `Slider` rather than raw inputs.
 
 ### Fixed
+
+- SLAAC IPv6 scopes advertised no DNS server. dnsmasq carries the DNS
+  servers and search list in its Router Advertisements only when those
+  options are set, and a SLAAC scope wrote no options at all, so clients got
+  addresses but no IPv6 DNS. A SLAAC scope now writes those two options (and
+  only those; it runs no DHCPv6 service for the rest).
+- A hostname typed into a DHCP option resolved to every address it has, so
+  `2.pool.ntp.org` put IPv6 addresses into DHCPv4 option 42 and IPv4 ones into
+  DHCPv6 option 56. The lookup now keeps only the option's family and warns
+  when a name has none (`pool.ntp.org` has no IPv6 address).
 
 - Renaming a host no longer restarts dnsmasq. Generated PTRs were written as
   `ptr-record` lines in `conf.d`, which dnsmasq only reads at start, so every

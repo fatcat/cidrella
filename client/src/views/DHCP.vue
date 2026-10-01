@@ -394,7 +394,7 @@ async function loadOptions() {
 async function resolveDefaultHostname(code) {
   const val = defaultValues[code];
   if (!val) return;
-  const resolved = await resolveHostname(val, api, toast);
+  const resolved = await resolveHostname(val, api, toast, props.family);
   if (resolved !== val) defaultValues[code] = resolved;
 }
 

@@ -96,7 +96,7 @@ describe('IPv6 networks', () => {
       start_ip: 'fd00:1234:0:1::1000',
       end_ip: 'fd00:1234:0:1::1fff',
     });
-    expect(res.body.dhcp_v6_modes).toEqual(['slaac', 'stateless', 'stateful']);
+    expect(res.body.dhcp_v6_modes).toEqual(['stateless', 'slaac', 'stateful']);
     const bad = await request(app)
       .post('/api/subnets/configuration-preview')
       .send({ cidr: NET, gateway_address: '10.0.0.1' });

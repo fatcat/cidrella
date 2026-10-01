@@ -50,9 +50,9 @@ describe('family helpers', () => {
   });
 
   it('allow the SLAAC modes on a /64 only', () => {
-    expect(dhcpV6ModesFor(64)).toEqual(['slaac', 'stateless', 'stateful']);
+    expect(dhcpV6ModesFor(64)).toEqual(['stateless', 'slaac', 'stateful']);
     expect(dhcpV6ModesFor(56)).toEqual(['stateful']);
-    expect(dhcpV6ModesFor('64')).toEqual(['slaac', 'stateless', 'stateful']);
+    expect(dhcpV6ModesFor('64')).toEqual(['stateless', 'slaac', 'stateful']);
   });
 
   it('names the gateway position for either family', () => {

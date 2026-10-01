@@ -511,7 +511,7 @@ function setOptionValue(selected, values, code, value, { overwrite = true } = {}
 async function resolveHostnameField(code) {
   const val = form.value.optionValues[code];
   if (!val) return;
-  const resolved = await resolveHostname(val, api, toast);
+  const resolved = await resolveHostname(val, api, toast, scopeFamily.value);
   if (resolved !== val) form.value.optionValues[code] = resolved;
 }
 

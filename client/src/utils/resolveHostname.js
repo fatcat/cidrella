@@ -2,7 +2,7 @@
  * Shared DHCP hostname-resolution utilities used by DHCP.vue and ScopeDialog.vue.
  */
 
-import { isValidAddress } from './ip.js';
+import { addressFamily, isValidAddress } from './ip.js';
 
 /**
  * Is this entry already an address, so it needs no DNS lookup?
@@ -19,15 +19,20 @@ const isAddress = (v) => isValidAddress(String(v ?? '').trim());
 
 /**
  * Resolve a comma-separated list of hostnames/IPs to IP addresses.
- * Entries that are already IPs are passed through unchanged.
- * Unresolvable entries are kept as-is and a toast warning is emitted.
+ * Entries that are already IPs are passed through unchanged. A hostname
+ * yields only the addresses of the option's family: a DHCPv4 option takes
+ * IPv4 addresses and a DHCPv6 option IPv6 ones, so a name with both (like
+ * 2.pool.ntp.org) never puts the other family's addresses into an option.
+ * An entry that resolves to nothing of that family is kept as-is and a toast
+ * warning is emitted.
  *
  * @param {string} value - Raw input value (hostname or comma-separated list)
  * @param {object} api   - Axios-compatible API client
  * @param {object} toast - PrimeVue toast instance
+ * @param {number} [family=4] - address family of the option (4 or 6)
  * @returns {Promise<string>} Resolved comma-separated IP string
  */
-export async function resolveHostname(value, api, toast) {
+export async function resolveHostname(value, api, toast, family = 4) {
   if (!value || isAddress(value)) return value;
   const parts = value
     .split(',')
@@ -38,11 +43,24 @@ export async function resolveHostname(value, api, toast) {
     if (isAddress(part)) {
       resolved.push(part);
     } else {
+      let ips;
       try {
         const res = await api.get(`/dns/resolve?name=${encodeURIComponent(part)}`);
-        resolved.push(...res.data.ips);
+        ips = res.data.ips;
       } catch {
         toast.add({ severity: 'warn', summary: `Could not resolve "${part}"`, life: 3000 });
+        resolved.push(part);
+        continue;
+      }
+      const matching = ips.filter((ip) => addressFamily(ip) === Number(family));
+      if (matching.length) {
+        resolved.push(...matching);
+      } else {
+        toast.add({
+          severity: 'warn',
+          summary: `"${part}" has no IPv${Number(family)} address`,
+          life: 4000,
+        });
         resolved.push(part);
       }
     }

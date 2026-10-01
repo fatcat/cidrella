@@ -173,9 +173,9 @@ describe('IPv6 schema migrations 070-073', () => {
     const upgraded = getDb();
 
     const after = counts(upgraded);
-    // Startup seeds the two IPv6 option defaults (DNS servers 23, search
-    // list 24); every other table keeps exactly its rows.
-    expect(after).toEqual({ ...before, dhcp_option_defaults: before.dhcp_option_defaults + 2 });
+    // Startup seeds the three IPv6 option defaults (DNS servers 23, search
+    // list 24, NTP 56); every other table keeps exactly its rows.
+    expect(after).toEqual({ ...before, dhcp_option_defaults: before.dhcp_option_defaults + 3 });
     expect(
       upgraded
         .prepare(
@@ -183,7 +183,7 @@ describe('IPv6 schema migrations 070-073', () => {
         )
         .all()
         .map((row) => row.option_code),
-    ).toEqual([23, 24]);
+    ).toEqual([23, 24, 56]);
     expect(upgraded.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(79);

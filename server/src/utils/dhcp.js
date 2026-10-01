@@ -232,11 +232,16 @@ function dynamicRangeSegmentsV6(scope, excludedIps) {
   return segments;
 }
 
+// The DHCPv6 options dnsmasq also carries in its Router Advertisements:
+// DNS servers (23) as RDNSS and the search list (24) as DNSSL.
+const RA_OPTION_CODES = new Set([23, 24]);
+
 /**
  * dnsmasq config for one DHCPv6 scope. The mode decides what dnsmasq does on
- * the link: `slaac` sends Router Advertisements only, `stateless` adds a
- * stateless DHCPv6 service for options, `stateful` hands out addresses from
- * the pool. Routers are never an option: clients learn them from the RA.
+ * the link: `slaac` sends Router Advertisements only, carrying the DNS
+ * servers and search list, `stateless` adds a stateless DHCPv6 service for
+ * every option, `stateful` hands out addresses from the pool. Routers are
+ * never an option: clients learn them from the RA.
  *
  * `scopeOptions` is the effective list from resolveEffectiveScopeOptions
  * (global IPv6 defaults, the scope's own rows, legacy columns and the
@@ -269,10 +274,6 @@ export function generateScopeConfigV6(
     }
   }
 
-  // Router Advertisement only: dnsmasq answers no DHCPv6 request, so options
-  // would never be sent.
-  if (mode === 'slaac') return lines.join('\n') + '\n';
-
   const merged = new Map();
   for (const opt of scopeOptions) {
     const code = Number(opt.option_code ?? opt.code);
@@ -287,6 +288,10 @@ export function generateScopeConfigV6(
 
   for (const [code, value] of [...merged].sort((a, b) => a[0] - b[0])) {
     if (catalog.internalCodes.has(code)) continue;
+    // SLAAC runs no DHCPv6 service, so no option reaches a client by DHCP.
+    // dnsmasq does copy these two into its Router Advertisements (RDNSS and
+    // DNSSL), and without them a SLAAC client is told of no DNS server.
+    if (mode === 'slaac' && !RA_OPTION_CODES.has(code)) continue;
     const optDef = catalog.byCode[code];
     const type = optDef?.type || customTypes.get(code);
     if (!type) continue;
