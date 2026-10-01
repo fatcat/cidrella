@@ -49,3 +49,25 @@ Do not change the host's ownership or permissions in response to this sandbox
 artifact. Bypass the sandbox-visible global SSH configuration with
 `ssh -F /dev/null` and supply the required identity and connection options
 explicitly.
+
+## IPv4 and IPv6
+
+Every feature and fix that touches addresses must handle both families.
+
+- Use the family-aware helpers: `utils/address.js` (`parseIp`,
+  `addressFamily`, `sortKey`, `canonicalizeIp`) and `utils/cidr.js`
+  (`parseNetwork`, `addressToBig`/`bigToAddress`, `networkContains`). Never
+  use a dotted-quad regex, `ipToLong`, or 32-bit arithmetic on an address that
+  could be IPv6.
+- Supporting both does not mean treating them alike. IPv6 has its own rules
+  in `docs/ARCHITECTURE.md` (Canonical IP Model, the IPv6 paragraph): no
+  broadcast, sparse address rows, PTRs only for allocated addresses, routers
+  from Router Advertisements, SLAAC modes on a /64 only, and DHCPv4 and
+  DHCPv6 option codes as separate namespaces. Follow those, don't mirror IPv4.
+- IPv6 is behind a switch (`utils/ipv6-support.js`). With it off, features
+  still work for IPv4 and refuse IPv6 input with a clear error
+  (`refuseIpv6Unless`).
+- Something inherently single-family (ARP, DHCPv4 option 42, Neighbor
+  Discovery) is fine. Say so in a comment where it is implemented.
+- Tests cover both families: an IPv4 case and an IPv6 case for the behavior
+  (`enableIpv6` in `tests/helpers/test-db.js` turns the switch on).

@@ -5,6 +5,11 @@ Node.js 24 + Express 5 + better-sqlite3 on the backend, Vue 3 + PrimeVue v4 + Pi
 the frontend, dnsmasq managed alongside. Ships as a signed release tarball installed natively
 (systemd, A/B slots) or via Docker.
 
+The agent instructions every coding agent shares (the canonical IP model gate, IPv4 and IPv6,
+repository workflow) live in AGENTS.md, imported here so Claude Code loads them every session:
+
+@AGENTS.md
+
 ## Layout
 
 - `server/`: Express API, SQLite models, dnsmasq config generation, DNS proxy. Entry:
