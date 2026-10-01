@@ -13,3 +13,7 @@ tmp/
 .mcp.json
 .playwright-mcp
 screenshots/
+__pycache__/
+# Local backup tarballs and integration harness output.
+/backup/
+scripts/test-harness/results/
