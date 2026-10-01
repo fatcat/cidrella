@@ -441,6 +441,17 @@ export function syncPtrForARecord(
   return { updated: true };
 }
 
+// Does any network hold this address in a state other than unassigned?
+function isAllocatedAddress(db, ip) {
+  return Boolean(
+    db
+      .prepare(
+        "SELECT 1 FROM ip_addresses WHERE ip_address = ? AND allocation_state != 'unassigned' LIMIT 1",
+      )
+      .get(ip),
+  );
+}
+
 export function setPtrForIp(
   db,
   ip,
@@ -450,14 +461,25 @@ export function setPtrForIp(
   const match = findReversePtrLocation(db, ip, { enabledOnly });
   if (!match) return { updated: false };
 
-  // An address covered by managed reverse DNS always has a visible row. When
-  // no real DNS/DHCP hostname exists, its canonical IP text is the placeholder.
+  // An IPv4 address covered by managed reverse DNS always has a visible row.
+  // When no real DNS/DHCP hostname exists, its canonical IP text is the
+  // placeholder. IPv6 has PTRs only for allocated addresses (ARCHITECTURE.md,
+  // Canonical IP Model), so an IPv6 address left with no name and no
+  // allocation loses its row instead of gaining a placeholder.
   const fqdn = String(hostname || ip).trim();
   const existing = db
     .prepare(
       "SELECT id, value, source, enabled FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?",
     )
     .get(match.zone.id, match.ptrName);
+
+  const placeholder = !hostname || parseIp(fqdn, { zoneId: false }) !== null;
+  if (placeholder && parseIp(String(ip))?.bits === IPV6_BITS && !isAllocatedAddress(db, ip)) {
+    if (!existing) return { updated: false };
+    db.prepare('DELETE FROM dns_records WHERE id = ?').run(existing.id);
+    bumpZoneSerial(db, match.zone.id);
+    return { updated: true };
+  }
 
   if (existing) {
     if (existing.value === fqdn && existing.source === source && existing.enabled === 1) {
@@ -727,6 +749,27 @@ export function reconcileManagedReverseDns(
       skipped_subnets: skippedSubnets,
     };
   })();
+}
+
+/**
+ * Remove the bare-address placeholder PTR of an IPv6 address that nothing
+ * holds any more. IPv6 has PTRs only for allocated addresses, so releasing one
+ * takes its placeholder with it; a PTR naming a host is left to its owner.
+ */
+export function dropUnallocatedIpv6Ptr(db, ip) {
+  if (parseIp(String(ip), { zoneId: false })?.bits !== IPV6_BITS) return { updated: false };
+  if (isAllocatedAddress(db, ip)) return { updated: false };
+  const match = findReversePtrLocation(db, ip);
+  if (!match) return { updated: false };
+  const existing = db
+    .prepare("SELECT id, value FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?")
+    .get(match.zone.id, match.ptrName);
+  if (!existing || parseIp(String(existing.value), { zoneId: false }) === null) {
+    return { updated: false };
+  }
+  db.prepare('DELETE FROM dns_records WHERE id = ?').run(existing.id);
+  bumpZoneSerial(db, match.zone.id);
+  return { updated: true };
 }
 
 export function clearPtrForIp(db, ip) {

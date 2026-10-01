@@ -289,7 +289,6 @@
       v-model:visible="scanDialogVisible"
       :subnet-id="selectedNetwork.id"
       :address="scanTarget.address"
-      :address-family="Number(scanTarget.raw?.address_family || 4)"
       :current-override="scanTarget.raw?.scan_enabled"
       :mode="scanDialogMode"
       @changed="refreshAfterMutation('address', $event)"
@@ -467,6 +466,8 @@ import {
   mapNetworkRows,
   mapRangeRows,
   sumScopeAddresses,
+  formatAddressCount,
+  compareCellValues,
   flattenAllocatable,
 } from '../networks-workspace-data.js';
 import { DHCP_V6_MODE_LABELS } from '../../utils/ip.js';
@@ -1198,10 +1199,7 @@ const currentRows = computed(() => {
   // The IP tables arrive sorted by the server, over every row, not the page.
   if (!sortKey.value || isIpTable.value) return rows;
   return [...rows].sort(
-    (a, b) =>
-      String(a[sortKey.value] ?? '').localeCompare(String(b[sortKey.value] ?? ''), undefined, {
-        numeric: true,
-      }) * sortOrder.value,
+    (a, b) => compareCellValues(a[sortKey.value], b[sortKey.value]) * sortOrder.value,
   );
 });
 const IP_TABLE_KINDS = new Set(['addresses', 'dns', 'dhcp']);
@@ -1345,7 +1343,10 @@ function preserveEmptyFolders(allocated, sourceFolders) {
 const contextStats = computed(() =>
   contextKind.value === 'network'
     ? [
-        isV6Network.value
+        // A percent needs a total, which the server sends whenever the prefix
+        // fits a JavaScript number: every IPv4 network and an IPv6 one
+        // longer than about /75. A /64 gets the count instead.
+        !Number.isFinite(workspaceResources.resources.summary.data?.total_addresses ?? NaN)
           ? {
               label: 'ASSIGNED',
               value: formatNumber(workspaceResources.resources.summary.data?.assigned_count || 0),
@@ -1376,7 +1377,7 @@ const contextStats = computed(() =>
           label: isV6Network.value ? 'DHCPV6' : 'DHCP POOL',
           value: isV6Network.value
             ? dhcpV6ModeLabel(networkScopes.value)
-            : formatNumber(sumScopeAddresses(networkScopes.value)),
+            : formatAddressCount(sumScopeAddresses(networkScopes.value)),
           note: `${networkScopes.value.filter((scope) => scope.enabled).length} active scopes`,
           tone: 'good',
           dot: true,
@@ -1393,7 +1394,7 @@ const contextStats = computed(() =>
     : [
         {
           label: 'POOL ADDRESSES',
-          value: formatNumber(sumScopeAddresses(scopedScopes.value)),
+          value: formatAddressCount(sumScopeAddresses(scopedScopes.value)),
           note: `across ${countOf(scopedScopes.value.length, 'DHCP scope')}`,
           tone: 'good',
           dot: true,
@@ -1451,7 +1452,7 @@ const addressOverview = computed(() => {
   if (isV6Network.value) return null;
   const total = Math.max(1, addressTotal.value);
   const assigned = Number(workspaceResources.resources.summary.data?.assigned_count) || 0;
-  const pool = sumScopeAddresses(networkScopes.value);
+  const pool = Number(sumScopeAddresses(networkScopes.value));
   const unassigned = Math.max(0, total - assigned);
   const pct = (n) => `${Math.round((n / total) * 100)}%`;
   return {

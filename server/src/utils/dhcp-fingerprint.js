@@ -9,6 +9,12 @@
  * store a per-MAC fingerprint. No raw sockets, no dhcp-script, no dnsmasq change.
  *
  * Mirrors the watcher shape of passive-liveness.js (readLogTail + poll loop).
+ *
+ * DHCPv4 only, deliberately: the fingerprint is option 55 and option 60, which
+ * are DHCPv4 option codes, keyed by the client's MAC. A DHCPv6 exchange
+ * (SOLICIT ... REPLY, identified by a DUID, with ORO option 6 and vendor class
+ * option 16 in their own namespace) is ignored here rather than folded into the
+ * option-55 fingerprint, so an IPv6-only device gets no device_type from DHCP.
  */
 
 import fs from 'fs';
@@ -26,6 +32,17 @@ const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 // accumulator key so an xid reused after a dnsmasq restart cannot inherit the
 // previous process's partial transaction.
 const DHCP_LINE_RE = /dnsmasq-dhcp\[(\d+)\]:\s+(\d+)\s+(.*)$/;
+// DHCPv6 message lines. REQUEST, RELEASE and DECLINE share their names with
+// DHCPv4, so those are told apart by the client DUID (seven or more colon
+// separated bytes) where a DHCPv4 line has an address and a MAC.
+const DHCPV6_ONLY_RE = /^DHCP(SOLICIT|ADVERTISE|REPLY|RENEW|REBIND|CONFIRM|INFORMATION-REQUEST)\b/;
+const DUID_TOKEN_RE = /(?:^|\s)(?:[0-9a-f]{2}:){6,}[0-9a-f]{2}(?:\s|$)/i;
+
+function isDhcpv6Line(content) {
+  return (
+    DHCPV6_ONLY_RE.test(content) || (/^DHCP[A-Z]+\(/.test(content) && DUID_TOKEN_RE.test(content))
+  );
+}
 // MAC parsing lives in utils/mac.js so this file and arp-cache.js cannot drift
 // on what counts as a MAC. See REVIEW.md, duplicate-logic audit #13.
 
@@ -44,6 +61,16 @@ export function ingestLine(line, pending, now = Date.now()) {
   if (!m) return null;
   const key = `${m[1]}:${m[2]}`;
   const content = m[3];
+  // A DHCPv6 message marks its transaction as one this fingerprint ignores:
+  // it stays in the map (never ACKed, so never finalized; the stale sweep
+  // drops it) so its trailing option lines are dropped too.
+  if (isDhcpv6Line(content)) {
+    pending.delete(key);
+    if (pending.size >= MAX_PENDING) pending.delete(pending.keys().next().value);
+    pending.set(key, { ignored: true, ackSeen: false, updatedAt: now });
+    return null;
+  }
+  if (pending.get(key)?.ignored) return null;
 
   let tx = pending.get(key);
   const ensure = () => {

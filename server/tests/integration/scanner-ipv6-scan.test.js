@@ -69,6 +69,7 @@ beforeAll(async () => {
       { family: 'IPv6', address: 'fd00:5::2', internal: false },
       { family: 'IPv6', address: 'fd00:6::2', internal: false },
       { family: 'IPv6', address: 'fd00:7::2', internal: false },
+      { family: 'IPv6', address: 'fd00:8::2', internal: false },
     ],
   });
 });
@@ -265,6 +266,34 @@ describe('a scan answers for every address it reports (IPV6-32, 33, 34)', () => 
       )
       .all('fd00:8::c2');
     expect(cleared.length).toBeGreaterThan(0);
+  });
+
+  it('does not bring a departed host back online from a STALE entry (IPV6-53)', async () => {
+    insert(stateful, 'fd00:8::f1', { is_online: 0 });
+    insert(stateful, 'fe80::f1', { is_online: 0, interface_id: 'eth0' });
+    const events = (ip) =>
+      db
+        .prepare("SELECT event_type FROM ip_events WHERE ip_address = ? AND event_type = 'online'")
+        .all(ip).length;
+    neighbors = new Map([
+      ['fd00:8::f1', { mac: 'aa:bb:cc:dd:ee:f1', interface: 'eth0', state: 'STALE' }],
+      ['fe80::f1', { mac: 'aa:bb:cc:dd:ee:f1', interface: 'eth0', state: 'STALE' }],
+    ]);
+    responders.clear();
+    execFile.mockClear();
+    await scan(stateful);
+    expect(row('fd00:8::f1')).toMatchObject({ is_online: 0 });
+    expect(row('fe80::f1')).toMatchObject({ is_online: 0 });
+    expect(events('fd00:8::f1')).toBe(0);
+    expect(events('fe80::f1')).toBe(0);
+    // It was echoed, so a host that is back and answers comes online.
+    const pinged = execFile.mock.calls.filter((c) => c[0] === 'ping').map((c) => c[1].at(-1));
+    expect(pinged).toEqual(expect.arrayContaining(['fd00:8::f1', 'fe80::f1%eth0']));
+    responders.add('fd00:8::f1');
+    responders.add('fe80::f1%eth0');
+    await scan(stateful);
+    expect(row('fd00:8::f1')).toMatchObject({ is_online: 1 });
+    expect(row('fe80::f1')).toMatchObject({ is_online: 1 });
   });
 
   it('leaves only the rows the scan never echoes to the stale sweep', async () => {

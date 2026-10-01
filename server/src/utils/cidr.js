@@ -307,10 +307,14 @@ export function mergeNetworks(cidrs) {
 /**
  * Apply a naming template to a network. `%1` to `%4` are the first four
  * groups of the network address (octets for IPv4, hextets for IPv6, as they
- * appear in the canonical spelling with '::' expanded), `%bitmask` the prefix.
+ * appear in the canonical spelling with '::' expanded), `%bitmask` the prefix,
+ * and `%network` the whole network address in its canonical spelling.
  * For IPv6 a dot written between two group placeholders becomes a colon, so
  * the default `%1.%2.%3.%4/%bitmask` names `fd00:9:0:0/48` rather than
- * `fd00.9.0.0/48`; dots elsewhere in a template are left alone.
+ * `fd00.9.0.0/48`; dots elsewhere in a template are left alone. Four hextets
+ * are only the top 64 bits, so on an IPv6 prefix longer than /64 the run
+ * `%1:%2:%3:%4` names the whole network instead: sibling /127 links are
+ * `2001:db8:0:ff::/127` and `2001:db8:0:ff::2/127`, not one name twice.
  */
 export function networkNameFromTemplate(template, cidr) {
   const parsed = parseNetwork(cidr);
@@ -321,7 +325,11 @@ export function networkNameFromTemplate(template, cidr) {
           ((parsed.networkBig >> BigInt(112 - 16 * i)) & 0xffffn).toString(16),
         );
   if (parsed.family === 6) template = template.replace(/(%[1-4])\.(?=%[1-4])/g, '$1:');
+  if (parsed.family === 6 && parsed.prefix > 64) {
+    template = template.replace(/%1:%2:%3:%4/g, '%network');
+  }
   return template
+    .replace(/%network/g, parsed.network)
     .replace(/%1/g, groups[0])
     .replace(/%2/g, groups[1])
     .replace(/%3/g, groups[2])
@@ -353,6 +361,17 @@ export function parsedNetworkContains(parsed, ip) {
 export function topologyAddresses(parsed) {
   if (parsed.prefix >= parsed.bits - 1) return [];
   return parsed.family === 4 ? [parsed.network, parsed.broadcast] : [parsed.network];
+}
+
+/**
+ * Is `value` (a BigInt in the network's family) one of the addresses topology
+ * reserves? The same set as topologyAddresses: the network address, and on
+ * IPv4 the broadcast, except on point-to-point and host prefixes (/31, /32,
+ * /127, /128, RFC 3021 and RFC 6164), which reserve nothing.
+ */
+export function isTopologyAddress(parsed, value) {
+  if (parsed.prefix >= parsed.bits - 1) return false;
+  return value === parsed.networkBig || (parsed.family === 4 && value === parsed.lastBig);
 }
 
 /** The address `offset` places after the network address, in the network's family. */

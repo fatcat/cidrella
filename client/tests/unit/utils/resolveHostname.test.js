@@ -33,6 +33,20 @@ describe('resolveHostname', () => {
     );
   });
 
+  it('leaves out an address literal of the other family, and says so (IPV6-47)', async () => {
+    const toast = { add: vi.fn() };
+    expect(await resolveHostname('192.168.1.53', api, toast, 6)).toBe('');
+    expect(await resolveHostname('fd00::53, 192.168.1.53', api, toast, 6)).toBe('fd00::53');
+    expect(await resolveHostname('fd00::53', api, toast, 4)).toBe('');
+    expect(toast.add).toHaveBeenCalledTimes(3);
+    expect(toast.add.mock.calls[0][0].summary).toMatch(/192\.168\.1\.53.*not an IPv6 address/);
+    // Same-family literals pass through untouched, alone or in a list.
+    const quiet = { add: vi.fn() };
+    expect(await resolveHostname('192.168.1.53', api, quiet, 4)).toBe('192.168.1.53');
+    expect(await resolveHostname('fd00::53', api, quiet, 6)).toBe('fd00::53');
+    expect(quiet.add).not.toHaveBeenCalled();
+  });
+
   it('still warns about a name that does not resolve at all', async () => {
     const toast = { add: vi.fn() };
     expect(await resolveHostname('nowhere.test', api, toast, 4)).toBe('nowhere.test');

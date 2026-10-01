@@ -186,7 +186,9 @@ export function generateReverseName(cidr) {
 export function generateReverseNames(cidr) {
   const parsed = parseNetwork(cidr);
   if (parsed.family === 6) {
-    const zoneNibbles = Math.max(1, Math.floor(parsed.prefix / 4));
+    // A zone has at most 31 nibbles: with all 32 the zone name would be the
+    // PTR owner itself, which no PTR lookup tries, so a /128 uses its /124.
+    const zoneNibbles = Math.min(31, Math.max(1, Math.floor(parsed.prefix / 4)));
     const nibbles = parsed.networkBig.toString(16).padStart(32, '0').split('');
     return [`${nibbles.slice(0, zoneNibbles).reverse().join('.')}.ip6.arpa`];
   }

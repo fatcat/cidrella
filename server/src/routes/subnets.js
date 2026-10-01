@@ -24,6 +24,7 @@ import {
   validateNetworkBounds,
   networkNameFromTemplate,
   addressToBig,
+  isTopologyAddress,
   bigToAddress,
   addressInRange,
   isValidAddress,
@@ -2752,7 +2753,7 @@ router.get(
 function ipAllocationRejectionReason(subnet, ip) {
   const parsed = parseNetwork(subnet.cidr);
   const value = addressToBig(ip).value;
-  if (value === parsed.networkBig || (parsed.family === 4 && value === parsed.lastBig)) {
+  if (isTopologyAddress(parsed, value)) {
     return parsed.family === 4
       ? 'Network and broadcast allocations are managed by subnet topology'
       : 'The network address is managed by subnet topology';

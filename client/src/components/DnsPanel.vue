@@ -614,7 +614,7 @@ import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { ipToLong, isValidIpv4, isValidIpv6, sortKey } from '../utils/ip.js';
+import { dhcpPoolScopeFor, isValidIpv4, isValidIpv6, sortKey } from '../utils/ip.js';
 import {
   reverseZoneFamily,
   ptrRecordAddress,
@@ -669,34 +669,11 @@ const {
 // Find the first DHCP scope whose pool contains `ip`. Returns { scope, cidr }
 // or null. Used to warn when a user points a DNS A record at an IP inside a
 // dynamic DHCP pool, DHCP may hand that IP to a different host tomorrow.
+// The DHCP pool an A or AAAA value falls in, for the "inside a DHCP pool"
+// warning (utils/ip.js dhcpPoolScopeFor, either family).
 function findDhcpScopeForIp(ip) {
-  // IPv4 only: an IPv6 pool is compared on the server when the record lands.
-  if (!ip || !isValidIpv4(ip)) return null;
-  let ipLong;
-  try {
-    ipLong = ipToLong(ip);
-  } catch {
-    return null;
-  }
-  for (const s of dhcpStore.scopes || []) {
-    if (!s.start_ip || !s.end_ip) continue;
-    // Guard per-scope IP conversion: a malformed start/end in the store
-    // (import or migration edge case) would otherwise throw mid-loop,
-    // bubble up to saveRecord's catch, and fire an error toast AFTER the
-    // DNS A record has already been created, user thinks the save
-    // failed and retries, creating a duplicate record.
-    let startLong, endLong;
-    try {
-      startLong = ipToLong(s.start_ip);
-      endLong = ipToLong(s.end_ip);
-    } catch {
-      continue;
-    }
-    if (ipLong >= startLong && ipLong <= endLong) {
-      return { scope: s, cidr: s.subnet_cidr };
-    }
-  }
-  return null;
+  const scope = dhcpPoolScopeFor(dhcpStore.scopes, ip);
+  return scope ? { scope, cidr: scope.subnet_cidr } : null;
 }
 
 // Zone state

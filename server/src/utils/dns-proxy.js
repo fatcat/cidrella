@@ -477,9 +477,9 @@ export function evaluateInboundPolicy(queryName) {
   return {
     action: 'block',
     blockReason: blockedCategory,
-    // With a redirect IP configured the synthesized answer resolves, so the
-    // logged response code is NOERROR; otherwise the block is an NXDOMAIN.
-    responseCode: blocklistRedirectIp ? 'NOERROR' : 'NXDOMAIN',
+    // With either redirect IP configured the synthesized answer is NOERROR
+    // (createBlockedResponse's condition); otherwise the block is an NXDOMAIN.
+    responseCode: blocklistRedirectIp || blocklistRedirectIp6 ? 'NOERROR' : 'NXDOMAIN',
   };
 }
 

@@ -19,6 +19,9 @@ import {
   parseNetwork,
   validateNetworkBounds,
   addressToBig,
+  addressInRange,
+  isValidAddress,
+  networkContains,
 } from '@shared/cidr.js';
 import { addressFamily } from '@shared/address.js';
 
@@ -54,6 +57,7 @@ export {
   isValidAddress,
   dhcpV6ModesFor,
   dhcpV6ModeError,
+  addressInRange,
 } from '@shared/cidr.js';
 export { sortKey, addressFamily, isValidIp, isValidIpv6, canonicalizeIp } from '@shared/address.js';
 export { isValidDomain } from '@shared/ip.js';
@@ -279,4 +283,37 @@ export function dhcpPoolErrorForNetwork(startIp, endIp, subnetCidr, { label = ''
     return `${E} must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
   }
   return null;
+}
+
+/**
+ * The DHCP scope whose pool holds `ip`, or null. Either family, and a range of
+ * the other family never matches. A SLAAC or stateless DHCPv6 scope's range is
+ * the prefix shown for reference, not a pool (the server's isAddressPoolScope),
+ * so it never matches. A malformed start or end is skipped, not thrown.
+ */
+export function dhcpPoolScopeFor(scopes, ip) {
+  if (!ip || !isValidAddress(ip)) return null;
+  for (const scope of scopes || []) {
+    if (!scope?.start_ip || !scope?.end_ip) continue;
+    if (Number(scope.address_family) === 6 && scope.v6_mode !== 'stateful') continue;
+    try {
+      if (addressInRange(ip, scope.start_ip, scope.end_ip)) return scope;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * The gateway a new network from dividing `parent` (a custom-gateway network)
+ * starts with: the parent's custom gateway on the one child that contains it,
+ * none on the others. Either family; containment is false across families.
+ */
+export function divideGatewayDefault(parent, cidr) {
+  const gateway = parent?.gateway_address;
+  if (gateway && isValidAddress(gateway) && networkContains(cidr, gateway)) {
+    return { policy: 'custom', address: gateway };
+  }
+  return { policy: 'none', address: null };
 }

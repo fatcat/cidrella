@@ -18,6 +18,24 @@ export function normalizeDuid(value) {
   return DUID_RE.test(duid) ? duid : null;
 }
 
+/**
+ * The Ethernet MAC a DUID-LLT (type 1) or DUID-LL (type 3) carries, or null.
+ * Only hardware type 1 (Ethernet) with a 6-byte address counts; DUID-EN and
+ * DUID-UUID carry no MAC. RFC 8415 calls a DUID opaque and the embedded
+ * address may belong to another interface, so this names a vendor for an
+ * unnamed client and is not the client's MAC of record.
+ */
+export function macFromDuid(value) {
+  const duid = normalizeDuid(value);
+  if (!duid) return null;
+  const bytes = duid.split(':');
+  const type = parseInt(bytes[0] + bytes[1], 16);
+  const hardware = parseInt(bytes[2] + bytes[3], 16);
+  const offset = type === 1 ? 8 : type === 3 ? 4 : null;
+  if (offset === null || hardware !== 1 || bytes.length !== offset + 6) return null;
+  return bytes.slice(offset).join(':');
+}
+
 /** Render raw DUID bytes in the canonical spelling. */
 export function duidFromBytes(bytes) {
   if (!bytes || bytes.length === 0) return null;

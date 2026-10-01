@@ -6,6 +6,7 @@ import { parseIp, formatIp } from './address.js';
 import { networkContains } from './cidr.js';
 import { PassThrough, Transform, pipeline } from 'node:stream';
 import { createGunzip } from 'node:zlib';
+import { ipv6Enabled } from './ipv6-support.js';
 
 // SSRF guard for outbound HTTP fetches. The Pi-hole probe / fetch path and
 // the blocklist source_url field both accept operator-supplied URLs that
@@ -14,8 +15,10 @@ import { createGunzip } from 'node:zlib';
 // services or exfiltrate their responses. v0.4.15 adds this guard and
 // wires it into both callers.
 //
-// Policy: hostname resolves to IPv4, IP must be in the public-unicast space.
-// IPv6 is blocked entirely (simpler + our target feeds are all v4).
+// Policy: the connected IP must be in the public-unicast space. IPv4 always;
+// IPv6 too while IPv6 support is switched on (literal URLs and AAAA answers,
+// checked by isBlockedIpv6), never while it is off. A hostname that resolves
+// to both families connects over IPv4.
 // CIDRs blocked: loopback, link-local, multicast, broadcast, private
 // (10/8, 172.16/12, 192.168/16), CGNAT (100.64/10), 0/8, metadata (169.254/16),
 // TEST-NET ranges.
@@ -102,27 +105,49 @@ export async function validateOutboundUrl(rawUrl) {
   }
 
   // If hostname is already a literal IP, check directly. Otherwise resolve.
+  // URL keeps an IPv6 literal in brackets.
+  const host = parsed.hostname.replace(/^\[(.*)\]$/, '$1');
+  const ipv6 = ipv6Enabled();
   let ip;
-  if (net.isIP(parsed.hostname) === 4) {
-    ip = parsed.hostname;
-  } else if (net.isIP(parsed.hostname) === 6) {
-    return { ok: false, reason: 'IPv6 URLs are not allowed' };
+  if (net.isIP(host) === 4) {
+    ip = host;
+  } else if (net.isIP(host) === 6) {
+    if (!ipv6) return { ok: false, reason: 'IPv6 URLs need IPv6 support switched on' };
+    ip = host;
   } else {
     try {
-      const lookup = await dns.promises.lookup(parsed.hostname, { family: 4 });
-      ip = lookup.address;
+      const answers = await dns.promises.lookup(host, { all: true, family: ipv6 ? 0 : 4 });
+      const chosen = answers.find((a) => a.family === 4) || answers.find((a) => a.family === 6);
+      if (!chosen) throw Object.assign(new Error('no address'), { code: 'ENOTFOUND' });
+      ip = chosen.address;
     } catch (err) {
-      return { ok: false, reason: `Hostname does not resolve (IPv4): ${err.code || err.message}` };
+      const families = ipv6 ? 'IPv4 or IPv6' : 'IPv4';
+      return {
+        ok: false,
+        reason: `Hostname does not resolve (${families}): ${err.code || err.message}`,
+      };
     }
   }
 
-  for (const range of BLOCKED_IPV4_RANGES) {
-    if (networkContains(range, ip)) {
-      return { ok: false, reason: `IP ${ip} is in blocked range ${range}` };
+  if (net.isIP(ip) === 6) {
+    if (isBlockedIpv6(ip)) return { ok: false, reason: `IP ${ip} is in a blocked IPv6 range` };
+  } else {
+    for (const range of BLOCKED_IPV4_RANGES) {
+      if (networkContains(range, ip)) {
+        return { ok: false, reason: `IP ${ip} is in blocked range ${range}` };
+      }
     }
   }
 
   return { ok: true, url: parsed.toString(), hostname: parsed.hostname, ip };
+}
+
+// The pinned connection's lookup: always the validated address, in its own
+// family, in the array form Node asks for when autoSelectFamily is on.
+function pinnedLookup(ip) {
+  const family = net.isIP(ip);
+  return (_hostname, opts, cb) =>
+    opts?.all ? cb(null, [{ address: ip, family }]) : cb(null, ip, family);
 }
 
 /**
@@ -165,8 +190,11 @@ export async function requestPinnedOutboundUrl(
       method,
       timeout,
       headers: requestHeaders,
-      servername: parsed.hostname,
-      lookup: (_hostname, _opts, cb) => cb(null, check.ip, 4),
+      // SNI names a host, never an address (an IPv6 literal keeps its brackets).
+      servername: net.isIP(parsed.hostname.replace(/^\[(.*)\]$/, '$1'))
+        ? undefined
+        : parsed.hostname,
+      lookup: pinnedLookup(check.ip),
     };
 
     try {
@@ -288,8 +316,11 @@ export async function openPinnedOutboundStream(
       method: 'GET',
       timeout,
       headers: requestHeaders,
-      servername: parsed.hostname,
-      lookup: (_hostname, _opts, cb) => cb(null, check.ip, 4),
+      // SNI names a host, never an address (an IPv6 literal keeps its brackets).
+      servername: net.isIP(parsed.hostname.replace(/^\[(.*)\]$/, '$1'))
+        ? undefined
+        : parsed.hostname,
+      lookup: pinnedLookup(check.ip),
     };
 
     try {

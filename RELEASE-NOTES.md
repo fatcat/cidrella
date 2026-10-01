@@ -617,6 +617,74 @@ first on a 0.4.17 host.
   own link. Two links using the same link-local address (fe80::1 is common)
   used to share one MAC, so a rogue router could inherit a trusted one's.
 
+- Deallocating a network that was divided from a larger one removes its
+  generated reverse DNS. After an IPv6 divide (a /56 into /64s, say) a child's
+  PTRs live in its parent's `ip6.arpa` zone, and the cleanup only looked in
+  zones named after the child, so the PTRs kept answering.
+
+- Releasing an IPv6 address removes its placeholder PTR. IPv6 reverse DNS
+  covers allocated addresses only, but every AAAA record or DHCPv6
+  reservation ever removed left a bare-address PTR row behind.
+
+- A /128 network's reverse DNS works: its zone is the /124 one, which PTR
+  lookups find. A 32-nibble `ip6.arpa` zone name is refused, and a PTR name
+  must make one whole address with its zone (`7` or `ff.1` in an `ip6.arpa`
+  zone, or `999` in an `in-addr.arpa` one, used to be accepted). Upper-case
+  nibbles are lowercased.
+
+- A blocked query answered by the IPv6 sinkhole alone is logged NOERROR, as
+  it is sent, not NXDOMAIN.
+
+- Both addresses of a point-to-point network (/31, /127) and the one address
+  of a host network (/32, /128) can be reserved and read as ordinary
+  addresses. The first one used to be refused as a protected network
+  address, which those prefixes do not have.
+
+- An IPv6 network longer than /64 is named after its whole address by the
+  default template, so sibling /127 links get two names instead of one. The
+  template also takes `%network`, the whole network address.
+
+- An unnamed DHCPv6 client is named after its vendor, as a DHCPv4 one is,
+  from the MAC its DUID carries (DUID-LLT and DUID-LL).
+
+- Blocklist feeds, the Pi-hole import and the MAC vendor download reach IPv6
+  addresses while IPv6 support is switched on: an IPv6 address in the URL, or
+  a host with only an IPv6 address. Private, loopback and link-local IPv6
+  addresses are refused as their IPv4 counterparts are.
+
+- A host that left an IPv6 network is no longer marked online and then
+  offline again on every scan while the kernel still remembers it.
+
+- IPv6 addresses can be probed from the address panel and the probe dialog.
+  Probing one IPv6 address used to disable the Probe button for IPv4 addresses
+  too until the page was reloaded.
+
+- The DHCP scope and range tables show IPv6 pool and range sizes (a /64 reads
+  2^64) instead of "0 addresses" or a dash, and the pool total counts them.
+  A SLAAC or stateless scope says it has no pool.
+
+- IPv6 networks small enough to count, such as a /120, show their
+  utilization and count towards the high-utilization warning.
+
+- Tables of networks and ranges sort IPv6 by address: 2001:db8:a:: comes
+  before 2001:db8:10::.
+
+- An AAAA record inside a stateful DHCPv6 pool gets the same "inside a DHCP
+  pool" warning an A record gets.
+
+- A DHCP option address of the other family (192.168.1.53 in a DHCPv6
+  option) is left out with a warning when the option is saved. It used to be
+  saved and then never sent to clients.
+
+- Dividing an IPv6 network with a custom gateway keeps that gateway on the
+  new network that contains it.
+
+- The classic network view opens on an IPv6 network instead of failing to
+  render.
+
+- DHCPv6 traffic no longer contributes stray partial entries to device
+  fingerprinting, which reads DHCPv4 only.
+
 - Two backups started in the same second, a scheduled one and a click, keep
   both archives. The second used to overwrite the first archive and then
   fail. The later one now takes a `-2` suffix.

@@ -49,8 +49,8 @@ export function createReverseZonesForSubnet(db, subnet) {
  * What deallocating a network would take out of DNS, computed read-only so the
  * confirmation dialog and the cleanup itself work from the same selection.
  *
- * - generatedPtrIds: PTRs the app wrote (placeholder, lease, reservation) in the
- *   block's reverse zones, for addresses inside the block.
+ * - generatedPtrIds: PTRs the app wrote (placeholder, lease, reservation) for
+ *   addresses inside the block, in any reverse zone that overlaps it.
  * - generatedAddressRecords: A/AAAA records written from leases and
  *   reservations whose address is inside the block. Manual records stay.
  * - reverseZones: every existing reverse zone the block maps to, with
@@ -64,19 +64,35 @@ export function dnsDeallocationImpact(db, subnet, { excludeSubnetIds = [] } = {}
     .map((name) => db.prepare('SELECT id, name, enabled FROM dns_zones WHERE name = ?').get(name))
     .filter(Boolean);
 
+  // A block's PTRs live in the most specific reverse zone that exists, which
+  // after a divide is often the parent's (an IPv6 /64 carved from a /63 has
+  // no 16-nibble zone of its own). So the PTRs to clean are found by address
+  // in every reverse zone that overlaps the block, not only in the zones
+  // named after it.
+  const ptrZones = db
+    .prepare("SELECT id, name FROM dns_zones WHERE type = 'reverse'")
+    .all()
+    .filter((zone) => {
+      const covered = reverseZoneNetwork(zone.name);
+      return covered !== null && networksOverlap(covered, subnet.cidr);
+    });
   const generatedPtrIds = [];
-  if (zones.length) {
+  const generatedPtrZoneIds = new Set();
+  if (ptrZones.length) {
     const rows = db
       .prepare(
-        `SELECT r.id, r.name, z.name AS zone_name FROM dns_records r
+        `SELECT r.id, r.name, r.zone_id, z.name AS zone_name FROM dns_records r
          JOIN dns_zones z ON z.id = r.zone_id
-         WHERE r.type = 'PTR' AND r.zone_id IN (${zones.map(() => '?').join(',')})
+         WHERE r.type = 'PTR' AND r.zone_id IN (${ptrZones.map(() => '?').join(',')})
            AND r.source IN (${GENERATED_PTR_SOURCES.map(() => '?').join(',')})`,
       )
-      .all(...zones.map((z) => z.id), ...GENERATED_PTR_SOURCES);
+      .all(...ptrZones.map((z) => z.id), ...GENERATED_PTR_SOURCES);
     for (const row of rows) {
       const ip = ipForPtrRecord(row.name, row.zone_name);
-      if (ip && networkContains(subnet.cidr, ip)) generatedPtrIds.push(row.id);
+      if (ip && networkContains(subnet.cidr, ip)) {
+        generatedPtrIds.push(row.id);
+        generatedPtrZoneIds.add(row.zone_id);
+      }
     }
   }
 
@@ -110,7 +126,7 @@ export function dnsDeallocationImpact(db, subnet, { excludeSubnetIds = [] } = {}
     };
   });
 
-  return { generatedPtrIds, generatedAddressRecords, reverseZones };
+  return { generatedPtrIds, generatedPtrZoneIds, generatedAddressRecords, reverseZones };
 }
 
 /**
@@ -128,6 +144,10 @@ export function cleanupDnsForDeallocatedSubnet(db, subnet, options = {}) {
   );
 
   for (const id of impact.generatedPtrIds) deleteRecord.run(id);
+  const reverseZoneIds = new Set(impact.reverseZones.map((zone) => zone.id));
+  for (const zoneId of impact.generatedPtrZoneIds) {
+    if (!reverseZoneIds.has(zoneId)) touchZone.run(zoneId);
+  }
   const forwardZoneIds = new Set();
   for (const record of impact.generatedAddressRecords) {
     deleteRecord.run(record.id);

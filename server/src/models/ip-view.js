@@ -3,7 +3,7 @@ import { lookupFingerprintBatch } from './device-fingerprint.js';
 import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
 import { addressFamily, canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import { resolveScanningEnabled } from '../utils/scan-coverage.js';
-import { addressToBig, bigToAddress, parseNetwork } from '../utils/ip.js';
+import { addressToBig, bigToAddress, isTopologyAddress, parseNetwork } from '../utils/ip.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
 
 export const ADDRESS_TYPE = {
@@ -126,10 +126,7 @@ export function buildVirtualSubnetIpRow(subnet, ip, functionalRange = null) {
   let allocationState = ALLOCATION_STATE.UNASSIGNED;
   if (gatewayValue === value) {
     allocationState = ALLOCATION_STATE.GATEWAY;
-  } else if (
-    value === parsedSubnet.networkBig ||
-    (parsedSubnet.family === 4 && value === parsedSubnet.lastBig)
-  ) {
+  } else if (isTopologyAddress(parsedSubnet, value)) {
     allocationState = ALLOCATION_STATE.SYSTEM;
   }
 

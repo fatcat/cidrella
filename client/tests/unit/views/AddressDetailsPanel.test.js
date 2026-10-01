@@ -135,16 +135,30 @@ describe('workspace address details panel', () => {
     });
   });
 
-  it('uses the server effective scanning value and disables unsupported probes', async () => {
+  it('uses the server effective scanning value and probes an IPv6 address too', async () => {
+    // IPV6-45: POST /scans/probe probes IPv6 (ICMPv6 echo, then Neighbor
+    // Discovery), so the button is offered for either family.
+    api.post.mockResolvedValue({ data: { responded: true, method: 'ndp' } });
     const row = {
       ...availableRow,
-      raw: { ...availableRow.raw, address_family: 6, scanning_enabled: false },
+      address: '2001:db8::33',
+      raw: {
+        ...availableRow.raw,
+        ip_address: '2001:db8::33',
+        address_family: 6,
+        scanning_enabled: false,
+      },
     };
     const wrapper = mountPanel(row);
     expect(wrapper.text()).toContain('Effective setting: Off');
-    expect(
-      wrapper.find('[data-track="workspace-probe-address"]').attributes('disabled'),
-    ).toBeDefined();
+    const probe = wrapper.find('[data-track="workspace-probe-address"]');
+    expect(probe.attributes('disabled')).toBeUndefined();
+    await probe.trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith(
+      '/scans/probe',
+      expect.objectContaining({ ip: '2001:db8::33' }),
+    );
   });
 
   it('distinguishes a completed probe with no response from a successful response', async () => {

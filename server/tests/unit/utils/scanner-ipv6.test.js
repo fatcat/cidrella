@@ -53,8 +53,8 @@ describe('discoverIpv6Hosts', () => {
       expect(neighbors).toHaveBeenCalledWith({ force: true });
       // The link-local neighbor on eth0 rides along; the one on eth1 does not.
       expect(result.hosts).toEqual([
-        { ip: 'fd00:a::1600', mac: 'aa:bb:cc:dd:ee:ff', interface: 'eth0' },
-        { ip: 'fe80::9', mac: 'aa:bb:cc:dd:ee:09', interface: 'eth0' },
+        { ip: 'fd00:a::1600', mac: 'aa:bb:cc:dd:ee:ff', interface: 'eth0', state: 'REACHABLE' },
+        { ip: 'fe80::9', mac: 'aa:bb:cc:dd:ee:09', interface: 'eth0', state: 'STALE' },
       ]);
     } finally {
       spy.mockRestore();

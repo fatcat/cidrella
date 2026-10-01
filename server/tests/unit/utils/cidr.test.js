@@ -220,6 +220,19 @@ describe('names and bounds', () => {
     );
   });
 
+  it('names an IPv6 network longer than /64 by its whole address (IPV6-08)', () => {
+    const name = (cidr) => networkNameFromTemplate('%1.%2.%3.%4/%bitmask', cidr);
+    expect(name('2001:db8:0:ff::/127')).toBe('2001:db8:0:ff::/127');
+    expect(name('2001:db8:0:ff::2/127')).toBe('2001:db8:0:ff::2/127');
+    expect(name('2001:db8:0:ff::100/120')).toBe('2001:db8:0:ff::100/120');
+    // Up to /64 the four groups are the whole network part, as before.
+    expect(name('2001:db8:0:ff::/64')).toBe('2001:db8:0:ff/64');
+    expect(networkNameFromTemplate('lan-%network', '10.20.30.0/24')).toBe('lan-10.20.30.0');
+    expect(networkNameFromTemplate('p2p %network/%bitmask', 'fd00:1::4/126')).toBe(
+      'p2p fd00:1::4/126',
+    );
+  });
+
   it('joins IPv6 hextets with colons where the template dots its group placeholders', () => {
     expect(networkNameFromTemplate('%1.%2.%3.%4/%bitmask', 'fd00:9::/48')).toBe('fd00:9:0:0/48');
     expect(networkNameFromTemplate('%1.%2.%3.%4/%bitmask', '10.20.30.0/24')).toBe('10.20.30.0/24');

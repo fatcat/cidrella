@@ -191,6 +191,14 @@ function validateRecord(
       // line is safe by construction, no newline / "=" / "," injection.
       if (!isValidPtrName(name))
         return 'PTR name must be dotted octets (e.g. "5" or "5.12") or hex nibbles (e.g. "f.e")';
+      // With the zone it must spell one address: four octets in in-addr.arpa,
+      // 32 single nibbles in ip6.arpa. 'ff.1' or '7' in an ip6.arpa zone named
+      // nothing and still emitted a ptr-record.
+      if (zone?.type === 'reverse' && ipForPtrRecord(name, zoneName) === null) {
+        return /ip6\.arpa$/i.test(zoneName)
+          ? `PTR name and zone must make 32 hex nibbles, one per label, in ${zoneName}`
+          : `PTR name and zone must make four octets in ${zoneName}`;
+      }
       if (!isValidDomain(value)) return 'Invalid target hostname';
       break;
     default:
@@ -321,8 +329,11 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
   // smuggled arbitrary dnsmasq directives into conf.d/zone-*.conf (the name is
   // interpolated raw at the ptr-record line). Digits, hex nibbles and dots only
   // closes that hole and still accepts every legitimate reverse zone.
-  const REVERSE_ZONE_RE = /^(?:(?:\d{1,3}\.){1,3}in-addr\.arpa|(?:[0-9a-f]\.){1,32}ip6\.arpa)$/;
-  if (!isValidDomain(name) && !REVERSE_ZONE_RE.test(name)) {
+  // At most 31 nibbles: a 32-nibble name is one address, not a zone a PTR
+  // could sit in (a /128 uses the /124 zone).
+  const REVERSE_ZONE_RE = /^(?:(?:\d{1,3}\.){1,3}in-addr\.arpa|(?:[0-9a-f]\.){1,31}ip6\.arpa)$/;
+  const arpa = /\.(?:in-addr|ip6)\.arpa$/i.test(String(name || ''));
+  if (arpa ? !REVERSE_ZONE_RE.test(name) : !isValidDomain(name)) {
     return res.status(400).json({ error: 'Invalid zone name' });
   }
   if (/ip6\.arpa$/i.test(name) && refuseIpv6Unless(res)) return;
@@ -541,7 +552,9 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
       ? normalizeARecordName(db, name, value, zone.name)
       : type === 'CNAME' && zone.type === 'forward'
         ? normalizeRecordNameForZone(name, zone.name)
-        : name;
+        : type === 'PTR' && typeof name === 'string'
+          ? name.toLowerCase()
+          : name;
   // An AAAA value is stored in its canonical spelling so equality holds
   // across the lifecycle tables; validation below still sees the raw input
   // when it is not an address at all.
@@ -742,7 +755,9 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
       ? normalizeARecordName(db, rawNewName, rawNewValue, zone.name)
       : newType === 'CNAME' && zone.type === 'forward'
         ? normalizeRecordNameForZone(rawNewName, zone.name)
-        : rawNewName;
+        : newType === 'PTR' && typeof rawNewName === 'string'
+          ? rawNewName.toLowerCase()
+          : rawNewName;
   const newValue =
     newType === 'CNAME'
       ? normalizeDnsName(rawNewValue)

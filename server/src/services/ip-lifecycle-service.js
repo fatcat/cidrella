@@ -12,8 +12,18 @@ import {
   canTransitionAllocation,
 } from '../models/ip-lifecycle.js';
 import { findEnabledScopeForIp } from '../models/dhcp-scope.js';
-import { isValidAddress, parseNetwork, addressToBig, topologyAddresses } from '../utils/ip.js';
-import { deleteDynamicDhcpRecordsByIps, fqdnForRecordName } from '../models/dns-record.js';
+import {
+  isValidAddress,
+  parseNetwork,
+  addressToBig,
+  topologyAddresses,
+  isTopologyAddress,
+} from '../utils/ip.js';
+import {
+  deleteDynamicDhcpRecordsByIps,
+  dropUnallocatedIpv6Ptr,
+  fqdnForRecordName,
+} from '../models/dns-record.js';
 import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease-queries.js';
 import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
 import { leaseExpiryMs, leaseDurationMs } from '../utils/lease-sql.js';
@@ -51,7 +61,7 @@ function protectedAddress(db, subnetId, ip) {
   const address = addressToBig(ip);
   if (address.family !== parsed.family) return null;
   const value = address.value;
-  if (value === parsed.networkBig) {
+  if (isTopologyAddress(parsed, value) && value === parsed.networkBig) {
     return {
       state: ALLOCATION_STATE.SYSTEM,
       dnsNameAllowed: false,
@@ -61,7 +71,7 @@ function protectedAddress(db, subnetId, ip) {
           : 'Network address is protected',
     };
   }
-  if (parsed.family === 4 && value === parsed.lastBig) {
+  if (isTopologyAddress(parsed, value)) {
     return {
       state: ALLOCATION_STATE.SYSTEM,
       dnsNameAllowed: false,
@@ -117,13 +127,18 @@ function setCanonicalAllocation(db, subnetId, ip, state, sourceType, sourceId = 
           dhcp_iaid: null,
         }
       : { is_rogue: 0, rogue_reason: null };
-  return IpAddress.upsert(db, subnetId, ip, {
+  const row = IpAddress.upsert(db, subnetId, ip, {
     ...allocationFields,
     ...fields,
     allocation_state: state,
     allocation_source_type: sourceType,
     allocation_source_id: sourceId,
   });
+  // A released IPv6 address keeps no placeholder PTR (IPv6 reverse DNS covers
+  // allocated addresses only). The clear paths rewrite the PTR before the
+  // state changes, so this is where the row can go.
+  if (state === ALLOCATION_STATE.UNASSIGNED) dropUnallocatedIpv6Ptr(db, ip);
+  return row;
 }
 
 function lifecycleIdentityIp(ip, interfaceId) {

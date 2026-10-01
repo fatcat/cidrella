@@ -32,7 +32,7 @@
           type="submit"
           :label="mode === 'policy' ? 'Save policy' : 'Probe now'"
           :loading="busy"
-          :disabled="busy || (mode === 'probe' && !supportsProbe)"
+          :disabled="busy"
         />
       </div>
     </form>
@@ -52,7 +52,6 @@ const props = defineProps({
   address: { type: String, required: true },
   mode: { type: String, required: true, validator: (value) => ['policy', 'probe'].includes(value) },
   currentOverride: { type: [Boolean, Number], default: null },
-  addressFamily: { type: Number, default: 4 },
 });
 const emit = defineEmits(['update:visible', 'changed']);
 const choices = [
@@ -64,7 +63,6 @@ const scanEnabled = ref('inherit');
 const busy = ref(false);
 const error = ref('');
 const result = ref(null);
-const supportsProbe = props.addressFamily === 4;
 
 watch(
   () => props.visible,
@@ -83,7 +81,9 @@ function close() {
 }
 
 async function submit() {
-  if (busy.value || (props.mode === 'probe' && !supportsProbe)) return;
+  // Either family: the server probes IPv6 with an ICMPv6 echo and Neighbor
+  // Discovery, and answers the IPv6-disabled error when the switch is off.
+  if (busy.value) return;
   busy.value = true;
   error.value = '';
   try {

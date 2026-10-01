@@ -138,10 +138,7 @@
         </button>
         <button
           v-if="canWrite"
-          :disabled="busyAction === 'probe' || !supportsProbe"
-          :title="
-            supportsProbe ? '' : 'Manual probing is currently available for IPv4 addresses only.'
-          "
+          :disabled="busyAction === 'probe'"
           data-track="workspace-probe-address"
           @click="probeNow"
         >
@@ -394,9 +391,6 @@ const effectiveScanningLabel = computed(() =>
       ? 'On'
       : 'Off',
 );
-const supportsProbe = computed(
-  () => !raw.value.address_family || Number(raw.value.address_family) === 4,
-);
 const deviceConfidence = computed(() => {
   const value = device.value.confidence ?? raw.value.device_confidence;
   return value == null ? dash : `${value}%`;
@@ -579,7 +573,7 @@ async function setScanEnabled(value) {
 }
 
 async function probeNow() {
-  if (busyAction.value || !supportsProbe.value) return;
+  if (busyAction.value) return;
   busyAction.value = 'probe';
   feedback.value = null;
   try {

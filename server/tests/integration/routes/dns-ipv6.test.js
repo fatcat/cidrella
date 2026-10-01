@@ -82,12 +82,20 @@ describe('IPv6 DNS', () => {
     expect(res.body.value).toBe('fd00:6::10');
 
     const row = db
-      .prepare("SELECT allocation_state, hostname, address_family FROM ip_addresses WHERE ip_address = 'fd00:6::10'")
+      .prepare(
+        "SELECT allocation_state, hostname, address_family FROM ip_addresses WHERE ip_address = 'fd00:6::10'",
+      )
       .get();
-    expect(row).toMatchObject({ allocation_state: 'static_dns', hostname: 'host1.lab6.test', address_family: 6 });
+    expect(row).toMatchObject({
+      allocation_state: 'static_dns',
+      hostname: 'host1.lab6.test',
+      address_family: 6,
+    });
 
     const ptr = db
-      .prepare("SELECT name, value, source FROM dns_records WHERE type = 'PTR' AND value = 'host1.lab6.test'")
+      .prepare(
+        "SELECT name, value, source FROM dns_records WHERE type = 'PTR' AND value = 'host1.lab6.test'",
+      )
       .get();
     expect(ptr).toMatchObject({ name: '0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0', source: 'dns' });
 
@@ -130,23 +138,33 @@ describe('IPv6 DNS', () => {
     expect(moved.status).toBe(200);
     expect(moved.body.value).toBe('fd00:6::11');
     const states = db
-      .prepare("SELECT ip_address, allocation_state FROM ip_addresses WHERE ip_address IN ('fd00:6::10', 'fd00:6::11') ORDER BY ip_address")
+      .prepare(
+        "SELECT ip_address, allocation_state FROM ip_addresses WHERE ip_address IN ('fd00:6::10', 'fd00:6::11') ORDER BY ip_address",
+      )
       .all();
     expect(states).toEqual([
       { ip_address: 'fd00:6::10', allocation_state: 'unassigned' },
       { ip_address: 'fd00:6::11', allocation_state: 'static_dns' },
     ]);
 
-    const removed = await request(app).delete(`/api/dns/zones/${forwardZoneId}/records/${record.id}`);
+    const removed = await request(app).delete(
+      `/api/dns/zones/${forwardZoneId}/records/${record.id}`,
+    );
     expect(removed.status).toBe(200);
     expect(
       db.prepare("SELECT allocation_state FROM ip_addresses WHERE ip_address = 'fd00:6::11'").get()
         .allocation_state,
     ).toBe('unassigned');
+    // IPv6 keeps PTRs only for allocated addresses: both the old and the new
+    // address of the moved record lose theirs once nothing holds them
+    // (IPV6-26), where IPv4 would keep a bare-address placeholder.
     expect(
-      db.prepare("SELECT value FROM dns_records WHERE type = 'PTR' AND name = '1.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0'").get()
-        ?.value,
-    ).toBe('fd00:6::11');
+      db
+        .prepare(
+          "SELECT name, value FROM dns_records WHERE type = 'PTR' AND name IN ('0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0', '1.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0')",
+        )
+        .all(),
+    ).toEqual([]);
   });
 
   it('accepts manual ip6.arpa zones and nibble PTR names, and refuses junk', async () => {
@@ -156,7 +174,11 @@ describe('IPv6 DNS', () => {
     expect(zone.status).toBe(201);
     const ptr = await request(app)
       .post(`/api/dns/zones/${zone.body.id}/records`)
-      .send({ name: '1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0', type: 'PTR', value: 'doc.example.net' });
+      .send({
+        name: '1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0',
+        type: 'PTR',
+        value: 'doc.example.net',
+      });
     expect(ptr.status).toBe(201);
     const junk = await request(app)
       .post(`/api/dns/zones/${zone.body.id}/records`)
@@ -173,10 +195,13 @@ describe('IPv6 DNS', () => {
       .put('/api/dns/forwarders')
       .send({ servers: ['2606:4700:4700::1111', '1.1.1.1', '2001:4860:4860:0:0:0:0:8888'] });
     expect(res.status).toBe(200);
-    const stored = typeof res.body.servers === 'string' ? JSON.parse(res.body.servers) : res.body.servers;
+    const stored =
+      typeof res.body.servers === 'string' ? JSON.parse(res.body.servers) : res.body.servers;
     expect(stored).toEqual(['2606:4700:4700::1111', '1.1.1.1', '2001:4860:4860::8888']);
 
-    const scoped = await request(app).put('/api/dns/forwarders').send({ servers: ['fe80::1%eth0'] });
+    const scoped = await request(app)
+      .put('/api/dns/forwarders')
+      .send({ servers: ['fe80::1%eth0'] });
     expect(scoped.status).toBe(400);
 
     const enc = await request(app)

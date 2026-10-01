@@ -152,7 +152,12 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
   stateless one; anything treating a scope as a dynamic pool asks it), `utils/dnsmasq-lease-file.js`
   (`LEASE_FILE`, `readServerDuid`), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
-  lookup: a link-local address is keyed with its interface, so look it up with one), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
+  lookup: a link-local address is keyed with its interface, so look it up with one),
+  `isTopologyAddress` in `utils/cidr.js` (is this the network or broadcast address topology
+  reserves; nothing on /31, /32, /127, /128), `macFromDuid` in `utils/duid.js`, client
+  `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family) and
+  `divideGatewayDefault`, and in `views/networks-workspace-data.js` `addressCount`,
+  `formatAddressCount` (BigInt-safe sizes) and `compareCellValues` (address-aware table sort), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
   record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
   this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6

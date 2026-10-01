@@ -13,6 +13,7 @@ vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), exec
 let tmpDir;
 let db;
 let syncLeases;
+let invalidateSubnetCache;
 let leaseFile;
 
 const FAR = 4102444800;
@@ -25,6 +26,7 @@ beforeAll(async () => {
   tmpDir = setup.tmpDir;
   // DATA_DIR is read when utils/dhcp.js loads, so it loads after setupTestDb.
   ({ syncLeases } = await import('../../src/utils/dhcp.js'));
+  ({ invalidateSubnetCache } = await import('../../src/utils/ip-sync.js'));
   leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
   fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
 
@@ -125,6 +127,52 @@ describe('DHCP lease names (ADR 005)', () => {
     renew([`54:af:97:00:00:02 10.0.1.31 * *`, `54:af:97:00:00:01 10.0.1.30 * *`]);
     expect(leaseName('10.0.1.30')).toBe('tplink-device');
     expect(leaseName('10.0.1.31')).toBe('tplink-device-00');
+  });
+
+  it('names an unnamed DHCPv6 client by the MAC its DUID embeds (IPV6-22)', () => {
+    const v6 = db
+      .prepare(
+        `INSERT INTO subnets (cidr, name, network_address, last_address, prefix_length,
+           address_family, status, domain_name)
+         VALUES ('fd00:a1::/64', 'Lan6', 'fd00:a1::', 'fd00:a1::ffff:ffff:ffff:ffff', 64, 6,
+           'allocated', 'example.test')`,
+      )
+      .run().lastInsertRowid;
+    const rangeTypeId = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get().id;
+    const rangeId = db
+      .prepare(
+        `INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
+         VALUES (?, ?, 'fd00:a1::1000', 'fd00:a1::1fff')`,
+      )
+      .run(v6, rangeTypeId).lastInsertRowid;
+    const scopeId = db
+      .prepare(
+        `INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, address_family, v6_mode)
+         VALUES (?, ?, '15m', 6, 'stateful')`,
+      )
+      .run(rangeId, v6).lastInsertRowid;
+    db.prepare(
+      `INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+       VALUES (?, ?, 'fd00:a1::1000', 'fd00:a1::1fff')`,
+    ).run(scopeId, rangeId);
+    db.prepare('UPDATE dhcp_scopes SET enabled = 1 WHERE id = ?').run(scopeId);
+    invalidateSubnetCache();
+
+    // DUID-LLT (type 1, Ethernet) and DUID-LL (type 3) embed the MAC;
+    // DUID-EN (type 2) does not, so that client stays unnamed.
+    renew([
+      `12345 fd00:a1::1010 * 00:01:00:01:2e:3f:40:51:54:af:97:00:00:61`,
+      `12346 fd00:a1::1011 * 00:03:00:01:54:af:97:00:00:62`,
+      `12347 fd00:a1::1012 * 00:02:00:00:ab:11:65:6e:74:65:72:70:72:69:73:65`,
+    ]);
+    const named = [leaseName('fd00:a1::1010'), leaseName('fd00:a1::1011')];
+    expect(named.every((name) => /^tplink-device(-\d+)?$/.test(name))).toBe(true);
+    expect(new Set(named).size).toBe(2);
+    expect(leaseName('fd00:a1::1012')).toBeNull();
+    // Naming only: the lease's MAC of record stays empty.
+    expect(
+      db.prepare("SELECT mac_address FROM dhcp_leases WHERE ip_address = 'fd00:a1::1010'").get(),
+    ).toEqual({ mac_address: null });
   });
 
   it('treats a manual record of the name as taken and leaves the record alone', () => {

@@ -22,6 +22,7 @@ import { addressFamily, isValidIpv6 } from './address.js';
 import { findSubnetForIp } from './ip-sync.js';
 import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
+import { macFromDuid } from './duid.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
 import { LEASE_FILE } from './dnsmasq-lease-file.js';
 import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
@@ -443,8 +444,8 @@ export function regenerateReservations(db, { hostsDir = DHCP_HOSTS_DIR } = {}) {
       const v6 = r.address_family === 6;
       if (v6 && (!r.duid || !isValidIpv6(r.ip_address))) return null;
       const parts = v6 ? [`id:${r.duid}`, `[${r.ip_address}]`] : [r.mac_address, r.ip_address];
-      const hostname =
-        r.hostname || (r.mac_address ? generateFallbackHostname(r.mac_address) : null);
+      const vendorMac = r.mac_address || (v6 ? macFromDuid(r.duid) : null);
+      const hostname = r.hostname || (vendorMac ? generateFallbackHostname(vendorMac) : null);
       if (hostname) parts.push(hostname);
       parts.push('infinite');
       return parts.join(',');
@@ -545,8 +546,8 @@ export function syncLeases(db, { leaseFile = LEASE_FILE } = {}) {
   // Persist the effective name every reader uses (ADR 005): unique in its
   // zone, sticky to the address holding it, the vendor fallback only for an
   // unnamed client holding none. dnsmasq writes '*' for a client without a
-  // name, and for one whose name it handed to another client. DHCPv6 clients
-  // have no MAC to look a vendor up by.
+  // name, and for one whose name it handed to another client. A DHCPv6
+  // client is named by the MAC its DUID-LLT/LL embeds, when it has one.
   assignLeaseNames(db, acceptedLeases, { fallbackName: generateFallbackHostname });
 
   replaceLeases(db, acceptedLeases, { lifecycleValidated: true });

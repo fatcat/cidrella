@@ -1257,7 +1257,6 @@ import { useDiscardGuard } from '../views/networks-workspace/composables/useDisc
 import { apiError } from '../utils/format.js';
 import {
   isValidIpv4,
-  isIpInSubnet,
   dhcpRangeDefaults,
   gatewayIpFromPosition,
   normalizeGatewayPositionDefault,
@@ -1276,6 +1275,7 @@ import {
   cidrFamily,
   dhcpV6ModesFor,
   DHCP_V6_MODE_LABELS,
+  divideGatewayDefault,
 } from '../utils/ip.js';
 import { useFeatures } from '../composables/useFeatures.js';
 
@@ -2048,10 +2048,7 @@ watch(
     const next = {};
     for (const cidr of cidrs) {
       const existing = divideGatewayPolicies.value[cidr];
-      if (existing) next[cidr] = existing;
-      else if (isValidIpv4(parent.gateway_address) && isIpInSubnet(parent.gateway_address, cidr)) {
-        next[cidr] = { policy: 'custom', address: parent.gateway_address };
-      } else next[cidr] = { policy: 'none', address: null };
+      next[cidr] = existing || divideGatewayDefault(parent, cidr);
     }
     divideGatewayPolicies.value = next;
   },

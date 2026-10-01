@@ -52,6 +52,7 @@ export {
   isValidAddress,
   parsedNetworkContains,
   topologyAddresses,
+  isTopologyAddress,
   addressAtOffset,
   addressRangesOverlap,
   addressInRange,

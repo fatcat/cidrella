@@ -12,6 +12,7 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 }));
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { getDb } from '../../../src/db/init.js';
 import {
   evaluateInboundPolicy,
   evaluateResolvedPolicy,
@@ -81,6 +82,35 @@ describe('evaluateInboundPolicy (blocklist verdict, shared by UDP + TCP)', () =>
   it('blocks a listed domain with its category and NXDOMAIN semantics', () => {
     const v = evaluateInboundPolicy('evil.example.com');
     expect(v).toEqual({ action: 'block', blockReason: 'malware', responseCode: 'NXDOMAIN' });
+  });
+
+  it('logs NOERROR when either sinkhole answers, matching the reply (IPV6-27)', () => {
+    const db = getDb();
+    const setRedirects = (v4, v6) => {
+      db.prepare(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', ?)",
+      ).run(v4);
+      db.prepare(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip6', ?)",
+      ).run(v6);
+      loadBlocklist();
+    };
+    try {
+      for (const [v4, v6, code] of [
+        ['', 'fd00::1', 'NOERROR'],
+        ['0.0.0.0', '', 'NOERROR'],
+        ['', '', 'NXDOMAIN'],
+      ]) {
+        setRedirects(v4, v6);
+        expect([v4, v6, evaluateInboundPolicy('evil.example.com').responseCode]).toEqual([
+          v4,
+          v6,
+          code,
+        ]);
+      }
+    } finally {
+      setRedirects('', '');
+    }
   });
 
   it('blocks subdomains of a listed domain', () => {

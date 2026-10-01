@@ -7,7 +7,7 @@ import {
   formatNumber,
   isOnlineFlag,
 } from '../utils/format.js';
-import { ipToLong } from '../utils/ip.js';
+import { addressToBig, sortKey } from '../utils/ip.js';
 import { allocationSourceLabel, recordSourceLabel } from '../utils/ipTableDisplay.js';
 
 // A server boolean, which arrives as true, 1 or '1' depending on the route.
@@ -55,13 +55,39 @@ export function formatTimestamp(value) {
   return new Date(timestamp).toLocaleString();
 }
 
-// Percent of a countable network in use. Null for an IPv6 network, whose
-// space is not a number worth dividing by.
-function networkUtilization(network) {
-  if (Number(network.address_family) === 6) return null;
-  const total = Number(network.total_addresses) || 0;
+// Percent of a countable network in use. Null when the server sends no total,
+// which it does for a prefix larger than a JavaScript number holds (an IPv6 /64
+// and wider); a small IPv6 prefix such as a /120 has a total like any IPv4 one.
+export function networkUtilization(network) {
+  const total = network.total_addresses == null ? null : Number(network.total_addresses);
+  if (!Number.isFinite(total)) return null;
   const used = Number(network.used_count) || 0;
   return total ? Math.min(100, Math.round((used / total) * 100)) : 0;
+}
+
+/** Addresses from startIp to endIp inclusive, as a BigInt; null when unreadable. */
+export function addressCount(startIp, endIp) {
+  try {
+    const start = addressToBig(startIp);
+    const end = addressToBig(endIp);
+    if (start.family !== end.family || end.value < start.value) return null;
+    return end.value - start.value + 1n;
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * An address count for display. Exact while it fits a JavaScript number;
+ * beyond that a power of two is written as one ('2^64'), anything else in
+ * full, so an IPv6 pool never reads as zero or blank.
+ */
+export function formatAddressCount(count) {
+  if (count == null) return EMPTY_CELL;
+  const big = BigInt(count);
+  if (big <= BigInt(Number.MAX_SAFE_INTEGER)) return formatNumber(Number(big));
+  if ((big & (big - 1n)) === 0n) return `2^${big.toString(2).length - 1}`;
+  return big.toLocaleString();
 }
 
 function collectAllocatedNetworks(nodes, folder, output) {
@@ -147,7 +173,9 @@ export function mapDhcpScopeRows(scopes) {
     id: `scope:${scope.id}`,
     range: scope.start_ip === scope.end_ip ? scope.start_ip : `${scope.start_ip} – ${scope.end_ip}`,
     network: scope.subnet_name || scope.subnet_cidr || null,
-    poolSize: `${formatNumber(sumScopeAddresses([scope]))} addresses`,
+    poolSize: isPoolScope(scope)
+      ? `${formatAddressCount(sumScopeAddresses([scope]))} addresses`
+      : 'No pool (addresses self-assigned)',
     leaseTime: formatDuration(scope.effective?.lease_time || scope.lease_time),
     description: scope.description || null,
     enabled: flag(scope.enabled),
@@ -281,12 +309,9 @@ export function mapDhcpRows(rows) {
 }
 
 function rangeSize(startIp, endIp) {
-  try {
-    const size = ipToLong(endIp) - ipToLong(startIp) + 1;
-    return `${formatNumber(size)} ${size === 1 ? 'address' : 'addresses'}`;
-  } catch {
-    return EMPTY_CELL;
-  }
+  const size = addressCount(startIp, endIp);
+  if (size === null) return EMPTY_CELL;
+  return `${formatAddressCount(size)} ${size === 1n ? 'address' : 'addresses'}`;
 }
 
 export function mapRangeRows(rows, scopes = []) {
@@ -338,22 +363,28 @@ export function addressCountLabel({ shown, matching, total, sparse = false, page
   return `Showing ${shown}${paged ? ' on this page' : ''} · ${matching} matching · ${tail}`;
 }
 
+// Whether a scope's pools hand out addresses: every DHCPv4 scope and a
+// stateful DHCPv6 one. A SLAAC or stateless scope's range is the prefix shown
+// for reference, not a pool (the server's isAddressPoolScope).
+function isPoolScope(scope) {
+  const raw = scope?.raw || scope;
+  return Number(raw?.address_family) !== 6 || raw?.v6_mode === 'stateful';
+}
+
+/**
+ * Pool addresses across scopes, as a BigInt: an IPv6 pool can exceed what a
+ * JavaScript number holds. Scopes that are not pools count nothing. Format it
+ * with formatAddressCount.
+ */
 export function sumScopeAddresses(scopes) {
-  return (scopes || []).reduce(
-    (total, scope) =>
-      total +
-      (scope.pools || [{ start_ip: scope.start_ip, end_ip: scope.end_ip }]).reduce(
-        (poolTotal, pool) => {
-          try {
-            return poolTotal + (ipToLong(pool.end_ip) - ipToLong(pool.start_ip)) + 1;
-          } catch {
-            return poolTotal;
-          }
-        },
-        0,
-      ),
-    0,
-  );
+  let total = 0n;
+  for (const scope of scopes || []) {
+    if (!isPoolScope(scope)) continue;
+    for (const pool of scope.pools || [{ start_ip: scope.start_ip, end_ip: scope.end_ip }]) {
+      total += addressCount(pool.start_ip, pool.end_ip) ?? 0n;
+    }
+  }
+  return total;
 }
 
 export function gridKind(row) {
@@ -378,4 +409,29 @@ export function isConfiguredRow(row) {
 
 export function countOnline(rows) {
   return (rows || []).filter((row) => isOnlineFlag(row.raw?.is_online) === true).length;
+}
+
+// The order key of a cell that holds an address, a network ('2001:db8::/64')
+// or an address range ('10.0.0.5 – 10.0.0.9'), or null for anything else.
+function addressOrderKey(value) {
+  const head = String(value ?? '')
+    .trim()
+    .split(/\s+[–-]\s+/)[0];
+  const [address, prefix] = head.split('/');
+  const key = sortKey(address);
+  if (!key) return null;
+  return `${key}/${String(prefix ?? '').padStart(3, '0')}`;
+}
+
+/**
+ * Compare two table cells. Addresses, networks and ranges sort by address
+ * value and then prefix (IPv4 before IPv6), so 2001:db8:a:: comes before
+ * 2001:db8:10::, which a numeric text sort reads as decimal and reverses.
+ * Anything else is compared as text with numeric runs.
+ */
+export function compareCellValues(a, b) {
+  const left = addressOrderKey(a);
+  const right = addressOrderKey(b);
+  if (left !== null && right !== null) return left < right ? -1 : left > right ? 1 : 0;
+  return String(a ?? '').localeCompare(String(b ?? ''), undefined, { numeric: true });
 }

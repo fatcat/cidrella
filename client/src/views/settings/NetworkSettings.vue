@@ -11,8 +11,8 @@
           <label>Name Template</label>
           <InputText v-model="settings.subnet_name_template" class="w-full" />
           <small class="field-help">
-            Variables: %1, %2, %3, %4 (the first four octets or hextets of the network), %bitmask
-            (prefix length)
+            Variables: %1, %2, %3, %4 (the first four octets or hextets of the network), %network
+            (the whole network address), %bitmask (prefix length)
           </small>
           <div v-if="templatePreview" class="template-preview">
             Preview: <strong>{{ templatePreview }}</strong>

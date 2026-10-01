@@ -119,8 +119,12 @@ rows and observed or allocated facts persist, reads are sparse, and
 utilization reports counts rather than a total when the prefix exceeds what a
 JavaScript number holds. Reverse projection for IPv6 writes PTR rows only for
 allocated addresses, into one `ip6.arpa` zone at the nibble boundary of the
-prefix (the prefix length rounded down to a multiple of four), and never walks
-the address space for placeholders.
+prefix (the prefix length rounded down to a multiple of four, at most 31
+nibbles, so a /128 uses its /124 zone), and never walks the address space for
+placeholders. Releasing an IPv6 address to `unassigned` removes its
+bare-address placeholder PTR with it; IPv4 keeps one for every address.
+Point-to-point and host prefixes (/31, /32, /127, /128) reserve nothing, so
+none of their addresses is a `system` row (RFC 3021, RFC 6164).
 
 Hostname selection is centralized in `models/ip-lifecycle.js`. A `static_dns`
 or `gateway` address takes its name from static DNS. A `static_dhcp`
@@ -255,7 +259,9 @@ generators should read and emit, not invent persistence semantics.
 Deallocating (or deleting) an allocated network removes what the app wrote for
 it and keeps what a person wrote. DHCP scopes, scope options and leases go.
 PTR records with source `placeholder`, `dhcp` or `reservation` for addresses
-inside the block go, as do A/AAAA records with source `dhcp` or `reservation`.
+inside the block go, found by address in every reverse zone that overlaps the
+block (after a divide a child's PTRs live in its parent's zone), as do A/AAAA
+records with source `dhcp` or `reservation`.
 Manual records and the `dns` PTRs that mirror them stay. Forward zones are
 shared DNS objects and are never touched. Each reverse zone the block maps to
 is disabled unless another allocated network with reverse DNS still overlaps

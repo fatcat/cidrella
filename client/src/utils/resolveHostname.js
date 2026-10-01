@@ -19,7 +19,11 @@ const isAddress = (v) => isValidAddress(String(v ?? '').trim());
 
 /**
  * Resolve a comma-separated list of hostnames/IPs to IP addresses.
- * Entries that are already IPs are passed through unchanged. A hostname
+ * An entry that is already an address of the option's family is passed
+ * through unchanged; one of the other family is left out with a warning,
+ * because the config writer could only drop it (a DHCPv6 option cannot carry
+ * 192.168.1.53), and an option that reads as set but is never served is
+ * worse than one the operator is told about. A hostname
  * yields only the addresses of the option's family: a DHCPv4 option takes
  * IPv4 addresses and a DHCPv6 option IPv6 ones, so a name with both (like
  * 2.pool.ntp.org) never puts the other family's addresses into an option.
@@ -33,7 +37,9 @@ const isAddress = (v) => isValidAddress(String(v ?? '').trim());
  * @returns {Promise<string>} Resolved comma-separated IP string
  */
 export async function resolveHostname(value, api, toast, family = 4) {
-  if (!value || isAddress(value)) return value;
+  if (!value) return value;
+  const wanted = Number(family);
+  if (isAddress(value) && addressFamily(value.trim()) === wanted) return value;
   const parts = value
     .split(',')
     .map((s) => s.trim())
@@ -41,7 +47,15 @@ export async function resolveHostname(value, api, toast, family = 4) {
   const resolved = [];
   for (const part of parts) {
     if (isAddress(part)) {
-      resolved.push(part);
+      if (addressFamily(part) === wanted) {
+        resolved.push(part);
+      } else {
+        toast.add({
+          severity: 'warn',
+          summary: `"${part}" is not an IPv${wanted} address, left out of this DHCPv${wanted} option`,
+          life: 5000,
+        });
+      }
     } else {
       let ips;
       try {
@@ -52,7 +66,7 @@ export async function resolveHostname(value, api, toast, family = 4) {
         resolved.push(part);
         continue;
       }
-      const matching = ips.filter((ip) => addressFamily(ip) === Number(family));
+      const matching = ips.filter((ip) => addressFamily(ip) === wanted);
       if (matching.length) {
         resolved.push(...matching);
       } else {

@@ -2,6 +2,7 @@ import { observeDhcpLeases } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { addressInRange, isValidAddress } from '../utils/ip.js';
 import { addressFamily, sortKey } from '../utils/address.js';
+import { macFromDuid } from '../utils/duid.js';
 import { resolveEffectiveScopeOptions } from './dhcp-scope.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
@@ -182,6 +183,14 @@ const NAME_SUFFIXES = Array.from(
 const MAX_LABEL = 63;
 
 /**
+ * The MAC to name a vendor by: the lease's own, or for a DHCPv6 client the one
+ * its DUID-LLT/LL embeds (for naming only, never stored as the lease's MAC).
+ */
+function vendorMac(lease) {
+  return lease.mac || (lease.duid ? macFromDuid(lease.duid) : null);
+}
+
+/**
  * Decide each lease's effective name before the leases are stored (ADR 005).
  * A name is unique within its forward zone and sticky to the address that
  * holds it, so two clients sending one name, or dnsmasq handing that name to
@@ -235,7 +244,9 @@ export function assignLeaseNames(db, leases, { fallbackName = () => null } = {})
   for (const lease of leases) {
     const zone = zones.zoneFor(lease.subnetId, lease.ip);
     if (!zone) {
-      if (!lease.hostname && lease.mac) lease.hostname = fallbackName(lease.mac) || null;
+      if (!lease.hostname && vendorMac(lease)) {
+        lease.hostname = fallbackName(vendorMac(lease)) || null;
+      }
       continue;
     }
     // The DHCP-derived name this address already holds, if any.
@@ -263,7 +274,12 @@ export function assignLeaseNames(db, leases, { fallbackName = () => null } = {})
             : held;
       claim(zone, lease, stored);
     } else {
-      pending.push({ lease, zone, candidate: lease.hostname || fallbackName(lease.mac) || null });
+      const vendor = vendorMac(lease);
+      pending.push({
+        lease,
+        zone,
+        candidate: lease.hostname || (vendor ? fallbackName(vendor) : null) || null,
+      });
     }
   }
 

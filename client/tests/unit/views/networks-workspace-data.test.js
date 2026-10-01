@@ -11,6 +11,11 @@ import {
   addressCountLabel,
   dnsRecordSummary,
   formatDuration,
+  formatAddressCount,
+  sumScopeAddresses,
+  networkUtilization,
+  compareCellValues,
+  mapRangeRows,
 } from '../../../src/views/networks-workspace-data.js';
 
 describe('networks workspace data adapter', () => {
@@ -350,5 +355,90 @@ describe('formatDuration', () => {
     expect(formatDuration('infinite')).toBe('Infinite');
     expect(formatDuration(null)).toBe(EMPTY_CELL);
     expect(formatDuration('soon')).toBe(EMPTY_CELL);
+  });
+});
+
+describe('IPv6 in the workspace aggregate tables', () => {
+  it('sizes IPv6 ranges and pools instead of blanking or zeroing them (IPV6-43)', () => {
+    const [stateful, slaac] = mapDhcpScopeRows([
+      {
+        id: 1,
+        address_family: 6,
+        v6_mode: 'stateful',
+        start_ip: '2001:db8::1000',
+        end_ip: '2001:db8::1fff',
+        pools: [{ start_ip: '2001:db8::1000', end_ip: '2001:db8::1fff' }],
+      },
+      {
+        id: 2,
+        address_family: 6,
+        v6_mode: 'slaac',
+        start_ip: 'fd00:5::',
+        end_ip: 'fd00:5::ffff:ffff:ffff:ffff',
+      },
+    ]);
+    expect(stateful.poolSize).toBe('4,096 addresses');
+    expect(slaac.poolSize).toMatch(/No pool/);
+
+    // A folder with a v4 pool of 64 and a v6 pool of 4,096 counts both.
+    const scopes = [
+      { address_family: 4, start_ip: '10.0.0.1', end_ip: '10.0.0.64' },
+      {
+        address_family: 6,
+        v6_mode: 'stateful',
+        start_ip: '2001:db8::1000',
+        end_ip: '2001:db8::1fff',
+      },
+      {
+        address_family: 6,
+        v6_mode: 'slaac',
+        start_ip: 'fd00:5::',
+        end_ip: 'fd00:5::ffff:ffff:ffff:ffff',
+      },
+    ];
+    expect(sumScopeAddresses(scopes)).toBe(4160n);
+
+    const [range] = mapRangeRows([
+      {
+        id: 7,
+        start_ip: 'fd00:9::',
+        end_ip: 'fd00:9::ffff:ffff:ffff:ffff',
+        range_type_name: 'Lab',
+      },
+    ]);
+    expect(range.size).toBe('2^64 addresses');
+    expect(formatAddressCount(1n)).toBe('1');
+    expect(formatAddressCount(2n ** 53n + 1n)).toBe((2n ** 53n + 1n).toLocaleString());
+  });
+
+  it('shows utilization whenever the network has a countable total (IPV6-52)', () => {
+    expect(networkUtilization({ address_family: 6, total_addresses: 256, used_count: 250 })).toBe(
+      98,
+    );
+    expect(networkUtilization({ address_family: 6, total_addresses: null, used_count: 5 })).toBe(
+      null,
+    );
+    expect(networkUtilization({ address_family: 4, total_addresses: 256, used_count: 64 })).toBe(
+      25,
+    );
+  });
+
+  it('sorts networks and ranges by address value, hextets as hex (IPV6-49)', () => {
+    const cidrs = ['2001:db8:a::/64', '2001:db8:10::/64', '2001:db8:9::/64', '10.0.0.0/24'];
+    expect([...cidrs].sort(compareCellValues)).toEqual([
+      '10.0.0.0/24',
+      '2001:db8:9::/64',
+      '2001:db8:a::/64',
+      '2001:db8:10::/64',
+    ]);
+    expect(['10.0.0.100 – 10.0.0.120', '10.0.0.9 – 10.0.0.20'].sort(compareCellValues)).toEqual([
+      '10.0.0.9 – 10.0.0.20',
+      '10.0.0.100 – 10.0.0.120',
+    ]);
+    expect(['10.0.0.0/25', '10.0.0.0/24'].sort(compareCellValues)).toEqual([
+      '10.0.0.0/24',
+      '10.0.0.0/25',
+    ]);
+    expect(['Lab 10', 'Lab 9'].sort(compareCellValues)).toEqual(['Lab 9', 'Lab 10']);
   });
 });

@@ -149,7 +149,7 @@ export async function discoverIpv6Hosts(parsed, { neighbors = readNdCache } = {}
     const ip = entry.ip ?? key;
     const onLink = /^fe[89ab]/i.test(ip) && interfaces.includes(entry.interface);
     if (!onLink && !parsedNetworkContains(parsed, ip)) continue;
-    found.push({ ip, mac: entry.mac, interface: entry.interface });
+    found.push({ ip, mac: entry.mac, interface: entry.interface, state: entry.state });
   }
   return { interfaces, hosts: found };
 }
@@ -253,9 +253,22 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     // SLAAC network, the allocation claim itself. Record it before the
     // assignment snapshot below so a self-assigned address counts as
     // assigned and is not mistaken for a rogue.
+    // A STALE (or older) entry is only what the kernel remembers, so it does
+    // not bring an offline row back online: a host that left would flip
+    // online here and offline at its echo on every scan. Such a host is
+    // echoed instead, and comes back online if it answers.
+    const recheck = [];
     if (updateModel) {
+      const offline = db.prepare(
+        'SELECT 1 FROM ip_addresses WHERE subnet_id = ? AND ip_address = ? AND is_online = 0',
+      );
       for (const host of discovered.hosts) {
         const linkLocal = /^fe[89ab]/i.test(host.ip);
+        if (host.state !== 'REACHABLE' && offline.get(subnetId, host.ip)) {
+          recheck.push(host);
+          if (linkLocal && host.interface) probeInterfaces.set(host.ip, host.interface);
+          continue;
+        }
         observeIpv6Presence(db, subnetId, host.ip, {
           interfaceId: linkLocal ? host.interface : null,
           mac: host.mac,
@@ -284,6 +297,9 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     ipsToScan = [
       ...new Set([
         ...globals,
+        ...recheck
+          .map((host) => host.ip)
+          .filter((ip) => probeInterfaces.has(ip) || !/^fe[89ab]/i.test(ip)),
         ...persisted
           .map((row) => row.ip_address)
           .filter((ip) => !/^fe[89ab]/i.test(ip) || probeInterfaces.has(ip)),

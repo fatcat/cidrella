@@ -891,6 +891,8 @@ function onRangeRightClick(event) {
 }
 
 function findRangeForIp(ipAddress) {
+  // 32-bit math below; an IPv6 network shows the workspace pointer instead.
+  if (isIpv6Subnet.value) return null;
   const long = ipToLong(ipAddress);
   return ranges.value.find(
     (r) => r.range_type_is_system && long >= ipToLong(r.start_ip) && long <= ipToLong(r.end_ip),
@@ -935,6 +937,10 @@ const assignableNetworkRangeTypes = computed(() =>
 // collapse consecutive IP Reservations into a single range (e.g. .5–.7 instead
 // of three separate rows) to keep the table tidy.
 const visibleRanges = computed(() => {
+  // The classic view walks addresses with 32-bit math, which throws on an
+  // IPv6 range (every IPv6 network has a Network range); it shows the
+  // workspace pointer for those instead.
+  if (isIpv6Subnet.value) return [];
   const filtered = ranges.value.filter((r) => {
     if (!r.range_type_is_system) return true;
     return !['Network', 'Broadcast', 'Gateway'].includes(r.range_type_name);
