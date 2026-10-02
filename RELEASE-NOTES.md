@@ -216,7 +216,9 @@ first on a 0.4.17 host.
   the enabled defaults, the scope editor shows the IPv6 catalog on an IPv6
   network, and every value reaches dnsmasq as an `option6:` line with
   bracketed addresses. Routers, prefixes and lifetimes are never options in
-  DHCPv6; they come from Router Advertisements.
+  DHCPv6; they come from Router Advertisements. Rapid Commit (14) is listed
+  as always on: dnsmasq gives a stateful client that asks for it its address
+  in one Reply and has no switch to turn that off, so it has no value to set.
 - **Rogue DHCPv6 servers and rogue routers.** The rogue detector now sends a
   DHCPv6 SOLICIT and keys answers by server DUID, and reads Router
   Advertisement default routes from the kernel. The Rogue DHCP page labels

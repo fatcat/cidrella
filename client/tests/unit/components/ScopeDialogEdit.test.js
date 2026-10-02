@@ -90,8 +90,12 @@ beforeEach(() => {
             { code: 23, label: 'DNS Servers', type: 'ip-list', group: 'Common' },
             { code: 24, label: 'Domain Search List', type: 'text-list', group: 'Common' },
             { code: 56, label: 'NTP Servers', type: 'ip-list', group: 'Common' },
+            { code: 14, label: 'Rapid Commit', type: 'flag', group: 'Network', builtIn: true },
           ],
-          groups: [{ name: 'Common', label: 'Common' }],
+          groups: [
+            { name: 'Common', label: 'Common' },
+            { name: 'Network', label: 'Network' },
+          ],
           defaults: { 56: 'fd00::123' },
           enabledDefaults: [23, 24, 56],
         },
@@ -225,7 +229,11 @@ describe('ScopeDialog on an IPv6 network', () => {
     wrapper.vm.optionsExpanded = true;
     await flushPromises();
     const codes = wrapper.findAll('.scope-option-code').map((node) => node.text());
-    expect(codes).toEqual(['(23)', '(24)', '(56)']);
+    expect(codes).toEqual(['(23)', '(24)', '(56)', '(14)']);
+    // Rapid Commit is dnsmasq's to send: no checkbox, read as always on.
+    const rapid = wrapper.findAll('.scope-option-row').at(3);
+    expect(rapid.find('input').exists()).toBe(false);
+    expect(rapid.text()).toContain('always on');
     expect(wrapper.vm.form.optionValues[3]).toBeUndefined();
     expect(wrapper.vm.form.optionValues[1]).toBeUndefined();
     // On edit, a default is preselected only when it carries a value (as for

@@ -866,7 +866,8 @@ export const LEGACY_COLUMN_MAP = {
  * there is no equivalent of v4 options 1, 3 and 28.
  *
  * Address values are written bracketed (`[fd00::53]`) by the config writer;
- * the catalog stores plain addresses.
+ * the catalog stores plain addresses. An entry with `builtIn` is shown but
+ * never set or written (its code is internal): dnsmasq does it on its own.
  */
 export const DHCP6_OPTIONS = [
   // ── Common ──────────────────────────────────────────────────────────
@@ -973,6 +974,23 @@ export const DHCP6_OPTIONS = [
     rfc: 'RFC 3898',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3898#section-6',
     description: 'NIS+ domain name.',
+  },
+  {
+    // Built in, never written: dnsmasq answers every Solicit that carries
+    // Rapid Commit with a committed Reply (rfc3315.c), and has no switch to
+    // turn that off. The entry is here so the code reads as always on, not as
+    // missing; 14 stays in DHCP6_INTERNAL_CODES, so it is refused as a value.
+    code: 14,
+    name: 'rapid-commit',
+    label: 'Rapid Commit',
+    type: 'flag',
+    builtIn: true,
+    dnsmasqName: null,
+    group: 'Network',
+    rfc: 'RFC 8415',
+    rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc8415#section-21.14',
+    description:
+      'Always on for stateful scopes. A client that asks for it in its Solicit gets its address in one Reply, two messages instead of four. dnsmasq always honors it and has no setting to turn it off, so there is nothing to set. With two stateful DHCPv6 servers on a link, each may commit a lease the client never uses until it expires.',
   },
   {
     code: 103,
@@ -1098,6 +1116,17 @@ const CATALOGS = {
  */
 export function optionCatalogFor(family) {
   return Number(family) === 6 ? CATALOGS[6] : CATALOGS[4];
+}
+
+/**
+ * Why `code` cannot be set for the family, for a code isOptionCodeAllowed
+ * refuses: a built-in catalog entry (DHCPv6 Rapid Commit) says it is always
+ * on, any other internal code that dnsmasq builds it.
+ */
+export function builtInCodeReason(code, family) {
+  const entry = optionCatalogFor(family).byCode[code];
+  if (entry?.builtIn) return `${entry.label} (${code}) is always on and has nothing to set`;
+  return `code ${code} is built by dnsmasq itself`;
 }
 
 /** Is `code` a valid user-settable option code for the family? */

@@ -154,3 +154,38 @@ describe('DHCP option defaults editor by family', () => {
     });
   });
 });
+
+describe('a built-in DHCPv6 option in the defaults table', () => {
+  it('reads Rapid Commit (14) as always on, with nothing to set or enable', async () => {
+    api.get.mockResolvedValue({
+      data: {
+        ...catalogs[6],
+        catalog: [
+          ...catalogs[6].catalog,
+          { code: 14, label: 'Rapid Commit', type: 'flag', group: 'Network', builtIn: true },
+        ],
+        groups: [
+          { name: 'Common', label: 'Common' },
+          { name: 'Network', label: 'Network' },
+        ],
+      },
+    });
+    const { UiPlugin } = await import('../../../src/ui/plugin.js');
+    const wrapper = mount(DHCP, {
+      props: { family: 6 },
+      global: {
+        plugins: [[UiPlugin, { unstyled: true }]],
+        stubs: { Dialog: true, Popover: true, EmptyState: true },
+      },
+    });
+    await flushPromises();
+    const rows = wrapper.findAll('tbody tr').filter((row) => row.find('td').exists());
+    const rapid = rows.find((row) => row.find('td').text() === '14');
+    expect(rapid).toBeTruthy();
+    expect(rapid.find('[data-track="dhcp-option-built-in"]').text()).toBe('Always on');
+    expect(rapid.find('input').exists()).toBe(false);
+    expect(rapid.find('button').exists()).toBe(false);
+    const ntp = rows.find((row) => row.find('td').text() === '56');
+    expect(ntp.find('input[type="checkbox"]').exists()).toBe(true);
+  });
+});

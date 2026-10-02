@@ -71,8 +71,13 @@
       </Column>
       <Column header="Default Value" style="min-width: 14rem">
         <template #body="{ data }">
+          <!-- A built-in option (DHCPv6 Rapid Commit) is dnsmasq's to send:
+               nothing to set, so it reads as always on. -->
+          <span v-if="data.builtIn" class="text-sm muted" data-track="dhcp-option-built-in">
+            Always on
+          </span>
           <Select
-            v-if="data.type === 'select'"
+            v-else-if="data.type === 'select'"
             v-model="defaultValues[data.code]"
             :options="data.choices"
             class="w-full"
@@ -105,6 +110,7 @@
       <Column header="Enabled by Default" style="width: 9rem; text-align: center">
         <template #body="{ data }">
           <input
+            v-if="!data.builtIn"
             type="checkbox"
             :checked="!!defaultEnabled[data.code]"
             @change="defaultEnabled[data.code] = $event.target.checked"
@@ -115,6 +121,7 @@
         <template #body="{ data }">
           <div class="action-buttons">
             <Button
+              v-if="!data.builtIn"
               icon="pi pi-times"
               severity="secondary"
               text

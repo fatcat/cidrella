@@ -152,6 +152,7 @@
           <div v-for="opt in group.options" :key="opt.code" class="scope-option-row">
             <div class="scope-option-check">
               <input
+                v-if="!opt.builtIn"
                 type="checkbox"
                 :checked="form.selectedOptions.includes(opt.code)"
                 @change="toggleOption(opt.code, $event.target.checked)"
@@ -166,7 +167,8 @@
               />
             </div>
             <div class="scope-option-value">
-              <template v-if="form.selectedOptions.includes(opt.code)">
+              <span v-if="opt.builtIn" class="scope-option-default">always on</span>
+              <template v-else-if="form.selectedOptions.includes(opt.code)">
                 <Select
                   v-if="opt.type === 'select'"
                   v-model="form.optionValues[opt.code]"

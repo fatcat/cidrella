@@ -22,6 +22,7 @@ import { syncLeases } from '../utils/dhcp.js';
 import {
   DHCP_OPTION_GROUPS,
   optionCatalogFor,
+  builtInCodeReason,
   isOptionCodeAllowed,
 } from '../utils/dhcp-options.js';
 import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
@@ -91,7 +92,7 @@ function optionCodeError(code, family) {
   if (!Number.isInteger(code) || code < 1 || code > catalog.maxCode)
     return `code must be an integer 1-${catalog.maxCode}`;
   if (!isOptionCodeAllowed(code, family))
-    return `code ${code} is built by dnsmasq itself and cannot be set`;
+    return `${builtInCodeReason(code, family)} and cannot be set`;
   return null;
 }
 
@@ -1270,7 +1271,7 @@ router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
   if (!isOptionCodeAllowed(codeNum, family)) {
     return res
       .status(400)
-      .json({ error: `Code ${codeNum} is built by dnsmasq itself and cannot be a custom option` });
+      .json({ error: `${builtInCodeReason(codeNum, family)} and cannot be a custom option` });
   }
 
   const allowedTypes = ['ip', 'ip-list', 'text', 'text-list', 'number'];

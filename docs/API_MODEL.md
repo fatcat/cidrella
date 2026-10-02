@@ -126,7 +126,10 @@ omitted so pre-IPv6 callers are unchanged:
 Scope `options` on `POST`/`PUT /api/dhcp/scopes` are validated against the
 network's family. The IPv6 catalog (`DHCP6_OPTIONS`) is written to dnsmasq as
 `option6:<name>` lines with bracketed addresses; a custom IPv6 code is written
-as `option6:<code>`. Startup seeds two IPv6 defaults, DNS servers (23) and the
+as `option6:<code>`. An entry with `builtIn: true` (Rapid Commit, 14) is
+listed for reference only: dnsmasq always honors a client's rapid-commit
+request and has no switch for it, so the code stays refused as a value, a
+default or a custom option, with an error that says it is always on. Startup seeds two IPv6 defaults, DNS servers (23) and the
 search list (24), enabled without a value: a new IPv6 scope inherits the
 enabled defaults and fills 23 with CIDRella's IPv6 address on the network and
 24 with the network's domain, the IPv6 twin of what IPv4 does with 1, 3, 6, 15,
