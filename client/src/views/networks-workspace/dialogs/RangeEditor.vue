@@ -24,6 +24,14 @@
       <!-- A new label is made here, in the same save as the range that
            wears it, instead of a trip to Settings first. -->
       <RangeTypeFields v-if="creatingType" v-model="newType" />
+      <!-- The chosen type's own name and color, editable here. A type is shared,
+           so a change reaches every range that wears it. -->
+      <template v-else-if="typeEdit">
+        <RangeTypeFields v-model="typeEdit" />
+        <p v-if="typeChanged" class="workspace-range-help">
+          This changes the type for every range that uses it.
+        </p>
+      </template>
       <label>
         Start IP
         <InputText v-model="form.start_ip" class="w-full" required />
@@ -127,7 +135,8 @@ const props = defineProps({
   rangeTypes: { type: Array, default: () => [] },
 });
 const emit = defineEmits(['update:visible', 'saved', 'deleted', 'type-created']);
-const { busy, createRange, createRangeType, updateRange, deleteRange } = useRangeActions();
+const { busy, createRange, createRangeType, updateRangeType, updateRange, deleteRange } =
+  useRangeActions();
 const overlap = ref(null);
 const confirmingDelete = ref(false);
 const error = ref('');
@@ -148,6 +157,22 @@ const customTypes = computed(() => {
 });
 const typeOptions = computed(() => [...customTypes.value, { id: NEW_TYPE, name: 'New type…' }]);
 const creatingType = computed(() => form.range_type_id === NEW_TYPE);
+const selectedType = computed(
+  () => customTypes.value.find((type) => type.id === form.range_type_id) || null,
+);
+// The selected type's fields as the admin edits them; null for a new type.
+const typeEdit = ref(null);
+function fieldsOf(type) {
+  return type ? { name: type.name, color: type.color, description: type.description ?? '' } : null;
+}
+function syncTypeEdit() {
+  typeEdit.value = fieldsOf(selectedType.value);
+}
+const typeChanged = computed(
+  () =>
+    Boolean(typeEdit.value) &&
+    JSON.stringify(typeEdit.value) !== JSON.stringify(fieldsOf(selectedType.value)),
+);
 const isValid = computed(
   () =>
     (Number.isInteger(form.range_type_id) || (creatingType.value && newType.value.name.trim())) &&
@@ -171,6 +196,7 @@ function reset() {
   form.end_ip = props.range?.end_ip ?? '';
   form.description = props.range?.description ?? '';
   baseline = JSON.stringify(form);
+  syncTypeEdit();
   resetGuard();
 }
 
@@ -182,7 +208,8 @@ const {
   reset: resetGuard,
 } = useDiscardGuard({
   busy,
-  isDirty: () => JSON.stringify(form) !== baseline || Boolean(newType.value.name.trim()),
+  isDirty: () =>
+    JSON.stringify(form) !== baseline || Boolean(newType.value.name.trim()) || typeChanged.value,
   close,
 });
 
@@ -191,6 +218,8 @@ const {
 // this dialog had just created wiped the half-filled range out from under
 // the save. The parent loads the types before it opens the dialog.
 watch(() => [props.visible, props.range], reset, { immediate: true, deep: true });
+// Picking another type shows that type's fields.
+watch(() => form.range_type_id, syncTypeEdit);
 
 function close() {
   overlap.value = null;
@@ -218,7 +247,7 @@ function cancelOverlap() {
 // The type is created first and the form switches to its id, so a retry
 // after an overlap prompt saves the range under the type already made.
 async function ensureType() {
-  if (!creatingType.value) return;
+  if (!creatingType.value) return saveTypeEdit();
   const created = await createRangeType({
     name: newType.value.name.trim(),
     color: newType.value.color,
@@ -227,6 +256,18 @@ async function ensureType() {
   createdTypes.value = [...createdTypes.value, created];
   form.range_type_id = created.id;
   newType.value = { name: '', color: NEW_RANGE_TYPE_COLOR, description: '' };
+}
+
+// A changed name or color is saved to the type itself before the range.
+async function saveTypeEdit() {
+  if (!typeChanged.value) return;
+  const edit = typeEdit.value;
+  const updated = await updateRangeType(selectedType.value.id, {
+    name: edit.name.trim(),
+    color: edit.color,
+    description: edit.description.trim(),
+  });
+  createdTypes.value = [...createdTypes.value.filter((type) => type.id !== updated.id), updated];
 }
 
 async function save(force) {

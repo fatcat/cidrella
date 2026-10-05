@@ -95,6 +95,10 @@ export function useRangeActions() {
       ranges: exactRangeRuns(selectedRuns),
       accept_overlaps: acceptOverlaps,
     });
+  const clearRangeType = (subnetId, selectedRuns) =>
+    request('put', `/subnets/${subnetId}/ranges/clear-type`, {
+      ranges: exactRangeRuns(selectedRuns),
+    });
 
   return {
     busy,
@@ -107,5 +111,6 @@ export function useRangeActions() {
     updateRangeType,
     deleteRangeType,
     setRangeType,
+    clearRangeType,
   };
 }

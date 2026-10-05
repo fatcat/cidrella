@@ -393,6 +393,12 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- The Network Range editor now edits the chosen type's name, color and
+  description (a type is shared, so the change reaches every range that uses
+  it). The Set Range Type dialog has a Clear range type button, for one
+  address or a multi-selection in either view: it removes the tag from the
+  selected addresses and keeps it on the rest of its range
+  (`PUT /subnets/:id/ranges/clear-type`).
 - A Network Range's color now shows. In the address grid a cell inside a
   range takes the range's color (a status cell keeps its status color and
   shows the range as a stripe along its foot); in the tables the range name

@@ -159,13 +159,13 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 // Assign a custom Network Range Type to one or more grid selections. Custom
 // classifications are non-overlapping; accepting a conflict replaces only the
 // selected portion and preserves the unaffected fragments on either side.
-router.put('/set-type', requirePerm('subnets:write'), (req, res) => {
+function assignOrClear(req, res, { clear }) {
   const db = getDb();
   const subnetId = req.params.subnetId;
   const body = req.body || {};
-  const { range_type_id, ranges: requestedRanges, accept_overlaps = false } = body;
+  const { range_type_id = null, ranges: requestedRanges, accept_overlaps = false } = body;
 
-  if (!Number.isInteger(range_type_id)) {
+  if (!clear && !Number.isInteger(range_type_id)) {
     return res.status(400).json({ error: 'range_type_id must be an integer' });
   }
   if (!Array.isArray(requestedRanges) || requestedRanges.length === 0) {
@@ -182,12 +182,14 @@ router.put('/set-type', requirePerm('subnets:write'), (req, res) => {
   if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
   if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
 
-  const rangeType = db.prepare('SELECT * FROM range_types WHERE id = ?').get(range_type_id);
-  if (!rangeType) return res.status(404).json({ error: 'Network range type not found' });
-  if (rangeType.is_system) {
-    return res
-      .status(400)
-      .json({ error: 'Set Range Type accepts custom Network Range Types only' });
+  if (!clear) {
+    const rangeType = db.prepare('SELECT * FROM range_types WHERE id = ?').get(range_type_id);
+    if (!rangeType) return res.status(404).json({ error: 'Network range type not found' });
+    if (rangeType.is_system) {
+      return res
+        .status(400)
+        .json({ error: 'Set Range Type accepts custom Network Range Types only' });
+    }
   }
 
   const selections = [];
@@ -230,7 +232,9 @@ router.put('/set-type', requirePerm('subnets:write'), (req, res) => {
     }
   }
 
-  const overlaps = Range.listCustomRangeOverlaps(db, subnetId, mergedSelections);
+  // Clearing removes labels from the selected addresses only, so there is
+  // nothing to confirm: the rest of each label is kept.
+  const overlaps = clear ? [] : Range.listCustomRangeOverlaps(db, subnetId, mergedSelections);
   if (overlaps.length > 0 && !accept_overlaps) {
     return res.status(409).json({
       error: 'Selection overlaps existing Network Range Types',
@@ -246,17 +250,34 @@ router.put('/set-type', requirePerm('subnets:write'), (req, res) => {
 
   const result = Range.assignCustomRangeType(db, {
     subnetId,
-    rangeTypeId: range_type_id,
+    rangeTypeId: clear ? null : range_type_id,
     selections: mergedSelections,
   });
 
-  audit(req.user.id, 'network_range_type_set', 'subnet', Number(subnetId), {
-    range_type_id,
-    ranges: requestedRanges,
-    replaced_range_ids: result.replaced.map((range) => range.id),
-  });
+  audit(
+    req.user.id,
+    clear ? 'network_range_type_cleared' : 'network_range_type_set',
+    'subnet',
+    Number(subnetId),
+    {
+      range_type_id,
+      ranges: requestedRanges,
+      replaced_range_ids: result.replaced.map((range) => range.id),
+    },
+  );
   return res.json(result);
-});
+}
+
+router.put('/set-type', requirePerm('subnets:write'), (req, res) =>
+  assignOrClear(req, res, { clear: false }),
+);
+
+// PUT /api/subnets/:subnetId/ranges/clear-type
+// Remove every custom Network Range Type from the selected addresses. A label
+// that extends past the selection keeps its unselected fragments.
+router.put('/clear-type', requirePerm('subnets:write'), (req, res) =>
+  assignOrClear(req, res, { clear: true }),
+);
 
 // PUT /api/subnets/:subnetId/ranges/:id
 router.put('/:id', requirePerm('subnets:write'), (req, res) => {

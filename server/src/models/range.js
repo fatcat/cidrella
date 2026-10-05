@@ -89,7 +89,8 @@ export function listCustomRangeOverlaps(db, subnetId, selections, { excludeRange
  * Apply one custom Network Range Type to one or more selected intervals.
  * Existing custom classifications are split around the selection so custom
  * ranges never overlap. Functional system ranges are a separate layer and are
- * intentionally left alone.
+ * intentionally left alone. A null `rangeTypeId` only removes the selection
+ * from the labels around it.
  */
 export function assignCustomRangeType(
   db,
@@ -143,7 +144,7 @@ export function assignCustomRangeType(
     }
 
     const createdIds = [];
-    for (const selection of selections) {
+    for (const selection of rangeTypeId === null ? [] : selections) {
       const result = insert.run(
         subnetId,
         rangeTypeId,

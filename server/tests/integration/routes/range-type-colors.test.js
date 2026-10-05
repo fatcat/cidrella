@@ -118,4 +118,44 @@ describe('range type colors', () => {
       ),
     ).toBe(true);
   });
+
+  it('clears a type from part of a range and keeps the rest of it', async () => {
+    const created = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '10.121.0.0/24', name: 'clear-type' });
+    const subnetId = created.body.id;
+    await request(app)
+      .post(`/api/subnets/${subnetId}/configure`)
+      .send({ name: 'clear-type', create_reverse_dns: false, create_dhcp_scope: false });
+    const type = await request(app)
+      .post('/api/range-types')
+      .send({ name: 'Bench', color: '#ec4899' });
+    await request(app)
+      .put(`/api/subnets/${subnetId}/ranges/set-type`)
+      .send({
+        range_type_id: type.body.id,
+        ranges: [{ start_ip: '10.121.0.10', end_ip: '10.121.0.20' }],
+      });
+
+    const cleared = await request(app)
+      .put(`/api/subnets/${subnetId}/ranges/clear-type`)
+      .send({ ranges: [{ start_ip: '10.121.0.12', end_ip: '10.121.0.14' }] });
+    expect(cleared.status).toBe(200);
+
+    const res = await request(app).get(`/api/subnets/${subnetId}/ips?page=1&pageSize=64`);
+    const typed = res.body.ips
+      .filter((row) => row.network_range_type === 'Bench')
+      .map((row) => row.ip_address)
+      .sort();
+    expect(typed).toEqual(
+      [
+        '10.121.0.10',
+        '10.121.0.11',
+        ...[15, 16, 17, 18, 19, 20].map((n) => `10.121.0.${n}`),
+      ].sort(),
+    );
+
+    const none = await request(app).put(`/api/subnets/${subnetId}/ranges/clear-type`).send({});
+    expect(none.status).toBe(400);
+  });
 });

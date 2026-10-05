@@ -334,15 +334,70 @@ describe('workspace range management', () => {
       ...componentOptions,
       props: { visible: true, subnetId: 4, rangeTypes: [customType], range: null },
     });
-    expect(wrapper.find('[data-track="workspace-range-type-name"]').exists()).toBe(false);
+    // The type's own fields show, filled from the type, and nothing is saved to it unchanged.
+    expect(wrapper.find('[data-track="workspace-range-type-name"]').exists()).toBe(true);
     const inputs = wrapper.findAllComponents(InputTextStub);
-    await inputs[0].vm.$emit('update:modelValue', '10.0.0.30');
-    await inputs[1].vm.$emit('update:modelValue', '10.0.0.40');
+    await inputs[3].vm.$emit('update:modelValue', '10.0.0.30');
+    await inputs[4].vm.$emit('update:modelValue', '10.0.0.40');
     await wrapper.get('[data-track="workspace-range-save"]').trigger('click');
     await flushPromises();
+    expect(api.put).not.toHaveBeenCalled();
     expect(api.post).toHaveBeenCalledTimes(1);
     expect(api.post.mock.calls[0][0]).toBe('/subnets/4/ranges');
     expect(api.post.mock.calls[0][1].range_type_id).toBe(8);
+  });
+
+  it('changes the color of the range type being edited, then saves the range', async () => {
+    api.put.mockResolvedValueOnce({ data: { ...customType, color: '#0ea5e9' } });
+    api.put.mockResolvedValueOnce({ data: { id: 51 } });
+    const wrapper = mount(RangeEditor, {
+      ...componentOptions,
+      props: {
+        visible: true,
+        subnetId: 4,
+        rangeTypes: [customType],
+        range: {
+          id: 51,
+          range_type_id: 8,
+          range_type_name: 'Lab equipment',
+          range_type_is_system: 0,
+          start_ip: '10.0.0.30',
+          end_ip: '10.0.0.40',
+        },
+      },
+    });
+    wrapper.findComponent(RangeTypeFields).vm.$emit('update:modelValue', {
+      name: 'Lab equipment',
+      color: '#0ea5e9',
+      description: '',
+    });
+    await flushPromises();
+    await wrapper.get('[data-track="workspace-range-save"]').trigger('click');
+    await flushPromises();
+    expect(api.put.mock.calls[0]).toEqual([
+      '/range-types/8',
+      { name: 'Lab equipment', color: '#0ea5e9', description: '' },
+    ]);
+    expect(api.put.mock.calls[1][0]).toBe('/subnets/4/ranges/51');
+    expect(wrapper.emitted('type-created')?.[0]?.[0]).toEqual([
+      expect.objectContaining({ id: 8, color: '#0ea5e9' }),
+    ]);
+  });
+
+  it('clears the range type from the exact selected runs', async () => {
+    api.put.mockResolvedValue({ data: { created: [], replaced: [] } });
+    const runs = [
+      { start_ip: '10.0.0.10', end_ip: '10.0.0.12' },
+      { start_ip: '10.0.0.20', end_ip: '10.0.0.21' },
+    ];
+    const wrapper = mount(BulkRangeTypeDialog, {
+      ...componentOptions,
+      props: { visible: true, subnetId: 4, selectedRuns: runs, rangeTypes: [customType] },
+    });
+    await wrapper.get('[data-track="workspace-bulk-range-type-clear"]').trigger('click');
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith('/subnets/4/ranges/clear-type', { ranges: runs });
+    expect(wrapper.emitted('saved')).toHaveLength(1);
   });
 
   it('prevents functional range types from being edited', async () => {

@@ -26,11 +26,21 @@
       />
     </label>
     <p class="workspace-range-help">
+      Clear range type removes the tag from these addresses and keeps it on the rest of its range.
       This adds an organizational tag only. Address allocation and liveness are unchanged.
     </p>
     <p v-if="error" role="alert" class="workspace-range-error">{{ error }}</p>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="close" />
+      <Button
+        label="Clear range type"
+        severity="secondary"
+        text
+        :loading="busy"
+        :disabled="selectedRuns.length === 0"
+        data-track="workspace-bulk-range-type-clear"
+        @click="clear"
+      />
       <Button
         label="Review and apply"
         :loading="busy"
@@ -85,7 +95,7 @@ const customTypes = computed(() => props.rangeTypes.filter((type) => !type.is_sy
 const rangeTypeId = ref(null);
 const overlap = ref(null);
 const error = ref('');
-const { busy, setRangeType } = useRangeActions();
+const { busy, setRangeType, clearRangeType } = useRangeActions();
 
 watch(
   () => props.visible,
@@ -105,6 +115,17 @@ function close() {
 
 function decline() {
   overlap.value = null;
+}
+
+async function clear() {
+  error.value = '';
+  try {
+    const result = await clearRangeType(props.subnetId, props.selectedRuns);
+    emit('saved', result);
+    emit('update:visible', false);
+  } catch (err) {
+    error.value = apiError(err);
+  }
 }
 
 async function apply(acceptOverlaps) {
