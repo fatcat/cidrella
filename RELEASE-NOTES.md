@@ -393,6 +393,16 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- A Network Range's color now shows. In the address grid a cell inside a
+  range takes the range's color (a status cell keeps its status color and
+  shows the range as a stripe along its foot); in the tables the range name
+  is drawn in the range's color. A rename or recolor of a Network Range Type
+  shows on every address in its ranges at the next read, since the name and
+  color are read from the type, never copied. The colors the grid uses for a
+  status (gray, amber, violet, red, cyan, blue, green) and anything close to
+  them, plus grays, are refused for a type; a type that already holds one can
+  still be renamed. The type dialog offers swatches that pass.
+
 - SLAAC IPv6 scopes advertised no DNS server. dnsmasq carries the DNS
   servers and search list in its Router Advertisements only when those
   options are set, and a SLAAC scope wrote no options at all, so clients got

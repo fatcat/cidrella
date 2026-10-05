@@ -3,6 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
 import * as RangeType from '../models/range-type.js';
+import { rangeColorProblem } from '../utils/range-colors.js';
 
 const router = Router();
 
@@ -30,6 +31,8 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     if (typeof color !== 'string' || !COLOR_RE.test(color)) {
       return res.status(400).json({ error: 'color must be a hex code like "#aabbcc"' });
     }
+    const problem = rangeColorProblem(color);
+    if (problem) return res.status(400).json({ error: `color ${color} ${problem}` });
   }
   if (description !== undefined) {
     const derr = validateDisplayString(description, { maxLength: 1024 });
@@ -71,6 +74,11 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     if (typeof color !== 'string' || !COLOR_RE.test(color)) {
       return res.status(400).json({ error: 'color must be a hex code like "#aabbcc"' });
     }
+    // A type that already holds a color the rule now refuses can still be
+    // renamed; only a new color is checked.
+    const problem =
+      color.toLowerCase() === type.color?.toLowerCase() ? null : rangeColorProblem(color);
+    if (problem) return res.status(400).json({ error: `color ${color} ${problem}` });
   }
   if (description !== undefined) {
     const derr = validateDisplayString(description, { maxLength: 1024 });

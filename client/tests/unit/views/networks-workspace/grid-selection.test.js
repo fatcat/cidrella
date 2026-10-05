@@ -161,4 +161,30 @@ describe('workspace address selection', () => {
       wrapper.unmount();
     },
   );
+
+  it('hands a cell its range color and leaves a cell outside any range alone', () => {
+    const cell = (ip, kind, rangeColor) => ({
+      ip,
+      last: ip.split('.').at(-1),
+      kind,
+      rangeColor,
+      label: kind,
+      row: { id: `address:${ip}` },
+    });
+    const wrapper = mount(AddressGrid, {
+      props: {
+        cells: [
+          cell('10.0.0.1', 'available', '#0ea5e9'),
+          cell('10.0.0.2', 'dns', '#0ea5e9'),
+          cell('10.0.0.3', 'available', null),
+        ],
+      },
+    });
+    const buttons = wrapper.findAll('.address-grid button');
+    expect(buttons[0].classes()).toContain('ranged');
+    expect(buttons[0].attributes('style')).toContain('--range-color: #0ea5e9');
+    expect(buttons[1].classes()).toEqual(expect.arrayContaining(['dns', 'ranged']));
+    expect(buttons[2].classes()).not.toContain('ranged');
+    expect(buttons[2].attributes('style')).toBeUndefined();
+  });
 });

@@ -77,6 +77,15 @@
                 :tooltip="row.raw?.address_type_tooltip || null"
               />
             </template>
+            <template v-else-if="column.key === 'network_range_type' || column.key === 'rangeType'">
+              <span
+                v-if="row.rangeType"
+                class="range-name"
+                :style="row.rangeColor ? { '--range-color': row.rangeColor } : null"
+                >{{ row.rangeType }}</span
+              >
+              <span v-else class="muted">{{ EMPTY_CELL }}</span>
+            </template>
             <template v-else-if="column.key === 'assignment'">
               <span v-if="row.assignment" class="assignment-cell">
                 <span
@@ -354,6 +363,10 @@ tbody tr:focus-visible {
 .status-pill.status-unavailable {
   background: color-mix(in srgb, var(--cid-status-warn) 16%, transparent);
   color: var(--cid-status-warn);
+}
+.range-name {
+  font-weight: 600;
+  color: color-mix(in srgb, var(--range-color, var(--cid-text-color)) 80%, var(--cid-text-color));
 }
 .assignment-cell {
   display: inline-flex;

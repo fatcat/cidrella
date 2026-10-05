@@ -240,6 +240,7 @@ function ipRowFields(row, { dns = row.dns_record || null, dhcp = row.dhcp || nul
     mac: displayMacAddress(row.mac_address || row.last_seen_mac),
     source: row.allocation_source_type || row.detection_source ? allocationSourceLabel(row) : null,
     rangeType: row.network_range_type || null,
+    rangeColor: row.network_range_type_color || null,
     lastSeen: formatTimestamp(row.last_seen_at),
     scanning:
       row.scanning_enabled == null
@@ -324,6 +325,7 @@ export function mapRangeRows(rows, scopes = []) {
       id: `range:${row.id}`,
       range: start === end ? start : `${start} – ${end}`,
       rangeType: row.range_type_name,
+      rangeColor: row.range_type_color || null,
       size: rangeSize(start, end),
       description: row.description || null,
       policy: scope

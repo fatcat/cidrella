@@ -113,6 +113,7 @@ import InputText from '../../../ui/InputText.js';
 import Select from '../../../ui/Select.js';
 import { apiError } from '../../../utils/format.js';
 import RangeTypeFields from './RangeTypeFields.vue';
+import { NEW_RANGE_TYPE_COLOR } from '../../../utils/rangeTypeColors.js';
 import { isProtectedRange, useRangeActions } from '../composables/useRangeActions.js';
 import { useDiscardGuard } from '../composables/useDiscardGuard.js';
 import './range-dialogs.css';
@@ -132,7 +133,7 @@ const confirmingDelete = ref(false);
 const error = ref('');
 const NEW_TYPE = 'new';
 const form = reactive({ range_type_id: null, start_ip: '', end_ip: '', description: '' });
-const newType = ref({ name: '', color: '#14b8a6', description: '' });
+const newType = ref({ name: '', color: NEW_RANGE_TYPE_COLOR, description: '' });
 let baseline = JSON.stringify(form);
 // Types made from this dialog join the list at once; the parent's list
 // catches up when it reloads after the save. Cleared on every open, and
@@ -165,7 +166,7 @@ function reset() {
   createdTypes.value = [];
   // With no label yet the dialog opens ready to make one.
   form.range_type_id = props.range?.range_type_id ?? customTypes.value[0]?.id ?? NEW_TYPE;
-  newType.value = { name: '', color: '#14b8a6', description: '' };
+  newType.value = { name: '', color: NEW_RANGE_TYPE_COLOR, description: '' };
   form.start_ip = props.range?.start_ip ?? '';
   form.end_ip = props.range?.end_ip ?? '';
   form.description = props.range?.description ?? '';
@@ -225,7 +226,7 @@ async function ensureType() {
   });
   createdTypes.value = [...createdTypes.value, created];
   form.range_type_id = created.id;
-  newType.value = { name: '', color: '#14b8a6', description: '' };
+  newType.value = { name: '', color: NEW_RANGE_TYPE_COLOR, description: '' };
 }
 
 async function save(force) {

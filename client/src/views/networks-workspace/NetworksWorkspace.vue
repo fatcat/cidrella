@@ -1949,6 +1949,7 @@ const gridCells = computed(() =>
       ? row.address.split(':').at(-1) || '0'
       : row.address.split('.').at(-1),
     kind: gridKind(row),
+    rangeColor: row.rangeColor,
     label: row.type || row.status || 'Available',
     row,
   })),

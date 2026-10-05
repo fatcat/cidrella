@@ -9,7 +9,11 @@
         v-for="(cell, index) in cells"
         :key="cell.ip"
         :ref="(element) => setCellRef(element, index)"
-        :class="[cell.kind, { selected: selectedRows.includes(cell.row.id) }]"
+        :class="[
+          cell.kind,
+          { ranged: cell.rangeColor, selected: selectedRows.includes(cell.row.id) },
+        ]"
+        :style="cell.rangeColor ? { '--range-color': cell.rangeColor } : null"
         :title="`${cell.ip} · ${cell.label}`"
         :aria-label="`${cell.ip}, ${cell.label}`"
         :aria-pressed="selectedRows.includes(cell.row.id)"
@@ -28,7 +32,7 @@
       <span><i class="system" />System</span><span><i class="gateway" />Gateway</span
       ><span><i class="dhcp" />DHCP</span> <span><i class="dns" />Static DNS</span
       ><span><i class="reserved" />Reserved</span><span><i class="rogue" />Rogue</span
-      ><span><i class="available" />Available</span>
+      ><span><i class="available" />Available</span><span><i class="ranged" />Network range</span>
     </div>
   </div>
   <div v-else class="compact-grid-view">
@@ -39,8 +43,13 @@
         :ref="(element) => setCellRef(element, index)"
         :class="[
           cell.kind,
-          { section: (index + 1) % 16 === 0, selected: selectedRows.includes(cell.row.id) },
+          {
+            ranged: cell.rangeColor,
+            section: (index + 1) % 16 === 0,
+            selected: selectedRows.includes(cell.row.id),
+          },
         ]"
+        :style="cell.rangeColor ? { '--range-color': cell.rangeColor } : null"
         :title="`${cell.ip} · ${cell.label}`"
         :aria-label="`${cell.ip}, ${cell.label}`"
         :aria-pressed="selectedRows.includes(cell.row.id)"
@@ -57,7 +66,7 @@
       <span><i class="system" />System</span><span><i class="gateway" />Gateway</span
       ><span><i class="dhcp" />DHCP</span> <span><i class="dns" />Static DNS</span
       ><span><i class="reserved" />Reserved</span><span><i class="rogue" />Rogue</span
-      ><span><i class="available" />Available</span>
+      ><span><i class="available" />Available</span><span><i class="ranged" />Network range</span>
     </div>
   </div>
 </template>
@@ -275,6 +284,18 @@ button {
   color: var(--cid-red-600);
   font-weight: 800;
 }
+/* A cell inside a Network Range takes the range's color. An unconfigured cell
+   is filled with it; a cell that already carries a status keeps that color
+   and shows the range as a stripe along its foot. */
+.address-grid button.ranged.available,
+.compact-address-grid button.ranged.available {
+  background: color-mix(in srgb, var(--range-color) 55%, var(--cid-surface-card));
+  color: var(--cid-text-color);
+}
+.address-grid button.ranged:not(.available),
+.compact-address-grid button.ranged:not(.available) {
+  box-shadow: inset 0 -3px 0 var(--range-color);
+}
 .grid-key {
   margin-top: 0.65rem;
 }
@@ -286,6 +307,9 @@ button {
 }
 .grid-key i.rogue {
   border: 2px solid var(--cid-red-500);
+}
+.grid-key i.ranged {
+  background: conic-gradient(#ec4899, #84cc16, #0ea5e9, #b45309, #ec4899);
 }
 .grid-key i.available {
   border: 1px solid var(--preview-line);

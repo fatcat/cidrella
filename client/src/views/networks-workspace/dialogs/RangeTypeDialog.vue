@@ -61,6 +61,7 @@ import { ref, watch } from 'vue';
 import Button from '../../../ui/Button.js';
 import Dialog from '../../../ui/Dialog.js';
 import RangeTypeFields from './RangeTypeFields.vue';
+import { NEW_RANGE_TYPE_COLOR } from '../../../utils/rangeTypeColors.js';
 import { apiError } from '../../../utils/format.js';
 import { useRangeActions } from '../composables/useRangeActions.js';
 import { useDiscardGuard } from '../composables/useDiscardGuard.js';
@@ -74,7 +75,7 @@ const props = defineProps({
 });
 const emit = defineEmits(['update:visible', 'saved', 'deleted']);
 const { busy, createRangeType, updateRangeType, deleteRangeType } = useRangeActions();
-const form = ref({ name: '', color: '#14b8a6', description: '' });
+const form = ref({ name: '', color: NEW_RANGE_TYPE_COLOR, description: '' });
 let baseline = JSON.stringify(form.value);
 const error = ref('');
 const confirmingDelete = ref(false);
@@ -92,7 +93,7 @@ watch(
   () => {
     form.value = {
       name: props.rangeType?.name ?? '',
-      color: props.rangeType?.color ?? '#14b8a6',
+      color: props.rangeType?.color ?? NEW_RANGE_TYPE_COLOR,
       description: props.rangeType?.description ?? '',
     };
     error.value = props.rangeType?.is_system
