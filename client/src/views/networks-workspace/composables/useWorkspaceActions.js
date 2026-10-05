@@ -215,6 +215,8 @@ export function useWorkspaceActions(ctx) {
     'network.divide': async (target) =>
       (await ensureNetworkDialogs()).openDivide(networkNode(target)),
     'network.merge': async (target) => (await ensureNetworkDialogs()).openMergeConfirm(target.ids),
+    'network.bulk-allocate': async (target) =>
+      (await ensureNetworkDialogs()).openGroupConfigure(target.networks),
     'network.apply-defaults': async (target) =>
       (await ensureNetworkDialogs()).executeApplyTemplate(
         target.kind === 'network-selection' ? target.ids : [target.id],

@@ -149,6 +149,37 @@ describe('NetworkDialogs transformation and two-step flows', () => {
     );
   });
 
+  it('allocates several selected networks, keeping given names and reporting failures', async () => {
+    store.fetchTree = vi.fn().mockResolvedValue();
+    store.configureSubnet
+      .mockResolvedValueOnce({ id: 1 })
+      .mockRejectedValueOnce({ response: { status: 400, data: { error: 'boom' } } });
+    const wrapper = mountDialogs();
+    wrapper.vm.openGroupConfigure([
+      { id: 1, cidr: '10.1.0.0/24', name: '10.1.0.0/24' },
+      { id: 2, cidr: 'fd00:2::/64', name: 'Lab v6' },
+    ]);
+    await settle();
+    expect(dialog(wrapper, 'dialog-group-allocate').text()).toContain('Allocate 2 networks?');
+    await wrapper.get('[data-track="group-allocate-confirm"]').trigger('click');
+    await settle();
+
+    const [first, second] = store.configureSubnet.mock.calls;
+    // A network still named by its CIDR takes the template name; a named one keeps it.
+    expect(first[0]).toBe(1);
+    expect(first[1]).toMatchObject({ name: 'Nine', create_dhcp_scope: false });
+    expect(first[1]).not.toHaveProperty('folder_id');
+    expect(second[0]).toBe(2);
+    expect(second[1].name).toBe('Lab v6');
+    expect(wrapper.emitted('group-configured')).toHaveLength(1);
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: 'error', detail: 'fd00:2::/64: boom' }),
+    );
+    // The one that failed stays in the dialog.
+    expect(dialog(wrapper, 'dialog-group-allocate').text()).toContain('fd00:2::/64');
+    expect(dialog(wrapper, 'dialog-group-allocate').text()).not.toContain('10.1.0.0/24');
+  });
+
   it('T-15 executes the reviewed plan token and re-reviews a stale plan without resubmitting', async () => {
     const plan = (token) => ({
       dependency_token: token,

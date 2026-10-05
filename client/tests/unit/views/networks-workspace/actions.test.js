@@ -447,14 +447,24 @@ describe('workspace action registry', () => {
     // A selection is acted on from its row menu. Merge stays in it, greyed
     // out with the reason, when the checked networks cannot be merged.
     expect(menuActions({ menu: 'row', target: one, can: all })).toMatchObject([
+      { id: 'network.bulk-allocate', available: true, label: 'Allocate 1 network' },
       { id: 'network.merge', available: false, reason: expect.stringContaining('two') },
       { id: 'network.apply-defaults', available: true },
     ]);
     expect(menuActions({ menu: 'row', target: two, can: all }).map((i) => i.id)).toEqual([
+      'network.bulk-allocate',
       'network.merge',
       'network.apply-defaults',
     ]);
     expect(menuActions({ menu: 'row', target: two, can: () => false })).toEqual([]);
+    // Bulk allocation takes unallocated, undivided networks only.
+    const allocateReason = (networks) =>
+      actionAvailability('network.bulk-allocate', selection(networks), all).reason;
+    expect(allocateReason([leaf(1, '10.0.0.0/25'), leaf(2, 'fd00:1::/64')])).toBe('');
+    expect(
+      allocateReason([leaf(1, '10.0.0.0/25', { status: 'allocated' }), leaf(2, '10.0.0.128/25')]),
+    ).toContain('unallocated');
+    expect(allocateReason([leaf(1, '10.0.0.0/25', { hasChildren: true })])).toContain('divided');
     // Merge follows the server's rules and the allocation rule: unallocated
     // siblings under one parent, no children, and a CIDR union that is one block.
     const mergeReason = (networks) =>

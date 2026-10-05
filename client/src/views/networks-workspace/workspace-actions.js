@@ -166,6 +166,21 @@ const ACTION_DEFINITIONS = [
     showUnavailable: true,
   },
   {
+    id: 'network.bulk-allocate',
+    label: (target) => `Allocate ${target.count} network${target.count === 1 ? '' : 's'}`,
+    note: 'Allocate each with the default settings',
+    icon: 'pi pi-check-circle',
+    capability: 'subnets:write',
+    targetKind: 'network-selection',
+    available: (target) =>
+      target.count > 0 &&
+      target.networks?.length === target.count &&
+      target.networks.every((network) => network.status === 'unallocated' && !network.hasChildren),
+    disabledReason: 'Select only unallocated networks that are not divided.',
+    menus: ['row'],
+    showUnavailable: true,
+  },
+  {
     id: 'network.move',
     label: 'Move to folder',
     note: 'Change organization without changing CIDR',
@@ -742,8 +757,8 @@ const ROW_MENU_ORDER = {
     'ip.bulk-scan-inherit',
     'ip.probe',
   ],
-  // Merge before the template re-apply.
-  'network-selection': ['network.merge', 'network.apply-defaults'],
+  // Allocate, then merge, before the template re-apply.
+  'network-selection': ['network.bulk-allocate', 'network.merge', 'network.apply-defaults'],
   range: [
     'dhcp.scope.edit',
     'dhcp.scope.remove-members',

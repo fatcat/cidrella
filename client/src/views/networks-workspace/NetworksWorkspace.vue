@@ -1838,13 +1838,17 @@ const selectionTarget = computed(() => {
       .filter(isNetworkId)
       .map((id) => Number(String(id).slice('network:'.length)));
     const known = [...allNetworks.value, ...unallocatedNetworks.value];
-    // What the merge rules need to know about each checked network.
+    // What the merge rules and bulk allocation need to know about each
+    // checked network.
     const networks = ids
       .map((id) => known.find((network) => Number(network.id) === id))
       .filter(Boolean)
       .map((network) => ({
         id: Number(network.id),
         cidr: network.cidr,
+        name: network.name,
+        description: network.description,
+        vlan_id: network.vlan_id,
         status: network.status,
         parent_id: network.parent_id ?? null,
         hasChildren: Boolean(network.children?.length),

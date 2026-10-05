@@ -32,7 +32,8 @@
       <span><i class="system" />System</span><span><i class="gateway" />Gateway</span
       ><span><i class="dhcp" />DHCP</span> <span><i class="dns" />Static DNS</span
       ><span><i class="reserved" />Reserved</span><span><i class="rogue" />Rogue</span
-      ><span><i class="available" />Available</span><span><i class="ranged" />Network range</span>
+      ><span><i class="available" />Available</span
+      ><span><i class="ranged" :style="{ background: RANGE_LEGEND }" />Network range</span>
     </div>
   </div>
   <div v-else ref="viewRoot" class="compact-grid-view">
@@ -66,13 +67,18 @@
       <span><i class="system" />System</span><span><i class="gateway" />Gateway</span
       ><span><i class="dhcp" />DHCP</span> <span><i class="dns" />Static DNS</span
       ><span><i class="reserved" />Reserved</span><span><i class="rogue" />Rogue</span
-      ><span><i class="available" />Available</span><span><i class="ranged" />Network range</span>
+      ><span><i class="available" />Available</span
+      ><span><i class="ranged" :style="{ background: RANGE_LEGEND }" />Network range</span>
     </div>
   </div>
 </template>
 
 <script setup>
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { RANGE_COLOR_PRESETS } from '../../utils/rangeTypeColors.js';
+
+// The legend swatch for a Network Range shows the colors a type can be given.
+const RANGE_LEGEND = `conic-gradient(${[...RANGE_COLOR_PRESETS, RANGE_COLOR_PRESETS[0]].join(', ')})`;
 
 // One grid, two densities. Cells arrive already classified by the parent
 // (gridKind over canonical rows); this component never derives status itself.
@@ -325,15 +331,18 @@ button {
 }
 /* A cell inside a Network Range takes the range's color. An unconfigured cell
    is filled with it; a cell that already carries a status keeps that color
-   and shows the range as a stripe along its foot. */
+   and shows the range as a stripe along its foot. The stripe is a background
+   layer, not a shadow, so the compact grid keeps its shadow-drawn lines. */
 .address-grid button.ranged.available,
 .compact-address-grid button.ranged.available {
   background: color-mix(in srgb, var(--range-color) 55%, var(--cid-surface-card));
   color: var(--cid-text-color);
 }
-.address-grid button.ranged:not(.available),
+.address-grid button.ranged:not(.available) {
+  background-image: linear-gradient(to top, var(--range-color) 3px, transparent 3px);
+}
 .compact-address-grid button.ranged:not(.available) {
-  box-shadow: inset 0 -3px 0 var(--range-color);
+  background-image: linear-gradient(to top, var(--range-color) 2px, transparent 2px);
 }
 .grid-key {
   margin-top: 0.65rem;
@@ -346,9 +355,6 @@ button {
 }
 .grid-key i.rogue {
   border: 2px solid var(--cid-red-500);
-}
-.grid-key i.ranged {
-  background: conic-gradient(#ec4899, #84cc16, #0ea5e9, #b45309, #ec4899);
 }
 .grid-key i.available {
   border: 1px solid var(--preview-line);

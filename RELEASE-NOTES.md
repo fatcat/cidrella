@@ -455,6 +455,11 @@ first on a 0.4.17 host.
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and
   showed as a dash.
 
+- Several networks can be allocated at once. Check unallocated networks
+  and choose Allocate N networks from the row menu. Each keeps the name it
+  was given (a network still named by its CIDR takes the name template) and
+  gets the default gateway, with no reverse DNS zone or DHCP scope. A
+  network that fails is reported and stays in the dialog.
 - A new network is always created unallocated: address space only, with a
   name, folder, VLAN and description. Gateway, domain, scanning, reverse DNS
   and DHCP are chosen when you allocate it, and the Add Network form no

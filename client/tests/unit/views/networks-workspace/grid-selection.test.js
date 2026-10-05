@@ -1,6 +1,8 @@
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
 import AddressGrid from '../../../../src/views/networks-workspace/AddressGrid.vue';
+import { RANGE_COLOR_PRESETS } from '../../../../src/utils/rangeTypeColors.js';
+
 import {
   MAX_BULK_ADDRESSES,
   addressIdentity,
@@ -186,6 +188,9 @@ describe('workspace address selection', () => {
     expect(buttons[1].classes()).toEqual(expect.arrayContaining(['dns', 'ranged']));
     expect(buttons[2].classes()).not.toContain('ranged');
     expect(buttons[2].attributes('style')).toBeUndefined();
+    // The legend swatch is drawn from the colors a type can be given.
+    const swatch = wrapper.find('.grid-key i.ranged').attributes('style');
+    for (const color of RANGE_COLOR_PRESETS) expect(swatch).toContain(color);
   });
 
   it('clears the selection on a press outside the cells, but not inside a menu or on a cell', async () => {

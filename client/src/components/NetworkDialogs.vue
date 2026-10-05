@@ -1186,20 +1186,31 @@
   <!-- Group Allocate Dialog -->
   <Dialog
     v-model:visible="showGroupConfigure"
-    header="Allocate Group"
+    :header="groupDropFolderId == null ? 'Allocate Networks' : 'Allocate Group'"
     modal
     :style="{ width: '28rem' }"
     data-track="dialog-group-allocate"
   >
     <p>
-      Allocate <strong>{{ groupDropIds.length }}</strong> networks to this folder?
+      Allocate <strong>{{ groupDropIds.length }}</strong> networks{{
+        groupDropFolderId == null ? '' : ' to this folder'
+      }}?
     </p>
-    <p style="font-size: 0.85rem; color: var(--cid-text-muted-color)">
-      Each network will be named using the current template and allocated with default settings.
+    <ul class="group-allocate-list">
+      <li v-for="network in groupNetworks" :key="network.id" class="mono">{{ network.cidr }}</li>
+    </ul>
+    <p class="muted text-sm">
+      Each keeps the name it was given, or takes the name template when it has none, and gets the
+      default gateway. No reverse DNS zone or DHCP scope is created; add those by editing a network.
     </p>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showGroupConfigure = false" />
-      <Button label="Allocate All" @click="executeGroupConfigure" :loading="saving" />
+      <Button
+        label="Allocate All"
+        data-track="group-allocate-confirm"
+        @click="executeGroupConfigure"
+        :loading="saving"
+      />
     </template>
   </Dialog>
 </template>
@@ -2871,38 +2882,78 @@ const showGroupConfigure = ref(false);
 const groupDropIds = ref([]);
 const groupDropFolderId = ref(null);
 
+// The networks the group dialog allocates, each with its id, CIDR and name.
+const groupNetworks = computed(() =>
+  groupDropIds.value
+    .map((id) => groupNetworkData.value.get(Number(id)) || findSubnetInTree(id))
+    .filter(Boolean),
+);
+const groupNetworkData = ref(new Map());
+
+// A network still named by its CIDR takes the name template; one the operator
+// named keeps that name.
+async function allocationName(network) {
+  if (network.name && network.name !== network.cidr) return network.name;
+  try {
+    const res = await api.post('/subnets/configuration-preview', { cidr: network.cidr });
+    return res.data?.suggested_name || network.cidr;
+  } catch {
+    return networkNameFromTemplate(props.nameTemplate, network.cidr);
+  }
+}
+
 async function executeGroupConfigure() {
   saving.value = true;
-  const count = groupDropIds.value.length;
+  const failed = [];
+  const failedIds = new Set();
+  let allocated = 0;
   try {
-    for (const id of groupDropIds.value) {
-      const subnet = findSubnetInTree(id);
-      if (!subnet) continue;
-      const autoName = networkNameFromTemplate(props.nameTemplate, subnet.cidr);
-      await store.configureSubnet(
-        id,
-        {
-          name: autoName,
-          description: '',
-          vlan_id: null,
-          gateway_address: '',
-          create_dhcp_scope: false,
-          create_reverse_dns: false,
-          dhcp_start_ip: '',
-          dhcp_end_ip: '',
-          folder_id: groupDropFolderId.value,
-        },
-        { refresh: false },
-      );
+    for (const network of groupNetworks.value) {
+      try {
+        await store.configureSubnet(
+          network.id,
+          {
+            name: await allocationName(network),
+            description: network.description || '',
+            vlan_id: network.vlan_id ?? null,
+            gateway_address: '',
+            create_dhcp_scope: false,
+            create_reverse_dns: false,
+            dhcp_start_ip: '',
+            dhcp_end_ip: '',
+            ...(groupDropFolderId.value == null ? {} : { folder_id: groupDropFolderId.value }),
+          },
+          { refresh: false },
+        );
+        allocated += 1;
+      } catch (err) {
+        failed.push(`${network.cidr}: ${apiError(err)}`);
+        failedIds.add(network.id);
+      }
     }
     await store.fetchTree();
+    if (allocated) {
+      toast.add({
+        severity: 'success',
+        summary: `${allocated} network${allocated === 1 ? '' : 's'} allocated`,
+        life: 3000,
+      });
+      emit('group-configured');
+    }
+    if (failed.length) {
+      toast.add({
+        severity: 'error',
+        summary: `${failed.length} network${failed.length === 1 ? '' : 's'} not allocated`,
+        detail: failed.join('; '),
+        life: 8000,
+      });
+      // Keep the dialog on the ones that are left.
+      groupDropIds.value = [...failedIds];
+      return;
+    }
     showGroupConfigure.value = false;
     groupDropIds.value = [];
     groupDropFolderId.value = null;
-    toast.add({ severity: 'success', summary: `${count} networks allocated`, life: 3000 });
-    emit('group-configured');
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     saving.value = false;
   }
@@ -3134,9 +3185,15 @@ async function openMergeConfirm(ids) {
   }
 }
 
-function openGroupConfigure(leafIds, folderId) {
-  groupDropIds.value = leafIds;
-  groupDropFolderId.value = folderId;
+// `networks` are ids (the classic tree's drop) or network rows (a workspace
+// selection); a row brings its own CIDR and name.
+function openGroupConfigure(networks, folderId = null) {
+  const rows = (networks || []).filter((item) => typeof item === 'object');
+  groupNetworkData.value = new Map(rows.map((row) => [Number(row.id), row]));
+  groupDropIds.value = (networks || []).map((item) =>
+    Number(typeof item === 'object' ? item.id : item),
+  );
+  groupDropFolderId.value = folderId ?? null;
   showGroupConfigure.value = true;
 }
 
@@ -3160,6 +3217,12 @@ defineExpose({
 </script>
 
 <style scoped>
+.group-allocate-list {
+  max-height: 10rem;
+  overflow: auto;
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
 .form-grid {
   display: flex;
   flex-direction: column;
