@@ -562,7 +562,7 @@
       @discard="divideDiscard.discard"
     />
     <p>
-      Network: <strong>{{ props.selectedNode?.data.cidr }}</strong>
+      Network: <strong>{{ divideNode?.data.cidr }}</strong>
     </p>
 
     <div class="divide-mode-toggle">
@@ -643,8 +643,8 @@
             <span class="carve-slash">/</span>
             <InputNumber
               v-model="carvePrefix"
-              :min="(props.selectedNode?.data.prefix_length || 0) + 1"
-              :max="maxPrefixFor(props.selectedNode?.data.cidr)"
+              :min="(divideNode?.data.prefix_length || 0) + 1"
+              :max="maxPrefixFor(divideNode?.data.cidr)"
               class="carve-prefix-input"
               :useGrouping="false"
             />
@@ -680,7 +680,7 @@
       </div>
     </template>
 
-    <Message v-if="props.selectedNode?.data.status === 'allocated'" severity="warn" class="mt-3">
+    <Message v-if="divideNode?.data.status === 'allocated'" severity="warn" class="mt-3">
       This network is allocated. Its configuration, leases, and reservations will be transferred to
       the resulting networks.
     </Message>
@@ -699,7 +699,7 @@
       before dividing.
     </Message>
 
-    <div v-if="props.selectedNode?.data.gateway_policy === 'custom'" class="divide-preview">
+    <div v-if="divideNode?.data.gateway_policy === 'custom'" class="divide-preview">
       <h4>Gateway policy for resulting networks</h4>
       <div v-for="cidr in divideResultCidrs" :key="`gateway-${cidr}`" class="field">
         <label>{{ cidr }}</label>
@@ -1932,6 +1932,11 @@ async function createSupernet() {
 
 // ── Divide dialog ──
 const showDivide = ref(false);
+// The network the divide dialog works on: the one it was opened for, which
+// the parent's selected node can differ from (a menu on one network while
+// another, or a deleted one, is still selected).
+const divideNodeOverride = ref(null);
+const divideNode = computed(() => divideNodeOverride.value || props.selectedNode);
 const divideMode = ref('equal');
 const divideModeOptions = [
   { label: 'Equal Division', value: 'equal' },
@@ -1947,8 +1952,8 @@ const carveValidationError = computed(() => {
   const cidr = carveCidr.value;
   if (!carveNetwork.value) return 'Enter a network address';
   if (!isValidNetwork(cidr)) return 'Invalid CIDR notation';
-  if (!props.selectedNode) return null;
-  const parentCidr = props.selectedNode.data.cidr;
+  if (!divideNode.value) return null;
+  const parentCidr = divideNode.value.data.cidr;
   const normalized = normalizeNetwork(cidr);
   const parentParsed = parseNetwork(parentCidr);
   const childParsed = parseNetwork(normalized);
@@ -1960,31 +1965,31 @@ const carveValidationError = computed(() => {
 
 const carvePreview = computed(() => {
   const cidr = carveCidr.value;
-  if (!carveNetwork.value || !props.selectedNode || carveValidationError.value) return null;
+  if (!carveNetwork.value || !divideNode.value || carveValidationError.value) return null;
   try {
-    return subtractNetwork(props.selectedNode.data.cidr, normalizeNetwork(cidr));
+    return subtractNetwork(divideNode.value.data.cidr, normalizeNetwork(cidr));
   } catch {
     return null;
   }
 });
 
 const maxDivideSteps = computed(() => {
-  if (!props.selectedNode) return 1;
-  const bound = maxPrefixFor(props.selectedNode.data.cidr) - props.selectedNode.data.prefix_length;
+  if (!divideNode.value) return 1;
+  const bound = maxPrefixFor(divideNode.value.data.cidr) - divideNode.value.data.prefix_length;
   return Math.max(1, Math.min(bound, 8));
 });
 
 const maxDivideCount = computed(() => Math.pow(2, maxDivideSteps.value));
 
 const divideTargetPrefix = computed(() => {
-  if (!props.selectedNode) return 32;
-  return props.selectedNode.data.prefix_length + divideSteps.value;
+  if (!divideNode.value) return 32;
+  return divideNode.value.data.prefix_length + divideSteps.value;
 });
 
 const dividePreviewSubnets = computed(() => {
-  if (!props.selectedNode) return [];
-  const parentCidr = props.selectedNode.data.cidr;
-  const targetPrefix = props.selectedNode.data.prefix_length + divideSteps.value;
+  if (!divideNode.value) return [];
+  const parentCidr = divideNode.value.data.cidr;
+  const targetPrefix = divideNode.value.data.prefix_length + divideSteps.value;
   if (targetPrefix > maxPrefixFor(parentCidr)) return [];
   // The shared helper returns parsed networks and throws on an impossible
   // split; the preview wants the CIDR strings and an empty list.
@@ -2043,7 +2048,7 @@ const divideResultCidrs = computed(() =>
 watch(
   divideResultCidrs,
   (cidrs) => {
-    const parent = props.selectedNode?.data;
+    const parent = divideNode.value?.data;
     if (parent?.gateway_policy !== 'custom') return;
     const next = {};
     for (const cidr of cidrs) {
@@ -2056,7 +2061,7 @@ watch(
 );
 
 function divideTargetGateways() {
-  if (props.selectedNode?.data.gateway_policy !== 'custom') return undefined;
+  if (divideNode.value?.data.gateway_policy !== 'custom') return undefined;
   return divideResultCidrs.value.map((cidr) => ({ cidr, ...divideGatewayPolicies.value[cidr] }));
 }
 
@@ -2068,7 +2073,7 @@ const divideAddsDefaultScopes = computed(() =>
 );
 
 async function refreshDividePreview() {
-  if (!showDivide.value || !props.selectedNode?.data?.id) return;
+  if (!showDivide.value || !divideNode.value?.data?.id) return;
   if (divideMode.value === 'carve' && (carveValidationError.value || !carveNetwork.value)) {
     serverDividePreview.value = null;
     return;
@@ -2078,7 +2083,7 @@ async function refreshDividePreview() {
   dividePreviewError.value = null;
   divideStaleNotice.value = '';
   try {
-    const preview = await store.previewDivide(props.selectedNode.data.id, {
+    const preview = await store.previewDivide(divideNode.value.data.id, {
       ...(divideMode.value === 'equal'
         ? { new_prefix: divideTargetPrefix.value }
         : { cidr: normalizeNetwork(carveCidr.value) }),
@@ -2132,8 +2137,8 @@ function lossyCarriesLabel(carries) {
 }
 
 async function executeDivide() {
-  const nodeId = props.selectedNode.data.id;
-  const isAllocated = props.selectedNode.data.status === 'allocated';
+  const nodeId = divideNode.value.data.id;
+  const isAllocated = divideNode.value.data.status === 'allocated';
   const params = {
     new_prefix: divideTargetPrefix.value,
     force: isAllocated,
@@ -2144,8 +2149,8 @@ async function executeDivide() {
 }
 
 async function executeCarve() {
-  const nodeId = props.selectedNode.data.id;
-  const isAllocated = props.selectedNode.data.status === 'allocated';
+  const nodeId = divideNode.value.data.id;
+  const isAllocated = divideNode.value.data.status === 'allocated';
   const params = {
     cidr: normalizeNetwork(carveCidr.value),
     force: isAllocated,
@@ -3085,10 +3090,11 @@ async function openCreateNetwork(folderId) {
 }
 
 function openDivide(node) {
+  divideNodeOverride.value = node || null;
   divideMode.value = 'equal';
   divideSteps.value = 1;
   divideCount.value = 2;
-  const d = (node || props.selectedNode)?.data;
+  const d = divideNode.value?.data;
   if (d) {
     carveNetwork.value = d.network_address || d.cidr.split('/')[0];
     carvePrefix.value = d.prefix_length + 1;

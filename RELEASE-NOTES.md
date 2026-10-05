@@ -393,6 +393,12 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- Divide Network worked on the selected network instead of the one it was
+  opened for. Opening it from the menu of one network while another (or one
+  already deleted or merged) was selected previewed and divided the selected
+  one: "subnet not found" for a deleted network, or an allocated network
+  divided and its children allocated. The dialog now keeps the network it was
+  opened for.
 - In the address grid, a press anywhere but on a cell clears the selection.
   A press inside a menu or dialog keeps it, since that is where a selection
   is acted on.

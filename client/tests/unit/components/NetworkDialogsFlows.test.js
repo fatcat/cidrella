@@ -256,6 +256,21 @@ describe('NetworkDialogs transformation and two-step flows', () => {
     expect(toast.add).not.toHaveBeenCalledWith(expect.objectContaining({ severity: 'error' }));
   });
 
+  it('divides the network the dialog was opened for, not a stale selected one', async () => {
+    store.previewDivide.mockResolvedValue({
+      plan: { dependency_token: 'tok', plan_id: 'p', targets: [], conflicts: [] },
+    });
+    store.divideSubnet.mockResolvedValue({});
+    const stale = { key: 'subnet-14', data: { ...node.data, id: 14, cidr: '1.1.2.0/24' } };
+    const wrapper = mountDialogs({ selectedNode: stale });
+    wrapper.vm.openDivide(node);
+    await settle();
+    expect(store.previewDivide).toHaveBeenCalledWith(42, expect.anything());
+    await wrapper.vm.executeDivide();
+    await settle();
+    expect(store.divideSubnet).toHaveBeenCalledWith(42, expect.anything());
+  });
+
   it('N-10 reports what the server did with a delete, not the menu label', async () => {
     store.deleteSubnet.mockResolvedValue({ message: 'Subnet deleted', action: 'children_deleted' });
     const wrapper = mountDialogs();
