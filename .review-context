@@ -1,0 +1,3 @@
+- .gitignore is intentionally untracked and removed from the repo. Each deployment maintains its own .gitignore locally. Do not flag this as an issue.
+- Bundled Node runtime artifacts are generated release assets, not source. Do not review or flag generated runtime trees such as dist/.node-cache/, dist/cidrella-*/runtime/node/, or node-v*-linux-*.tar.xz if they appear in local context. They should normally be ignored/untracked.
+- package-lock.json changes may be large and mechanical after npm security/routine updates. Review them for obvious dependency drift or unsafe lifecycle/tooling changes, but do not treat ordinary lockfile churn as hand-authored application code.

@@ -19,9 +19,11 @@ import api from './api/client.js';
 import { useDebugStore } from './stores/debug.js';
 import { useThemeStore } from './stores/theme.js';
 import { migrateStorageKeys } from './utils/storage.js';
+import { installStaleChunkReload } from './utils/stale-chunk-reload.js';
 
 // One-time migration from ipam_ to cidrella_ localStorage keys
 migrateStorageKeys();
+installStaleChunkReload();
 
 const app = createApp(App);
 const pinia = createPinia();

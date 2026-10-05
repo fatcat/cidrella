@@ -313,6 +313,16 @@ first on a 0.4.17 host.
   address with no row.
 - Address tables offer a Last Scanned column, and the address panel shows
   it.
+- **DHCP Bulk Change.** Settings, DHCP has a Bulk Change tab: the defaults
+  editor beside a list of the family's scopes. It starts from your DHCPv4 (or,
+  with IPv6 on, DHCPv6) defaults, can reset to the defaults CIDRella ships,
+  and shows per scope which options would change, old and new. Each selected
+  scope gets exactly the options ticked under Apply (typing a value into a
+  blank row ticks it); a blank Subnet Mask,
+  Router, Domain, Search List or DNS Servers is filled from that scope's
+  network, as for a new scope. Lease time and pools stay as they are. A
+  checkbox (on by default) saves the editor as your defaults too. A
+  SLAAC-only scope sends no options and is listed but not selectable.
 
 ### Changed
 - **History no longer records every probe.** A scan that only confirms an
@@ -421,6 +431,11 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- **A tab left open across an update no longer breaks on its next page.**
+  It asked for script files the new build had replaced, the server answered
+  with the app's page instead of a 404, and the browser stopped with "Failed
+  to fetch dynamically imported module". A missing file under `/assets/` is
+  now a 404, and the app reloads itself once to pick up the new build.
 - Divide Network worked on the selected network instead of the one it was
   opened for. Opening it from the menu of one network while another (or one
   already deleted or merged) was selected previewed and divided the selected

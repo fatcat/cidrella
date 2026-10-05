@@ -48,7 +48,9 @@ import {
   createCustomOption,
   deleteCustomOption,
   replaceDefaultOptions,
+  SHIPPED_DEFAULT_OPTIONS,
 } from '../models/dhcp-option.js';
+import { bulkChangeScopeOptions } from '../models/dhcp-bulk-options.js';
 import { scopeMatches } from '../models/workspace-view.js';
 import { UNGROUPED } from '../utils/validation.js';
 
@@ -118,6 +120,28 @@ function validateDefaultOption(opt, family = 4) {
   if (codeErr) return codeErr;
   if (opt.value == null || opt.value === '') return null;
   return validateScopeOption(opt, family);
+}
+
+// The option list and enabled codes the defaults editor sends, shared by
+// saving defaults and by Bulk Change. Returns an error message or null.
+function defaultsBodyError(options, enabledDefaults, family) {
+  const { maxCode } = optionCatalogFor(family);
+  if (!Array.isArray(options)) return 'options must be an array of { code, value }';
+  if (options.length > 254) return 'options may contain at most 254 entries';
+  for (const opt of options) {
+    const err = validateDefaultOption(opt, family);
+    if (err) return `Default option ${opt?.code ?? '?'}: ${err}`;
+  }
+  if (enabledDefaults !== undefined) {
+    if (!Array.isArray(enabledDefaults)) return 'enabledDefaults must be an array';
+    if (enabledDefaults.length > 254) return 'enabledDefaults may contain at most 254 entries';
+    for (const code of enabledDefaults) {
+      if (!isOptionCodeAllowed(code, family)) {
+        return `enabledDefaults must contain integer option codes 1-${maxCode}`;
+      }
+    }
+  }
+  return null;
 }
 
 // Helper: parse and validate a JSON IP array field for a scope of `family`.
@@ -570,6 +594,82 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   audit(req.user.id, 'dhcp_scope_updated', 'dhcp_scope', scope.id, { changes: req.body });
   req.afterCommit('regenerate_dhcp');
   res.json(updated);
+});
+
+// POST /api/dhcp/scopes/bulk-options/preview and POST /api/dhcp/scopes/bulk-options
+// (Settings, DHCP, Bulk Change). Body: { family, options: [{code, value}],
+// enabledDefaults: [codes], scope_ids (apply only), save_defaults }. Both
+// answer every scope of the family with what applying would change; the
+// preview writes nothing.
+function bulkOptionsRequest(req, res) {
+  const body = req.body || {};
+  const family = familyParam(body.family);
+  if (family === null) {
+    res.status(400).json({ error: FAMILY_PARAM_ERROR });
+    return null;
+  }
+  if (family === 6 && refuseIpv6Unless(res)) return null;
+  const enabled = body.enabledDefaults ?? [];
+  const bodyErr = defaultsBodyError(body.options, enabled, family);
+  if (bodyErr) {
+    res.status(400).json({ error: bodyErr });
+    return null;
+  }
+  if (body.save_defaults !== undefined && typeof body.save_defaults !== 'boolean') {
+    res.status(400).json({ error: 'save_defaults must be true or false' });
+    return null;
+  }
+  return {
+    family,
+    options: body.options,
+    enabled,
+    saveDefaults: body.save_defaults === true,
+  };
+}
+
+router.post('/scopes/bulk-options/preview', requirePerm('dhcp:write'), (req, res) => {
+  const request = bulkOptionsRequest(req, res);
+  if (!request) return;
+  res.json(bulkChangeScopeOptions(getDb(), { ...request, preview: true }));
+});
+
+router.post('/scopes/bulk-options', requirePerm('dhcp:write'), (req, res) => {
+  const request = bulkOptionsRequest(req, res);
+  if (!request) return;
+  const ids = req.body.scope_ids;
+  if (
+    !Array.isArray(ids) ||
+    ids.length > 10000 ||
+    !ids.every((id) => Number.isInteger(id) && id > 0)
+  ) {
+    return res.status(400).json({ error: 'scope_ids must be an array of scope ids' });
+  }
+  if (ids.length === 0 && !request.saveDefaults) {
+    return res.status(400).json({ error: 'Select at least one scope' });
+  }
+  const db = getDb();
+  const known = new Set(
+    db
+      .prepare('SELECT id, address_family FROM dhcp_scopes')
+      .all()
+      .filter((scope) => (Number(scope.address_family) === 6 ? 6 : 4) === request.family)
+      .map((scope) => scope.id),
+  );
+  const unknown = ids.find((id) => !known.has(id));
+  if (unknown !== undefined) {
+    return res
+      .status(404)
+      .json({ error: `Scope ${unknown} is not a DHCPv${request.family} scope` });
+  }
+  const result = bulkChangeScopeOptions(db, { ...request, scopeIds: ids });
+  audit(req.user.id, 'dhcp_scope_options_bulk_changed', 'dhcp', null, {
+    address_family: request.family,
+    scope_ids: result.applied,
+    enabled: request.enabled,
+    defaults_saved: request.saveDefaults,
+  });
+  req.afterCommit('regenerate_dhcp');
+  res.json(result);
 });
 
 // DELETE /api/dhcp/scopes/:id
@@ -1247,6 +1347,15 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
     catalog,
     defaults,
     enabledDefaults,
+    // What CIDRella ships, for the Bulk Change tab's reset.
+    shipped: {
+      defaults: Object.fromEntries(
+        SHIPPED_DEFAULT_OPTIONS[family]
+          .filter((option) => option.value != null)
+          .map((option) => [option.code, option.value]),
+      ),
+      enabledDefaults: SHIPPED_DEFAULT_OPTIONS[family].map((option) => option.code),
+    },
     groups: DHCP_OPTION_GROUPS,
     customRange: catalogFor.customRange,
   });
@@ -1338,27 +1447,8 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   const family = familyParam(req.body.family);
   if (family === null) return res.status(400).json({ error: FAMILY_PARAM_ERROR });
   if (family === 6 && refuseIpv6Unless(res)) return;
-  const { maxCode } = optionCatalogFor(family);
-  if (!Array.isArray(options)) {
-    return res.status(400).json({ error: 'options must be an array of { code, value }' });
-  }
-  if (options.length > 254)
-    return res.status(400).json({ error: 'options may contain at most 254 entries' });
-  for (const opt of options) {
-    const err = validateDefaultOption(opt, family);
-    if (err) return res.status(400).json({ error: `Default option ${opt?.code ?? '?'}: ${err}` });
-  }
-  if (enabledDefaults !== undefined) {
-    if (!Array.isArray(enabledDefaults))
-      return res.status(400).json({ error: 'enabledDefaults must be an array' });
-    for (const code of enabledDefaults) {
-      if (!isOptionCodeAllowed(code, family)) {
-        return res
-          .status(400)
-          .json({ error: `enabledDefaults must contain integer option codes 1-${maxCode}` });
-      }
-    }
-  }
+  const bodyErr = defaultsBodyError(options, enabledDefaults, family);
+  if (bodyErr) return res.status(400).json({ error: bodyErr });
 
   const db = getDb();
   const updated = replaceDefaultOptions(db, options, enabledDefaults, family);

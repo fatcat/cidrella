@@ -113,7 +113,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `client/src/ui/*.js`, never from the package; `EmptyState`, `StatusDot`, `StatusBadge`,
   `AddressTypePill`, `ConfirmDialog` (every danger or warn confirmation, with
   `type-to-confirm` for the typed gates), `ScanToggle` (`inherits-from` names the parent),
-  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`, `networks-workspace/dialogs/RangeTypeDialog`
+  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`, `dhcp/DhcpOptionTable` (the DHCP option editor
+  table: Settings defaults and Bulk Change; `composables/useDhcpOptionCatalog.js` loads its
+  catalog and builds the request body), `networks-workspace/dialogs/RangeTypeDialog`
   + `RangeTypeFields` (the one Network Range Type editor: Settings uses the dialog, RangeEditor
   the fields inline; type writes go through the subnet store so its type cache drops), `WorkspaceHead` (title, lede, Refresh and the range select of a
   reworked Analytics section), `SeriesChart` (every area chart of minute rows, with per-series
@@ -153,6 +155,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   stateless one; anything treating a scope as a dynamic pool asks it), `utils/dnsmasq-lease-file.js`
   (`LEASE_FILE`, `readServerDuid`), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
+  `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
+  enabled set, blanks filled from its network; new scopes and Bulk Change),
   `isTopologyAddress` in `utils/cidr.js` (is this the network or broadcast address topology
   reserves; nothing on /31, /32, /127, /128), `macFromDuid` in `utils/duid.js`, client
   `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family),

@@ -78,11 +78,31 @@ export function replaceDefaultOptions(db, options, enabledDefaults, family = 4) 
 }
 
 /**
- * Seed the enabled-by-default rows both families start with. IPv4: mask,
- * router, DNS, domain, search list and the baked NTP pool. IPv6: DNS servers
- * (23) and the search list (24), both without a value, so a new scope gets
- * CIDRella's own address on the network and the network's domain, and the
- * baked IPv6 NTP pool (56). A row an install already has keeps its value.
+ * The defaults CIDRella ships, per family: every one enabled by default, most
+ * with no value so a scope fills it from its network. IPv4: mask, router,
+ * DNS, domain, search list and the baked NTP pool. IPv6: DNS servers (23) and
+ * the search list (24), so a new scope gets CIDRella's own address on the
+ * network and the network's domain, and the baked IPv6 NTP pool (56).
+ */
+export const SHIPPED_DEFAULT_OPTIONS = Object.freeze({
+  4: Object.freeze([
+    { code: 1, value: null },
+    { code: 3, value: null },
+    { code: 6, value: null },
+    { code: 15, value: null },
+    { code: 119, value: null },
+    { code: 42, value: DHCP_DEFAULT_NTP_SERVERS },
+  ]),
+  6: Object.freeze([
+    { code: 23, value: null },
+    { code: 24, value: null },
+    { code: 56, value: DHCP6_DEFAULT_NTP_SERVERS },
+  ]),
+});
+
+/**
+ * Seed SHIPPED_DEFAULT_OPTIONS for both families. A row an install already
+ * has keeps its value.
  */
 export function seedDefaultOptions(db) {
   const seed = db.transaction(() => {
@@ -97,14 +117,11 @@ export function seedDefaultOptions(db) {
         END
     `);
 
-    for (const code of [1, 3, 6, 15, 119]) {
-      insert.run(code, null, 1, 4);
+    for (const family of [4, 6]) {
+      for (const { code, value } of SHIPPED_DEFAULT_OPTIONS[family]) {
+        insert.run(code, value, 1, family);
+      }
     }
-    insert.run(42, DHCP_DEFAULT_NTP_SERVERS, 1, 4);
-    for (const code of [23, 24]) {
-      insert.run(code, null, 1, 6);
-    }
-    insert.run(56, DHCP6_DEFAULT_NTP_SERVERS, 1, 6);
   });
 
   seed();

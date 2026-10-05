@@ -104,7 +104,6 @@ export default [
       'client/src/components/ScopeDialog.vue',
       'client/src/components/settings/SettingsArea.vue',
       'client/src/views/Blocklists.vue',
-      'client/src/views/DHCP.vue',
       'client/src/views/GeoIP.vue',
       'client/src/views/networks-workspace/AddressDetailsPanel.vue',
       'client/src/views/networks-workspace/dialogs/AddressScanDialog.vue',

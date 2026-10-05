@@ -531,6 +531,13 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
+    // A built asset that is not there is a 404, never the SPA page: a tab
+    // from before a deploy asks for chunks the new build removed, and
+    // index.html in their place is refused as a script with no clear cause.
+    // The 404 lets the client's stale-chunk reload take over.
+    app.use('/assets', (req, res) => {
+      res.status(404).json({ error: 'Not found' });
+    });
     // SPA fallback, serve index.html for all non-API routes
     app.get(/^(?!\/api).*/, (req, res) => {
       res.sendFile(path.join(clientDist, 'index.html'));

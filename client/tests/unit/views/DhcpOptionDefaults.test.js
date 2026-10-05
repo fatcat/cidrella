@@ -12,6 +12,9 @@ vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => toast }));
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 
 const DHCP = (await import('../../../src/views/DHCP.vue')).default;
+const DhcpOptionTable = (await import('../../../src/components/dhcp/DhcpOptionTable.vue')).default;
+const placeholder = (wrapper, code, type) =>
+  wrapper.findComponent(DhcpOptionTable).vm.getOptionPlaceholder(code, type);
 
 const catalogs = {
   4: {
@@ -98,8 +101,8 @@ describe('DHCP option defaults editor by family', () => {
     expect(wrapper.text()).not.toContain('Router Advertisements');
     expect(wrapper.find('[data-track="dhcp-save-defaults"]').exists()).toBe(true);
     expect(wrapper.find('[data-track="dhcp-save-defaults-v6"]').exists()).toBe(false);
-    expect(wrapper.vm.getOptionPlaceholder(6, 'ip-list')).toBe('e.g. 192.168.1.1, 192.168.1.2');
-    expect(wrapper.vm.getOptionPlaceholder(15, 'text')).toBe("Defaults to network's domain");
+    expect(placeholder(wrapper, 6, 'ip-list')).toBe('e.g. 192.168.1.1, 192.168.1.2');
+    expect(placeholder(wrapper, 15, 'text')).toBe("Defaults to network's domain");
 
     wrapper.vm.defaultValues[15] = 'lab.test';
     await flushPromises();
@@ -123,10 +126,8 @@ describe('DHCP option defaults editor by family', () => {
     expect(wrapper.text()).toContain('Router Advertisements');
     expect(wrapper.find('[data-track="dhcp-save-defaults-v6"]').exists()).toBe(true);
     expect(wrapper.find('[data-track="dhcp-save-defaults"]').exists()).toBe(false);
-    expect(wrapper.vm.getOptionPlaceholder(56, 'ip-list')).toBe(
-      'e.g. fd00::53, 2606:4700:4700::1111',
-    );
-    expect(wrapper.vm.getOptionPlaceholder(23, 'ip-list')).toBe(
+    expect(placeholder(wrapper, 56, 'ip-list')).toBe('e.g. fd00::53, 2606:4700:4700::1111');
+    expect(placeholder(wrapper, 23, 'ip-list')).toBe(
       "Defaults to CIDRella's IPv6 address on the network",
     );
     expect(wrapper.vm.customRange).toEqual([1, 65535]);

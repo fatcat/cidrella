@@ -152,11 +152,7 @@ export function createAutoScopeV6(db, subnetId, parsed, domainName, { mode, pool
 
 /**
  * Copy the family's enabled-by-default options into a new scope, filling the
- * ones that default to a network fact: IPv4 gets mask, router, broadcast,
- * domain and DNS (CIDRella's address plus the fallback resolver); IPv6 gets
- * the search list (24) from the domain and DNS (23) from CIDRella's IPv6
- * address on the network, with no fallback since routers, prefixes and the
- * rest come from Router Advertisements.
+ * ones that default to a network fact (see fillScopeOptions).
  */
 export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
   const family = parsed.family === 6 ? 6 : 4;
@@ -165,12 +161,29 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
       'SELECT option_code, value FROM dhcp_option_defaults WHERE enabled_by_default = 1 AND address_family = ?',
     )
     .all(family);
+  const optionValues = fillScopeOptions(
+    enabledRows.map((row) => ({ code: row.option_code, value: row.value })),
+    { parsed, gateway, domain, serverIp: getServerIpForSubnet(cidr) },
+  );
+  writeScopeOptionRows(db, scopeId, family, optionValues);
+}
+
+/**
+ * The option set a scope gets from a list of enabled options, the way a new
+ * scope gets it: a blank value that defaults to a network fact is filled.
+ * IPv4 gets mask, router, broadcast, domain and DNS (CIDRella's address plus
+ * the fallback resolver); IPv6 gets the search list (24) from the domain and
+ * DNS (23) from CIDRella's IPv6 address on the network, with no fallback
+ * since routers, prefixes and the rest come from Router Advertisements.
+ * Returns a Map of code to value; a code still blank has a null value.
+ */
+export function fillScopeOptions(enabled, { parsed, gateway, domain, serverIp }) {
+  const family = parsed.family === 6 ? 6 : 4;
   const optionValues = new Map();
-  for (const row of enabledRows) {
-    optionValues.set(row.option_code, row.value != null ? row.value : null);
+  for (const { code, value } of enabled) {
+    optionValues.set(Number(code), value != null && value !== '' ? String(value) : null);
   }
-  const unset = (code) => !optionValues.has(code) || !optionValues.get(code);
-  const serverIp = getServerIpForSubnet(cidr);
+  const unset = (code) => !optionValues.get(code);
   if (family === 6) {
     if (domain && unset(24)) optionValues.set(24, domain);
     if (serverIp && unset(23)) optionValues.set(23, serverIp);
@@ -186,6 +199,11 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
       optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
     }
   }
+  return optionValues;
+}
+
+/** Store a scope's option rows from fillScopeOptions; blank values are skipped. */
+export function writeScopeOptionRows(db, scopeId, family, optionValues) {
   const insertOpt = db.prepare(
     'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, ?)',
   );

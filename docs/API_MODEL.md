@@ -153,8 +153,10 @@ omitted so pre-IPv6 callers are unchanged:
 
 | Endpoint | Family |
 | --- | --- |
-| `GET /api/dhcp/options?family=4\|6` | Catalog, defaults, `enabledDefaults`, custom options and `customRange` for that family. |
+| `GET /api/dhcp/options?family=4\|6` | Catalog, defaults, `enabledDefaults`, custom options and `customRange` for that family, and `shipped` (`{ defaults, enabledDefaults }`, what CIDRella ships). |
 | `PUT /api/dhcp/options/defaults` | Body `{ family, options, enabledDefaults }`; replaces only that family's rows. |
+| `POST /api/dhcp/scopes/bulk-options/preview` | Bulk Change. Body `{ family, options, enabledDefaults, save_defaults }`. Every scope of the family with `changes` (`{ code, before, after }` of its effective options) if it took this set; writes nothing. |
+| `POST /api/dhcp/scopes/bulk-options` | The same body plus `scope_ids`. Each listed scope gets exactly the enabled options, blanks filled from its network as for a new scope (`fillScopeOptions`); its other option rows and its pre-catalog `dns_servers`, `ntp_servers` and `domain_search` go. Lease time and pools are untouched. A SLAAC-only scope is skipped (`skip_reason`). With `save_defaults` the family's defaults are replaced first. |
 | `POST /api/dhcp/options/custom` | Body `address_family`; codes 128-254 for IPv4, 1-65535 for IPv6 minus the codes dnsmasq builds itself (1-7, 12-17, 39). |
 | `DELETE /api/dhcp/options/custom/:code?family=` | Deletes the option, its default and its scope values within that family. |
 
