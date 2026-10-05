@@ -183,14 +183,26 @@ watch(
 
 // A press anywhere but on a cell clears the selection. Menus, dialogs and
 // popups are where a selection is acted on, so a press inside one keeps it.
-const KEEPS_SELECTION =
-  '[role="menu"], [role="dialog"], [role="alertdialog"], .p-overlay, .p-popover';
+// The toolkit portals a select, autocomplete or date panel to the body, outside
+// the dialog that opened it, so those panels are named here too. While a modal
+// dialog is open nothing outside it clears the selection it is working on.
+const KEEPS_SELECTION = [
+  '[role="menu"]',
+  '[role="dialog"]',
+  '[role="alertdialog"]',
+  '[role="listbox"]',
+  '.p-anchored-overlay',
+  '[class*="-overlay"]',
+  '.p-popover',
+].join(', ');
+const MODAL_OPEN = '.p-dialog-mask, [role="dialog"][aria-modal="true"]';
 function clearOnOutsidePress(event) {
   if (event.button !== 0 || !props.selectedRows.length) return;
   const target = event.target;
   if (!(target instanceof Element)) return;
   if (viewRoot.value?.contains(target) && target.closest('button[aria-pressed]')) return;
   if (target.closest(KEEPS_SELECTION)) return;
+  if (globalThis.document?.querySelector(MODAL_OPEN)) return;
   emit('clear-selection');
 }
 

@@ -214,6 +214,20 @@ describe('workspace address selection', () => {
     press(outside, 2);
     expect(wrapper.emitted('clear-selection')).toBeUndefined();
 
+    // A select panel portaled to the body, and anything while a modal is open.
+    const panel = globalThis.document.createElement('div');
+    panel.className = 'p-select-overlay p-anchored-overlay';
+    const option = globalThis.document.createElement('li');
+    panel.append(option);
+    const mask = globalThis.document.createElement('div');
+    mask.className = 'p-dialog-mask';
+    globalThis.document.body.append(panel, mask);
+    press(option);
+    press(outside);
+    expect(wrapper.emitted('clear-selection')).toBeUndefined();
+    mask.remove();
+    panel.remove();
+
     press(outside);
     expect(wrapper.emitted('clear-selection')).toHaveLength(1);
 

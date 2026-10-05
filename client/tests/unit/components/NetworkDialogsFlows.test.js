@@ -97,12 +97,6 @@ const button = (wrapper, track, text) =>
     .findAll('button')
     .find((candidate) => candidate.text() === text);
 
-const reverseZoneBox = (wrapper) =>
-  dialog(wrapper, 'dialog-network-edit')
-    .findAll('label')
-    .find((label) => label.text().includes('Create reverse DNS zone'))
-    .find('input');
-
 async function settle() {
   await vi.runAllTimersAsync();
   await flushPromises();
@@ -123,71 +117,26 @@ beforeEach(() => {
 });
 
 describe('NetworkDialogs transformation and two-step flows', () => {
-  it('T-10 resumes configuration on the created root instead of creating it twice', async () => {
-    store.createSupernet.mockResolvedValue({ id: 77, cidr: '10.9.0.0/24' });
-    store.configureSubnet
-      .mockRejectedValueOnce({ response: { status: 502, data: { error: 'dnsmasq refused' } } })
-      .mockResolvedValue({ id: 77 });
-    const wrapper = mountDialogs();
-    await wrapper.vm.openCreateNetwork(null);
-    await settle();
-    await dialog(wrapper, 'dialog-network-edit').find('input').setValue('10.9.0.0/24');
-    await settle();
-    // A reverse zone makes this an allocating create, the one that can fail
-    // half-way.
-    await reverseZoneBox(wrapper).setValue(true);
-
-    await button(wrapper, 'dialog-network-edit', 'Create').trigger('click');
-    await settle();
-    expect(dialog(wrapper, 'dialog-network-create-confirm').text()).toContain(
-      'allocated network because you chose to create a reverse DNS zone',
-    );
-    await button(wrapper, 'dialog-network-create-confirm', 'Create').trigger('click');
-    await settle();
-    expect(store.createSupernet).toHaveBeenCalledTimes(1);
-    expect(store.configureSubnet).toHaveBeenCalledWith(
-      77,
-      expect.objectContaining({ name: 'Nine' }),
-    );
-    const editor = dialog(wrapper, 'dialog-network-edit');
-    expect(editor.exists()).toBe(true);
-    expect(editor.attributes('data-header')).toBe('Resume Configuration');
-    expect(wrapper.find('[data-track="network-save-error"]').text()).toContain(
-      '10.9.0.0/24 was created but not configured: dnsmasq refused',
-    );
-    expect(wrapper.emitted('network-created')).toHaveLength(1);
-
-    await button(wrapper, 'dialog-network-edit', 'Save').trigger('click');
-    await settle();
-    expect(store.createSupernet).toHaveBeenCalledTimes(1);
-    expect(store.configureSubnet).toHaveBeenCalledTimes(2);
-    expect(store.configureSubnet.mock.calls[1][0]).toBe(77);
-    expect(wrapper.emitted('network-configured')).toEqual([[77]]);
-    expect(dialog(wrapper, 'dialog-network-edit').exists()).toBe(false);
-  });
-
-  it('creates a network unallocated unless a DNS zone or DHCP scope is asked for', async () => {
+  it('creates a network unallocated, with no allocation settings to choose', async () => {
     store.createSupernet.mockResolvedValue({ id: 78, cidr: '10.8.0.0/24' });
     const wrapper = mountDialogs();
     await wrapper.vm.openCreateNetwork(null);
     await settle();
-    await dialog(wrapper, 'dialog-network-edit').find('input').setValue('10.8.0.0/24');
+    const editor = dialog(wrapper, 'dialog-network-edit');
+    await editor.find('input').setValue('10.8.0.0/24');
     await settle();
 
-    // Create says so first, and Cancel sends nothing.
-    await button(wrapper, 'dialog-network-edit', 'Create').trigger('click');
-    await settle();
-    expect(dialog(wrapper, 'dialog-network-create-confirm').text()).toContain(
-      '10.8.0.0/24 will be created as an unallocated network',
-    );
-    await button(wrapper, 'dialog-network-create-confirm', 'Cancel').trigger('click');
-    await settle();
-    expect(store.createSupernet).not.toHaveBeenCalled();
-    expect(dialog(wrapper, 'dialog-network-edit').exists()).toBe(true);
+    // Gateway, domain, scanning, reverse DNS and DHCP belong to allocation.
+    for (const label of [
+      'Gateway',
+      'Domain Name',
+      'Create reverse DNS zone',
+      'Create DHCP scope',
+    ]) {
+      expect(editor.text()).not.toContain(label);
+    }
 
     await button(wrapper, 'dialog-network-edit', 'Create').trigger('click');
-    await settle();
-    await button(wrapper, 'dialog-network-create-confirm', 'Create').trigger('click');
     await settle();
     expect(store.createSupernet).toHaveBeenCalledWith(
       expect.objectContaining({ cidr: '10.8.0.0/24' }),
@@ -195,27 +144,8 @@ describe('NetworkDialogs transformation and two-step flows', () => {
     expect(store.configureSubnet).not.toHaveBeenCalled();
     expect(wrapper.emitted('network-created')).toHaveLength(1);
     expect(dialog(wrapper, 'dialog-network-edit').exists()).toBe(false);
-  });
-
-  it('names both choices that make a new network allocated', async () => {
-    const wrapper = mountDialogs();
-    await wrapper.vm.openCreateNetwork(null);
-    await settle();
-    await dialog(wrapper, 'dialog-network-edit').find('input').setValue('10.7.0.0/24');
-    await settle();
-    await reverseZoneBox(wrapper).setValue(true);
-    await dialog(wrapper, 'dialog-network-edit')
-      .findAll('label')
-      .find((label) => label.text().includes('Create DHCP scope'))
-      .find('input')
-      .setValue(true);
-    await button(wrapper, 'dialog-network-edit', 'Create').trigger('click');
-    await settle();
-    expect(dialog(wrapper, 'dialog-network-create-confirm').text()).toContain(
-      'because you chose to create a reverse DNS zone and a DHCP scope',
-    );
-    expect(dialog(wrapper, 'dialog-network-create-confirm').text()).toContain(
-      'clear the "Create reverse DNS zone" and "Create DHCP scope" checkboxes',
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({ detail: expect.stringContaining('10.8.0.0/24 is unallocated') }),
     );
   });
 

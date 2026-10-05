@@ -97,15 +97,18 @@ const button = (wrapper, text) =>
   dialog(wrapper)
     .findAll('button')
     .find((candidate) => candidate.text() === text);
-// Create asks whether the network is created allocated; confirm it.
-async function confirmCreate(wrapper) {
-  await wrapper
-    .find('[data-track="dialog-network-create-confirm"]')
-    .findAll('button')
-    .find((candidate) => candidate.text() === 'Create')
-    .trigger('click');
-  await settle();
-}
+// Allocation settings live on the configure form: a new network is created
+// unallocated, so these open an unallocated network for allocation.
+const unallocated = (id, cidr) => ({
+  key: `subnet-${id}`,
+  data: {
+    id,
+    cidr,
+    status: 'unallocated',
+    prefix_length: Number(cidr.split('/')[1]),
+    address_family: cidr.includes(':') ? 6 : 4,
+  },
+});
 const checkbox = (wrapper, label) =>
   wrapper
     .findAll('label.toggle-label')
@@ -150,12 +153,9 @@ describe('NetworkDialogs with an IPv6 CIDR', () => {
   });
 
   it('hides the gateway, offers the DHCPv6 modes the server allows, and sends the choice', async () => {
-    store.createSupernet.mockResolvedValue({ id: 9, cidr: 'fd00:1234::/48' });
     store.configureSubnet.mockResolvedValue({ id: 9 });
     const wrapper = mountDialogs(true);
-    await wrapper.vm.openCreateNetwork(null);
-    await settle();
-    await dialog(wrapper).find('input').setValue('fd00:1234::/48');
+    await wrapper.vm.openConfigure(unallocated(9, 'fd00:1234::/48'));
     await settle();
 
     expect(dialog(wrapper).text()).not.toContain('IPv6 support is disabled');
@@ -173,12 +173,8 @@ describe('NetworkDialogs with an IPv6 CIDR', () => {
     expect(mode.attributes('data-value')).toBe('stateful');
     expect(dialog(wrapper).text()).toContain('Start IP');
 
-    await button(wrapper, 'Create').trigger('click');
+    await button(wrapper, 'Save').trigger('click');
     await settle();
-    await confirmCreate(wrapper);
-    expect(store.createSupernet).toHaveBeenCalledWith(
-      expect.objectContaining({ cidr: 'fd00:1234::/48' }),
-    );
     expect(store.configureSubnet).toHaveBeenCalledWith(
       9,
       expect.objectContaining({
@@ -190,22 +186,17 @@ describe('NetworkDialogs with an IPv6 CIDR', () => {
   });
 
   it('sends no DHCPv6 mode for an IPv4 network', async () => {
-    store.createSupernet.mockResolvedValue({ id: 4, cidr: '10.9.0.0/24' });
     store.configureSubnet.mockResolvedValue({ id: 4 });
     api.post.mockResolvedValue({
       data: { gateway_address: '10.9.0.1', suggested_name: 'Nine', default_dhcp_pool: null },
     });
     const wrapper = mountDialogs(true);
-    await wrapper.vm.openCreateNetwork(null);
-    await settle();
-    await dialog(wrapper).find('input').setValue('10.9.0.0/24');
+    await wrapper.vm.openConfigure(unallocated(4, '10.9.0.0/24'));
     await settle();
     expect(dialog(wrapper).text()).toContain('Gateway');
-    // A reverse zone is what allocates it here, so configure runs.
     await checkbox(wrapper, 'Create reverse DNS zone').setValue(true);
-    await button(wrapper, 'Create').trigger('click');
+    await button(wrapper, 'Save').trigger('click');
     await settle();
-    await confirmCreate(wrapper);
     const payload = store.configureSubnet.mock.calls[0][1];
     expect(payload).not.toHaveProperty('dhcp_v6_mode');
   });

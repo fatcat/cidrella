@@ -889,7 +889,9 @@
           />
         </div>
       </div>
-      <div v-if="dialogAddressFamily !== 6" class="field">
+      <!-- A new network is address space only. Gateway, domain, scanning, DNS
+           and DHCP are allocation settings, set when the network is allocated. -->
+      <div v-if="dialogAddressFamily !== 6 && networkDialogMode !== 'create'" class="field">
         <label>Gateway</label>
         <div class="gateway-row">
           <SelectButton
@@ -907,7 +909,7 @@
           class="w-full"
         />
       </div>
-      <div class="field">
+      <div v-if="networkDialogMode !== 'create'" class="field">
         <label>Domain Name</label>
         <div style="display: flex; gap: 0.25rem; align-items: center">
           <AutoComplete
@@ -934,11 +936,20 @@
         </div>
       </div>
       <ScanToggle
+        v-if="networkDialogMode !== 'create'"
         v-model="networkForm.scan_enabled"
         :resolved-enabled="resolvedGlobalScanEnabled"
         inherits-from="global default"
       />
-      <template v-if="networkDialogMode === 'configure' || networkDialogMode === 'create'">
+      <Message
+        v-if="networkSaveError"
+        severity="error"
+        :closable="false"
+        class="mt-1"
+        data-track="network-save-error"
+        >{{ networkSaveError }}</Message
+      >
+      <template v-if="networkDialogMode === 'configure'">
         <div class="field">
           <label class="toggle-label">
             <Checkbox v-model="networkForm.create_reverse_dns" binary />
@@ -956,14 +967,6 @@
             Create DHCP scope
           </label>
         </div>
-        <Message
-          v-if="networkSaveError"
-          severity="error"
-          :closable="false"
-          class="mt-1"
-          data-track="network-save-error"
-          >{{ networkSaveError }}</Message
-        >
         <template v-if="networkForm.create_dhcp_scope">
           <div v-if="dialogAddressFamily === 6" class="field">
             <label>DHCPv6 mode</label>
@@ -1007,7 +1010,7 @@
       <Button
         :label="networkDialogMode === 'create' ? 'Create' : 'Save'"
         data-track="network-save"
-        @click="requestNetworkSave"
+        @click="executeNetworkSave"
         :loading="saving"
         :disabled="networkDialogMode === 'create' && !!createCidrError"
       />
@@ -1091,31 +1094,6 @@
       <Button label="Yes" @click="confirmVlanAssignment" />
     </template>
   </Dialog>
-
-  <!-- Create Network: whether the new network is allocated -->
-  <ConfirmDialog
-    v-model:visible="confirmingCreate"
-    header="Create network"
-    severity="warn"
-    confirm-label="Create"
-    confirm-icon="pi pi-check"
-    width="28rem"
-    data-track="dialog-network-create-confirm"
-    confirm-track="network-create-confirm"
-    cancel-track="network-create-cancel"
-    @confirm="confirmNetworkCreate"
-  >
-    <p v-if="createAllocates">
-      <strong>{{ networkForm.cidr }}</strong> will be created as an
-      <strong>allocated</strong> network because you chose to create {{ createAllocationCauses }}.
-      To create it as unallocated, choose Cancel and clear the {{ createAllocationCheckboxes }}.
-    </p>
-    <p v-else>
-      <strong>{{ networkForm.cidr }}</strong> will be created as an
-      <strong>unallocated</strong> network: address space only, with no DNS zone or DHCP scope. Its
-      gateway, domain and scanning settings are applied when you allocate it.
-    </p>
-  </ConfirmDialog>
 
   <!-- Delete Network Dialog -->
   <ConfirmDialog
@@ -2324,9 +2302,6 @@ const dialogNetworkData = computed(
 );
 const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialog opens
 const dropTargetFolderIdForConfigure = ref(null);
-// Set when a two-step create made the root but configuration failed; Save
-// then configures that ID instead of creating a second root (N-04, T-10).
-const resumingConfiguration = ref(false);
 const networkSaveError = ref('');
 const networkState = () =>
   JSON.stringify({ form: networkForm.value, gateway: gatewayPosition.value });
@@ -2341,7 +2316,6 @@ const networkDiscard = useDiscardGuard({
 function showNetworkEditor() {
   networkFormBaseline = networkState();
   networkDiscard.reset();
-  resumingConfiguration.value = false;
   networkSaveError.value = '';
   showNetworkDialog.value = true;
 }
@@ -2439,8 +2413,7 @@ watch(
 
 const networkDialogHeader = computed(() => {
   if (networkDialogMode.value === 'create') return 'Add Network';
-  if (networkDialogMode.value === 'configure')
-    return resumingConfiguration.value ? 'Resume Configuration' : 'Configure Network';
+  if (networkDialogMode.value === 'configure') return 'Configure Network';
   return 'Edit Network';
 });
 
@@ -2750,89 +2723,29 @@ function shapeDhcpPayload(payload) {
   }
 }
 
-// A new network is created unallocated, as address space only, unless the
-// operator asks for a reverse DNS zone or a DHCP scope, which need an
-// allocated network. Create says which it will be before anything is sent.
-const confirmingCreate = ref(false);
-const createAllocates = computed(
-  () => !!(networkForm.value.create_dhcp_scope || networkForm.value.create_reverse_dns),
-);
-const createAllocationChoices = computed(() =>
-  [
-    networkForm.value.create_reverse_dns && ['a reverse DNS zone', 'Create reverse DNS zone'],
-    networkForm.value.create_dhcp_scope && ['a DHCP scope', 'Create DHCP scope'],
-  ].filter(Boolean),
-);
-const createAllocationCauses = computed(() =>
-  createAllocationChoices.value.map(([cause]) => cause).join(' and '),
-);
-const createAllocationCheckboxes = computed(() => {
-  const labels = createAllocationChoices.value.map(([, label]) => `"${label}"`);
-  return `${labels.join(' and ')} ${labels.length > 1 ? 'checkboxes' : 'checkbox'}`;
-});
-function requestNetworkSave() {
-  if (networkDialogMode.value === 'create') confirmingCreate.value = true;
-  else executeNetworkSave();
-}
-function confirmNetworkCreate() {
-  confirmingCreate.value = false;
-  executeNetworkSave();
-}
-
 async function executeNetworkSave() {
   saving.value = true;
   networkSaveError.value = '';
   try {
     if (networkDialogMode.value === 'create') {
-      // Create the supernet first, then configure it
+      // Address space only: a new network stays unallocated until the
+      // operator allocates it.
       const cidr = networkForm.value.cidr.trim();
       const created = await store.createSupernet({
         cidr,
         name: networkForm.value.name || undefined,
         folder_id: networkForm.value.folder_id || undefined,
         vlan_id: networkForm.value.vlan_id || undefined,
+        description: networkForm.value.description || undefined,
       });
       surfaceVlanWarning(created);
-      if (!createAllocates.value) {
-        showNetworkDialog.value = false;
-        toast.add({
-          severity: 'success',
-          summary: 'Network created',
-          detail: `${created.cidr || cidr} is unallocated`,
-          life: 3000,
-        });
-        emit('network-created');
-        return;
-      }
-      // A DNS zone or DHCP scope was asked for: configure (allocate) it.
-      const payload = { ...networkForm.value };
-      payload.name = payload.name || createAutoName.value || cidr;
-      delete payload.cidr;
-      delete payload.folder_id;
-      shapeDhcpPayload(payload);
-      let configured;
-      try {
-        configured = await store.configureSubnet(created.id, payload);
-      } catch (err) {
-        // The root exists now. Retarget the editor at its ID so Save resumes
-        // configuration; a second Save must never create a second root.
-        activeNetworkData.value = {
-          id: created.id,
-          cidr: created.cidr || cidr,
-          status: 'unallocated',
-          name: payload.name,
-          folder_id: networkForm.value.folder_id ?? null,
-        };
-        networkDialogMode.value = 'configure';
-        resumingConfiguration.value = true;
-        networkForm.value.name = payload.name;
-        networkSaveError.value = `Address space ${cidr} was created but not configured: ${apiError(err)}. Save again to resume configuration.`;
-        emit('network-created');
-        return;
-      }
-      surfaceVlanWarning(configured);
       showNetworkDialog.value = false;
-      toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
+      toast.add({
+        severity: 'success',
+        summary: 'Network created',
+        detail: `${created.cidr || cidr} is unallocated. Allocate it to give it a gateway, DNS and DHCP.`,
+        life: 4000,
+      });
       emit('network-created');
     } else if (networkDialogMode.value === 'configure') {
       const id = activeNetworkData.value?.id ?? props.selectedNode?.data?.id;
@@ -2847,7 +2760,6 @@ async function executeNetworkSave() {
       showNetworkDialog.value = false;
       toast.add({ severity: 'success', summary: 'Network configured', life: 3000 });
       emit('network-configured', id);
-      resumingConfiguration.value = false;
     } else {
       const id = activeNetworkData.value?.id ?? props.selectedNode?.data?.id;
       if (!id) throw new Error('No network selected for editing');
