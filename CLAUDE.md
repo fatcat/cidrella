@@ -153,8 +153,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `isTopologyAddress` in `utils/cidr.js` (is this the network or broadcast address topology
   reserves; nothing on /31, /32, /127, /128), `macFromDuid` in `utils/duid.js`, client
-  `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family) and
-  `divideGatewayDefault`, and in `views/networks-workspace-data.js` `addressCount`,
+  `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family),
+  `divideGatewayDefault`, `GATEWAY_POSITION_OPTIONS` and `inferGatewayPosition` (with
+  `components/GatewayField.vue`, the one gateway picker: network dialogs and the scope dialog), and in `views/networks-workspace-data.js` `addressCount`,
   `formatAddressCount` (BigInt-safe sizes) and `compareCellValues` (address-aware table sort), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
   record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe

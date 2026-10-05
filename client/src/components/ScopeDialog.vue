@@ -68,6 +68,18 @@
           Router Advertisements and CIDRella records what appears.
         </small>
       </div>
+      <GatewayField
+        v-if="scopeFamily !== 6 && network"
+        v-model:position="gateway.position"
+        v-model:address="gateway.address"
+        placeholder="10.0.0.1"
+        track="scope-gateway-position"
+      >
+        <small class="field-help">
+          The network's gateway, handed out as the router. Changing it here changes the gateway of
+          {{ network.name || network.cidr }}.
+        </small>
+      </GatewayField>
       <template v-if="showRangePicker && !form.range_id && scopeShowsPool">
         <div class="or-divider"><span>or define a new range</span></div>
         <div class="field-row">
@@ -250,7 +262,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, computed, watch } from 'vue';
+import { ref, reactive, computed, watch, nextTick } from 'vue';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import Dialog from '../ui/Dialog.js';
@@ -271,7 +283,10 @@ import {
   dhcpV6ModeError,
   DHCP_V6_MODE_LABELS,
   parseNetwork,
+  gatewayIpFromPosition,
+  inferGatewayPosition,
 } from '../utils/ip.js';
+import GatewayField from './GatewayField.vue';
 import SelectButton from '../ui/SelectButton.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
@@ -299,7 +314,7 @@ const subnetsList = ref([]);
 const networkDialogsRef = ref(null);
 let formBaseline = '';
 const scopeDiscard = useDiscardGuard({
-  isDirty: () => JSON.stringify(form.value) !== formBaseline,
+  isDirty: () => JSON.stringify(form.value) !== formBaseline || gatewayChanged.value,
   close: () => {
     dialogVisible.value = false;
   },
@@ -317,10 +332,112 @@ async function loadSuggestedPool(subnet) {
   if (!subnet?.cidr) return null;
   const { data } = await api.post('/subnets/configuration-preview', {
     cidr: subnet.cidr,
-    ...(subnet.gateway_address ? { gateway_address: subnet.gateway_address } : {}),
+    ...(subnet.gateway_address
+      ? { gateway_address: subnet.gateway_address }
+      : subnet.gateway_policy === 'none'
+        ? { gateway_policy: 'none' }
+        : {}),
   });
   return data.default_dhcp_pool;
 }
+
+// The pool last filled in from the server's suggestion. While the fields
+// still hold it, a gateway change refills them around the new gateway; once
+// the operator edits them they are left alone.
+let suggestedPool = null;
+function applySuggestedPool(pool) {
+  form.value.start_ip = pool?.start_ip || '';
+  form.value.end_ip = pool?.end_ip || '';
+  suggestedPool = { start: form.value.start_ip, end: form.value.end_ip };
+}
+
+// The network the scope belongs to, and its gateway as this dialog edits it.
+// A scope hands out its network's gateway as the router, so the choice here
+// is the network's: saving a change updates the network first.
+const network = ref(null);
+const gateway = ref({ position: 'first', address: '' });
+const gatewayChanged = computed(
+  () =>
+    Boolean(network.value) &&
+    scopeFamily.value !== 6 &&
+    (gateway.value.address || '').trim() !== (network.value.gateway_address || ''),
+);
+// Loading the network sets the gateway without it counting as an edit, so a
+// scope's own router override is not replaced on open.
+let loadingGateway = false;
+async function loadNetwork(subnetId) {
+  network.value = null;
+  if (!subnetId) return;
+  try {
+    const { data } = await api.get(`/subnets/${subnetId}`);
+    if (Number(form.value.subnet_id) !== Number(subnetId)) return;
+    loadingGateway = true;
+    network.value = data;
+    gateway.value = {
+      position: data.gateway_policy || inferGatewayPosition(data.cidr, data.gateway_address),
+      address: data.gateway_address || '',
+    };
+    await nextTick();
+  } catch {
+    network.value = null;
+  } finally {
+    loadingGateway = false;
+  }
+}
+watch(
+  () => gateway.value.position,
+  (position) => {
+    if (!network.value || loadingGateway) return;
+    if (position === 'first' || position === 'last') {
+      gateway.value.address = gatewayIpFromPosition(network.value.cidr, position) || '';
+    } else if (position === 'none') {
+      gateway.value.address = '';
+    }
+  },
+);
+watch(
+  () => gateway.value.address,
+  async (address, previous) => {
+    if (!network.value || loadingGateway) return;
+    const inferred = inferGatewayPosition(network.value.cidr, address);
+    // Typing an address makes it custom; first and last stay as chosen.
+    if (gateway.value.position !== inferred && !(inferred === 'none' && !address)) {
+      gateway.value.position = inferred;
+    }
+    // The router option follows the gateway, unless the scope overrides it.
+    const router = (address || '').trim();
+    const following =
+      !form.value.selectedOptions.includes(3) ||
+      (form.value.optionValues[3] || '').trim() === (previous || '').trim();
+    if (following && router) {
+      setOptionValue(form.value.selectedOptions, form.value.optionValues, 3, router);
+    } else if (following) {
+      form.value.selectedOptions = form.value.selectedOptions.filter((code) => code !== 3);
+      delete form.value.optionValues[3];
+    }
+    if (
+      editing.value ||
+      form.value.range_id ||
+      !suggestedPool ||
+      form.value.start_ip !== suggestedPool.start ||
+      form.value.end_ip !== suggestedPool.end
+    ) {
+      return;
+    }
+    try {
+      const pool = await loadSuggestedPool({
+        cidr: network.value.cidr,
+        gateway_address: router,
+        gateway_policy: gateway.value.position,
+      });
+      if (form.value.start_ip === suggestedPool.start && form.value.end_ip === suggestedPool.end) {
+        applySuggestedPool(pool);
+      }
+    } catch {
+      /* keep the pool as it is */
+    }
+  },
+);
 
 // Options state
 const optionCatalog = ref([]);
@@ -559,6 +676,14 @@ function toggleOption(code, checked) {
   }
 }
 
+// The network section follows the picked network.
+watch(
+  () => form.value.subnet_id,
+  (subnetId, oldSubnetId) => {
+    if (subnetId !== oldSubnetId) loadNetwork(subnetId);
+  },
+);
+
 // Auto-populate network-dependent options when a subnet is selected
 watch(
   () => form.value.subnet_id,
@@ -594,8 +719,7 @@ watch(
         try {
           const pool = await loadSuggestedPool(subnet);
           if (form.value.subnet_id !== subnetId || form.value.range_id) return;
-          form.value.start_ip = pool?.start_ip || '';
-          form.value.end_ip = pool?.end_ip || '';
+          applySuggestedPool(pool);
         } catch {
           /* ignore */
         }
@@ -648,8 +772,7 @@ watch(
       try {
         const pool = await loadSuggestedPool(subnet);
         if (form.value.subnet_id !== subnetId || form.value.range_id) return;
-        form.value.start_ip = pool?.start_ip || '';
-        form.value.end_ip = pool?.end_ip || '';
+        applySuggestedPool(pool);
       } catch {
         /* ignore */
       }
@@ -825,6 +948,23 @@ async function save() {
       payload.v6_mode = form.value.v6_mode;
     }
 
+    // The gateway is the network's: change it before the scope, so the pool
+    // checks and the router option see the new one.
+    if (gatewayChanged.value) {
+      const { position, address } = gateway.value;
+      const updated = await subnetStore.updateSubnet(
+        network.value.id,
+        position === 'custom'
+          ? { gateway_policy: 'custom', gateway_address: address.trim() }
+          : { gateway_policy: position },
+      );
+      network.value = {
+        ...network.value,
+        gateway_policy: updated?.gateway_policy ?? position,
+        gateway_address: updated?.gateway_address ?? (address.trim() || null),
+      };
+    }
+
     if (editing.value) {
       if (!multiPool.value) {
         if (form.value.start_ip) payload.start_ip = form.value.start_ip;
@@ -916,6 +1056,7 @@ async function save() {
  */
 async function openEdit(scope) {
   editing.value = scope;
+  suggestedPool = null;
   showRangePicker.value = false;
   contextCidr.value = scope.subnet_cidr || '';
   await loadOptions(scopeFamily.value);
@@ -966,6 +1107,7 @@ async function openEdit(scope) {
     v6_mode: scope.v6_mode || null,
   };
   optionsExpanded.value = form.value.selectedOptions.length > 0;
+  await loadNetwork(form.value.subnet_id);
   showScopeDialog();
 }
 
@@ -979,6 +1121,8 @@ async function openEdit(scope) {
  */
 async function openNewWithPicker(subnetCtx) {
   editing.value = null;
+  suggestedPool = null;
+  let poolSuggested = false;
   showRangePicker.value = true;
   contextCidr.value = subnetCtx?.cidr || '';
   await loadOptions(scopeFamily.value);
@@ -1016,6 +1160,7 @@ async function openNewWithPicker(subnetCtx) {
         const pool = await loadSuggestedPool(subnetCtx);
         autoStartIp = pool?.start_ip || '';
         autoEndIp = pool?.end_ip || '';
+        poolSuggested = true;
       } catch {
         /* defaults unavailable, leave explicit fields blank */
       }
@@ -1033,6 +1178,8 @@ async function openNewWithPicker(subnetCtx) {
     selectedOptions: autoSelected,
     optionValues: autoValues,
   };
+  if (poolSuggested) suggestedPool = { start: autoStartIp, end: autoEndIp };
+  await loadNetwork(form.value.subnet_id);
 
   loadingRanges.value = true;
   try {
@@ -1054,6 +1201,7 @@ async function openNewWithPicker(subnetCtx) {
  */
 async function openNewForRange(opts) {
   editing.value = null;
+  suggestedPool = null;
   showRangePicker.value = false;
   contextCidr.value = opts.cidr || '';
   await loadOptions(scopeFamily.value);
@@ -1092,6 +1240,7 @@ async function openNewForRange(opts) {
     optionValues: autoValues,
   };
   optionsExpanded.value = form.value.selectedOptions.length > 0;
+  await loadNetwork(form.value.subnet_id);
   showScopeDialog();
 }
 

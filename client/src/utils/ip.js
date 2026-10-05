@@ -141,6 +141,24 @@ export function normalizeGatewayPositionDefault(value) {
   return value === 'last' ? 'last' : 'first';
 }
 
+// Where a network's gateway sits: the choices every gateway field offers.
+export const GATEWAY_POSITION_OPTIONS = Object.freeze([
+  { label: 'First IP', value: 'first' },
+  { label: 'Last IP', value: 'last' },
+  { label: 'None', value: 'none' },
+  { label: 'Custom', value: 'custom' },
+]);
+
+/** The position a gateway address is at in its network: first, last, custom or none. */
+export function inferGatewayPosition(cidr, address) {
+  const addr = (address || '').trim();
+  if (!addr) return 'none';
+  if (!cidr || !isValidNetwork(cidr)) return 'custom';
+  if (addr === gatewayIpFromPosition(cidr, 'first')) return 'first';
+  if (addr === gatewayIpFromPosition(cidr, 'last')) return 'last';
+  return 'custom';
+}
+
 /**
  * Validate a DHCP pool against its subnet. Returns an operator-facing message,
  * or null when the pool is fine.

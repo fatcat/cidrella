@@ -450,9 +450,31 @@ describe('deployment step', () => {
     await w.find('[data-track="first-run-deployment-continue"]').trigger('click');
     await flushPromises();
     expect(api.put).toHaveBeenCalledWith('/setup/state', {
-      deployment: { role: 'dns', interfaces: { eth0: { dns: true, dhcp: false } } },
+      deployment: {
+        role: 'dns',
+        interfaces: { eth0: { dns: true, dhcp: false } },
+        gateway_position: 'first',
+      },
     });
     expect(stepOf(w)).toBe(4);
+    w.unmount();
+  });
+
+  it('asks where new networks put their gateway and remembers the answer', async () => {
+    const w = await atDeployment();
+    const choice = w.find('[data-track="first-run-gateway-position"]');
+    expect(choice.text()).toContain('First IP');
+    expect(choice.text()).not.toContain('Custom');
+    const last = choice.findAll('button').find((b) => b.text() === 'Last IP');
+    await last.trigger('click');
+    await w.find('[data-track="first-run-deployment-continue"]').trigger('click');
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith(
+      '/setup/state',
+      expect.objectContaining({
+        deployment: expect.objectContaining({ gateway_position: 'last' }),
+      }),
+    );
     w.unmount();
   });
 
@@ -468,13 +490,17 @@ describe('deployment step', () => {
 });
 
 describe('import step and start', () => {
-  async function atImport(role = 'both') {
+  async function atImport(role = 'both', deployment = {}) {
     auth.mustChangePassword = false;
     const w = mountWizard(
       serverState({
         password: true,
         totp: 'skipped',
-        deployment: { role, interfaces: { eth0: { dns: role !== 'dhcp', dhcp: role !== 'dns' } } },
+        deployment: {
+          role,
+          interfaces: { eth0: { dns: role !== 'dhcp', dhcp: role !== 'dns' } },
+          ...deployment,
+        },
       }),
     );
     await flushPromises();
@@ -505,6 +531,7 @@ describe('import step and start', () => {
     const ifaceAt = order[putCalls.findIndex(([url]) => url === '/interfaces/config')];
     const doneAt = order[putCalls.findIndex(([, body]) => body?.done === true)];
     expect(ifaceAt).toBeLessThan(subnets.updateSetting.mock.invocationCallOrder[0]);
+    expect(subnets.updateSetting).toHaveBeenCalledWith('default_gateway_position', 'first');
     expect(subnets.updateSetting).toHaveBeenCalledWith('setup_wizard_completed', 'true');
     expect(subnets.updateSetting.mock.invocationCallOrder[0]).toBeLessThan(doneAt);
     expect(doneAt).toBeLessThan(auth.fetchUser.mock.invocationCallOrder[0]);
@@ -514,7 +541,8 @@ describe('import step and start', () => {
   });
 
   it('Pi-hole: blocks until a preview exists, then Start creates the network before importing', async () => {
-    const w = await atImport('both');
+    // A resumed setup keeps the gateway answer from the deployment step.
+    const w = await atImport('both', { gateway_position: 'last' });
     await w.find('[data-track="first-run-import-pihole"]').trigger('click');
     let cont = w.find('[data-track="first-run-import-continue"]');
     expect(cont.attributes('disabled')).toBeDefined();
@@ -540,6 +568,7 @@ describe('import step and start', () => {
     await cont.trigger('click');
     await flushPromises();
     expect(stepOf(w)).toBe(5);
+    expect(w.text()).toContain('Last address of each new network');
 
     pihole.executeImport.mockImplementation(async () => {
       pihole.importResults.value = { a: { created: 1 } };
@@ -547,6 +576,11 @@ describe('import step and start', () => {
     await w.find('[data-track="first-run-start"]').trigger('click');
     await flushPromises();
     expect(subnets.createSupernet).toHaveBeenCalledWith({ cidr: '192.168.1.0/24' });
+    // The default is in place before the network is made, so it takes it.
+    expect(subnets.updateSetting).toHaveBeenCalledWith('default_gateway_position', 'last');
+    expect(subnets.updateSetting.mock.invocationCallOrder[0]).toBeLessThan(
+      subnets.createSupernet.mock.invocationCallOrder[0],
+    );
     expect(subnets.configureSubnet).toHaveBeenCalledWith(7, {
       name: '192.168.1.0/24',
       domain_name: 'home.arpa',

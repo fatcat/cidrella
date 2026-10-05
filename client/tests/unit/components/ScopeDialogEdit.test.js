@@ -3,7 +3,12 @@ import { flushPromises, mount } from '@vue/test-utils';
 
 const { dhcpStore, subnetStore, toast, api } = vi.hoisted(() => ({
   dhcpStore: { updateScope: vi.fn(), createScope: vi.fn(), fetchAvailableRanges: vi.fn() },
-  subnetStore: { folders: [], getRangeTypes: vi.fn(), createRange: vi.fn() },
+  subnetStore: {
+    folders: [],
+    getRangeTypes: vi.fn(),
+    createRange: vi.fn(),
+    updateSubnet: vi.fn(),
+  },
   toast: { add: vi.fn() },
   api: { get: vi.fn(), post: vi.fn() },
 }));
@@ -76,6 +81,7 @@ beforeEach(() => {
     ...Object.values(dhcpStore),
     subnetStore.getRangeTypes,
     subnetStore.createRange,
+    subnetStore.updateSubnet,
     toast.add,
     api.get,
     api.post,
@@ -338,5 +344,113 @@ describe('ScopeDialog on an IPv6 network', () => {
     await flushPromises();
     const [, payload] = dhcpStore.updateScope.mock.calls[0];
     expect(payload).not.toHaveProperty('v6_mode');
+  });
+});
+
+describe('the gateway choice', () => {
+  const network = {
+    id: 11,
+    name: 'Lab',
+    cidr: '10.0.0.0/24',
+    gateway_policy: 'first',
+    gateway_address: '10.0.0.1',
+  };
+  beforeEach(() => {
+    const fallback = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets/11' ? Promise.resolve({ data: network }) : fallback(url, config),
+    );
+    subnetStore.updateSubnet.mockImplementation((id, body) =>
+      Promise.resolve({ ...network, ...body, gateway_address: '10.0.0.254' }),
+    );
+  });
+
+  it("shows the network's gateway and leaves a scope's own router alone on open", async () => {
+    const wrapper = mountDialog();
+    await wrapper.vm.openEdit({
+      ...scope,
+      pools: [scope.pools[0]],
+      options: [{ option_code: 3, value: '10.0.0.9' }],
+    });
+    await flushPromises();
+    expect(wrapper.find('[data-track="scope-gateway-position"]').exists()).toBe(true);
+    expect(wrapper.vm.gateway).toEqual({ position: 'first', address: '10.0.0.1' });
+    expect(wrapper.vm.form.optionValues[3]).toBe('10.0.0.9');
+    expect(wrapper.vm.gatewayChanged).toBe(false);
+
+    await saveButton(wrapper).trigger('click');
+    await flushPromises();
+    expect(subnetStore.updateSubnet).not.toHaveBeenCalled();
+
+    // Moving the gateway keeps the override too.
+    await wrapper.vm.openEdit({
+      ...scope,
+      pools: [scope.pools[0]],
+      options: [{ option_code: 3, value: '10.0.0.9' }],
+    });
+    await flushPromises();
+    wrapper.vm.gateway.position = 'last';
+    await flushPromises();
+    expect(wrapper.vm.form.optionValues[3]).toBe('10.0.0.9');
+  });
+
+  it('moves the network gateway to the last address before saving the scope', async () => {
+    const wrapper = mountDialog();
+    await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });
+    await flushPromises();
+    wrapper.vm.gateway.position = 'last';
+    await flushPromises();
+    expect(wrapper.vm.gateway.address).toBe('10.0.0.254');
+    expect(wrapper.vm.form.optionValues[3]).toBe('10.0.0.254');
+    expect(wrapper.vm.gatewayChanged).toBe(true);
+
+    await saveButton(wrapper).trigger('click');
+    await flushPromises();
+    expect(subnetStore.updateSubnet).toHaveBeenCalledWith(11, { gateway_policy: 'last' });
+    expect(subnetStore.updateSubnet.mock.invocationCallOrder[0]).toBeLessThan(
+      dhcpStore.updateScope.mock.invocationCallOrder[0],
+    );
+  });
+
+  it('sends a typed address as a custom gateway, and None drops the router', async () => {
+    const wrapper = mountDialog();
+    await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });
+    await flushPromises();
+    wrapper.vm.gateway.address = '10.0.0.50';
+    await flushPromises();
+    expect(wrapper.vm.gateway.position).toBe('custom');
+    await saveButton(wrapper).trigger('click');
+    await flushPromises();
+    expect(subnetStore.updateSubnet).toHaveBeenCalledWith(11, {
+      gateway_policy: 'custom',
+      gateway_address: '10.0.0.50',
+    });
+
+    await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });
+    await flushPromises();
+    wrapper.vm.gateway.position = 'none';
+    await flushPromises();
+    expect(wrapper.vm.form.selectedOptions).not.toContain(3);
+  });
+
+  it('refills an untouched suggested pool around the new gateway', async () => {
+    api.post.mockImplementation((url, body) =>
+      Promise.resolve({
+        data: {
+          default_dhcp_pool:
+            body.gateway_address === '10.0.0.254'
+              ? { start_ip: '10.0.0.1', end_ip: '10.0.0.200' }
+              : { start_ip: '10.0.0.50', end_ip: '10.0.0.254' },
+        },
+      }),
+    );
+    dhcpStore.fetchAvailableRanges.mockResolvedValue([]);
+    const wrapper = mountDialog();
+    await wrapper.vm.openNewWithPicker(network);
+    await flushPromises();
+    expect(wrapper.vm.form.start_ip).toBe('10.0.0.50');
+    wrapper.vm.gateway.position = 'last';
+    await flushPromises();
+    expect(wrapper.vm.form).toMatchObject({ start_ip: '10.0.0.1', end_ip: '10.0.0.200' });
   });
 });

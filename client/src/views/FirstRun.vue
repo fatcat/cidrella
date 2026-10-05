@@ -177,6 +177,7 @@ async function start() {
 
     progress.value = 'Applying the deployment';
     await api.put('/interfaces/config', setup.deploymentPayload);
+    await subnets.updateSetting('default_gateway_position', setup.draft.gatewayPosition);
 
     if (setup.draft.importKind === 'pihole') {
       progress.value = 'Creating the network';

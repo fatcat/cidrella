@@ -289,6 +289,15 @@ first on a 0.4.17 host.
   available where DNS may claim the address (unassigned, an IP Reservation or
   the gateway, outside a DHCP pool) and needs `dns:write`. Elsewhere it is
   shown greyed out, with the reason as its tooltip.
+- **Gateway position in the DHCP scope dialog and first-run setup.** The scope
+  dialog shows its network's gateway as First IP, Last IP, None or Custom (an
+  IPv4 scope; DHCPv6 has no router option). The gateway is the network's, so
+  changing it updates the network, and with it the Gateway range, before the
+  scope saves. The router option follows the new gateway unless the scope
+  overrides it, and a new scope's untouched suggested pool is refilled around
+  it. First-run setup asks where new networks put their gateway (first or
+  last address) on the deployment step and sets New Network Defaults at Start,
+  before a Pi-hole import creates its network.
 
 ### Changed
 

@@ -20,6 +20,7 @@ export const useSetupStore = defineStore('setup', () => {
     interfaces: [], // [{ name, addresses, state, dns, dhcp }] from GET /api/interfaces
     importKind: 'fresh',
     network: { cidr: '', domain: '' }, // Pi-hole path only
+    gatewayPosition: 'first', // the default_gateway_position setting, applied at Start
   });
 
   // Both GET and PUT answer with the markers plus the served policy; one
@@ -35,6 +36,9 @@ export const useSetupStore = defineStore('setup', () => {
     const res = await api.get('/setup/state');
     absorb(res.data);
     if (state.value.deployment?.role) draft.role = state.value.deployment.role;
+    if (state.value.deployment?.gateway_position) {
+      draft.gatewayPosition = state.value.deployment.gateway_position;
+    }
     if (state.value.import?.kind) draft.importKind = state.value.import.kind;
     loaded.value = true;
     return state.value;
@@ -89,6 +93,7 @@ export const useSetupStore = defineStore('setup', () => {
     draft.interfaces = [];
     draft.importKind = 'fresh';
     draft.network = { cidr: '', domain: '' };
+    draft.gatewayPosition = 'first';
   }
 
   return {

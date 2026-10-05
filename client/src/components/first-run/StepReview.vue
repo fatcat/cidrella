@@ -26,6 +26,8 @@
       <dd>{{ draft.role === 'dhcp' ? 'off' : listFor('dns') }}</dd>
       <dt>DHCP on</dt>
       <dd>{{ draft.role === 'dns' ? 'off' : listFor('dhcp') }}</dd>
+      <dt>Gateway</dt>
+      <dd>{{ draft.gatewayPosition === 'last' ? 'Last' : 'First' }} address of each new network</dd>
       <dt>Upstream DNS</dt>
       <dd>Defaults, change under Settings &gt; DNS</dd>
       <dt>Import</dt>

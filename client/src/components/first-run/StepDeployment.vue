@@ -84,6 +84,24 @@
         class="fr-note-mark"
       /><span>{{ roleNote }}</span>
     </div>
+    <div class="fr-gateway">
+      <div>
+        <div class="fr-eyebrow">New networks</div>
+        <span class="fr-help">
+          Where a new network puts its gateway, and so the router its DHCP scope hands out. Change
+          it later under Settings &gt; General &gt; New Network Defaults.
+        </span>
+      </div>
+      <SelectButton
+        v-model="draft.gatewayPosition"
+        :options="GATEWAY_END_OPTIONS"
+        option-label="label"
+        option-value="value"
+        :allow-empty="false"
+        aria-label="Gateway position for new networks"
+        data-track="first-run-gateway-position"
+      />
+    </div>
     <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
 
     <div class="fr-actions">
@@ -107,10 +125,12 @@ import { ref, computed, onMounted } from 'vue';
 import Button from '../../ui/Button.js';
 import Message from '../../ui/Message.js';
 import Tag from '../../ui/Tag.js';
+import SelectButton from '../../ui/SelectButton.js';
 import ToggleSwitch from '../../ui/ToggleSwitch.js';
 import api from '../../api/client.js';
 import { useSetupStore } from '../../stores/setup.js';
 import { apiError } from '../../utils/format.js';
+import { GATEWAY_POSITION_OPTIONS } from '../../utils/ip.js';
 
 const emit = defineEmits(['next', 'back']);
 const setup = useSetupStore();
@@ -144,6 +164,12 @@ const ROLE_NOTE = {
   dns: 'DHCP is switched off globally. The DHCP column is locked; it can be enabled per interface later from Settings > General > Interfaces.',
   dhcp: 'DNS is switched off globally, so port 53 stays closed. Clients keep whatever resolver they have now.',
 };
+
+// A default places the gateway at an end of the network; None and Custom are
+// per-network choices.
+const GATEWAY_END_OPTIONS = GATEWAY_POSITION_OPTIONS.filter((o) =>
+  ['first', 'last'].includes(o.value),
+);
 
 const loading = ref(false);
 const saving = ref(false);
@@ -180,7 +206,13 @@ async function submit() {
   saving.value = true;
   error.value = '';
   try {
-    await setup.mark({ deployment: { role: draft.role, interfaces: setup.interfaceConfig } });
+    await setup.mark({
+      deployment: {
+        role: draft.role,
+        interfaces: setup.interfaceConfig,
+        gateway_position: draft.gatewayPosition,
+      },
+    });
     emit('next');
   } catch (err) {
     error.value = apiError(err);
@@ -191,6 +223,13 @@ async function submit() {
 </script>
 
 <style scoped>
+.fr-gateway {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+}
 .fr-badge {
   margin-left: 0.4rem;
   font-size: 0.7rem;

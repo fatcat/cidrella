@@ -190,26 +190,12 @@
           />
         </div>
       </div>
-      <div v-if="wizardFamily !== 6" class="field">
-        <label>Gateway</label>
-        <div class="gateway-row">
-          <SelectButton
-            v-model="wizardNet.gateway_position"
-            :options="gatewayPositionOptions"
-            optionLabel="label"
-            optionValue="value"
-            size="small"
-          />
-        </div>
-        <InputText
-          v-model="wizardNet.gateway_address"
-          :placeholder="wizardGatewayPlaceholder"
-          :disabled="
-            wizardNet.gateway_position !== 'custom' && wizardNet.gateway_position !== 'none'
-          "
-          class="w-full"
-        />
-      </div>
+      <GatewayField
+        v-if="wizardFamily !== 6"
+        v-model:position="wizardNet.gateway_position"
+        v-model:address="wizardNet.gateway_address"
+        :placeholder="wizardGatewayPlaceholder"
+      />
       <div class="field">
         <label>Domain Name</label>
         <InputText v-model="wizardNet.domain_name" class="w-full" />
@@ -891,24 +877,12 @@
       </div>
       <!-- A new network is address space only. Gateway, domain, scanning, DNS
            and DHCP are allocation settings, set when the network is allocated. -->
-      <div v-if="dialogAddressFamily !== 6 && networkDialogMode !== 'create'" class="field">
-        <label>Gateway</label>
-        <div class="gateway-row">
-          <SelectButton
-            v-model="gatewayPosition"
-            :options="gatewayPositionOptions"
-            optionLabel="label"
-            optionValue="value"
-            size="small"
-          />
-        </div>
-        <InputText
-          v-model="networkForm.gateway_address"
-          :placeholder="gatewayPlaceholder"
-          :disabled="gatewayPosition !== 'custom' && gatewayPosition !== 'none'"
-          class="w-full"
-        />
-      </div>
+      <GatewayField
+        v-if="dialogAddressFamily !== 6 && networkDialogMode !== 'create'"
+        v-model:position="gatewayPosition"
+        v-model:address="networkForm.gateway_address"
+        :placeholder="gatewayPlaceholder"
+      />
       <div v-if="networkDialogMode !== 'create'" class="field">
         <label>Domain Name</label>
         <div style="display: flex; gap: 0.25rem; align-items: center">
@@ -1238,6 +1212,7 @@ import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
 import DeallocationImpact from './DeallocationImpact.vue';
 import ScanToggle from './ScanToggle.vue';
+import GatewayField from './GatewayField.vue';
 import ConfirmDialog from './ConfirmDialog.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
@@ -1249,6 +1224,7 @@ import {
   dhcpRangeDefaults,
   gatewayIpFromPosition,
   normalizeGatewayPositionDefault,
+  inferGatewayPosition,
   DHCP_DEFAULT_MIN_PREFIX,
   DHCP_DEFAULT_MAX_PREFIX,
   isValidNetwork,
@@ -1347,22 +1323,7 @@ const wizardNet = ref({
 });
 // Gateway position options live here but watchers that reference `networkForm`
 // must wait until `networkForm` itself is declared, installed further below.
-const gatewayPositionOptions = [
-  { label: 'First IP', value: 'first' },
-  { label: 'Last IP', value: 'last' },
-  { label: 'None', value: 'none' },
-  { label: 'Custom', value: 'custom' },
-];
 const gatewayPosition = ref('custom');
-
-function inferGatewayPosition(cidr, address) {
-  const addr = (address || '').trim();
-  if (!addr) return 'none';
-  if (!cidr || !isValidNetwork(cidr)) return 'custom';
-  if (addr === gatewayIpFromPosition(cidr, 'first')) return 'first';
-  if (addr === gatewayIpFromPosition(cidr, 'last')) return 'last';
-  return 'custom';
-}
 
 const domainWarningShown = ref(false);
 const wizardVlanSelection = ref(null);
@@ -3288,9 +3249,6 @@ defineExpose({
   display: flex;
   gap: 0.25rem;
   align-items: center;
-}
-.gateway-row {
-  margin-bottom: 4px;
 }
 /* Wizard DNS listen-port plain <input>: match PrimeVue input styling so it
    sits alongside sibling InputTexts without looking out of place. */

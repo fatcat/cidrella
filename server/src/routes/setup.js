@@ -20,6 +20,7 @@ const router = Router();
 const ROLES = new Set(['both', 'dns', 'dhcp']);
 const IMPORT_KINDS = new Set(['fresh', 'pihole', 'cidrella']);
 const TOTP_CHOICES = new Set(['enabled', 'skipped']);
+const GATEWAY_POSITIONS = new Set(['first', 'last']);
 
 function validatePatch(body) {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return 'body must be an object';
@@ -37,7 +38,11 @@ function validatePatch(body) {
       if (!ROLES.has(d.role)) return 'deployment.role must be both, dns or dhcp';
       const ifErr = validateInterfaceConfig(d.interfaces ?? {});
       if (ifErr) return `deployment.interfaces ${ifErr}`;
+      if (d.gateway_position !== undefined && !GATEWAY_POSITIONS.has(d.gateway_position)) {
+        return 'deployment.gateway_position must be first or last';
+      }
       patch.deployment = { role: d.role, interfaces: d.interfaces ?? {} };
+      if (d.gateway_position) patch.deployment.gateway_position = d.gateway_position;
     }
   }
   if ('import' in body) {
