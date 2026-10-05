@@ -278,12 +278,27 @@ export function reconcileDnsHold(db, ip) {
       ALLOCATION_STATE.RESERVED,
       LIFECYCLE_SOURCE.DNS,
       holder.id,
-      { reservation_note: null },
+      {
+        reservation_note: null,
+        allocation_event: {
+          type: 'dns_hold_taken',
+          old: null,
+          new: fqdnForRecordName(holder.name, holder.zone_name),
+          source: LIFECYCLE_SOURCE.DNS,
+        },
+      },
     );
   }
   if (!held) return existing;
   assertAllocationTransition(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, LIFECYCLE_SOURCE.DNS);
-  return setCanonicalAllocation(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, null, null);
+  return setCanonicalAllocation(db, subnet.id, ip, ALLOCATION_STATE.UNASSIGNED, null, null, {
+    allocation_event: {
+      type: 'dns_hold_released',
+      old: null,
+      new: null,
+      source: LIFECYCLE_SOURCE.DNS,
+    },
+  });
 }
 
 /**
@@ -444,6 +459,12 @@ export function reconcileStaticDnsZone(db, previousZone, currentZone = null, rec
   for (const record of addressRecords) reconcileDnsHold(db, record.value);
 }
 
+// How history names a DHCP reservation: its MAC (or DUID) and hostname.
+function describeReservation({ mac_address, dhcp_duid, hostname } = {}) {
+  const client = mac_address || (dhcp_duid ? `DUID ${dhcp_duid}` : null);
+  return [client, hostname ? `(${hostname})` : null].filter(Boolean).join(' ') || null;
+}
+
 export function allocateStaticDhcp(db, subnetId, ip, fields = {}, reservationId = null) {
   assertAllocationTransition(
     db,
@@ -464,6 +485,12 @@ export function allocateStaticDhcp(db, subnetId, ip, fields = {}, reservationId 
       dhcp_version: fields.dhcp_version || 4,
       dhcp_duid: fields.dhcp_duid || null,
       dhcp_iaid: fields.dhcp_iaid != null ? String(fields.dhcp_iaid) : null,
+      allocation_event: {
+        type: 'dhcp_reservation_created',
+        old: null,
+        new: describeReservation(fields),
+        source: LIFECYCLE_SOURCE.DHCP_RESERVATION,
+      },
     },
   );
 }
@@ -478,9 +505,22 @@ export function deallocateStaticDhcp(db, subnetId, ip, macAddress) {
   );
   IpSync.clearDhcpReservationFromIp(db, subnetId, ip, macAddress);
   const existing = IpAddress.findBySubnetAndIp(db, subnetId, ip);
-  // Clearing a lease-less reservation removes the row outright; a disabled
-  // record naming the address still takes its hold back (ADR 004).
-  if (!existing) return reconcileDnsHold(db, ip);
+  const removed = {
+    type: 'dhcp_reservation_removed',
+    old: macAddress || null,
+    new: null,
+    source: LIFECYCLE_SOURCE.DHCP_RESERVATION,
+  };
+  // Clearing a lease-less reservation removes the row outright; its history
+  // stays, and a disabled record naming the address still takes its hold
+  // back (ADR 004).
+  if (!existing) {
+    IpAddress.recordEvent(db, subnetId, ip, removed.type, {
+      oldValue: removed.old,
+      source: removed.source,
+    });
+    return reconcileDnsHold(db, ip);
+  }
   const state =
     existing.detection_source === 'dhcp_lease'
       ? ALLOCATION_STATE.DYNAMIC_DHCP
@@ -491,6 +531,8 @@ export function deallocateStaticDhcp(db, subnetId, ip, macAddress) {
     ip,
     state,
     state === ALLOCATION_STATE.DYNAMIC_DHCP ? LIFECYCLE_SOURCE.DHCP_LEASE : null,
+    null,
+    { allocation_event: removed },
   );
   // A disabled record naming the address takes its hold back (ADR 004).
   return state === ALLOCATION_STATE.UNASSIGNED ? reconcileDnsHold(db, ip) || released : released;
@@ -604,7 +646,7 @@ export function reconcileExpiredDhcpAllocations(db) {
   const expired = db
     .prepare(
       `
-    SELECT ip.subnet_id, ip.ip_address, ip.is_online
+    SELECT ip.subnet_id, ip.ip_address, ip.is_online, ip.mac_address
     FROM ip_addresses ip
     WHERE ip.allocation_state = ?
       AND NOT EXISTS (
@@ -642,6 +684,14 @@ export function reconcileExpiredDhcpAllocations(db) {
       ALLOCATION_STATE.UNASSIGNED,
       null,
       null,
+      {
+        allocation_event: {
+          type: 'lease_expired',
+          old: row.mac_address || null,
+          new: null,
+          source: LIFECYCLE_SOURCE.DHCP_LEASE,
+        },
+      },
     );
     // The lease name survives only inside the offline retention window. A
     // holder that is still online has simply stopped being ours (a static
@@ -800,6 +850,14 @@ export function setManualReservation(db, subnetId, ip, reserved, note = null) {
     {
       reservation_note: reserved ? note : null,
       detection_source: reserved ? 'manual' : null,
+      allocation_event: reserved
+        ? { type: 'ip_reservation_created', old: null, new: note || null, source: 'manual' }
+        : {
+            type: 'ip_reservation_released',
+            old: existing?.reservation_note || null,
+            new: null,
+            source: 'manual',
+          },
     },
   );
   // Releasing an IP Reservation hands a disabled record its hold back (ADR 004).

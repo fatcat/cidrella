@@ -104,7 +104,7 @@ describe('syncLeasesToIps', () => {
       is_rogue: 1,
       detection_source: 'scanner',
     });
-    expect(IpAddress.getEvents(db, observed.id)).toHaveLength(1);
+    expect(IpAddress.getEvents(db, observed.ip_address)).toHaveLength(1);
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.31')).toBeTruthy();
   });
 

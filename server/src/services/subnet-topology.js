@@ -13,6 +13,7 @@ import {
 } from './ip-lifecycle-service.js';
 import { ALLOCATION_STATE } from '../models/ip-lifecycle.js';
 import * as DnsTopology from './subnet-dns-topology.js';
+import { recordSubtreeRangesRemoved } from '../models/range.js';
 import * as DhcpTopology from './subnet-dhcp-topology.js';
 
 export function createSystemRanges(db, subnetId, parsed, gatewayAddress) {
@@ -783,6 +784,17 @@ export function deleteSubnet(db, subnet) {
       dns.ptr_removed += result.ptr_removed;
       dns.address_records_removed += result.address_records_removed;
       dns.zones_disabled.push(...result.zones_disabled);
+    }
+
+    // The Network Range Types the deleted rows carried leave each address's
+    // history with them.
+    const removesOwnRanges = subnet.status === 'allocated' || !subnet.parent_id || !hasChildren;
+    if (removesOwnRanges) {
+      recordSubtreeRangesRemoved(db, subnet.id);
+    } else {
+      for (const child of db.prepare('SELECT id FROM subnets WHERE parent_id = ?').all(subnet.id)) {
+        recordSubtreeRangesRemoved(db, child.id);
+      }
     }
 
     if (subnet.status === 'allocated') {

@@ -143,7 +143,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   for the range dialogs' form grammar, `assets/analytics-layout.css` for
   the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
   `utils/ip.js` and `utils/cidr.js`, `services/ip-lifecycle-service.js` for every lifecycle
-  write, `models/ip-view.js` for every server-owned display field (status, type, and
+  write, `models/ip-events.js` for address history (`ip_events` and `ip_range_events`; history
+  is keyed by address, never by row, so it outlives the row), `utils/request-actor.js`
+  (`currentActor`, the signed-in user a write deep in a model should name), `models/ip-view.js` for every server-owned display field (status, type, and
   `dhcp_lease_state` from the newest lease; any read that shows an address feeds it
   `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own; a count of rogue
   hosts runs rows through it too), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's

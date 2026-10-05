@@ -15,20 +15,26 @@
 const EVENT_LABELS = {
   online: 'Online',
   offline: 'Offline',
+  // Written before v0.5.0, kept so older history still reads.
   scanned: 'Scanned',
   rogue_detected: 'Rogue detected',
   rogue_cleared: 'Rogue cleared',
   dns_added: 'DNS added',
   dns_removed: 'DNS removed',
+  dns_hold_taken: 'Held for disabled DNS',
+  dns_hold_released: 'DNS hold released',
   lease_obtained: 'Lease obtained',
+  lease_expired: 'Lease expired',
+  dhcp_reservation_created: 'DHCP Reservation created',
+  dhcp_reservation_removed: 'DHCP Reservation removed',
+  ip_reservation_created: 'IP Reservation created',
+  ip_reservation_released: 'IP Reservation released',
+  range_assigned: 'Added to range',
+  range_unassigned: 'Removed from range',
   hostname_changed: 'Hostname changed',
   mac_changed: 'MAC changed',
   allocation_changed: 'Allocation changed',
-  status_changed: 'Legacy status changed',
   scan_enabled_changed: 'Scan setting changed',
-  scope_added: 'Added to DHCP Scope',
-  scope_removed: 'Removed from DHCP Scope',
-  scope_membership_changed: 'DHCP Scope membership changed',
   // Scope-only addresses lose learned metadata through retirement while their
   // current status stays DHCP Scope. History says the metadata expired, not
   // that the address was released.
@@ -45,6 +51,8 @@ const SOURCE_LABELS = {
   manual: 'manual',
   offline: 'went offline',
   retirement: 'automatic cleanup',
+  admin_reservation: 'IP Reservation',
+  range: 'Network Range Type',
 };
 
 /** Tone to vendor Tag severity, for the current-interface drawer. */
@@ -62,10 +70,31 @@ export function eventLabel(type) {
 }
 
 export function eventTone(type) {
-  if (['online', 'dns_added', 'lease_obtained'].includes(type)) return 'good';
+  if (
+    [
+      'online',
+      'dns_added',
+      'lease_obtained',
+      'dhcp_reservation_created',
+      'ip_reservation_created',
+    ].includes(type)
+  )
+    return 'good';
   if (type === 'rogue_detected') return 'danger';
   if (type === 'rogue_cleared') return 'warn';
-  if (['offline', 'dns_removed', 'retired'].includes(type)) return 'muted';
+  if (
+    [
+      'offline',
+      'dns_removed',
+      'retired',
+      'lease_expired',
+      'dhcp_reservation_removed',
+      'ip_reservation_released',
+      'dns_hold_released',
+      'range_unassigned',
+    ].includes(type)
+  )
+    return 'muted';
   return 'info';
 }
 

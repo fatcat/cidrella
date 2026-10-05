@@ -452,6 +452,7 @@ function availableRow(scopes, subnet, ip) {
     // pool address, which read as a failed check rather than an idle one.
     is_online: 0,
     last_seen_at: null,
+    last_scanned_at: null,
     created_at: null,
     updated_at: null,
   };

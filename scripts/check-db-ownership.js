@@ -34,6 +34,20 @@ const STRICT_TABLE_RULES = [
       );
     },
   },
+  ...['ip_events', 'ip_range_events'].map((table) => ({
+    table,
+    ownerLabel: 'server/src/models/ip-events.js',
+    writePattern: new RegExp(
+      `\\b(?:INSERT\\s+(?:OR\\s+\\w+\\s+)?INTO|UPDATE|DELETE\\s+FROM)\\s+[\`'"]?${table}\\b`,
+      'gi',
+    ),
+    allow(file) {
+      const rel = relPath(file);
+      return (
+        rel === 'server/src/models/ip-events.js' || rel.startsWith('server/src/db/migrations/')
+      );
+    },
+  })),
   {
     table: 'network_scans',
     ownerLabel: 'server/src/models/scan-run.js',

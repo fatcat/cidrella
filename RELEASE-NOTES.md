@@ -298,8 +298,27 @@ first on a 0.4.17 host.
   it. First-run setup asks where new networks put their gateway (first or
   last address) on the deployment step and sets New Network Defaults at Start,
   before a Pi-hole import creates its network.
+- **Address history says more, and keeps it.** An address's Lifecycle tab
+  now survives the address row: deallocating or deleting a network, or a
+  reservation removed with its row, no longer erases what happened to its
+  addresses, and the history follows an address into a new network. New
+  events name what used to read as "Allocation changed": IP Reservation
+  created and released (with the note), DHCP Reservation created and removed
+  (with the MAC or DUID and hostname), held for a disabled DNS record and
+  released, and Lease expired. A Network Range Type added to or taken off an
+  address is recorded too, stored once per run of addresses so a /16 or an
+  IPv6 /64 costs one row, and only for what changed. Each event names the
+  user whose action caused it. Migration 080 rebuilds `ip_events` and adds
+  `ip_range_events`; `GET /api/subnets/:id/ips/:ip/events` answers for an
+  address with no row.
+- Address tables offer a Last Scanned column, and the address panel shows
+  it.
 
 ### Changed
+- **History no longer records every probe.** A scan that only confirms an
+  address's state records nothing; Online and Offline mark a change, and Last
+  Scanned says when it was last probed. Migration 080 drops the existing
+  "Scanned" rows, which were most of the history table.
 
 - **DHCPv6 defaults.** A new /64 scope now defaults to stateless DHCPv6:
   addresses still come from SLAAC (which Android needs; it has no DHCPv6

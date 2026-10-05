@@ -242,6 +242,7 @@ function ipRowFields(row, { dns = row.dns_record || null, dhcp = row.dhcp || nul
     rangeType: row.network_range_type || null,
     rangeColor: row.network_range_type_color || null,
     lastSeen: formatTimestamp(row.last_seen_at),
+    lastScanned: formatTimestamp(row.last_scanned_at),
     scanning:
       row.scanning_enabled == null
         ? null

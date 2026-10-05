@@ -5,11 +5,11 @@
  * go through this module rather than writing inline SQL.
  */
 
-import { getSetting } from '../db/init.js';
 import { activeLeaseSql } from '../utils/lease-sql.js';
 import { isAutomaticScanAllowed, scannerCoveredSql } from '../utils/scan-coverage.js';
 import { ipv6Enabled } from '../utils/ipv6-support.js';
 import { canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
+import * as IpEvents from './ip-events.js';
 
 // The reason string the passive path stamps on an unassigned address.
 export const PASSIVE_ROGUE_REASON = 'passive DNS query from unassigned address';
@@ -48,60 +48,67 @@ function canonicalIdentity(ip, interfaceId) {
   };
 }
 
-/**
- * Record an IP lifecycle event.
- */
+// Record an event for an address that has a row; the row supplies the
+// canonical address and interface the history is keyed by.
 function emit(db, ipAddressId, subnetId, ip, eventType, { oldValue, newValue, source } = {}) {
-  db.prepare(
-    `
-    INSERT INTO ip_events (ip_address_id, subnet_id, ip_address, event_type, old_value, new_value, source)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `,
-  ).run(ipAddressId, subnetId, ip, eventType, oldValue ?? null, newValue ?? null, source ?? null);
+  const row = db
+    .prepare('SELECT ip_address, interface_id FROM ip_addresses WHERE id = ?')
+    .get(ipAddressId);
+  IpEvents.insertEvent(db, {
+    ipAddressId,
+    subnetId,
+    ip: row?.ip_address ?? ip,
+    interfaceId: row?.interface_id ?? null,
+    type: eventType,
+    oldValue,
+    newValue,
+    source,
+  });
 }
 
 /**
- * Prune ip_events older than the configured retention period.
- * Reads ip_history_retention_days from settings (default 7).
+ * Record an event for an address whether or not it still has a row (a
+ * reservation removed with the row it lived on, say).
  */
-export function pruneEvents(db) {
-  const val = getSetting('ip_history_retention_days');
-  const retentionDays = parseInt(val, 10) || 7;
-  const offset = `-${retentionDays} days`;
-  return db
+export function recordEvent(db, subnetId, ip, eventType, { oldValue, newValue, source } = {}) {
+  const identity = canonicalIdentity(ip);
+  const row = db
     .prepare(
-      `
-    DELETE FROM ip_events WHERE created_at < datetime('now', ?)
-  `,
+      `SELECT id FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?
+         AND COALESCE(interface_id, '') = COALESCE(?, '')`,
     )
-    .run(offset);
+    .get(subnetId, identity.ip, identity.interfaceId);
+  IpEvents.insertEvent(db, {
+    ipAddressId: row?.id ?? null,
+    subnetId,
+    ip: identity.ip,
+    interfaceId: identity.interfaceId,
+    type: eventType,
+    oldValue,
+    newValue,
+    source,
+  });
 }
 
 /**
- * Get events for a specific IP, newest first.
+ * One address's history, newest first, including what happened to it under
+ * rows (or networks) that no longer exist.
  */
-export function getEvents(db, ipAddressId, { limit = 50 } = {}) {
-  return db
-    .prepare(
-      `
-    SELECT * FROM ip_events WHERE ip_address_id = ? ORDER BY created_at DESC LIMIT ?
-  `,
-    )
-    .all(ipAddressId, limit);
+export function getEvents(db, ip, { limit = 50 } = {}) {
+  const identity = canonicalIdentity(ip);
+  return IpEvents.listAddressEvents(db, identity.ip, identity.interfaceId, { limit });
 }
 
-/**
- * Get events for a subnet within a time window, newest first.
- */
-export function getSubnetEvents(db, subnetId, { hours = 24, limit = 200 } = {}) {
-  const offset = `-${hours} hours`;
-  return db
-    .prepare(
-      `
-    SELECT * FROM ip_events WHERE subnet_id = ? AND created_at >= datetime('now', ?) ORDER BY created_at DESC LIMIT ?
-  `,
-    )
-    .all(subnetId, offset, limit);
+export const pruneEvents = IpEvents.pruneEvents;
+
+function allocationEvent(named, oldState, newState) {
+  if (!named) return { type: 'allocation_changed', old: oldState, new: newState };
+  return {
+    type: named.type,
+    old: named.old !== undefined ? named.old : oldState,
+    new: named.new !== undefined ? named.new : newState,
+    source: named.source,
+  };
 }
 
 /**
@@ -131,6 +138,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
     dhcp_iaid,
     reservation_note,
     scan_enabled,
+    // Not a column: names an allocation change ({ type, old, new, source })
+    // so history says what happened rather than only the state it went to.
+    allocation_event,
   } = fields;
 
   const existing = db
@@ -215,7 +225,7 @@ export function upsert(db, subnetId, ip, fields = {}) {
         updates.push(`${column} = ?`);
         params.push(value);
         if (column === 'allocation_state') {
-          events.push({ type: 'allocation_changed', old: existing.allocation_state, new: value });
+          events.push(allocationEvent(allocation_event, existing.allocation_state, value));
         }
       }
     }
@@ -228,7 +238,7 @@ export function upsert(db, subnetId, ip, fields = {}) {
         emit(db, existing.id, subnetId, ip, e.type, {
           oldValue: e.old,
           newValue: e.new,
-          source: detection_source,
+          source: e.source ?? detection_source,
         });
       }
     }
@@ -283,10 +293,11 @@ export function upsert(db, subnetId, ip, fields = {}) {
       scan_enabled ?? null,
     );
   if (allocation_state && allocation_state !== 'unassigned') {
-    emit(db, result.lastInsertRowid, subnetId, ip, 'allocation_changed', {
-      oldValue: 'unassigned',
-      newValue: allocation_state,
-      source: allocation_source_type || detection_source,
+    const e = allocationEvent(allocation_event, 'unassigned', allocation_state);
+    emit(db, result.lastInsertRowid, subnetId, ip, e.type, {
+      oldValue: e.old,
+      newValue: e.new,
+      source: e.source || allocation_source_type || detection_source,
     });
   }
   return result.lastInsertRowid;
@@ -721,7 +732,7 @@ export function moveToSubnet(db, id, ip, targetSubnetId) {
     .prepare("UPDATE ip_addresses SET subnet_id = ?, updated_at = datetime('now') WHERE id = ?")
     .run(targetSubnetId, id);
 
-  db.prepare('UPDATE ip_events SET subnet_id = ? WHERE ip_address_id = ?').run(targetSubnetId, id);
+  IpEvents.moveEventsToSubnet(db, id, targetSubnetId);
 
   return moved;
 }
@@ -839,11 +850,8 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     params.push(existing.id);
     db.prepare(`UPDATE ip_addresses SET ${updates.join(', ')} WHERE id = ?`).run(...params);
 
-    // Emit lifecycle events for state transitions
-    emit(db, existing.id, subnetId, ip, 'scanned', {
-      newValue: responded ? 'responded' : 'no_response',
-      source: 'scanner',
-    });
+    // History records what changed: a probe that only confirms the current
+    // state is last_scanned_at, not an event.
     if (responded && !existing.is_online) {
       emit(db, existing.id, subnetId, ip, 'online', { source: 'scanner' });
     } else if (!responded && existing.is_online) {
@@ -868,7 +876,6 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
       last_scanned_at: new Date().toISOString(),
       detection_source: 'scanner',
     });
-    emit(db, newId, subnetId, ip, 'scanned', { newValue: 'responded', source: 'scanner' });
     emit(db, newId, subnetId, ip, 'online', { source: 'scanner' });
     if (effectiveConflict) {
       emit(db, newId, subnetId, ip, 'rogue_detected', {

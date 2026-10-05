@@ -252,7 +252,8 @@ Liveness comes from active and passive sources:
 
 Manual probes and scheduled scans should share the same probe implementation.
 ARP should be attempted first where appropriate, with ICMP ping fallback inside
-the same scan lifecycle event.
+the same probe. A probe updates `last_scanned_at`; address history records only
+a change of liveness (online, offline), never the probe itself.
 
 ## DNS/DHCP Config Generation
 

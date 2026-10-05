@@ -63,6 +63,41 @@ IPv4 identity. IPv6 link-local addresses require `interface_id`; global
 addresses must leave it null. API consumers must not use textual address
 spelling for identity or ordering.
 
+## Address History
+
+`GET /api/subnets/:id/ips/:ip/events` (`subnets:read`, `limit` 1 to 500,
+default 100) returns one address's history, newest first. History belongs to
+the address, not its `ip_addresses` row: it is read by canonical address (and
+`interface_id` for a link-local IPv6 address), so it survives the row being
+deleted, the network being deallocated or deleted, and the address moving to
+another network. An address with no row answers with whatever history it has.
+
+Each event carries `event_type`, `old_value`, `new_value`, `source` (the
+subsystem: scanner, dhcp_lease, dns, manual, range, retirement and so on),
+`actor` (the signed-in user whose request caused it, null for background work)
+and `created_at` (UTC, millisecond resolution). Types:
+
+| Type | Recorded when | Values |
+| --- | --- | --- |
+| `online`, `offline` | liveness changes (a probe that confirms the current state records nothing; `last_scanned_at` says when it ran) | |
+| `rogue_detected`, `rogue_cleared` | the rogue flag changes | reason |
+| `allocation_changed` | an allocation state changes with no more specific event | old and new state |
+| `ip_reservation_created`, `ip_reservation_released` | an IP Reservation is made or released | note |
+| `dhcp_reservation_created`, `dhcp_reservation_removed` | a DHCP Reservation takes or leaves the address | MAC or DUID, hostname |
+| `dns_hold_taken`, `dns_hold_released` | a disabled record holds the address, or stops (ADR 004) | record name |
+| `dns_added`, `dns_removed` | a served A or AAAA record names the address, or stops | record name |
+| `lease_obtained`, `lease_expired` | a DHCP lease lands, or lapses | MAC |
+| `range_assigned`, `range_unassigned` | a Network Range Type covers the address, or stops | type name |
+| `hostname_changed`, `mac_changed`, `scan_enabled_changed` | the field changes | old and new |
+| `retired` | automatic cleanup frees a stale address | |
+
+Range events are stored once per run of addresses (`ip_range_events`) and
+joined in by range, so a type covering a /16 or an IPv6 /64 is one row. Only
+what a write changes is recorded: widening a range records the added
+addresses, a description edit nothing. Functional system ranges (DHCP Scope,
+Gateway) are not history. History is kept for `ip_history_retention_days`
+(default 7). `models/ip-events.js` owns both tables.
+
 ## Lifecycle Diagnostics
 
 `GET /api/metrics/ip-lifecycle` requires `analytics:read` and returns allocation

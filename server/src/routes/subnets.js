@@ -2966,11 +2966,15 @@ router.get(
     const subnet = db.prepare('SELECT id FROM subnets WHERE id = ?').get(req.params.id);
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
-    const existing = IpAddress.findBySubnetAndIp(db, subnet.id, req.params.ip);
-    if (!existing) return res.json({ events: [] });
-
+    // History is the address's, so it is there with no row too: a released
+    // reservation, a deleted network, a Network Range Type assigned to it.
     const limit = Math.min(Math.max(parseInt(req.query.limit) || 100, 1), 500);
-    const events = IpAddress.getEvents(db, existing.id, { limit });
+    let events;
+    try {
+      events = IpAddress.getEvents(db, req.params.ip, { limit });
+    } catch (err) {
+      return res.status(400).json({ error: err.message });
+    }
     res.json({ events });
   }),
 );

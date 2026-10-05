@@ -85,6 +85,7 @@ export const IP_COLUMNS = Object.freeze({
   device_fingerprint_source: { kind: 'enum', get: (row) => str(row.device_fingerprint_source) },
   is_online: { kind: 'enum', get: (row) => bool(row.is_online) ?? false },
   last_seen_at: { kind: 'none', get: (row) => str(row.last_seen_at) },
+  last_scanned_at: { kind: 'none', get: (row) => str(row.last_scanned_at) },
   scanning_enabled: { kind: 'enum', get: (row) => bool(row.scanning_enabled) },
   lease: { kind: 'enum', get: (row) => str(row.dhcp_lease_state) },
   network: {

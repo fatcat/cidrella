@@ -545,7 +545,7 @@ describe('rogue management', () => {
     expect(IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.44').is_rogue).toBe(1);
     const events = db
       .prepare(
-        "SELECT ip_address FROM ip_events WHERE event_type = 'rogue_cleared' AND ip_address LIKE '10.0.1.4%'",
+        "SELECT ip_address FROM ip_events WHERE event_type = 'rogue_cleared' AND ip_address IN ('10.0.1.42', '10.0.1.43', '10.0.1.44')",
       )
       .all()
       .map((row) => row.ip_address);

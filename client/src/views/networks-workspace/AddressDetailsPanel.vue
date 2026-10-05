@@ -64,6 +64,8 @@
       <dd class="capitalize">{{ row.online || 'unknown' }}</dd>
       <dt>Last seen</dt>
       <dd>{{ row.lastSeen || dash }}</dd>
+      <dt>Last scanned</dt>
+      <dd>{{ row.lastScanned || dash }}</dd>
       <dt>Scanning</dt>
       <dd>{{ row.scanning || dash }}</dd>
       <dt>Source</dt>

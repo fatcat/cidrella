@@ -30,6 +30,7 @@ import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
 import { sanitizeForLog } from './utils/validation.js';
 import { authMiddleware } from './auth/middleware.js';
+import { actorMiddleware } from './utils/request-actor.js';
 import { afterCommitMiddleware, resumePendingRegeneration } from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
@@ -384,6 +385,8 @@ async function main() {
 
   // Auth middleware for API routes
   app.use(authMiddleware);
+  // Names the signed-in user on the records written for this request.
+  app.use(actorMiddleware);
 
   // v0.4.15: authenticated write rate-limiter. v0.4.14 had only the login
   // limiter, so a compromised/bought token could fill the DB, thrash dnsmasq

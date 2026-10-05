@@ -212,6 +212,13 @@ const COLUMN_CATALOG = [
     style: 'width: 10rem',
   },
   {
+    key: 'last_scanned_at',
+    header: 'Last Scanned',
+    description: 'Most recent time the scanner probed the IP, answered or not.',
+    field: 'last_scanned_at',
+    style: 'width: 10rem',
+  },
+  {
     key: 'scanning_enabled',
     header: 'Scanning',
     description: 'Server-resolved effective scanning status for the IP.',

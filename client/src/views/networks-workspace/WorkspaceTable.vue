@@ -250,6 +250,7 @@ const CELL_FIELDS = {
   ip_address: 'address',
   mac_address: 'mac',
   last_seen_at: 'lastSeen',
+  last_scanned_at: 'lastScanned',
   dns_hostname: 'dnsName',
   record_type: 'recordType',
   record_enabled: 'recordEnabled',

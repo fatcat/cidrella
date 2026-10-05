@@ -55,7 +55,7 @@ function pingIp(ip, { count = 1 } = {}) {
 /**
  * Probe an IP with ARP first, then ICMP if ARP gets no response.
  * This is intentionally a single logical probe for lifecycle purposes:
- * callers insert one scan_results row and emit one "scanned" event per IP.
+ * callers insert one scan_results row and update last_scanned_at once per IP.
  * ARP is cheap and captures MAC addresses on directly-connected networks;
  * ICMP is the fallback for hosts that do not answer ARP or are off-link.
  * IPv6 has no ARP (it is IPv4-only): an ICMPv6 echo makes the kernel resolve

@@ -138,11 +138,17 @@ function readRaRoutes() {
  * Read the kernel's learned routers on every probe interface and persist the
  * ones nobody vouches for. Synchronous: it is two process reads.
  *
- * `routes`, `interfaces`, `neighbors` and `supported` are test seams.
+ * `routes`, `interfaces`, `neighbors`, `selfIps` and `supported` are test seams.
  */
 export function checkRouterAdvertisements(
   db,
-  { routes = null, interfaces = null, neighbors = null, supported = raSupportedOn } = {},
+  {
+    routes = null,
+    interfaces = null,
+    neighbors = null,
+    selfIps = null,
+    supported = raSupportedOn,
+  } = {},
 ) {
   lastCheckAt = new Date().toISOString();
   lastError = null;
@@ -170,7 +176,7 @@ export function checkRouterAdvertisements(
     const routers = learned.routers.filter((r) => watched.has(r.iface));
     const table = neighbors || (routers.length > 0 ? readNdCache({ force: true }) : new Map());
     const trusted = {
-      selfIps: localAddressSet(),
+      selfIps: selfIps || localAddressSet(),
       authorized: authorizedSets(db),
       gatewayMacs: configuredGatewayMacSet(db),
     };

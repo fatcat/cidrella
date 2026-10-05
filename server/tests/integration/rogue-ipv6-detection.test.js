@@ -177,6 +177,9 @@ default via fe80::5 dev eth9 proto ra metric 1024 expires 1700sec hoplimit 64 pr
       routes: parseRaRoutes(ROUTE_TABLE),
       interfaces: ['eth0'],
       neighbors: NEIGHBORS,
+      // The host's own addresses vary (a Docker bridge holds fe80::1), so
+      // the test says which are local rather than reading the machine.
+      selfIps: new Set(),
       supported: () => true,
       ...extra,
     });

@@ -14,9 +14,9 @@ import {
 
 describe('eventLabel', () => {
   it('names every event type the server emits', () => {
-    // Emitters: models/ip-address.js, utils/ip-sync.js,
-    // services/ip-lifecycle-service.js. status_changed is legacy and only
-    // appears on rows written before ip_addresses.status was removed.
+    // Emitters: models/ip-address.js, models/range.js, utils/ip-sync.js,
+    // services/ip-lifecycle-service.js. scanned is no longer written but
+    // older history still holds it.
     const emitted = [
       'online',
       'offline',
@@ -25,11 +25,19 @@ describe('eventLabel', () => {
       'rogue_cleared',
       'dns_added',
       'dns_removed',
+      'dns_hold_taken',
+      'dns_hold_released',
       'lease_obtained',
+      'lease_expired',
+      'dhcp_reservation_created',
+      'dhcp_reservation_removed',
+      'ip_reservation_created',
+      'ip_reservation_released',
+      'range_assigned',
+      'range_unassigned',
       'hostname_changed',
       'mac_changed',
       'allocation_changed',
-      'status_changed',
       'scan_enabled_changed',
       'retired',
     ];
@@ -46,10 +54,7 @@ describe('eventLabel', () => {
     expect(eventLabel('retired').toLowerCase()).not.toMatch(/releas|unassign|free/);
   });
 
-  it('labels scope events without implying allocation', () => {
-    expect(eventLabel('scope_added')).toBe('Added to DHCP Scope');
-    expect(eventLabel('scope_removed')).toBe('Removed from DHCP Scope');
-    expect(eventLabel('scope_membership_changed')).toBe('DHCP Scope membership changed');
+  it('reads an unknown type rather than reinterpreting it', () => {
     expect(eventLabel('unknown_event')).toBe('unknown event');
     expect(eventLabel(undefined)).toBe('Event');
     expect(eventLabel('')).toBe('Event');
@@ -98,6 +103,17 @@ describe('eventDetail', () => {
   it('spaces an unknown source instead of showing raw underscores', () => {
     expect(eventSourceLabel('lease_sync')).toBe('lease sync');
     expect(eventSourceLabel(null)).toBe('');
+  });
+
+  it('names a range event by its type and who assigned it', () => {
+    expect(
+      eventDetail({
+        event_type: 'range_assigned',
+        new_value: 'Printers',
+        source: 'range',
+        actor: 'admin',
+      }),
+    ).toBe('Printers · via Network Range Type · by admin');
   });
 
   it('shows a recorded actor but does not invent one', () => {
