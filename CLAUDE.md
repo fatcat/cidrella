@@ -108,8 +108,6 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `BACKLOG.md` only once work on it has started and stalled.
 - **Screenshots and throwaway prototypes** go in `screenshots/` (gitignored), never the repo
   root.
-- **Git**: the maintainer runs all commits, tags, and pushes. Claude prepares changes and
-  commit messages but never commits.
 - **Shared things exist, use them.** Before writing a component, style rule or helper, check
   this list and grep for the name. Client: every vendor component is imported through
   `client/src/ui/*.js`, never from the package; `EmptyState`, `StatusDot`, `StatusBadge`,

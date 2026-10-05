@@ -187,4 +187,41 @@ describe('workspace address selection', () => {
     expect(buttons[2].classes()).not.toContain('ranged');
     expect(buttons[2].attributes('style')).toBeUndefined();
   });
+
+  it('clears the selection on a press outside the cells, but not inside a menu or on a cell', async () => {
+    const cells = [1, 2].map((n) => ({
+      ip: `10.0.0.${n}`,
+      last: String(n),
+      kind: 'available',
+      label: 'available',
+      row: { id: `address:10.0.0.${n}` },
+    }));
+    const outside = globalThis.document.createElement('div');
+    const menu = globalThis.document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    const item = globalThis.document.createElement('button');
+    menu.append(item);
+    globalThis.document.body.append(outside, menu);
+    const wrapper = mount(AddressGrid, {
+      attachTo: globalThis.document.body,
+      props: { cells, selectedRows: ['address:10.0.0.1'] },
+    });
+    const press = (element, button = 0) =>
+      element.dispatchEvent(new globalThis.MouseEvent('pointerdown', { bubbles: true, button }));
+
+    press(wrapper.find('.address-grid button').element);
+    press(item);
+    press(outside, 2);
+    expect(wrapper.emitted('clear-selection')).toBeUndefined();
+
+    press(outside);
+    expect(wrapper.emitted('clear-selection')).toHaveLength(1);
+
+    await wrapper.setProps({ selectedRows: [] });
+    press(outside);
+    expect(wrapper.emitted('clear-selection')).toHaveLength(1);
+    wrapper.unmount();
+    outside.remove();
+    menu.remove();
+  });
 });

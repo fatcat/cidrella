@@ -393,6 +393,9 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- In the address grid, a press anywhere but on a cell clears the selection.
+  A press inside a menu or dialog keeps it, since that is where a selection
+  is acted on.
 - The Network Range editor now edits the chosen type's name, color and
   description (a type is shared, so the change reaches every range that uses
   it). The Set Range Type dialog has a Clear range type button, for one

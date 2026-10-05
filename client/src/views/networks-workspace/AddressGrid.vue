@@ -1,5 +1,5 @@
 <template>
-  <div v-if="density === 'spacious'" class="address-grid-view">
+  <div v-if="density === 'spacious'" ref="viewRoot" class="address-grid-view">
     <div class="grid-ruler">
       <span>.0</span><span>.16</span><span>.32</span><span>.48</span><span>.64</span><span>.80</span
       ><span>.96</span><span>.112</span>
@@ -35,7 +35,7 @@
       ><span><i class="available" />Available</span><span><i class="ranged" />Network range</span>
     </div>
   </div>
-  <div v-else class="compact-grid-view">
+  <div v-else ref="viewRoot" class="compact-grid-view">
     <div class="compact-address-grid" aria-label="Compact address grid">
       <button
         v-for="(cell, index) in cells"
@@ -85,7 +85,15 @@ const props = defineProps({
   },
   selectedRows: { type: Array, default: () => [] },
 });
-const emit = defineEmits(['open', 'toggle', 'range-toggle', 'drag-select', 'row-menu']);
+const emit = defineEmits([
+  'open',
+  'toggle',
+  'range-toggle',
+  'drag-select',
+  'row-menu',
+  'clear-selection',
+]);
+const viewRoot = ref(null);
 const focusedIndex = ref(0);
 const cellRefs = [];
 let dragStart = null;
@@ -173,8 +181,27 @@ watch(
   },
 );
 
-onMounted(() => globalThis.window?.addEventListener('pointerup', finishDrag));
-onBeforeUnmount(() => globalThis.window?.removeEventListener('pointerup', finishDrag));
+// A press anywhere but on a cell clears the selection. Menus, dialogs and
+// popups are where a selection is acted on, so a press inside one keeps it.
+const KEEPS_SELECTION =
+  '[role="menu"], [role="dialog"], [role="alertdialog"], .p-overlay, .p-popover';
+function clearOnOutsidePress(event) {
+  if (event.button !== 0 || !props.selectedRows.length) return;
+  const target = event.target;
+  if (!(target instanceof Element)) return;
+  if (viewRoot.value?.contains(target) && target.closest('button[aria-pressed]')) return;
+  if (target.closest(KEEPS_SELECTION)) return;
+  emit('clear-selection');
+}
+
+onMounted(() => {
+  globalThis.window?.addEventListener('pointerup', finishDrag);
+  globalThis.document?.addEventListener('pointerdown', clearOnOutsidePress);
+});
+onBeforeUnmount(() => {
+  globalThis.window?.removeEventListener('pointerup', finishDrag);
+  globalThis.document?.removeEventListener('pointerdown', clearOnOutsidePress);
+});
 </script>
 
 <style scoped>

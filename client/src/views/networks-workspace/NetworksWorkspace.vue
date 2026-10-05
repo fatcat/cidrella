@@ -138,6 +138,7 @@
               )
             "
             @drag-select="selectGridDrag"
+            @clear-selection="selectedRows = []"
             @row-menu="openRowMenu"
           />
           <WorkspaceTable
