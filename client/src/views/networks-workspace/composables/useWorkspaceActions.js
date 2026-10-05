@@ -185,12 +185,12 @@ export function useWorkspaceActions(ctx) {
       const dialogsRef = await ensureNetworkDialogs();
       // Browsing unallocated space with a leaf selected configures that leaf;
       // a folder target (its Actions menu or explorer row) creates a root in
-      // that folder; anywhere else the current folder.
+      // that folder; anywhere else the new network starts with no folder.
       const rowTarget = targetForRow(state.selectedRow.value);
       const node = rowTarget?.kind === 'network' ? networkNode(rowTarget) : null;
       if (node?.data?.status === 'unallocated') dialogsRef.openConfigure(node, node.data.folder_id);
       else if (target.kind === 'folder') await dialogsRef.openCreateNetwork(target.id ?? null);
-      else await dialogsRef.openCreateNetwork(state.selectedFolder.value?.id || null);
+      else await dialogsRef.openCreateNetwork(null);
     },
     'folder.create': async () => (await ensureNetworkDialogs()).openCreateFolder(),
     'folder.edit': async (target) => (await ensureNetworkDialogs()).openEditFolder(target.raw),

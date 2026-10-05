@@ -1870,7 +1870,7 @@ async function createSupernet() {
       folder_id: supernetForm.value.folder_id || undefined,
     });
     showSubnetDialog.value = false;
-    supernetForm.value = { cidr: '', name: '', folder_id: store.folders[0]?.id || null };
+    supernetForm.value = { cidr: '', name: '', folder_id: null };
     toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
     emit('network-created');
   } catch (err) {
@@ -2971,7 +2971,7 @@ function openDeleteFolder(folder) {
 
 function openSubnetDialog(folderId) {
   quickAddMode.value = false;
-  supernetForm.value = { cidr: '', name: '', folder_id: folderId || store.folders[0]?.id || null };
+  supernetForm.value = { cidr: '', name: '', folder_id: folderId || null };
   showSupernetEditor();
 }
 
@@ -2991,7 +2991,7 @@ async function openCreateNetwork(folderId) {
     vlan_id: null,
     gateway_address: '',
     domain_name: '',
-    folder_id: folderId || store.folders[0]?.id || null,
+    folder_id: folderId || null,
     create_dhcp_scope: false,
     create_reverse_dns: false,
     dhcp_start_ip: '',
@@ -3001,8 +3001,15 @@ async function openCreateNetwork(folderId) {
   editDomainSelection.value = null;
   // Load before showing the dialog so a fast CIDR entry cannot race the saved
   // default and accidentally retain the local fallback.
-  gatewayPosition.value = 'first';
   loadForwardZones();
+  await applyNetworkDefaults();
+  showNetworkEditor();
+}
+
+// The New Network Defaults (Settings > General) a network takes when it is
+// created or allocated: the gateway position and the scanning default.
+async function applyNetworkDefaults() {
+  gatewayPosition.value = 'first';
   try {
     const settings = await store.getSettings();
     resolvedGlobalScanEnabled.value = settings.default_scan_enabled !== '0';
@@ -3010,7 +3017,6 @@ async function openCreateNetwork(folderId) {
   } catch {
     /* best effort, keep the server defaults */
   }
-  showNetworkEditor();
 }
 
 function openDivide(node) {
@@ -3035,10 +3041,10 @@ function openDivide(node) {
 }
 
 function openConfigure(node, folderId) {
-  openEdit(node, folderId);
+  return openEdit(node, folderId);
 }
 
-function openEdit(node, folderId) {
+async function openEdit(node, folderId) {
   const d = (node || props.selectedNode)?.data;
   if (!d) return;
   activeNetworkData.value = d;
@@ -3068,8 +3074,10 @@ function openEdit(node, folderId) {
     dhcp_v6_mode: null,
     scan_enabled: d.scan_enabled === null || d.scan_enabled === undefined ? null : !!d.scan_enabled,
   };
-  // Seed the SelectButton from the stored address so it reflects reality on open.
-  gatewayPosition.value = inferGatewayPosition(d.cidr, d.gateway_address);
+  // Seed the SelectButton from the stored address so it reflects reality on
+  // open. An unallocated network has none yet: it takes the default.
+  if (isUnconfigured && !d.gateway_address) await applyNetworkDefaults();
+  else gatewayPosition.value = inferGatewayPosition(d.cidr, d.gateway_address);
   // Seed the domain autocomplete + load zones for suggestions.
   editDomainSelection.value = d.domain_name || null;
   loadForwardZones();

@@ -11,7 +11,7 @@
  *   - GET /deallocation-preview reports the same numbers the delete removes.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
 vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
@@ -314,6 +314,46 @@ describe('DELETE /api/subnets/:id on an allocated network', () => {
       dns: { ptr_removed: 0, address_records_removed: 0, zones_disabled: [] },
     });
     expect(db.prepare('SELECT COUNT(*) AS c FROM dns_records').get().c).toBe(before);
+  });
+});
+
+describe('a deallocated network keeps only its address space', () => {
+  it.each([
+    ['IPv4', '10.71.0.0/24', '10.71.0.1'],
+    ['IPv6', 'fd71::/64', 'fd71::1'],
+  ])('%s: clears every attribute, its folder included', async (_family, cidr, gateway) => {
+    enableIpv6(db);
+    const folderId = db.prepare("INSERT INTO folders (name) VALUES ('Lab')").run().lastInsertRowid;
+    const s = await mkSubnet({ cidr, name: cidr, status: 'unallocated' });
+    await configure(s.id, {
+      name: 'Lab net',
+      description: 'bench',
+      vlan_id: 71,
+      folder_id: folderId,
+      domain_name: 'lab.test',
+      gateway_address: gateway,
+      scan_enabled: false,
+      create_reverse_dns: false,
+      create_dhcp_scope: false,
+    });
+    const allocated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(s.id);
+    expect(allocated).toMatchObject({ folder_id: folderId, scan_enabled: 0, vlan_id: 71 });
+
+    const del = await request(app).delete(`/api/subnets/${s.id}`);
+    expect(del.body.action).toBe('deallocated');
+    expect(db.prepare('SELECT * FROM subnets WHERE id = ?').get(s.id)).toMatchObject({
+      status: 'unallocated',
+      name: cidr,
+      description: null,
+      vlan_id: null,
+      folder_id: null,
+      domain_name: null,
+      gateway_address: null,
+      gateway_policy: 'none',
+      has_reverse_dns: 0,
+      scan_enabled: null,
+      scan_interval: null,
+    });
   });
 });
 

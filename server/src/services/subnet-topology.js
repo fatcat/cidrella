@@ -556,12 +556,16 @@ function deleteDescendantSubnets(db, subnetId) {
     .run(subnetId);
 }
 
+// A deallocated network keeps only its address space: every attribute the
+// operator gave it, its folder included, goes with the allocation.
 function deallocateSubnetRow(db, subnet) {
   return db
     .prepare(
       `
     UPDATE subnets SET status = 'unallocated', name = ?, description = NULL,
-      vlan_id = NULL, gateway_address = NULL, has_reverse_dns = 0, domain_name = NULL, updated_at = datetime('now')
+      vlan_id = NULL, gateway_address = NULL, gateway_policy = 'none', has_reverse_dns = 0,
+      domain_name = NULL, folder_id = NULL, scan_interval = NULL, scan_enabled = NULL,
+      updated_at = datetime('now')
     WHERE id = ?
   `,
     )

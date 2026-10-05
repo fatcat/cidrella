@@ -408,6 +408,16 @@ first on a 0.4.17 host.
   one: "subnet not found" for a deleted network, or an allocated network
   divided and its children allocated. The dialog now keeps the network it was
   opened for.
+- Create network opens with no folder. It used to fill in the folder being
+  browsed, or the first folder in the list when there was none, so a network
+  landed in a folder nobody picked. A folder's own menu still fills in that
+  folder.
+- Allocating a network started its gateway at None, so the network was
+  allocated without one unless the operator noticed. It now starts at the New
+  Network Defaults gateway position (Settings > General).
+- Deallocating a network now clears everything the allocation gave it. Its
+  folder, gateway position and scanning settings used to stay behind, so the
+  unallocated block still sat in its old folder.
 - In the address grid, a press anywhere but on a cell clears the selection.
   A press inside a menu or dialog keeps it, since that is where a selection
   is acted on.

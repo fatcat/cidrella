@@ -185,6 +185,34 @@ describe('NetworkDialogs with an IPv6 CIDR', () => {
     );
   });
 
+  it('allocates with the New Network Defaults gateway, not None', async () => {
+    store.getSettings.mockResolvedValue({
+      default_scan_enabled: '1',
+      default_gateway_position: 'last',
+    });
+    store.configureSubnet.mockResolvedValue({ id: 4 });
+    api.post.mockImplementation((url, body) =>
+      Promise.resolve({
+        data: {
+          gateway_address: body.gateway_policy === 'last' ? '10.9.0.254' : null,
+          suggested_name: 'Nine',
+          default_dhcp_pool: null,
+        },
+      }),
+    );
+    const wrapper = mountDialogs(true);
+    await wrapper.vm.openConfigure(unallocated(4, '10.9.0.0/24'));
+    await settle();
+    expect(wrapper.vm.gatewayPosition).toBe('last');
+    expect(api.post).toHaveBeenCalledWith(
+      '/subnets/configuration-preview',
+      expect.objectContaining({ gateway_policy: 'last' }),
+    );
+    await button(wrapper, 'Save').trigger('click');
+    await settle();
+    expect(store.configureSubnet.mock.calls[0][1]).toMatchObject({ gateway_address: '10.9.0.254' });
+  });
+
   it('sends no DHCPv6 mode for an IPv4 network', async () => {
     store.configureSubnet.mockResolvedValue({ id: 4 });
     api.post.mockResolvedValue({

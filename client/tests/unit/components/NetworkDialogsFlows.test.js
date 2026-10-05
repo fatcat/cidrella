@@ -119,9 +119,13 @@ beforeEach(() => {
 describe('NetworkDialogs transformation and two-step flows', () => {
   it('creates a network unallocated, with no allocation settings to choose', async () => {
     store.createSupernet.mockResolvedValue({ id: 78, cidr: '10.8.0.0/24' });
+    store.folders = [{ id: 3, name: 'First folder', subnets: [] }];
     const wrapper = mountDialogs();
     await wrapper.vm.openCreateNetwork(null);
     await settle();
+    // No folder unless one was asked for, never the first in the list.
+    expect(wrapper.vm.networkForm.folder_id).toBeNull();
+    store.folders = [];
     const editor = dialog(wrapper, 'dialog-network-edit');
     await editor.find('input').setValue('10.8.0.0/24');
     await settle();
