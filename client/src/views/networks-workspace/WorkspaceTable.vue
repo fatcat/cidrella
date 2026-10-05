@@ -5,11 +5,10 @@
         <tr>
           <th v-if="showCheckboxes" class="check-cell">
             <input
+              ref="headerBox"
               type="checkbox"
-              :checked="allRowsChecked"
-              :indeterminate="selectedHere > 0 && !allRowsChecked"
-              :aria-label="selectedHere ? 'Clear selection' : 'Select all visible rows'"
-              @click.prevent="emit('toggle-all', selectedHere === 0)"
+              :aria-label="allRowsChecked ? 'Clear selection' : 'Select all rows'"
+              @click="clickHeaderBox"
             />
           </th>
           <th
@@ -129,7 +128,7 @@
 </template>
 
 <script setup>
-import { computed } from 'vue';
+import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import AddressTypePill from '../../components/table/AddressTypePill.vue';
 import StatusDot from '../../components/StatusDot.vue';
 import { EMPTY_CELL } from '../../utils/format.js';
@@ -162,9 +161,10 @@ const emit = defineEmits([
 ]);
 
 // The header box shows the selection: checked when every visible row is,
-// partly checked when some are. Clicking it with anything checked clears the
-// selection, on or off this page; with nothing checked it checks every
-// visible row. `toggle-all` carries which of the two to do.
+// partly checked when some are. Clicking it checks every row unless every
+// visible row already is, which clears the selection, on or off this page.
+// So a partly checked box checks all, as the macOS and Windows guidelines
+// have it. `toggle-all` carries which of the two to do.
 const allRowsChecked = computed(
   () => props.rows.length > 0 && props.rows.every((row) => props.selectedRows.includes(row.id)),
 );
@@ -174,6 +174,24 @@ const selectedHere = computed(() => {
   const kind = String(props.rows[0]?.id ?? '').split(':')[0];
   return props.selectedRows.filter((id) => String(id).split(':')[0] === kind).length;
 });
+
+// The header box is set by hand rather than bound. Bound with a prevented
+// click, the browser put back the box's old checked and indeterminate state
+// after Vue had drawn the new one, so clearing every row left it showing "-".
+const headerBox = ref(null);
+function syncHeaderBox() {
+  if (!headerBox.value) return;
+  headerBox.value.checked = allRowsChecked.value;
+  headerBox.value.indeterminate = selectedHere.value > 0 && !allRowsChecked.value;
+}
+watch([allRowsChecked, selectedHere], syncHeaderBox, { flush: 'post' });
+onMounted(syncHeaderBox);
+function clickHeaderBox() {
+  emit('toggle-all', !allRowsChecked.value);
+  // The click already flipped the box; draw the selection's state over it
+  // even when the click changed nothing.
+  nextTick(syncHeaderBox);
+}
 
 // Where rows have checkboxes, a click picks like a file list: Shift checks
 // every row from the last one checked to this one, Ctrl (Command on a Mac)

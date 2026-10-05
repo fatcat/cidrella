@@ -196,15 +196,16 @@ describe('the header checkbox', () => {
       props: { columns: [], rows, showCheckboxes: true, selectedRows },
     });
 
-  it('shows the selection and clears it when anything is checked', async () => {
+  it('checks all from partly checked and clears when every row is checked', async () => {
     const some = mountTable(['address:1']);
     expect(header(some).element.indeterminate).toBe(true);
-    expect(header(some).attributes('aria-label')).toBe('Clear selection');
+    expect(header(some).attributes('aria-label')).toBe('Select all rows');
     await header(some).trigger('click');
-    expect(some.emitted('toggle-all')).toEqual([[false]]);
+    expect(some.emitted('toggle-all')).toEqual([[true]]);
 
     const every = mountTable(['address:1', 'address:2']);
     expect(header(every).element.checked).toBe(true);
+    expect(header(every).attributes('aria-label')).toBe('Clear selection');
     await header(every).trigger('click');
     expect(every.emitted('toggle-all')).toEqual([[false]]);
   });

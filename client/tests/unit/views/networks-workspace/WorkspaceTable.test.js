@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { mount } from '@vue/test-utils';
+import { flushPromises, mount } from '@vue/test-utils';
 import WorkspaceTable from '../../../../src/views/networks-workspace/WorkspaceTable.vue';
 
 describe('WorkspaceTable', () => {
@@ -35,5 +35,37 @@ describe('WorkspaceTable', () => {
     expect(names).toHaveLength(1);
     expect(names[0].text()).toBe('Lab bench');
     expect(names[0].attributes('style')).toContain('--range-color: #0ea5e9');
+  });
+
+  it('shows the header box as the selection is, and checks all from partly checked', async () => {
+    const rows = [{ id: 'address:1' }, { id: 'address:2' }];
+    const wrapper = mount(WorkspaceTable, {
+      props: { columns: [{ key: 'name', label: 'Hostname' }], rows, showCheckboxes: true },
+    });
+    const box = () => wrapper.find('thead input').element;
+    const state = () => [box().checked, box().indeterminate];
+
+    await wrapper.find('thead input').trigger('click');
+    expect(wrapper.emitted('toggle-all').at(-1)).toEqual([true]);
+    await wrapper.setProps({ selectedRows: rows.map((row) => row.id) });
+    await flushPromises();
+    expect(state()).toEqual([true, false]);
+
+    await wrapper.setProps({ selectedRows: ['address:1'] });
+    await flushPromises();
+    expect(state()).toEqual([false, true]);
+
+    // Partly checked: a click checks every row.
+    await wrapper.find('thead input').trigger('click');
+    expect(wrapper.emitted('toggle-all').at(-1)).toEqual([true]);
+    await wrapper.setProps({ selectedRows: rows.map((row) => row.id) });
+    await flushPromises();
+
+    // All checked: a click clears.
+    await wrapper.find('thead input').trigger('click');
+    expect(wrapper.emitted('toggle-all').at(-1)).toEqual([false]);
+    await wrapper.setProps({ selectedRows: [] });
+    await flushPromises();
+    expect(state()).toEqual([false, false]);
   });
 });

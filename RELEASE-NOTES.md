@@ -455,6 +455,11 @@ first on a 0.4.17 host.
   dnsmasq writes it ("900s", "12h"), which the cards read as a number and
   showed as a dash.
 
+- The select-all box in the workspace tables showed a "-" after it cleared
+  every row, and could show unchecked after checking them all. It now shows
+  checked, partly checked or clear as the selection is. A partly checked box
+  now checks every row when clicked, as macOS and Windows do; it used to
+  clear the selection. A fully checked box still clears it.
 - Several networks can be allocated at once. Check unallocated networks
   and choose Allocate N networks from the row menu. Each keeps the name it
   was given (a network still named by its CIDR takes the name template) and
