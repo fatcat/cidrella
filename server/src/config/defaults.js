@@ -195,7 +195,7 @@ export const FALLBACK_SECONDARY_DNS = '9.9.9.9';
 // (DHCPv6) from 2.pool.ntp.org, the one pool name that answers with IPv6.
 // scripts/refresh-ntp-defaults.js refreshes both at release-build time so new
 // installs and reset databases do not carry stale pool answers indefinitely.
-export const DHCP_DEFAULT_NTP_SERVERS = '162.244.81.139,23.155.72.147,66.85.78.80,66.118.229.14';
+export const DHCP_DEFAULT_NTP_SERVERS = '69.164.213.136,172.234.25.10,172.233.189.68,198.44.55.245';
 export const DHCP6_DEFAULT_NTP_SERVERS =
-  '2a11:6c7:2300:a300::123,2606:82c0:21::e,2001:559:2be:3::1001,2604:a880:400:d0::83:2002';
-export const DHCP_DEFAULT_NTP_SERVERS_REFRESHED_AT = '2026-09-02';
+  '2602:fcac:0:7b::74,2603:c020:0:8369:feed:feed:feed:feed,2600:1702:4a73:e00f:c3ee:91f2:71d8:5243,2607:f710:35::29c:0:6';
+export const DHCP_DEFAULT_NTP_SERVERS_REFRESHED_AT = '2026-10-05';
