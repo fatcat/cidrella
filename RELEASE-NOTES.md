@@ -79,25 +79,6 @@ names, below).
   names outside their zone, so every record keeps serving the name it
   served, and the Pi-hole import marks out-of-zone names the same way. A
   full name is now shown without its trailing dot. DNS-NAME-01.
-- **Local names get a 60 second TTL, and the appliance's `/etc/hosts` stays
-  home.** dnsmasq answered every local record with a TTL of 0, so clients
-  looked a name up again for nearly every request. On a client that also
-  lists a public resolver (a scope handing out `10.0.3.250,9.9.9.9`, say),
-  any slow answer let the public resolver's NXDOMAIN win, and the browser
-  failed a burst of requests with `ERR_NAME_NOT_RESOLVED`. Local records now
-  carry a 60 second TTL. dnsmasq also read the appliance's own `/etc/hosts`,
-  where Proxmox and Debian map the host's name to `127.0.1.1`, and served
-  that to the whole network next to the real addresses; `no-hosts` stops it.
-  Both are lines CIDRella manages in `dnsmasq.conf`, so the first boot after
-  the upgrade adds them and restarts dnsmasq once. The installer's include
-  mode, which points a host's own dnsmasq at CIDRella's `conf.d`, is not
-  affected.
-- **The TTL column shows the TTL clients get.** It showed a record's stored
-  TTL, or the zone's SOA minimum (the negative-cache TTL) when it had none,
-  but dnsmasq serves every record except a CNAME with its one local TTL.
-  Record reads now carry `served_ttl` from the backend, and the column shows
-  it, marked "default" when it is not the record's own. The stored TTL is
-  kept for a backend that can serve it.
 
 ### Developer notes
 
@@ -110,6 +91,9 @@ names, below).
 - `utils/after-commit.js` takes its hook handlers from `registerHookHandlers`
   at boot instead of importing them. That removed the last server import
   cycle; the CI madge baseline is now 0.
+- A DNS role op, `servedTtl(record)`, reports the TTL the backend answers a
+  record with; record reads carry it as `served_ttl` (the 60 second
+  `local-ttl` fix itself shipped in 0.5.0).
 - Neutral helpers moved out of the dnsmasq code: `utils/reverse-zones.js`,
   `utils/config-value-validation.js` (was `utils/dnsmasq-escape.js`),
   `listenableAddresses` in `utils/interface-config.js`, and
@@ -544,6 +528,24 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- **Local names get a 60 second TTL, and the appliance's `/etc/hosts` stays
+  home.** dnsmasq answered every local record with a TTL of 0, so clients
+  looked a name up again for nearly every request. On a client that also
+  lists a public resolver (a scope handing out `10.0.3.250,9.9.9.9`, say),
+  any slow answer let the public resolver's NXDOMAIN win, and the browser
+  failed a burst of requests with `ERR_NAME_NOT_RESOLVED`. Local records now
+  carry a 60 second TTL. dnsmasq also read the appliance's own `/etc/hosts`,
+  where Proxmox and Debian map the host's name to `127.0.1.1`, and served
+  that to the whole network next to the real addresses; `no-hosts` stops it.
+  Both are lines CIDRella manages in `dnsmasq.conf`, so the first boot after
+  the upgrade adds them and restarts dnsmasq once. The installer's include
+  mode, which points a host's own dnsmasq at CIDRella's `conf.d`, is not
+  affected.
+- **The TTL column shows the TTL clients get.** It showed a record's stored
+  TTL, or the zone's SOA minimum (the negative-cache TTL) when it had none,
+  but dnsmasq serves every record except a CNAME with its one local TTL.
+  Record reads now carry `served_ttl`, and the column shows it, marked
+  "default" when it is not the record's own. The stored TTL is kept.
 - **Address history stops repeating itself.** Three loops filled it on a
   busy network:
   - Every lease sync, about every 10 seconds, wrote "Lease obtained" again for
