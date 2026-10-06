@@ -106,10 +106,6 @@ domain-needed
 # Don't forward addresses in the non-routed address spaces
 bogus-priv
 
-dnssec
-dnssec-check-unsigned
-dnssec-no-timecheck
-trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D
 bind-dynamic
 listen-address=127.0.0.1
 port=53
@@ -121,6 +117,10 @@ no-dhcp-interface=eth0
 interface=eth1
 listen-address=10.61.0.2
 no-dhcp-interface=eth1
+dnssec
+dnssec-check-unsigned
+dnssec-no-timecheck
+trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D
 === hosts.d/records.hosts ===
 10.60.0.10 web.golden.test
 10.60.0.50 printer.golden.test
@@ -241,10 +241,6 @@ domain-needed
 # Don't forward addresses in the non-routed address spaces
 bogus-priv
 
-dnssec
-dnssec-check-unsigned
-dnssec-no-timecheck
-trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D
 bind-dynamic
 listen-address=127.0.0.1
 port=5353
@@ -253,6 +249,10 @@ interface=eth0
 no-dhcp-interface=eth0
 interface=eth1
 no-dhcp-interface=eth1
+dnssec
+dnssec-check-unsigned
+dnssec-no-timecheck
+trust-anchor=.,20326,8,2,E06D44B80B8F1D39A95C0B0D7C65D08458E880409BBC683457104237C7F8EC8D
 === hosts.d/records.hosts ===
 10.60.0.10 web.golden.test
 10.60.0.50 printer.golden.test

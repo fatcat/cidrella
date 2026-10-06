@@ -66,30 +66,6 @@ was suggested.
   reservations to a file dnsmasq reads only on reload (`dhcp-hostsfile` instead of
   `dhcp-hostsdir`), which also drops the inotify path.
 
-## Found writing the dnsmasq golden test (2026-10-06)
-
-#### DNSMASQ-03: With DNSSEC on, every boot restarts dnsmasq
-
-**medium**, confirmed in the code and by `server/tests/integration/backends/__golden__/05-boot-unchanged.txt`.
-`server/src/services/backend-apply.js:41` (`applyAtBoot`), `server/src/backends/dnsmasq/dnsmasq.js`
-(`applyInterfaceConfig`, `regenerateDnsmasqConf`)
-
-- **What happens:** With `dnssec_enabled` true, a reboot with no setting changed still reports
-  the conf changed, validates it and restarts dnsmasq, dropping its cache. The file on disk ends
-  up byte for byte the same.
-- **Why:** Both writers strip their own lines and append them at the end of `dnsmasq.conf`. Boot
-  runs `applyInterfaceConfig` (moves the interface lines below the DNSSEC block, a directive
-  change) and then `regenerateDnsmasqConf` (moves the DNSSEC block back below them, another
-  change). Each write compares against the one before it, so both report a change even though
-  the pair is a round trip.
-- **Fix:** Have the boot block compare the final `dnsmasq.conf` with what was on disk before
-  either write (directives only, like `writeIfChanged`), or give each writer a fixed position
-  for its block instead of appending. `routes/interfaces.js` has the same flaw on its own: it
-  runs `applyInterfaceConfig` alone, which moves the interface lines below the DNSSEC block, so
-  saving the Interfaces page with DNSSEC on restarts dnsmasq even when nothing changed
-  (inferred from the same code path, not run). Fixing it changes the golden snapshot for step
-  05, which should then show no restart.
-
 ## Found building the backend facade (2026-10-06)
 
 The facade (0.5.1) left these dnsmasq traits in place on purpose: changing them is a behavior

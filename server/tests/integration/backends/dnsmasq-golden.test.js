@@ -45,6 +45,7 @@ const { invalidateSubnetCache } = await import('../../../src/utils/ip-sync.js');
 const { queueRegen } = await import('../../../src/utils/after-commit.js');
 const { applyAtBoot, applyListenNow } = await import('../../../src/services/backend-apply.js');
 const { syncLeasesNow } = await import('../../../src/services/dhcp-lease-sync.js');
+const { getDnsBackend } = await import('../../../src/backends/index.js');
 
 let db;
 let tmpDir;
@@ -248,6 +249,16 @@ describe('dnsmasq backend golden output', () => {
   it('05 reboots with nothing changed', async () => {
     applyPaths.boot();
     await expect(snapshot()).toMatchFileSnapshot(golden('05-boot-unchanged'));
+  });
+
+  // DNSMASQ-03: with DNSSEC on, the listen and resolver writers used to move
+  // each other's block, so an Interfaces save with nothing changed reported
+  // a change and restarted dnsmasq. Not a snapshot: it must leave no trace.
+  it('05b saves the Interfaces page with nothing changed', () => {
+    const before = snapshot();
+    expect(getDnsBackend().applyListen(db, { activate: false }).changed).toBe(false);
+    expect(getDnsBackend().applyResolver(db, { activate: false }).changed).toBe(false);
+    expect(snapshot()).toBe(before.replace(/##### commands\n[\s\S]*$/, '##### commands\n'));
   });
 
   it('06 enters and leaves proxy bypass', async () => {

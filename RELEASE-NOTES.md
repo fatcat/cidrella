@@ -17,8 +17,8 @@ security: false
 Groundwork for moving DHCP to Kea and DNS to PowerDNS. Every dnsmasq call now
 goes through one backend layer, with dnsmasq as its only adapter. A golden
 test snapshots every generated file and command for every apply path; the
-refactor left them byte for byte the same, and the one change to what dnsmasq
-serves is the SRV fix below. No schema change.
+refactor left them byte for byte the same, and the fixes below are the only
+changes to what dnsmasq is given. No schema change.
 
 ### Changed
 
@@ -62,14 +62,13 @@ serves is the SRV fix below. No schema change.
   `cidrella-dnsmasq` unit, the same check the restart decision already used,
   and falls back to `pidof` only where there is no systemctl (Docker).
   DNSMASQ-05.
-
-### Known issues
-
-Found while building the golden test and the backend layer, and left as they
-were because this release changes no behavior beyond the fixes above:
-
-- With DNSSEC on, every boot restarts dnsmasq and drops its cache even when
-  nothing changed (DNSMASQ-03).
+- **A reboot with DNSSEC on no longer restarts dnsmasq for nothing.** The
+  interface and DNSSEC blocks in `dnsmasq.conf` swapped places on every
+  write, so each boot, and each Interfaces save that changed nothing,
+  validated the conf and restarted dnsmasq, dropping its cache. The interface
+  block now sits above the DNSSEC block, where both writers leave it. The
+  first boot after the upgrade may restart once if the last write before it
+  was an Interfaces save. DNSMASQ-03.
 
 ### Developer notes
 

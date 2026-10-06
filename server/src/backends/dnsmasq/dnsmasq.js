@@ -690,8 +690,13 @@ export function applyInterfaceConfig(_db) {
     }
   }
 
-  // Append directives at the end
-  filtered.push(...newDirectives);
+  // Place the block just above the DNSSEC block, which regenerateDnsmasqConf
+  // keeps at the end. Appending below it moved the DNSSEC lines on every
+  // write, so each writer saw a directive change in the other's output and a
+  // reboot (or an Interfaces save) with DNSSEC on restarted dnsmasq for nothing
+  // (DNSMASQ-03). With this order the file is a fixed point for both writers.
+  const dnssecIdx = filtered.findIndex(isManagedDnssecLine);
+  filtered.splice(dnssecIdx >= 0 ? dnssecIdx : filtered.length, 0, ...newDirectives);
 
   // Same changed-boolean convention as regenerateDnsmasqConf.
   return writeIfChanged(DNSMASQ_CONF, filtered.join('\n'));
