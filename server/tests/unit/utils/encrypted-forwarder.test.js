@@ -4,7 +4,7 @@ import net from 'net';
 import https from 'https';
 
 // dns-proxy is imported transitively (framing helpers); stub its side-effecting deps.
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   applyInterfaceConfig: vi.fn(),
   restartDnsmasq: vi.fn(),
 }));

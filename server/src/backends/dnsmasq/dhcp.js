@@ -16,19 +16,19 @@ import {
   bigToAddress,
   isValidAddress,
   getServerIpForSubnet,
-} from './ip.js';
-import { addressFamily, isValidIpv6 } from './address.js';
-import { findSubnetForIp } from './ip-sync.js';
-import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from './dhcp-options.js';
-import { generateFallbackHostname } from './mac-vendor.js';
-import { macFromDuid } from './duid.js';
-import { DATA_DIR, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
-import { LEASE_FILE, isWholeLeaseFile, readSettledLeaseFile } from './dnsmasq-lease-file.js';
-import { validateConfigSafeValue } from './config-value-validation.js';
-import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
-import { dhcpLeaseRejectionReason } from '../services/ip-lifecycle-service.js';
-import { resolveEffectiveScopeOptions } from '../models/dhcp-scope.js';
-import { ipv6Enabled } from './ipv6-support.js';
+} from '../../utils/ip.js';
+import { addressFamily, isValidIpv6 } from '../../utils/address.js';
+import { findSubnetForIp } from '../../utils/ip-sync.js';
+import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from '../../utils/dhcp-options.js';
+import { generateFallbackHostname } from '../../utils/mac-vendor.js';
+import { macFromDuid } from '../../utils/duid.js';
+import { DATA_DIR, DHCP_LEASE_WATCH_MS } from '../../config/defaults.js';
+import { LEASE_FILE, isWholeLeaseFile, readSettledLeaseFile } from './lease-file.js';
+import { validateConfigSafeValue } from '../../utils/config-value-validation.js';
+import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../../models/dhcp-lease.js';
+import { dhcpLeaseRejectionReason } from '../../services/ip-lifecycle-service.js';
+import { resolveEffectiveScopeOptions } from '../../models/dhcp-scope.js';
+import { ipv6Enabled } from '../../utils/ipv6-support.js';
 
 /**
  * Resolve a hostname to an address of the wanted family (4 by default).

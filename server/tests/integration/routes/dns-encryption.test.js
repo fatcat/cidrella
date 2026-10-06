@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,

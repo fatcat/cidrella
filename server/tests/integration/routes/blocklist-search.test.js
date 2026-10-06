@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   atomicWrite: vi.fn(),
   restartDnsmasq: vi.fn(),
   applyInterfaceConfig: vi.fn(),

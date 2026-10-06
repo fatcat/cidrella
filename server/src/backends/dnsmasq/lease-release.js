@@ -1,7 +1,7 @@
 import { execFileSync } from 'child_process';
-import { isValidIpv4, isValidAddress } from './ip.js';
-import { isValidIpv6 } from './address.js';
-import { readServerDuid } from './dnsmasq-lease-file.js';
+import { isValidIpv4, isValidAddress } from '../../utils/ip.js';
+import { isValidIpv6 } from '../../utils/address.js';
+import { readServerDuid } from './lease-file.js';
 
 const MAC_RE = /^(?:[0-9a-f]{2}:){5}[0-9a-f]{2}$/i;
 const INTERFACE_RE = /^[A-Za-z0-9_.:-]+$/;

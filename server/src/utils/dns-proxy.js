@@ -17,7 +17,7 @@ import {
   applyInterfaceConfig,
   restartDnsmasq,
   withValidatedDnsmasqUpdate,
-} from './dnsmasq.js';
+} from '../backends/dnsmasq/dnsmasq.js';
 import { canonicalizeIp } from './address.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import { parseCidrEntry, ipInAny } from './cidr-match.js';

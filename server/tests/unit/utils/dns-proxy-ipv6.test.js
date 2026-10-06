@@ -6,7 +6,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import os from 'os';
 import dnsPacket from 'dns-packet';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return { ...original, applyInterfaceConfig: vi.fn(), restartDnsmasq: vi.fn() };
 });

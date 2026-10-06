@@ -9,7 +9,7 @@ import {
   isCidrellaDnsmasqRunning,
   dnsmasqRestartPending,
   withValidatedDnsmasqUpdate,
-} from '../utils/dnsmasq.js';
+} from '../backends/dnsmasq/dnsmasq.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
 import {
   applyHttpRedirectConfig,

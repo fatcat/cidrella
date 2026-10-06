@@ -87,6 +87,44 @@ export default [
       ],
     },
   },
+  // Only the backend layer talks to a DNS/DHCP backend adapter; everything
+  // else goes through server/src/backends/index.js or
+  // services/backend-apply.js. The ignores below that are not under
+  // backends/ are a BASELINE of callers not yet rerouted: delete an entry
+  // when its file stops importing the adapter, never add one. Tests are
+  // covered separately (vi.mock strings are invisible to this rule).
+  {
+    files: ['server/src/**/*.js'],
+    ignores: [
+      'server/src/backends/**',
+      'server/src/index.js',
+      'server/src/routes/dhcp.js',
+      'server/src/routes/dns.js',
+      'server/src/routes/health.js',
+      'server/src/routes/interfaces.js',
+      'server/src/routes/metrics.js',
+      'server/src/services/ip-lifecycle-service.js',
+      'server/src/utils/after-commit.js',
+      'server/src/utils/blocklist.js',
+      'server/src/utils/dhcpv6-probe.js',
+      'server/src/utils/dns-proxy.js',
+      'server/src/utils/timesync.js',
+    ],
+    rules: {
+      'no-restricted-imports': [
+        'error',
+        {
+          patterns: [
+            {
+              group: ['**/backends/dnsmasq', '**/backends/dnsmasq/**'],
+              message:
+                'Only server/src/backends/** may import a backend adapter. Use backends/index.js or services/backend-apply.js.',
+            },
+          ],
+        },
+      ],
+    },
+  },
   {
     files: ['client/src/**/*.vue'],
     ignores: [

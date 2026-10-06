@@ -2,7 +2,7 @@ import { addressToBig, addressInRange, isValidAddress, parseNetwork } from '../u
 
 // The one definition of "this DHCP pool would swallow the subnet's gateway".
 //
-// dnsmasq serves the pool verbatim: utils/dhcp.js builds `dhcp-range=` from
+// dnsmasq serves the pool verbatim: backends/dnsmasq/dhcp.js builds `dhcp-range=` from
 // `dhcp_scopes JOIN ranges ON s.range_id = r.id`, so a gateway inside the pool
 // gets handed to a client as a dynamic lease and collides with the router.
 //

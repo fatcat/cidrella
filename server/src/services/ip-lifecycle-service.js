@@ -25,7 +25,7 @@ import {
   fqdnForRecordName,
 } from '../models/dns-record.js';
 import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease-queries.js';
-import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
+import { releaseDnsmasqLease } from '../backends/dnsmasq/lease-release.js';
 import { leaseExpiryMs, leaseDurationMs } from '../utils/lease-sql.js';
 import { parseIp } from '../utils/address.js';
 

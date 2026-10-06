@@ -11,7 +11,7 @@ vi.mock('child_process', () => ({
 
 // Controllable settings backing getSetting().
 let settings = {};
-vi.mock('../../../src/db/init.js', () => ({
+vi.mock('../../../../src/db/init.js', () => ({
   getSetting: (k) => settings[k],
 }));
 
@@ -42,7 +42,7 @@ beforeAll(async () => {
     applyInterfaceConfig,
     validateDnsmasqConfig,
     withValidatedDnsmasqUpdate,
-  } = await import('../../../src/utils/dnsmasq.js'));
+  } = await import('../../../../src/backends/dnsmasq/dnsmasq.js'));
 });
 
 beforeEach(() => {

@@ -4,7 +4,7 @@ import { createTestApp } from '../../helpers/test-app.js';
 import { ADDRESS_TYPE } from '../../../src/models/ip-view.js';
 
 // Stub filesystem-dependent utilities so they don't write dnsmasq/dhcp configs
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
@@ -12,7 +12,7 @@ vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
   };
 });
 
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,

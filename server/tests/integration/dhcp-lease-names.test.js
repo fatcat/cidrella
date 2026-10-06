@@ -25,8 +25,8 @@ beforeAll(async () => {
   const setup = await setupTestDb();
   db = setup.db;
   tmpDir = setup.tmpDir;
-  // DATA_DIR is read when utils/dhcp.js loads, so it loads after setupTestDb.
-  ({ syncLeases, syncSettledLeases } = await import('../../src/utils/dhcp.js'));
+  // DATA_DIR is read when backends/dnsmasq/dhcp.js loads, so it loads after setupTestDb.
+  ({ syncLeases, syncSettledLeases } = await import('../../src/backends/dnsmasq/dhcp.js'));
   ({ invalidateSubnetCache } = await import('../../src/utils/ip-sync.js'));
   leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
   fs.mkdirSync(path.dirname(leaseFile), { recursive: true });

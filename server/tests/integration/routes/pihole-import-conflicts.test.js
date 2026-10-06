@@ -2,14 +2,14 @@ import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
     regenerateConfigs: vi.fn(),
   };
 });
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
   const original = await importOriginal();
   return { ...original, regenerateDhcpConfigs: vi.fn() };
 });

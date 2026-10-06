@@ -4,13 +4,13 @@ const execFileSync = vi.fn();
 vi.mock('child_process', () => ({ execFileSync }));
 // dnsmasq's server DUID, as the lease file would give it.
 const serverDuid = vi.hoisted(() => ({ value: '00:01:00:01:aa:bb:cc:dd:00:00:5e:00:53:01' }));
-vi.mock('../../../src/utils/dnsmasq-lease-file.js', () => ({
+vi.mock('../../../../src/backends/dnsmasq/lease-file.js', () => ({
   LEASE_FILE: '/nonexistent/dnsmasq.leases',
   readServerDuid: () => serverDuid.value,
 }));
 
 const { releaseDnsmasqLease, routeInterfaceForIp } =
-  await import('../../../src/utils/dhcp-release.js');
+  await import('../../../../src/backends/dnsmasq/lease-release.js');
 
 beforeEach(() => execFileSync.mockReset());
 

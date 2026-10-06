@@ -1,7 +1,7 @@
 import fs from 'fs';
 import path from 'path';
-import { DATA_DIR } from '../config/defaults.js';
-import { normalizeDuid } from './duid.js';
+import { DATA_DIR } from '../../config/defaults.js';
+import { normalizeDuid } from '../../utils/duid.js';
 
 // The lease file dnsmasq owns. CIDRella reads it; dnsmasq alone writes it.
 export const LEASE_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.leases');

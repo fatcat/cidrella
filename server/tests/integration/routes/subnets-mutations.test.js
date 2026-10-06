@@ -17,7 +17,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
@@ -28,7 +28,7 @@ vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
     restartDnsmasq: vi.fn(),
   };
 });
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
@@ -725,7 +725,7 @@ describe('PUT /api/dhcp/scopes/:id, pool resize guard (R4 #4)', () => {
 
 // The gateway-in-pool invariant used to be enforced on two of the four routes
 // that can write a scope's pool. dnsmasq builds dhcp-range= straight from the
-// ranges row (utils/dhcp.js), so an unguarded route hands the router's own
+// ranges row (backends/dnsmasq/dhcp.js), so an unguarded route hands the router's own
 // address out as a dynamic lease. One test per write path, so a future route
 // that skips the shared helper fails here.
 describe('gateway-in-pool invariant holds on every route that writes a pool', () => {
@@ -1186,7 +1186,7 @@ describe('canonical IP allocation endpoints', () => {
       gateway_address: '10.46.0.1',
     });
 
-    const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
+    const { regenerateDhcpConfigs } = await import('../../../src/backends/dnsmasq/dhcp.js');
     regenerateDhcpConfigs.mockClear();
 
     const reserve = await request(app)
@@ -1264,7 +1264,7 @@ describe('canonical IP allocation endpoints', () => {
       gateway_address: '10.47.0.1',
     });
 
-    const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
+    const { regenerateDhcpConfigs } = await import('../../../src/backends/dnsmasq/dhcp.js');
     regenerateDhcpConfigs.mockClear();
 
     const reserve = await request(app).put(`/api/subnets/${s.id}/ips/bulk-allocation`).send({

@@ -50,8 +50,8 @@ const {
   withValidatedDnsmasqUpdate,
   dnsmasqRestartPending,
   isCidrellaDnsmasqRunning,
-} = await import('../../../src/utils/dnsmasq.js');
-const { syncSettledLeases } = await import('../../../src/utils/dhcp.js');
+} = await import('../../../src/backends/dnsmasq/dnsmasq.js');
+const { syncSettledLeases } = await import('../../../src/backends/dnsmasq/dhcp.js');
 
 let db;
 let tmpDir;

@@ -2,7 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import readline from 'node:readline';
 import { getDb, getSetting } from '../db/init.js';
-import { atomicWrite, restartDnsmasq, withValidatedDnsmasqUpdate } from './dnsmasq.js';
+import { atomicWrite, restartDnsmasq, withValidatedDnsmasqUpdate } from '../backends/dnsmasq/dnsmasq.js';
 import { loadBlocklist, loadAllowlist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 import {

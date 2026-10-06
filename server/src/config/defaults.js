@@ -178,7 +178,7 @@ export function resolveDnsmasqInternalPort(lanListenPort) {
  * The LAN-facing DNS port, from a stored `dns_listen_port` value, falling back
  * to 53 for anything that is not a usable port.
  *
- * Two callers resolved this differently. `utils/dnsmasq.js` range-checked and
+ * Two callers resolved this differently. `backends/dnsmasq/dnsmasq.js` range-checked and
  * fell back to 53; `utils/dns-proxy.js` used `Number(value) || 53`, which
  * accepts anything non-zero, so a stored 70000 became a bind attempt on 70000
  * while the dnsmasq config it is supposed to sit in front of stayed on 53.

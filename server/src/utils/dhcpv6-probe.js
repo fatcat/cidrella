@@ -28,7 +28,7 @@ import { localAddressSet } from './local-addresses.js';
 import { findNeighbor, readNdCache } from './nd-cache.js';
 import { canonicalizeIp, formatIp, IPV6_BITS } from './address.js';
 import { duidFromBytes } from './duid.js';
-import { LEASE_FILE, readServerDuid } from './dnsmasq-lease-file.js';
+import { LEASE_FILE, readServerDuid } from '../backends/dnsmasq/lease-file.js';
 
 // Re-exported for the callers that found it here first.
 export { readServerDuid };

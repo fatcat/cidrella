@@ -2,20 +2,20 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync, execSync } from 'child_process';
-import { isValidAddress } from './ip.js';
-import { sortKey } from './address.js';
-import { ipForPtrRecord } from '../models/dns-record.js';
-import { getSetting } from '../db/init.js';
-import { ipv6Enabled } from './ipv6-support.js';
-import { listenableAddresses, selectInterfaceNames } from './interface-config.js';
+import { isValidAddress } from '../../utils/ip.js';
+import { sortKey } from '../../utils/address.js';
+import { ipForPtrRecord } from '../../models/dns-record.js';
+import { getSetting } from '../../db/init.js';
+import { ipv6Enabled } from '../../utils/ipv6-support.js';
+import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
 import {
   DATA_DIR,
   resolveDnsmasqInternalPort,
   resolveDnsListenPort,
   DEFAULT_DNS_LISTEN_PORT,
   ENCRYPTED_FORWARDER_PORT,
-} from '../config/defaults.js';
-import { validateConfigSafeValue, validateTxtValue, isValidPtrName } from './config-value-validation.js';
+} from '../../config/defaults.js';
+import { validateConfigSafeValue, validateTxtValue, isValidPtrName } from '../../utils/config-value-validation.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');

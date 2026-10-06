@@ -1,8 +1,8 @@
 import fs from 'fs';
 import path from 'path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { cleanupTestDb, setupTestDb } from '../helpers/test-db.js';
-import { regenerateScopeConfigs } from '../../src/utils/dhcp.js';
+import { cleanupTestDb, setupTestDb } from '../../../helpers/test-db.js';
+import { regenerateScopeConfigs } from '../../../../src/backends/dnsmasq/dhcp.js';
 
 let db;
 let tmpDir;

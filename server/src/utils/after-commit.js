@@ -31,8 +31,8 @@ import {
   regenerateDnsmasqConf,
   restartDnsmasq,
   withValidatedDnsmasqUpdate,
-} from './dnsmasq.js';
-import { regenerateDhcpConfigs } from './dhcp.js';
+} from '../backends/dnsmasq/dnsmasq.js';
+import { regenerateDhcpConfigs } from '../backends/dnsmasq/dhcp.js';
 import {
   enqueueGeneration,
   listGenerations,

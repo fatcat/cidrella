@@ -9,7 +9,7 @@ vi.mock('../../../src/db/init.js', () => ({
   getSetting: (k) => settings[k],
 }));
 
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   signalDnsmasq: vi.fn(),
 }));
 
@@ -20,7 +20,7 @@ import {
   armDnssecTimecheckWhenSynced,
   stopTimesync,
 } from '../../../src/utils/timesync.js';
-import { signalDnsmasq } from '../../../src/utils/dnsmasq.js';
+import { signalDnsmasq } from '../../../src/backends/dnsmasq/dnsmasq.js';
 
 beforeEach(() => {
   vi.clearAllMocks();

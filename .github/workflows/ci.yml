@@ -67,8 +67,8 @@ jobs:
         run: node scripts/check-release-version.js .
 
       - name: Circular dependency check (server)
-        # Baseline = 1 known cycle: utils/dhcp.js → models/dhcp-lease.js →
-        # utils/after-commit.js → utils/dhcp.js. That one is a deliberate
+        # Baseline = 1 known cycle: backends/dnsmasq/dhcp.js → models/dhcp-lease.js →
+        # utils/after-commit.js → backends/dnsmasq/dhcp.js. That one is a deliberate
         # hook-registry pattern (imports only invoked at runtime; safe under
         # ESM live bindings). Breaking it means inverting to runtime
         # registration, tracked as a future refactor. This gate fails only

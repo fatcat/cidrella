@@ -3,7 +3,7 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
 // Stub dnsmasq (no real config writes / exec) and force DNSSEC support on.
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
@@ -22,7 +22,7 @@ vi.mock('../../../src/utils/timesync.js', () => ({
 }));
 
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
-const { dnsmasqSupportsDnssec } = await import('../../../src/utils/dnsmasq.js');
+const { dnsmasqSupportsDnssec } = await import('../../../src/backends/dnsmasq/dnsmasq.js');
 const { ensureNtpEnabled, armDnssecTimecheckWhenSynced } =
   await import('../../../src/utils/timesync.js');
 const { default: request } = await import('supertest');

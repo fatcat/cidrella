@@ -1,15 +1,15 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../../helpers/test-db.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   regenerateConfigs: vi.fn(),
   regenerateDnsmasqConf: vi.fn(),
   restartDnsmasq: vi.fn(),
   withValidatedDnsmasqUpdate: vi.fn((callback) => callback()),
 }));
-vi.mock('../../../src/utils/dhcp.js', () => ({ regenerateDhcpConfigs: vi.fn() }));
+vi.mock('../../../src/backends/dnsmasq/dhcp.js', () => ({ regenerateDhcpConfigs: vi.fn() }));
 
-const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
+const { regenerateDhcpConfigs } = await import('../../../src/backends/dnsmasq/dhcp.js');
 const { enqueueGeneration, findGeneration } =
   await import('../../../src/models/configuration-generation.js');
 const { resumePendingRegeneration } = await import('../../../src/utils/after-commit.js');

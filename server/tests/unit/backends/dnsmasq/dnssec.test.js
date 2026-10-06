@@ -11,7 +11,7 @@ vi.mock('child_process', () => ({
 
 // Controllable settings backing getSetting().
 let settings = {};
-vi.mock('../../../src/db/init.js', () => ({
+vi.mock('../../../../src/db/init.js', () => ({
   getSetting: (k) => settings[k],
 }));
 
@@ -41,7 +41,7 @@ beforeAll(async () => {
   // dnsmasq reports DNSSEC support in this file's default mock.
   vi.mocked(execFileSync).mockReturnValue('Compile time options: IPv6 DHCP DNSSEC inotify');
   ({ regenerateDnsmasqConf, dnsmasqSupportsDnssec } =
-    await import('../../../src/utils/dnsmasq.js'));
+    await import('../../../../src/backends/dnsmasq/dnsmasq.js'));
 });
 
 beforeEach(() => {
@@ -172,7 +172,7 @@ describe('regenerateDnsmasqConf: dnsmasq without DNSSEC support', () => {
   it('refuses to emit the block and reports unsupported', async () => {
     vi.resetModules();
     vi.mocked(execFileSync).mockReturnValue('Compile time options: IPv6 DHCP no-DNSSEC inotify');
-    const fresh = await import('../../../src/utils/dnsmasq.js');
+    const fresh = await import('../../../../src/backends/dnsmasq/dnsmasq.js');
 
     fs.writeFileSync(DNSMASQ_CONF, BASE_CONF);
     settings = { dns_upstream_servers: ['1.1.1.1'], dnssec_enabled: 'true' };

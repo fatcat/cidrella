@@ -5,7 +5,7 @@ import { createTestApp } from '../../helpers/test-app.js';
 // blocklist.js pulls in dnsmasq + dns-proxy side effects and writes conf files.
 // Stub those effect modules, keep the real blocklist.js exports (the route
 // imports SCHEDULE_HOURS from it), and override only the side-effectful fns.
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   atomicWrite: vi.fn(),
   restartDnsmasq: vi.fn(),
   applyInterfaceConfig: vi.fn(),

@@ -7,7 +7,7 @@ vi.mock('../../../src/db/init.js', () => ({
   getSetting: () => null,
   audit: () => {},
 }));
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   atomicWrite: () => {},
   restartDnsmasq: () => {},
 }));

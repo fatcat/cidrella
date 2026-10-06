@@ -38,7 +38,7 @@ beforeAll(async () => {
   process.env.DATA_DIR = tmpDir;
   fs.mkdirSync(path.join(tmpDir, 'dnsmasq', 'hosts.d'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'dnsmasq', 'conf.d'), { recursive: true });
-  ({ regenerateConfigs } = await import('../../../src/utils/dnsmasq.js'));
+  ({ regenerateConfigs } = await import('../../../../src/backends/dnsmasq/dnsmasq.js'));
 });
 
 beforeEach(() => {
@@ -283,7 +283,7 @@ describe('IPv6 emission', () => {
 
 describe('atomicWrite', () => {
   it('writes through a dot-named temp file dnsmasq skips (DNSMASQ-01)', async () => {
-    const { atomicWrite } = await import('../../../src/utils/dnsmasq.js');
+    const { atomicWrite } = await import('../../../../src/backends/dnsmasq/dnsmasq.js');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-atomic-'));
     const target = path.join(dir, 'reservations.hosts');
     const rename = vi.spyOn(fs, 'renameSync');

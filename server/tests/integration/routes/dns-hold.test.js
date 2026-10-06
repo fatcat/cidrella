@@ -9,7 +9,7 @@ import { findRetirementCandidates } from '../../../src/models/ip-address.js';
 import { computeIpView } from '../../../src/models/ip-view.js';
 import { invalidateSubnetCache } from '../../../src/utils/ip-sync.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
@@ -19,7 +19,7 @@ vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
     signalDnsmasq: vi.fn(),
   };
 });
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
   const original = await importOriginal();
   return { ...original, regenerateDhcpConfigs: vi.fn() };
 });

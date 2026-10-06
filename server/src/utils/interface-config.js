@@ -6,7 +6,7 @@ import { ipv6Enabled } from './ipv6-support.js';
  * One reading of the `interface_config` setting.
  *
  * Three call sites used to parse this setting and walk it themselves:
- * `utils/dnsmasq.js` (emitting interface= / listen-address= / no-dhcp-interface=),
+ * `backends/dnsmasq/dnsmasq.js` (emitting interface= / listen-address= / no-dhcp-interface=),
  * `utils/dns-proxy.js` (collecting bind addresses) and `utils/dhcp-probe.js`
  * (collecting interfaces to probe). The dhcp-probe copy carried a comment
  * saying it "mirrors dnsmasq.js exactly", which is a drift risk stated out loud

@@ -8,7 +8,7 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
@@ -19,7 +19,7 @@ vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
     restartDnsmasq: vi.fn(),
   };
 });
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
   const original = await importOriginal();
   return { ...original, regenerateDhcpConfigs: vi.fn(), startLeaseWatcher: vi.fn() };
 });

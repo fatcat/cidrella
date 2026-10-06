@@ -2,8 +2,8 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', () => ({ regenerateDnsmasqConfig: vi.fn() }));
-vi.mock('../../../src/utils/dhcp.js', () => ({ regenerateDhcpConfig: vi.fn() }));
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({ regenerateDnsmasqConfig: vi.fn() }));
+vi.mock('../../../src/backends/dnsmasq/dhcp.js', () => ({ regenerateDhcpConfig: vi.fn() }));
 
 const { default: request } = await import('supertest');
 const { default: subnetsRouter } = await import('../../../src/routes/subnets.js');

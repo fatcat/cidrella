@@ -10,7 +10,7 @@ import {
   IpLifecycleConflictError,
 } from '../services/ip-lifecycle-service.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
-import { dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
+import { dnsmasqSupportsDnssec } from '../backends/dnsmasq/dnsmasq.js';
 import { ensureNtpEnabled, getNtpStatus, armDnssecTimecheckWhenSynced } from '../utils/timesync.js';
 import {
   applyEncryptedForwarder,

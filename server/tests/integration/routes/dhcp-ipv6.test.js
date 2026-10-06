@@ -24,14 +24,14 @@ let parseLeaseLine;
 const subnets = {};
 
 beforeAll(async () => {
-  // DATA_DIR is read when utils/dhcp.js loads, so every module that writes
+  // DATA_DIR is read when backends/dnsmasq/dhcp.js loads, so every module that writes
   // dnsmasq files must load after setupTestDb has pointed it at the temp dir.
   const setup = await setupTestDb();
   enableIpv6(setup.db);
   tmpDir = setup.tmpDir;
   db = setup.db;
   ({ regenerateScopeConfigs, regenerateReservations, syncLeases, parseLeaseLine } =
-    await import('../../../src/utils/dhcp.js'));
+    await import('../../../src/backends/dnsmasq/dhcp.js'));
   const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
   const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');
   const { default: dnsRouter } = await import('../../../src/routes/dns.js');

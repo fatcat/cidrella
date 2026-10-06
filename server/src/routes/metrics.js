@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getDb, getSetting } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getProxyStatus } from '../utils/dns-proxy.js';
-import { isDnsmasqRunning } from '../utils/dnsmasq.js';
+import { isDnsmasqRunning } from '../backends/dnsmasq/dnsmasq.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
 import { VALID_RANGE_KEYS } from '../config/defaults.js';
 import { getIpLifecycleDiagnostics } from '../utils/ip-lifecycle-diagnostics.js';

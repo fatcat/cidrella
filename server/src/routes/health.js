@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import { getDb, getSetting } from '../db/init.js';
 import { queryRaw } from '../db/duckdb.js';
 import { APP_VERSION } from '../utils/version.js';
-import { isDnsmasqRunning, dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
+import { isDnsmasqRunning, dnsmasqSupportsDnssec } from '../backends/dnsmasq/dnsmasq.js';
 import { getNtpStatus } from '../utils/timesync.js';
 import { getEncryptedForwarderStatus } from '../utils/encrypted-forwarder.js';
 import { getProbeState } from '../utils/dhcp-probe.js';

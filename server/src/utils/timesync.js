@@ -14,7 +14,7 @@
 
 import { execFileSync } from 'child_process';
 import { getSetting } from '../db/init.js';
-import { signalDnsmasq } from './dnsmasq.js';
+import { signalDnsmasq } from '../backends/dnsmasq/dnsmasq.js';
 
 let timecheckTimer = null;
 

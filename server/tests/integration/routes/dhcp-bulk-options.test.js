@@ -17,7 +17,7 @@ import {
   DHCP6_DEFAULT_NTP_SERVERS,
 } from '../../../src/config/defaults.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
@@ -28,7 +28,7 @@ vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
     restartDnsmasq: vi.fn(),
   };
 });
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
+vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 
 // Mock dnsmasq.js before importing dns-proxy (avoids circular dep issues)
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
+vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   applyInterfaceConfig: vi.fn(),
   restartDnsmasq: vi.fn(),
 }));

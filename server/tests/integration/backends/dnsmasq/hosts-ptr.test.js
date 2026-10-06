@@ -5,11 +5,11 @@
  * from the first hosts line for an address, and a ptr-record beats a hosts
  * line; both were checked against dnsmasq 2.91.
  */
-import { DATA_DIR } from '../helpers/isolated-data-dir.js';
+import { DATA_DIR } from '../../../helpers/isolated-data-dir.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb } from '../../../helpers/test-db.js';
 
 let tmpDir;
 let db;
@@ -28,7 +28,7 @@ const add = (zoneId, name, type, value) =>
 
 beforeAll(async () => {
   ({ db, tmpDir } = await setupTestDb());
-  ({ regenerateHostsDir, regenerateConfDir } = await import('../../src/utils/dnsmasq.js'));
+  ({ regenerateHostsDir, regenerateConfDir } = await import('../../../../src/backends/dnsmasq/dnsmasq.js'));
   forwardId = db
     .prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)")
     .run().lastInsertRowid;

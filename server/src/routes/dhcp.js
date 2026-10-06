@@ -18,7 +18,7 @@ import {
 } from '../utils/ip.js';
 import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
-import { syncSettledLeases } from '../utils/dhcp.js';
+import { syncSettledLeases } from '../backends/dnsmasq/dhcp.js';
 import {
   DHCP_OPTION_GROUPS,
   optionCatalogFor,
@@ -78,7 +78,7 @@ function resolveV6Mode(subnet, requested, current = null) {
 }
 
 // v0.4.15: validate each scope option value before it reaches the scope-
-// options table. The config writer (utils/dhcp.js) already drops bad rows
+// options table. The config writer (backends/dnsmasq/dhcp.js) already drops bad rows
 // so a malformed row is non-exploitable, but catching it at write-time
 // surfaces a clear error and keeps the DB clean.
 // The family an option request is about. Only 4 and 6 exist; anything else
