@@ -15,7 +15,11 @@ import {
   DEFAULT_DNS_LISTEN_PORT,
   ENCRYPTED_FORWARDER_PORT,
 } from '../../config/defaults.js';
-import { validateConfigSafeValue, validateTxtValue, isValidPtrName } from '../../utils/config-value-validation.js';
+import {
+  validateConfigSafeValue,
+  validateTxtValue,
+  isValidPtrName,
+} from '../../utils/config-value-validation.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
@@ -90,8 +94,15 @@ export function validateDnsmasqConfig() {
   }
 }
 
+// Depth of the validated update in progress. A nested call (an apply op
+// run inside a backend transaction) joins the outer one: the outer call
+// owns the snapshot, the single `dnsmasq --test` and the rollback.
+let validatedUpdateDepth = 0;
+
 export function withValidatedDnsmasqUpdate(update) {
+  if (validatedUpdateDepth > 0) return update();
   const snapshot = snapshotDnsmasqConfig();
+  validatedUpdateDepth++;
   try {
     const result = update();
     const changed = typeof result === 'boolean' ? result : Boolean(result?.changed);
@@ -100,6 +111,8 @@ export function withValidatedDnsmasqUpdate(update) {
   } catch (err) {
     restoreDnsmasqConfig(snapshot);
     throw err;
+  } finally {
+    validatedUpdateDepth--;
   }
 }
 
@@ -470,7 +483,7 @@ export function regenerateDnsmasqConf(_db) {
   }
 
   // Skip the write when nothing changed so callers (boot especially) can skip
-  // the dnsmasq restart. Same changed-boolean convention as regenerateConfigs.
+  // the dnsmasq restart. Same changed-boolean convention as the other writers here.
   return writeIfChanged(DNSMASQ_CONF, filtered.join('\n'));
 }
 
@@ -696,24 +709,6 @@ export function applyInterfaceConfig(_db) {
   // Append directives at the end
   filtered.push(...newDirectives);
 
-  // Same changed-boolean convention as regenerateDnsmasqConf/regenerateConfigs.
+  // Same changed-boolean convention as regenerateDnsmasqConf.
   return writeIfChanged(DNSMASQ_CONF, filtered.join('\n'));
-}
-
-export function regenerateConfigs(db) {
-  const { hostsChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
-    const hostsChanged = regenerateHostsDir(db);
-    const confChanged = regenerateConfDir(db);
-    return { hostsChanged, confChanged, changed: hostsChanged || confChanged };
-  });
-
-  // dnsmasq rereads hostsdir/dhcp-hostsdir on SIGHUP, but it does not reread
-  // the main config file or conf-dir includes. CNAME/MX/TXT/SRV/PTR records
-  // live in conf.d/zone-*.conf, so those changes need a full restart to take
-  // effect. Hosts-only updates can keep using the cheaper reload path.
-  if (confChanged) {
-    restartDnsmasq();
-  } else if (hostsChanged) {
-    signalDnsmasq();
-  }
 }

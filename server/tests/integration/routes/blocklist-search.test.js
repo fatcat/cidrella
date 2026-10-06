@@ -2,6 +2,12 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyResolver',
+  ]),
+);
 vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   atomicWrite: vi.fn(),
   restartDnsmasq: vi.fn(),

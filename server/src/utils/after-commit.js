@@ -26,13 +26,7 @@
  */
 
 import { getDb } from '../db/init.js';
-import {
-  regenerateConfigs as regenDnsConfigs,
-  regenerateDnsmasqConf,
-  restartDnsmasq,
-  withValidatedDnsmasqUpdate,
-} from '../backends/dnsmasq/dnsmasq.js';
-import { regenerateDhcpConfigs } from '../backends/dnsmasq/dhcp.js';
+import { HOOK_HANDLERS } from '../services/backend-apply.js';
 import {
   enqueueGeneration,
   listGenerations,
@@ -41,23 +35,17 @@ import {
   markFailed,
 } from '../models/configuration-generation.js';
 
-// Hook name → function(db). All hooks must accept a db handle and return void.
+// Hook name → function(db), from services/backend-apply.js. All hooks must
+// accept a db handle and return void.
 // Ordering matters when one artifact depends on another: DHCP scope emit reads
 // freshly synced reservations, so run DNS-side regen first, then DHCP. The
-// main dnsmasq.conf regen fires last and restarts dnsmasq after.
+// resolver config (dnsmasq.conf) fires last and restarts the backend after.
 //
 // Note on ordering: hooks fire via queueMicrotask, AFTER res.on('finish').
 // Callers that must observe the hook's effect synchronously (e.g. before a
 // dnsmasq restart) MUST call the underlying function inline instead.
 // queueRegen is not a synchronous-completion primitive.
-const HOOK_REGISTRY = {
-  regenerate_dns: (db) => regenDnsConfigs(db),
-  regenerate_dhcp: (db) => regenerateDhcpConfigs(db),
-  regenerate_dnsmasq_conf: (db) => {
-    const changed = withValidatedDnsmasqUpdate(() => regenerateDnsmasqConf(db));
-    if (changed) restartDnsmasq();
-  },
-};
+const HOOK_REGISTRY = HOOK_HANDLERS;
 
 const HOOK_ORDER = ['regenerate_dns', 'regenerate_dhcp', 'regenerate_dnsmasq_conf'];
 

@@ -1,15 +1,11 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../../helpers/test-db.js';
 
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
-  regenerateConfigs: vi.fn(),
-  regenerateDnsmasqConf: vi.fn(),
-  restartDnsmasq: vi.fn(),
-  withValidatedDnsmasqUpdate: vi.fn((callback) => callback()),
-}));
-vi.mock('../../../src/backends/dnsmasq/dhcp.js', () => ({ regenerateDhcpConfigs: vi.fn() }));
+vi.mock('../../../src/services/backend-apply.js', async () =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply({}),
+);
 
-const { regenerateDhcpConfigs } = await import('../../../src/backends/dnsmasq/dhcp.js');
+const { applyDhcp } = await import('../../../src/services/backend-apply.js');
 const { enqueueGeneration, findGeneration } =
   await import('../../../src/models/configuration-generation.js');
 const { resumePendingRegeneration } = await import('../../../src/utils/after-commit.js');
@@ -22,7 +18,7 @@ beforeAll(async () => {
 });
 
 beforeEach(() => {
-  regenerateDhcpConfigs.mockReset();
+  applyDhcp.mockReset();
   db.prepare(
     `
     UPDATE configuration_generations
@@ -44,11 +40,11 @@ describe('durable after-commit recovery', () => {
         status: 'applied',
       });
     });
-    expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(1);
+    expect(applyDhcp).toHaveBeenCalledTimes(1);
   });
 
   it('retains failure details and succeeds on a later restart retry', async () => {
-    regenerateDhcpConfigs.mockImplementationOnce(() => {
+    applyDhcp.mockImplementationOnce(() => {
       throw new Error('injected dnsmasq validation failure');
     });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
@@ -70,6 +66,6 @@ describe('durable after-commit recovery', () => {
       });
     });
     error.mockRestore();
-    expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(2);
+    expect(applyDhcp).toHaveBeenCalledTimes(2);
   });
 });

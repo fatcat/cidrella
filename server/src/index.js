@@ -57,7 +57,7 @@ import piholeRoutes from './routes/pihole.js';
 import interfaceRoutes from './routes/interfaces.js';
 import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js';
 import { ensureCerts, setHttpsServer } from './utils/cert.js';
-import { startLeaseWatcher } from './backends/dnsmasq/dhcp.js';
+import { startLeaseSync } from './services/dhcp-lease-sync.js';
 import { syncServerDnsDefault } from './models/dhcp-option.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
@@ -213,7 +213,7 @@ async function main() {
   }
 
   // Start DHCP lease file watcher
-  startLeaseWatcher(getDb());
+  startLeaseSync(getDb());
 
   // Start passive liveness watcher (DNS query log → is_online)
   startPassiveLivenessWatcher(getDb());

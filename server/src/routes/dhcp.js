@@ -18,7 +18,7 @@ import {
 } from '../utils/ip.js';
 import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
-import { syncSettledLeases } from '../backends/dnsmasq/dhcp.js';
+import { syncLeasesNow } from '../services/dhcp-lease-sync.js';
 import {
   DHCP_OPTION_GROUPS,
   optionCatalogFor,
@@ -1250,7 +1250,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
 // POST /api/dhcp/sync-leases
 router.post('/sync-leases', requirePerm('dhcp:write'), async (req, res) => {
   const db = getDb();
-  const result = await syncSettledLeases(db);
+  const result = await syncLeasesNow(db);
   res.json({ message: 'Leases synced', ...result });
 });
 

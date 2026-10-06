@@ -10,7 +10,7 @@ vi.mock('child_process', () => ({
 }));
 
 let tmpDir;
-let regenerateConfigs;
+let applyZones;
 
 function makeDb({ aRecords = [], otherRecords = [], ptrRecords = [], zone = {} } = {}) {
   const zones = [{ id: 10, name: 'the-mcnultys.org', ...zone }];
@@ -38,7 +38,8 @@ beforeAll(async () => {
   process.env.DATA_DIR = tmpDir;
   fs.mkdirSync(path.join(tmpDir, 'dnsmasq', 'hosts.d'), { recursive: true });
   fs.mkdirSync(path.join(tmpDir, 'dnsmasq', 'conf.d'), { recursive: true });
-  ({ regenerateConfigs } = await import('../../../../src/backends/dnsmasq/dnsmasq.js'));
+  const { createDnsmasqBackend } = await import('../../../../src/backends/dnsmasq/index.js');
+  ({ applyZones } = createDnsmasqBackend().dns);
 });
 
 beforeEach(() => {
@@ -53,9 +54,9 @@ afterAll(() => {
   fs.rmSync(tmpDir, { recursive: true, force: true });
 });
 
-describe('regenerateConfigs reload behavior', () => {
+describe('applyZones reload behavior', () => {
   it('reloads dnsmasq for hostsdir-only changes', () => {
-    regenerateConfigs(
+    applyZones(
       makeDb({
         aRecords: [{ name: 'container-host', value: '10.0.3.231' }],
       }),
@@ -70,7 +71,7 @@ describe('regenerateConfigs reload behavior', () => {
   });
 
   it('restarts dnsmasq for conf-dir CNAME changes', () => {
-    regenerateConfigs(
+    applyZones(
       makeDb({
         otherRecords: [
           {
@@ -92,7 +93,7 @@ describe('regenerateConfigs reload behavior', () => {
   });
 
   it('does not append the zone twice for legacy fully-qualified CNAME names', () => {
-    regenerateConfigs(
+    applyZones(
       makeDb({
         otherRecords: [
           {
@@ -111,7 +112,7 @@ describe('regenerateConfigs reload behavior', () => {
   });
 
   it('preserves trailing dots for external absolute A-record names', () => {
-    regenerateConfigs(
+    applyZones(
       makeDb({
         aRecords: [{ name: 'host.google.com.', value: '10.0.3.232' }],
       }),
@@ -163,13 +164,13 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
 
   it('rewrites the file but does not restart when only the SOA serial moved', () => {
     // First pass establishes the file and legitimately restarts.
-    regenerateConfigs(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860436 } }));
+    applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860436 } }));
     expect(fs.readFileSync(CONF(), 'utf-8')).toContain('860436');
     expect(restarts()).toBe(1);
 
     // Lease churn bumped the serial. Nothing else about the zone changed.
     vi.clearAllMocks();
-    regenerateConfigs(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860439 } }));
+    applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860439 } }));
 
     const conf = fs.readFileSync(CONF(), 'utf-8');
     expect(conf).toContain('860439'); // comment stays truthful
@@ -179,10 +180,10 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
   });
 
   it('still restarts when a real directive changes alongside the serial', () => {
-    regenerateConfigs(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
+    applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
     vi.clearAllMocks();
 
-    regenerateConfigs(
+    applyZones(
       makeDb({
         otherRecords: [
           ...CNAME,
@@ -200,11 +201,11 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
 
   it('is fully idempotent when nothing at all changed', () => {
     const db = () => makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 7 } });
-    regenerateConfigs(db());
+    applyZones(db());
     const after = fs.readFileSync(CONF(), 'utf-8');
     vi.clearAllMocks();
 
-    regenerateConfigs(db());
+    applyZones(db());
     expect(fs.readFileSync(CONF(), 'utf-8')).toBe(after);
     expect(restarts()).toBe(0);
     expect(reloads()).toBe(0);
@@ -213,11 +214,11 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
   it('treats a commented-out directive as a real change, not a comment', () => {
     // Guard against a lazy "ignore anything with a #" implementation: dropping a
     // directive behind a `#` genuinely disables it and must reach the daemon.
-    regenerateConfigs(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
+    applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
     vi.clearAllMocks();
 
     // Same serial, but the CNAME is gone. The zone now has only a PTR.
-    regenerateConfigs(
+    applyZones(
       makeDb({
         ptrRecords: [{ name: '231', value: 'container-host.the-mcnultys.org' }],
         zone: { ...SOA, soa_serial: 1 },
@@ -232,7 +233,7 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
 
 describe('TXT record escaping', () => {
   it('escapes backslashes so a trailing backslash cannot swallow the closing quote', () => {
-    regenerateConfigs(
+    applyZones(
       makeDb({
         otherRecords: [
           { name: 'spf', type: 'TXT', value: 'v=spf1 a:mail.example.com \\', ttl: null },
@@ -245,7 +246,7 @@ describe('TXT record escaping', () => {
   });
 
   it('escapes quotes and backslashes independently', () => {
-    regenerateConfigs(
+    applyZones(
       makeDb({
         otherRecords: [{ name: 'meta', type: 'TXT', value: 'say "hi" via C:\\path', ttl: null }],
       }),
@@ -258,7 +259,7 @@ describe('TXT record escaping', () => {
 
 describe('IPv6 emission', () => {
   it('writes AAAA hosts lines and nibble ptr-record lines, skipping IPv6 placeholders', () => {
-    regenerateConfigs(
+    applyZones(
       makeDb({
         aRecords: [
           { name: 'host4', value: '10.0.3.231' },

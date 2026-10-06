@@ -22,23 +22,21 @@ import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
 import { createTestApp, createMultiRouterApp } from '../helpers/test-app.js';
 import { getDb } from '../../src/db/init.js';
 
+vi.mock('../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
 vi.mock('../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
-    regenerateConfigs: vi.fn(),
     applyInterfaceConfig: vi.fn(),
     regenerateDnsmasqConf: vi.fn(),
     signalDnsmasq: vi.fn(),
     restartDnsmasq: vi.fn(),
-  };
-});
-vi.mock('../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateDhcpConfigs: vi.fn(),
-    startLeaseWatcher: vi.fn(),
   };
 });
 

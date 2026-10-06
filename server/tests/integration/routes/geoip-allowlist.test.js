@@ -3,6 +3,12 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
 // dns-proxy (imported by geoip routes) pulls in dnsmasq + duckdb side effects; stub them.
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyResolver',
+  ]),
+);
 vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
   applyInterfaceConfig: vi.fn(),
   restartDnsmasq: vi.fn(),

@@ -3,11 +3,16 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
 // Stub dnsmasq (no real config writes / exec) and force DNSSEC support on.
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyResolver',
+  ]),
+);
 vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
-    regenerateConfigs: vi.fn(),
     regenerateDnsmasqConf: vi.fn(),
     restartDnsmasq: vi.fn(),
     dnsmasqSupportsDnssec: vi.fn(() => true),

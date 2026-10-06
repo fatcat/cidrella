@@ -1,6 +1,6 @@
 /**
  * ADR 005: a DHCP lease name is unique in its zone and sticky to the address
- * that holds it. Driven through syncLeases with real lease files, the way
+ * that holds it. Driven through lease ingestion with real lease files, the way
  * dnsmasq hands one client name to whichever client renewed last.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
@@ -12,8 +12,9 @@ vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), exec
 
 let tmpDir;
 let db;
-let syncLeases;
-let syncSettledLeases;
+let parseLeaseFile;
+let ingestLeases;
+let syncLeasesNow;
 let invalidateSubnetCache;
 let leaseFile;
 
@@ -26,7 +27,8 @@ beforeAll(async () => {
   db = setup.db;
   tmpDir = setup.tmpDir;
   // DATA_DIR is read when backends/dnsmasq/dhcp.js loads, so it loads after setupTestDb.
-  ({ syncLeases, syncSettledLeases } = await import('../../src/backends/dnsmasq/dhcp.js'));
+  ({ parseLeaseFile } = await import('../../src/backends/dnsmasq/dhcp.js'));
+  ({ ingestLeases, syncLeasesNow } = await import('../../src/services/dhcp-lease-sync.js'));
   ({ invalidateSubnetCache } = await import('../../src/utils/ip-sync.js'));
   leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
   fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
@@ -64,6 +66,12 @@ beforeAll(async () => {
 });
 
 afterAll(() => cleanupTestDb(tmpDir));
+
+// One read of the lease file, no settling: what a sync does with this text.
+function syncLeases(db, { leaseFile }) {
+  const leases = parseLeaseFile(fs.readFileSync(leaseFile, 'utf8'));
+  return leases ? ingestLeases(db, leases) : { synced: 0, unsettled: true };
+}
 
 function renew(lines) {
   fs.writeFileSync(leaseFile, lines.map((line) => `${FAR} ${line}`).join('\n') + '\n');
@@ -203,7 +211,7 @@ describe('DHCP lease names (ADR 005)', () => {
     // two reads agree, so the empty and the one-lease files are never synced.
     const writes = [firstLine, whole, whole];
     fs.writeFileSync(leaseFile, '');
-    const result = await syncSettledLeases(db, {
+    const result = await syncLeasesNow(db, {
       leaseFile,
       wait: async () => fs.writeFileSync(leaseFile, writes.shift()),
     });
@@ -214,7 +222,7 @@ describe('DHCP lease names (ADR 005)', () => {
 
     // A file that never settles syncs nothing.
     let n = 0;
-    const churn = await syncSettledLeases(db, {
+    const churn = await syncLeasesNow(db, {
       leaseFile,
       wait: async () => fs.writeFileSync(leaseFile, n++ % 2 ? whole : firstLine),
     });

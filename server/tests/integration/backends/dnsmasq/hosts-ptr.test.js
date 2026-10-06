@@ -28,7 +28,8 @@ const add = (zoneId, name, type, value) =>
 
 beforeAll(async () => {
   ({ db, tmpDir } = await setupTestDb());
-  ({ regenerateHostsDir, regenerateConfDir } = await import('../../../../src/backends/dnsmasq/dnsmasq.js'));
+  ({ regenerateHostsDir, regenerateConfDir } =
+    await import('../../../../src/backends/dnsmasq/dnsmasq.js'));
   forwardId = db
     .prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('example.test', 'forward', 1)")
     .run().lastInsertRowid;

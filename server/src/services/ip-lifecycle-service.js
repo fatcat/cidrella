@@ -25,7 +25,6 @@ import {
   fqdnForRecordName,
 } from '../models/dns-record.js';
 import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease-queries.js';
-import { releaseDnsmasqLease } from '../backends/dnsmasq/lease-release.js';
 import { leaseExpiryMs, leaseDurationMs } from '../utils/lease-sql.js';
 import { parseIp } from '../utils/address.js';
 
@@ -721,10 +720,14 @@ export function markStalePassiveAddresses(db, staleMinutes) {
   return IpAddress.bulkMarkStale(db, staleMinutes);
 }
 
+// `releaseLease` tells the DHCP backend to drop a sticky lease
+// (getDhcpBackend().releaseLease); it is passed in so this service does not
+// depend on the backend layer.
 export function retireStaleDynamicAddresses(
   db,
-  { now = new Date(), limit = 500, releaseLease = releaseDnsmasqLease } = {},
+  { now = new Date(), limit = 500, releaseLease } = {},
 ) {
+  if (typeof releaseLease !== 'function') throw new TypeError('releaseLease is required');
   const nowDate = now instanceof Date ? now : new Date(now);
   if (!Number.isFinite(nowDate.getTime())) throw new Error('Invalid retirement clock');
   const nowIso = nowDate.toISOString();

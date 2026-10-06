@@ -9,19 +9,21 @@ import { findRetirementCandidates } from '../../../src/models/ip-address.js';
 import { computeIpView } from '../../../src/models/ip-view.js';
 import { invalidateSubnetCache } from '../../../src/utils/ip-sync.js';
 
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
 vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
-    regenerateConfigs: vi.fn(),
     regenerateDnsmasqConf: vi.fn(),
     restartDnsmasq: vi.fn(),
     signalDnsmasq: vi.fn(),
   };
-});
-vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return { ...original, regenerateDhcpConfigs: vi.fn() };
 });
 
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');

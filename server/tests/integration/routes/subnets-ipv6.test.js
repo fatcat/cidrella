@@ -7,24 +7,21 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
 vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
   return {
     ...original,
-    regenerateConfigs: vi.fn(),
     applyInterfaceConfig: vi.fn(),
     regenerateDnsmasqConf: vi.fn(),
     signalDnsmasq: vi.fn(),
     restartDnsmasq: vi.fn(),
-  };
-});
-
-vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateDhcpConfigs: vi.fn(),
-    startLeaseWatcher: vi.fn(),
   };
 });
 
@@ -117,9 +114,7 @@ describe('IPv6 networks', () => {
     expect(preview.body.count).toBe(16);
     expect(preview.body.subnets[1]).toBe('fd00:1234:0:1000::/52');
 
-    const carve = await request(app)
-      .post(`/api/subnets/${labId}/divide`)
-      .send({ cidr: NET });
+    const carve = await request(app).post(`/api/subnets/${labId}/divide`).send({ cidr: NET });
     expect(carve.status).toBe(200);
     const cidrs = carve.body.children.map((child) => child.cidr);
     expect(cidrs).toContain(NET);
@@ -141,7 +136,9 @@ describe('IPv6 networks', () => {
     expect(res.body.status).toBe('allocated');
 
     const rows = db
-      .prepare('SELECT ip_address, allocation_state FROM ip_addresses WHERE subnet_id = ? ORDER BY ip_address')
+      .prepare(
+        'SELECT ip_address, allocation_state FROM ip_addresses WHERE subnet_id = ? ORDER BY ip_address',
+      )
       .all(netId);
     expect(rows).toEqual([
       { ip_address: 'fd00:1234:0:1::', allocation_state: 'system' },
@@ -220,18 +217,28 @@ describe('IPv6 networks', () => {
 
     const bulk = await request(app)
       .put(`/api/subnets/${netId}/ips/bulk-allocation`)
-      .send({ start_ip: 'fd00:1234:0:1::100', end_ip: 'fd00:1234:0:1::103', allocation_state: 'reserved' });
+      .send({
+        start_ip: 'fd00:1234:0:1::100',
+        end_ip: 'fd00:1234:0:1::103',
+        allocation_state: 'reserved',
+      });
     expect(bulk.status).toBe(200);
     expect(bulk.body.count).toBe(4);
 
     const tooBig = await request(app)
       .put(`/api/subnets/${netId}/ips/bulk-allocation`)
-      .send({ start_ip: 'fd00:1234:0:1::', end_ip: 'fd00:1234:0:1::ffff', allocation_state: 'reserved' });
+      .send({
+        start_ip: 'fd00:1234:0:1::',
+        end_ip: 'fd00:1234:0:1::ffff',
+        allocation_state: 'reserved',
+      });
     expect(tooBig.status).toBe(400);
     expect(tooBig.body.error).toContain('1024');
 
     // Search is a substring match, so the bulk block's ::100 to ::103 match too.
-    const list = await request(app).get(`/api/subnets/${netId}/ips`).query({ search: 'fd00:1234:0:1::10' });
+    const list = await request(app)
+      .get(`/api/subnets/${netId}/ips`)
+      .query({ search: 'fd00:1234:0:1::10' });
     expect(list.body.ips.map((row) => row.ip_address)).toEqual([
       'fd00:1234:0:1::10',
       'fd00:1234:0:1::100',
@@ -243,11 +250,17 @@ describe('IPv6 networks', () => {
 
   it('holds a custom range on an IPv6 network', async () => {
     const type = db
-      .prepare("INSERT INTO range_types (name, color, is_system) VALUES ('Printers6', '#123456', 0)")
+      .prepare(
+        "INSERT INTO range_types (name, color, is_system) VALUES ('Printers6', '#123456', 0)",
+      )
       .run().lastInsertRowid;
     const res = await request(app)
       .post(`/api/subnets/${netId}/ranges`)
-      .send({ range_type_id: Number(type), start_ip: 'fd00:1234:0:1::200', end_ip: 'fd00:1234:0:1::2ff' });
+      .send({
+        range_type_id: Number(type),
+        start_ip: 'fd00:1234:0:1::200',
+        end_ip: 'fd00:1234:0:1::2ff',
+      });
     expect(res.status).toBe(201);
     const wrongFamily = await request(app)
       .post(`/api/subnets/${netId}/ranges`)
@@ -303,7 +316,11 @@ describe('IPv6 networks', () => {
     const merge = await request(app).post('/api/subnets/merge').send({ subnet_ids: ids });
     expect(merge.status).toBe(200);
     const merged = merge.body.children.find((child) => child.cidr === 'fd00:1234::/65');
-    expect(merged).toMatchObject({ address_family: 6, broadcast_address: null, status: 'unallocated' });
+    expect(merged).toMatchObject({
+      address_family: 6,
+      broadcast_address: null,
+      status: 'unallocated',
+    });
     // Only the requested pair merges; the other quarters stay as they are.
     // The server orders children numerically, not by text.
     expect(merge.body.children.map((child) => child.cidr)).toEqual([

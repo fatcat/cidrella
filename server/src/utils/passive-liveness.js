@@ -23,6 +23,8 @@ import {
   PASSIVE_LIVENESS_POLL_MS,
   PASSIVE_LIVENESS_STALE_MS,
 } from '../config/defaults.js';
+import { getDhcpBackend } from '../backends/index.js';
+
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 // Matches: "query[A] example.com from 192.168.1.100"
 //      and: "query[AAAA] example.com from fd00:a::1600"
@@ -70,7 +72,9 @@ export function startPassiveLivenessWatcher(db) {
       const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
       markStalePassiveAddresses(db, staleMinutes);
       pruneLifecycleEvents(db);
-      const retirement = retireStaleDynamicAddresses(db);
+      const retirement = retireStaleDynamicAddresses(db, {
+        releaseLease: (lease) => getDhcpBackend().releaseLease(lease),
+      });
       if (retirement.dnsRecordsRemoved > 0) queueRegen('regenerate_dns');
       if (retirement.retired > 0 || retirement.deferred > 0) {
         console.log(

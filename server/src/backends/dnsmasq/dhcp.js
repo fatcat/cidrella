@@ -1,13 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import {
-  atomicWrite,
-  signalDnsmasq,
-  restartDnsmasq,
-  cleanStaleFiles,
-  withValidatedDnsmasqUpdate,
-} from './dnsmasq.js';
+import { atomicWrite, cleanStaleFiles } from './dnsmasq.js';
 import {
   parseNetwork,
   ipToLong,
@@ -18,15 +12,12 @@ import {
   getServerIpForSubnet,
 } from '../../utils/ip.js';
 import { addressFamily, isValidIpv6 } from '../../utils/address.js';
-import { findSubnetForIp } from '../../utils/ip-sync.js';
 import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from '../../utils/dhcp-options.js';
 import { generateFallbackHostname } from '../../utils/mac-vendor.js';
 import { macFromDuid } from '../../utils/duid.js';
-import { DATA_DIR, DHCP_LEASE_WATCH_MS } from '../../config/defaults.js';
-import { LEASE_FILE, isWholeLeaseFile, readSettledLeaseFile } from './lease-file.js';
+import { DATA_DIR } from '../../config/defaults.js';
+import { isWholeLeaseFile } from './lease-file.js';
 import { validateConfigSafeValue } from '../../utils/config-value-validation.js';
-import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../../models/dhcp-lease.js';
-import { dhcpLeaseRejectionReason } from '../../services/ip-lifecycle-service.js';
 import { resolveEffectiveScopeOptions } from '../../models/dhcp-scope.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
 
@@ -504,149 +495,25 @@ export function parseLeaseLine(line) {
 }
 
 /**
- * Sync leases from dnsmasq lease file into the database. `content` is the
- * file's text when the caller has already read it (readSettledLeaseFile);
- * without it the file is read here. A file cut off partway through a line is
- * one dnsmasq is still writing, and is left for the next sync.
+ * The leases in lease-file text, or null when the text was cut off partway
+ * through a line (dnsmasq was still writing it). Lines that are not leases
+ * are skipped.
  */
-export function syncLeases(db, { leaseFile = LEASE_FILE, content } = {}) {
-  if (content === undefined) {
-    try {
-      content = fs.readFileSync(leaseFile, 'utf-8');
-    } catch {
-      return { synced: 0 };
-    }
-  }
-  if (!isWholeLeaseFile(content)) return { synced: 0, unsettled: true };
+export function parseLeaseFile(content) {
+  if (!isWholeLeaseFile(content)) return null;
+  return content.split('\n').map(parseLeaseLine).filter(Boolean);
+}
 
-  const leases = [];
-  for (const line of content.split('\n')) {
-    const lease = parseLeaseLine(line);
-    if (!lease) continue;
-    // A DHCPv6 lease without a client DUID has no identity CIDRella can act on.
-    if (lease.dhcpVersion === 6 && !lease.duid) continue;
-    let subnet;
-    try {
-      subnet = findSubnetForIp(db, lease.ip);
-    } catch {
-      subnet = null;
-    }
-    leases.push({ ...lease, subnetId: subnet?.status === 'allocated' ? subnet.id : null });
-  }
-
-  const acceptedLeases = [];
-  let rejected = 0;
-  for (const lease of leases) {
-    const rejection = dhcpLeaseRejectionReason(db, lease);
-    if (rejection) {
-      rejected++;
-      console.warn(`Rejected lease ${lease.ip}: ${rejection}`);
-    } else {
-      acceptedLeases.push(lease);
-    }
-  }
-
-  // Persist the effective name every reader uses (ADR 005): unique in its
-  // zone, sticky to the address holding it, the vendor fallback only for an
-  // unnamed client holding none. dnsmasq writes '*' for a client without a
-  // name, and for one whose name it handed to another client. A DHCPv6
-  // client is named by the MAC its DUID-LLT/LL embeds, when it has one.
-  assignLeaseNames(db, acceptedLeases, { fallbackName: generateFallbackHostname });
-
-  replaceLeases(db, acceptedLeases, { lifecycleValidated: true });
-
-  // Remove legacy dhcp-leases.hosts (hostnames now managed via dns_records)
+/**
+ * Remove the legacy dhcp-leases.hosts. Lease hostnames used to be served
+ * from it; they live in dns_records now, so a copy left from an old install
+ * would serve stale names.
+ */
+export function removeLegacyLeaseHosts() {
   const legacyHostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
   try {
     if (fs.existsSync(legacyHostsPath)) fs.unlinkSync(legacyHostsPath);
   } catch {
     /* ignore */
   }
-
-  // Sync DHCP hostnames (leases + reservations) into dns_records
-  syncDhcpDnsRecords(db, acceptedLeases);
-
-  return { synced: acceptedLeases.length, rejected };
 }
-
-/**
- * Orchestrator: regenerate all DHCP configs and sync DNS records.
- */
-export function regenerateDhcpConfigs(db) {
-  const { confChanged, resChanged } = withValidatedDnsmasqUpdate(() => {
-    const confChanged = regenerateScopeConfigs(db);
-    const resChanged = regenerateReservations(db);
-    return { confChanged, resChanged, changed: confChanged || resChanged };
-  });
-  // Sync DHCP hostnames (leases + reservations) into dns_records. Stored
-  // leases already carry their effective names (ADR 005), the vendor
-  // fallback included, so none is applied here.
-  const leases = db
-    .prepare(
-      'SELECT ip_address as ip, hostname, mac_address as mac, subnet_id as subnetId FROM dhcp_leases',
-    )
-    .all();
-  syncDhcpDnsRecords(db, leases);
-  if (confChanged) {
-    restartDnsmasq();
-  } else if (resChanged) {
-    signalDnsmasq();
-  }
-}
-
-/**
- * Sync from the lease file once dnsmasq has finished writing it. Every
- * runtime sync goes through here; a direct syncLeases read can land in the
- * middle of a rewrite.
- */
-export async function syncSettledLeases(db, { leaseFile = LEASE_FILE, ...settle } = {}) {
-  const content = await readSettledLeaseFile({ leaseFile, ...settle });
-  if (content === null) return { synced: 0, unsettled: true };
-  return syncLeases(db, { leaseFile, content });
-}
-
-/**
- * Watch the dnsmasq lease file for changes and sync to DB.
- */
-let leaseWatcherDb = null;
-let leaseSyncRunning = false;
-let leaseSyncAgain = false;
-
-// One sync at a time. A change seen while one runs is synced after it, once.
-async function runLeaseSync(label) {
-  if (leaseSyncRunning) {
-    leaseSyncAgain = true;
-    return;
-  }
-  leaseSyncRunning = true;
-  try {
-    do {
-      leaseSyncAgain = false;
-      try {
-        await syncSettledLeases(leaseWatcherDb);
-      } catch (err) {
-        console.warn(`${label}:`, err.message);
-      }
-    } while (leaseSyncAgain);
-  } finally {
-    leaseSyncRunning = false;
-  }
-}
-
-export function startLeaseWatcher(db) {
-  leaseWatcherDb = db;
-
-  runLeaseSync('Initial lease sync failed');
-
-  // Watch for changes (poll every 10 seconds since fs.watch can be unreliable)
-  try {
-    fs.watchFile(LEASE_FILE, { interval: DHCP_LEASE_WATCH_MS }, () => {
-      runLeaseSync('Lease sync error');
-    });
-    console.log('Lease file watcher started:', LEASE_FILE);
-  } catch (err) {
-    console.warn('Could not watch lease file:', err.message);
-  }
-}
-
-export { syncDhcpDnsRecords };

@@ -19,8 +19,9 @@ let app;
 let db;
 let regenerateScopeConfigs;
 let regenerateReservations;
-let syncLeases;
 let parseLeaseLine;
+let parseLeaseFile;
+let ingestLeases;
 const subnets = {};
 
 beforeAll(async () => {
@@ -30,8 +31,9 @@ beforeAll(async () => {
   enableIpv6(setup.db);
   tmpDir = setup.tmpDir;
   db = setup.db;
-  ({ regenerateScopeConfigs, regenerateReservations, syncLeases, parseLeaseLine } =
+  ({ regenerateScopeConfigs, regenerateReservations, parseLeaseLine, parseLeaseFile } =
     await import('../../../src/backends/dnsmasq/dhcp.js'));
+  ({ ingestLeases } = await import('../../../src/services/dhcp-lease-sync.js'));
   const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
   const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');
   const { default: dnsRouter } = await import('../../../src/routes/dns.js');
@@ -474,7 +476,7 @@ describe('DHCPv6 leases', () => {
         '4102444800 12347 fd00:a::1601 anon *',
       ].join('\n') + '\n',
     );
-    const result = syncLeases(db, { leaseFile });
+    const result = ingestLeases(db, parseLeaseFile(fs.readFileSync(leaseFile, 'utf8')));
     expect(result).toMatchObject({ synced: 1, rejected: 1 });
     const lease = db.prepare("SELECT * FROM dhcp_leases WHERE ip_address = 'fd00:a::1600'").get();
     expect(lease).toMatchObject({
@@ -528,7 +530,7 @@ describe('DHCPv6 leases', () => {
           `${expiry} 22345 fd00:a::1700 renew6 ${duid}`,
         ].join('\n') + '\n',
       );
-      syncLeases(db, { leaseFile });
+      ingestLeases(db, parseLeaseFile(fs.readFileSync(leaseFile, 'utf8')));
     };
     const obtained = () =>
       db

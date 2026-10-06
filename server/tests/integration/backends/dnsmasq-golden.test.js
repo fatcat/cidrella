@@ -51,7 +51,7 @@ const {
   dnsmasqRestartPending,
   isCidrellaDnsmasqRunning,
 } = await import('../../../src/backends/dnsmasq/dnsmasq.js');
-const { syncSettledLeases } = await import('../../../src/backends/dnsmasq/dhcp.js');
+const { syncLeasesNow } = await import('../../../src/services/dhcp-lease-sync.js');
 
 let db;
 let tmpDir;
@@ -85,7 +85,7 @@ const applyPaths = {
     withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db));
     restartDnsmasq();
   },
-  syncLeases: () => syncSettledLeases(db, { settleMs: 0 }),
+  syncLeases: () => syncLeasesNow(db, { settleMs: 0 }),
 };
 
 const hooksSettle = () => new Promise((resolve) => setTimeout(resolve, 0));

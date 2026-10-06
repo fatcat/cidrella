@@ -153,7 +153,12 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   hosts runs rows through it too), `macIsAuthoritative` in `models/ip-lifecycle.js` (whether DHCP sets an address's stored MAC; anything comparing an observed MAC with the stored one asks it), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
   stateless one; anything treating a scope as a dynamic pool asks it), `backends/dnsmasq/lease-file.js`
-  (`LEASE_FILE`, `readServerDuid`), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
+  (`LEASE_FILE`, `readServerDuid`), `backends/index.js` (the DNS/DHCP backend registry: `getDnsBackend`,
+  `getDhcpBackend`, `getService`; only `backends/**` imports an adapter, and an adapter never
+  writes the database), `services/backend-apply.js` (`applyDns`, `applyDhcp`, `applyResolver`:
+  what the after-commit hooks run; route and service tests stub them with `stubBackendApply`
+  from `tests/helpers/fake-backends.js`, and a new adapter passes `tests/contract/backend-contract.js`),
+  `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
   enabled set, blanks filled from its network; new scopes and Bulk Change),

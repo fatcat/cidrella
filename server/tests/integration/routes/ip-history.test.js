@@ -13,18 +13,19 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
 vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => ({
   ...(await importOriginal()),
-  regenerateConfigs: vi.fn(),
   applyInterfaceConfig: vi.fn(),
   regenerateDnsmasqConf: vi.fn(),
   signalDnsmasq: vi.fn(),
   restartDnsmasq: vi.fn(),
-}));
-vi.mock('../../../src/backends/dnsmasq/dhcp.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  regenerateDhcpConfigs: vi.fn(),
-  startLeaseWatcher: vi.fn(),
 }));
 
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');

@@ -98,13 +98,10 @@ export default [
     ignores: [
       'server/src/backends/**',
       'server/src/index.js',
-      'server/src/routes/dhcp.js',
       'server/src/routes/dns.js',
       'server/src/routes/health.js',
       'server/src/routes/interfaces.js',
       'server/src/routes/metrics.js',
-      'server/src/services/ip-lifecycle-service.js',
-      'server/src/utils/after-commit.js',
       'server/src/utils/blocklist.js',
       'server/src/utils/dhcpv6-probe.js',
       'server/src/utils/dns-proxy.js',
