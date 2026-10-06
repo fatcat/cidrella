@@ -1,15 +1,14 @@
 /**
- * Passive host liveness detection from dnsmasq logs.
+ * Passive host liveness detection from the DNS backend's query log.
  *
- * Tails the dnsmasq log file for DNS query lines ("query[...] ... from <ip>")
- * and marks the source IP as online in ip_addresses. Also runs a periodic
+ * Tails the log for DNS queries (logSource().querySourceIp) and marks the
+ * source IP as online in ip_addresses. Also runs a periodic
  * staleness sweep to mark hosts offline when no signal has been seen.
  *
  * DHCP lease liveness is handled separately in ip-sync.js (syncLeasesToIps).
  */
 
 import fs from 'fs';
-import path from 'path';
 import { readLogTail } from './log-reader.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import {
@@ -18,45 +17,42 @@ import {
   retireStaleDynamicAddresses,
 } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from './after-commit.js';
-import {
-  DATA_DIR,
-  PASSIVE_LIVENESS_POLL_MS,
-  PASSIVE_LIVENESS_STALE_MS,
-} from '../config/defaults.js';
-import { getDhcpBackend } from '../backends/index.js';
-
-const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
-// Matches: "query[A] example.com from 192.168.1.100"
-//      and: "query[AAAA] example.com from fd00:a::1600"
-const QUERY_FROM_RE = /\bquery\[.+?\]\s+\S+\s+from\s+([0-9a-fA-F.:]+)/;
+import { PASSIVE_LIVENESS_POLL_MS, PASSIVE_LIVENESS_STALE_MS } from '../config/defaults.js';
+import { getDhcpBackend, getService } from '../backends/index.js';
 
 /**
  * Start the passive liveness watcher.
- * Polls the dnsmasq log for DNS query source IPs and updates ip_addresses.
+ * Polls the DNS backend's log for query source IPs and updates ip_addresses.
+ * Without a log to read, only the staleness sweep runs.
  */
 export function startPassiveLivenessWatcher(db) {
+  const source = getService('dns').logSource();
+  const logFile = source?.path;
   let offset = 0;
   let lastStaleCheck = Date.now();
 
   // Start from end of file (don't process historical lines)
   try {
-    offset = fs.statSync(LOG_FILE).size;
+    if (logFile) offset = fs.statSync(logFile).size;
   } catch {
     /* file may not exist yet */
   }
 
   function poll() {
-    const { lines, newOffset } = readLogTail(LOG_FILE, offset);
-    offset = newOffset;
+    let lines = [];
+    if (logFile) {
+      const tail = readLogTail(logFile, offset);
+      lines = tail.lines;
+      offset = tail.newOffset;
+    }
 
     // Extract unique source IPs from DNS query lines
     const now = Date.now();
     const ipsThisCycle = new Set();
 
     for (const line of lines) {
-      const m = line.match(QUERY_FROM_RE);
-      if (!m) continue;
-      const ip = m[1];
+      const ip = source.querySourceIp(line);
+      if (!ip) continue;
       if (ip === '127.0.0.1' || ip === '::1') continue;
       ipsThisCycle.add(ip);
     }
@@ -89,7 +85,7 @@ export function startPassiveLivenessWatcher(db) {
 
   const interval = setInterval(poll, PASSIVE_LIVENESS_POLL_MS);
   console.log(
-    `[passive-liveness] Watching ${LOG_FILE} (poll ${PASSIVE_LIVENESS_POLL_MS / 1000}s, stale ${PASSIVE_LIVENESS_STALE_MS / 60000}min)`,
+    `[passive-liveness] Watching ${logFile || 'no DNS log'} (poll ${PASSIVE_LIVENESS_POLL_MS / 1000}s, stale ${PASSIVE_LIVENESS_STALE_MS / 60000}min)`,
   );
 
   return interval; // for cleanup in tests

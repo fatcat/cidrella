@@ -14,7 +14,7 @@
 
 import { execFileSync } from 'child_process';
 import { getSetting } from '../db/init.js';
-import { signalDnsmasq } from '../backends/dnsmasq/dnsmasq.js';
+import { getDnsBackend } from '../backends/index.js';
 
 let timecheckTimer = null;
 
@@ -94,7 +94,7 @@ export function armDnssecTimecheckWhenSynced(opts = {}) {
     if (!available) return finish();
     if (synchronized) {
       try {
-        signalDnsmasq();
+        getDnsBackend().onClockSynchronized();
         console.log(
           '[timesync] Clock synchronized, signaled dnsmasq to enforce DNSSEC signature timestamps',
         );

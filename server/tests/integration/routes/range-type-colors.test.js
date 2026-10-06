@@ -14,13 +14,9 @@ vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
     'applyResolver',
   ]),
 );
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  applyInterfaceConfig: vi.fn(),
-  regenerateDnsmasqConf: vi.fn(),
-  signalDnsmasq: vi.fn(),
-  restartDnsmasq: vi.fn(),
-}));
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
 const { default: rangeRouter } = await import('../../../src/routes/ranges.js');

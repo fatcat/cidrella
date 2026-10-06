@@ -6,9 +6,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
-import { createMultiRouterApp } from '../../helpers/test-app.js';
-import { DHCP6_DEFAULT_NTP_SERVERS } from '../../../src/config/defaults.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../../helpers/test-db.js';
+import { createMultiRouterApp } from '../../../helpers/test-app.js';
+import { DHCP6_DEFAULT_NTP_SERVERS } from '../../../../src/config/defaults.js';
 
 vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), execFile: vi.fn() }));
 
@@ -32,11 +32,11 @@ beforeAll(async () => {
   tmpDir = setup.tmpDir;
   db = setup.db;
   ({ regenerateScopeConfigs, regenerateReservations, parseLeaseLine, parseLeaseFile } =
-    await import('../../../src/backends/dnsmasq/dhcp.js'));
-  ({ ingestLeases } = await import('../../../src/services/dhcp-lease-sync.js'));
-  const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
-  const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');
-  const { default: dnsRouter } = await import('../../../src/routes/dns.js');
+    await import('../../../../src/backends/dnsmasq/dhcp.js'));
+  ({ ingestLeases } = await import('../../../../src/services/dhcp-lease-sync.js'));
+  const { default: subnetRouter } = await import('../../../../src/routes/subnets.js');
+  const { default: dhcpRouter } = await import('../../../../src/routes/dhcp.js');
+  const { default: dnsRouter } = await import('../../../../src/routes/dns.js');
   app = createMultiRouterApp([
     { prefix: '/api/subnets', router: subnetRouter },
     { prefix: '/api/dhcp', router: dhcpRouter },
@@ -222,7 +222,7 @@ describe('DHCPv6 scopes', () => {
     expect(await status(subnets.stateful, 'fd00:a::20')).toBe('available');
 
     const { getNetworkDhcpDiagnostics } =
-      await import('../../../src/utils/network-dhcp-diagnostics.js');
+      await import('../../../../src/utils/network-dhcp-diagnostics.js');
     const slaacScopes = new Set([scopeFor(subnets.slaac).id, scopeFor(subnets.stateless).id]);
     const flagged = getNetworkDhcpDiagnostics(db).issues.filter((issue) =>
       slaacScopes.has(issue.scope_id),

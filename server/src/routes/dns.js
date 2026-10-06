@@ -10,7 +10,7 @@ import {
   IpLifecycleConflictError,
 } from '../services/ip-lifecycle-service.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
-import { dnsmasqSupportsDnssec } from '../backends/dnsmasq/dnsmasq.js';
+import { getService } from '../backends/index.js';
 import { ensureNtpEnabled, getNtpStatus, armDnssecTimecheckWhenSynced } from '../utils/timesync.js';
 import {
   applyEncryptedForwarder,
@@ -46,7 +46,11 @@ import {
 import { canonicalizeIp, isValidIpv6, addressFamily } from '../utils/address.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { isBlockedAddress } from '../utils/url-guard.js';
-import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/config-value-validation.js';
+import {
+  isValidPtrName,
+  validateTxtValue,
+  isValidRecordName,
+} from '../utils/config-value-validation.js';
 import { validateSoaFields, isIntInRange, UNGROUPED } from '../utils/validation.js';
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
@@ -1036,7 +1040,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
 router.get('/dnssec', requirePerm('dns:read'), (req, res) => {
   res.json({
     enabled: getSetting('dnssec_enabled') === 'true',
-    supported: dnsmasqSupportsDnssec(),
+    supported: getService('dns').capabilities().dnssec,
     ntp: getNtpStatus(),
   });
 });
@@ -1049,7 +1053,7 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'enabled must be a boolean' });
   }
-  if (enabled && !dnsmasqSupportsDnssec()) {
+  if (enabled && !getService('dns').capabilities().dnssec) {
     return res
       .status(400)
       .json({ error: 'dnsmasq on this host was not built with DNSSEC support' });

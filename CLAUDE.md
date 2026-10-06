@@ -152,12 +152,14 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own; a count of rogue
   hosts runs rows through it too), `macIsAuthoritative` in `models/ip-lifecycle.js` (whether DHCP sets an address's stored MAC; anything comparing an observed MAC with the stored one asks it), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
-  stateless one; anything treating a scope as a dynamic pool asks it), `backends/dnsmasq/lease-file.js`
-  (`LEASE_FILE`, `readServerDuid`), `backends/index.js` (the DNS/DHCP backend registry: `getDnsBackend`,
+  stateless one; anything treating a scope as a dynamic pool asks it), `backends/index.js` (the DNS/DHCP backend registry: `getDnsBackend`,
   `getDhcpBackend`, `getService`; only `backends/**` imports an adapter, and an adapter never
   writes the database), `services/backend-apply.js` (`applyDns`, `applyDhcp`, `applyResolver`:
-  what the after-commit hooks run; route and service tests stub them with `stubBackendApply`
-  from `tests/helpers/fake-backends.js`, and a new adapter passes `tests/contract/backend-contract.js`),
+  what the after-commit hooks run; `applyAtBoot` and `applyListenNow` for the paths that cannot
+  wait for a hook; route and service tests stub them with `stubBackendApply`, or swap the
+  registry with `fakeBackendsModule`, both in `tests/helpers/fake-backends.js`; a new adapter
+  passes `tests/contract/backend-contract.js`; anything reading the backend's log asks
+  `getService(role).logSource()`),
   `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
@@ -172,9 +174,11 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
   this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6
   gates SQL cannot express; the scheduler and the stale sweep both apply both). Add to this list when you
-  make something shared. Four guards enforce what they can detect, each baselined so it fails
+  make something shared. Five guards enforce what they can detect, each baselined so it fails
   only on NEW instances (fix one by deleting its baseline entry, never by adding one):
-  `npm run lint` refuses a vendor import outside `src/ui`, a raw `<select>`/`<input>` outside
+  `npm run lint` refuses an import of a backend adapter (`server/src/backends/<name>/`) from
+  outside `server/src/backends/` (ESLint for static imports, `scripts/check-backend-imports.js`
+  for `vi.mock` and `import()` strings; tests of the adapters live under `tests/*/backends/`), a vendor import outside `src/ui`, a raw `<select>`/`<input>` outside
   the baselined files, and a `dot`/`pill`/`badge` class outside the status components;
   `npm run check:reuse` runs `check-duplicate-exports.js` (a local copy of an exported helper),
   `check-scoped-css-dupes.js` (an identical rule in two scoped style blocks; `--drift` lists

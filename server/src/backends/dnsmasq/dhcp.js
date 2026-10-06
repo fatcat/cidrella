@@ -15,7 +15,7 @@ import { addressFamily, isValidIpv6 } from '../../utils/address.js';
 import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from '../../utils/dhcp-options.js';
 import { generateFallbackHostname } from '../../utils/mac-vendor.js';
 import { macFromDuid } from '../../utils/duid.js';
-import { DATA_DIR } from '../../config/defaults.js';
+import { CONF_DIR, DHCP_HOSTS_DIR } from './paths.js';
 import { isWholeLeaseFile } from './lease-file.js';
 import { validateConfigSafeValue } from '../../utils/config-value-validation.js';
 import { resolveEffectiveScopeOptions } from '../../models/dhcp-scope.js';
@@ -44,8 +44,6 @@ function resolveToIp(value, family = 4) {
     return null;
   }
 }
-const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
-const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
 
 /**
  * Generate dnsmasq config for a single DHCP scope.
@@ -502,18 +500,4 @@ export function parseLeaseLine(line) {
 export function parseLeaseFile(content) {
   if (!isWholeLeaseFile(content)) return null;
   return content.split('\n').map(parseLeaseLine).filter(Boolean);
-}
-
-/**
- * Remove the legacy dhcp-leases.hosts. Lease hostnames used to be served
- * from it; they live in dns_records now, so a copy left from an old install
- * would serve stale names.
- */
-export function removeLegacyLeaseHosts() {
-  const legacyHostsPath = path.join(DATA_DIR, 'dnsmasq', 'hosts.d', 'dhcp-leases.hosts');
-  try {
-    if (fs.existsSync(legacyHostsPath)) fs.unlinkSync(legacyHostsPath);
-  } catch {
-    /* ignore */
-  }
 }

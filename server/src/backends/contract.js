@@ -44,6 +44,8 @@ export const ROLES = Object.freeze(['dns', 'dhcp', 'ra']);
  * - applyResolver(db, opts) -> ApplyResult: forwarders, recursion, DNSSEC
  * - applyListen(db, opts) -> ApplyResult: listen addresses, ports, interfaces
  * - onClockSynchronized() -> void: the system clock is now trustworthy
+ * - retireLegacyArtifacts?() -> boolean: optional; clear files an older
+ *   release left that would serve stale data
  */
 export const DNS_OPS = Object.freeze([
   'applyZones',
@@ -78,6 +80,10 @@ export const DHCP_OPS = Object.freeze([
  * - activate({ force }) -> 'restarted' | 'unchanged': make sure the running
  *   service has the applied configuration
  * - restart() -> void
+ * - prepare() -> void: create what the backend needs on disk before it starts
+ * - logSource() -> null, or { path, querySourceIp(line), dhcpDirection(line),
+ *   isDhcpLine(line), createDhcpParser() } for a backend whose log the
+ *   liveness, metrics, log viewer and fingerprint readers can use
  */
 export const SERVICE_OPS = Object.freeze([
   'status',
@@ -86,6 +92,8 @@ export const SERVICE_OPS = Object.freeze([
   'applyActivation',
   'activate',
   'restart',
+  'prepare',
+  'logSource',
 ]);
 
 export const CAPABILITY_KEYS = Object.freeze([

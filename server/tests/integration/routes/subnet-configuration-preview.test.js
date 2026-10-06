@@ -9,8 +9,9 @@ vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
     'applyResolver',
   ]),
 );
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({ regenerateDnsmasqConfig: vi.fn() }));
-vi.mock('../../../src/backends/dnsmasq/dhcp.js', () => ({ regenerateDhcpConfig: vi.fn() }));
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: request } = await import('supertest');
 const { default: subnetsRouter } = await import('../../../src/routes/subnets.js');

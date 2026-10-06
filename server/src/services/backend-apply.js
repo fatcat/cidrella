@@ -33,6 +33,50 @@ export function applyDhcp(db) {
   getService('dhcp').applyActivation(result.activation);
 }
 
+/**
+ * Boot: write the listen and resolver config as one validated change, then
+ * make sure the backend runs it. A clean reboot with nothing changed and the
+ * service up costs no restart. Returns 'restarted', 'unchanged' or 'failed'.
+ */
+export function applyAtBoot(db) {
+  const service = getService('dns');
+  let changed = false;
+  try {
+    ({ changed } = service.transaction(() => {
+      const listen = getDnsBackend().applyListen(db, { activate: false });
+      const resolver = getDnsBackend().applyResolver(db, { activate: false });
+      return { changed: listen.changed || resolver.changed };
+    }));
+  } catch (err) {
+    // The validated writer restored the last config. Keep the management API
+    // available so the operator can correct the stored setting or record.
+    console.error('dnsmasq config generation failed; retained previous config:', err.message);
+  }
+  try {
+    // Restart when the config changed, when OUR unit is down (the specific
+    // unit, not any dnsmasq on the host), or when a previous restart failed
+    // and the running process may have loaded a stale config.
+    const outcome = service.activate({ force: changed });
+    if (outcome === 'unchanged') {
+      console.log('dnsmasq config unchanged and service running, skipping boot restart');
+    }
+    return outcome;
+  } catch {
+    console.warn('dnsmasq restart failed (may not be installed)');
+    return 'failed';
+  }
+}
+
+/**
+ * Write the listen config and restart the backend right away, not through
+ * the after-commit hooks: proxy bypass must have the backend on port 53
+ * before it returns.
+ */
+export function applyListenNow(db) {
+  getDnsBackend().applyListen(db, { activate: false });
+  getService('dns').restart();
+}
+
 // Hook names are stored in configuration_generations (a CHECK in migration
 // 065 lists them), so they keep their original spelling.
 export const HOOK_HANDLERS = {

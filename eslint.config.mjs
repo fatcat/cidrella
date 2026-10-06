@@ -89,24 +89,12 @@ export default [
   },
   // Only the backend layer talks to a DNS/DHCP backend adapter; everything
   // else goes through server/src/backends/index.js or
-  // services/backend-apply.js. The ignores below that are not under
-  // backends/ are a BASELINE of callers not yet rerouted: delete an entry
-  // when its file stops importing the adapter, never add one. Tests are
-  // covered separately (vi.mock strings are invisible to this rule).
+  // services/backend-apply.js. Tests are covered by
+  // scripts/check-backend-imports.js (vi.mock strings are invisible to this
+  // rule).
   {
     files: ['server/src/**/*.js'],
-    ignores: [
-      'server/src/backends/**',
-      'server/src/index.js',
-      'server/src/routes/dns.js',
-      'server/src/routes/health.js',
-      'server/src/routes/interfaces.js',
-      'server/src/routes/metrics.js',
-      'server/src/utils/blocklist.js',
-      'server/src/utils/dhcpv6-probe.js',
-      'server/src/utils/dns-proxy.js',
-      'server/src/utils/timesync.js',
-    ],
+    ignores: ['server/src/backends/**'],
     rules: {
       'no-restricted-imports': [
         'error',

@@ -3,11 +3,10 @@
  * every 60 seconds and persists them to the metrics tables.
  *
  * Blocklist and GeoIP block counts come from in-memory proxy counters.
- * DNS query and DHCP counts come from dnsmasq log parsing.
+ * DNS query and DHCP counts come from the backend's log (logSource()).
  */
 
 import fs from 'fs';
-import path from 'path';
 import { readLogTail } from './log-reader.js';
 import {
   getBlockedDelta,
@@ -15,31 +14,16 @@ import {
   getAndResetPerformanceMetrics,
   getAndResetBlocklistHits,
 } from './dns-proxy.js';
-import { DATA_DIR } from '../config/defaults.js';
-const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
+import { getService } from '../backends/index.js';
 
 const AGGREGATE_INTERVAL_MS = 60_000;
 const RETENTION_DAYS = 30;
 const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
-// Matches: "query[A] example.com from 192.168.1.100"
-const QUERY_RE = /\bquery\[.+?\]\s+\S+\s+from\s+/;
-// DHCP conversation halves. DHCPv4 clients send DISCOVER, REQUEST, RELEASE,
-// INFORM and DECLINE; the server answers with OFFER, ACK and NAK. DHCPv6
-// (RFC 8415, as dnsmasq's rfc3315.c logs it) has its own names: clients send
-// SOLICIT, REQUEST, RENEW, REBIND, CONFIRM, RELEASE, DECLINE and
-// INFORMATION-REQUEST, and the server answers with ADVERTISE and REPLY.
-// dnsmasq logs one line per message with the type as the first word after the
-// tag. The two counts are kept apart so the dashboard can show a request the
-// server never answered. dhcp_requests, the column older readers use, stays
-// as the sum.
-const DHCP_CLIENT_RE =
-  /\bDHCP(?:DISCOVER|REQUEST|RELEASE|INFORM|DECLINE|SOLICIT|RENEW|REBIND|CONFIRM|INFORMATION-REQUEST)\b/;
-const DHCP_SERVER_RE = /\bDHCP(?:OFFER|ACK|NAK|ADVERTISE|REPLY)\b/;
-
 let db = null;
 let timer = null;
 let logOffset = 0;
+let logSource = null;
 let cycleCount = 0;
 
 // CPU tracking for delta computation
@@ -59,19 +43,23 @@ let deleteOldProxyPerf = null;
 
 /**
  * Parse new log lines and return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs }.
+ * The two DHCP counts are kept apart so the dashboard can show a request the
+ * server never answered; dhcp_requests, the column older readers use, stays
+ * as the sum.
  */
-export function parseLogLines(lines) {
+export function parseLogLines(lines, source = getService('dns').logSource()) {
+  if (!source) return { dnsQueries: 0, dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
   let dnsQueries = 0;
   let dhcpClientMsgs = 0;
   let dhcpServerMsgs = 0;
 
   for (const line of lines) {
-    if (QUERY_RE.test(line)) {
+    if (source.querySourceIp(line)) {
       dnsQueries++;
-    } else if (DHCP_CLIENT_RE.test(line)) {
-      dhcpClientMsgs++;
-    } else if (DHCP_SERVER_RE.test(line)) {
-      dhcpServerMsgs++;
+    } else {
+      const direction = source.dhcpDirection(line);
+      if (direction === 'client') dhcpClientMsgs++;
+      else if (direction === 'server') dhcpServerMsgs++;
     }
   }
 
@@ -86,9 +74,13 @@ function aggregate() {
     const ts = Math.floor(Date.now() / 60_000) * 60; // minute-aligned epoch seconds
 
     // Parse dnsmasq log for DNS query and DHCP counts
-    const { lines, newOffset: newLogOffset } = readLogTail(LOG_FILE, logOffset);
-    logOffset = newLogOffset;
-    const { dnsQueries, dhcpClientMsgs, dhcpServerMsgs } = parseLogLines(lines);
+    let lines = [];
+    if (logSource) {
+      const tail = readLogTail(logSource.path, logOffset);
+      lines = tail.lines;
+      logOffset = tail.newOffset;
+    }
+    const { dnsQueries, dhcpClientMsgs, dhcpServerMsgs } = parseLogLines(lines, logSource);
 
     // Blocklist blocks from in-memory proxy counters
     const blocklistData = getAndResetBlocklistHits();
@@ -201,8 +193,9 @@ export function startMetricsAggregator(database) {
   deleteOldProxyPerf = db.prepare('DELETE FROM metrics_proxy_perf WHERE ts < ?');
 
   // Start from end of log file (don't process historical lines)
+  logSource = getService('dns').logSource();
   try {
-    logOffset = fs.statSync(LOG_FILE).size;
+    if (logSource) logOffset = fs.statSync(logSource.path).size;
   } catch {
     /* file may not exist yet */
   }

@@ -13,11 +13,7 @@ import { getDb, getSetting, setSetting } from '../db/init.js';
 import { listenableAddresses, selectInterfaceNames } from './interface-config.js';
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
-import {
-  applyInterfaceConfig,
-  restartDnsmasq,
-  withValidatedDnsmasqUpdate,
-} from '../backends/dnsmasq/dnsmasq.js';
+import { applyListenNow } from '../services/backend-apply.js';
 import { canonicalizeIp } from './address.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import { parseCidrEntry, ipInAny } from './cidr-match.js';
@@ -1094,7 +1090,7 @@ function stopHealthMonitor() {
 
 // Bypass: dnsmasq takes over port 53 on LAN IPs directly (requires full restart for port change)
 //
-// These two writers deliberately call applyInterfaceConfig + restartDnsmasq
+// These two writers deliberately call applyListenNow
 // inline, OUTSIDE the after-commit single-flight that serializes the
 // request-driven regen hooks. Bypass needs the conf written and dnsmasq
 // restarted synchronously (queueRegen defers into a microtask that would
@@ -1111,11 +1107,10 @@ function activateBypass() {
   proxyLog('error', 'All restart attempts failed, activating bypass mode (dnsmasq takes port 53)');
   try {
     // Temporarily override: dnsmasq listens on port 53 + LAN IPs.
-    // Must be synchronous before restartDnsmasq, queueRegen would defer
+    // Must be synchronous before the restart, queueRegen would defer
     // the conf write into a microtask that fires AFTER the restart.
     setSetting('dns_proxy_bypass', 'true');
-    withValidatedDnsmasqUpdate(() => applyInterfaceConfig(getDb()));
-    restartDnsmasq();
+    applyListenNow(getDb());
     proxyLog('info', 'dnsmasq reconfigured for bypass mode (port 53 on LAN)');
   } catch (err) {
     proxyLog('error', 'Failed to reconfigure dnsmasq for bypass', { error: err.message });
@@ -1128,8 +1123,7 @@ function deactivateBypass() {
   try {
     const db = getDb();
     Setting.deleteSetting(db, 'dns_proxy_bypass');
-    withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db));
-    restartDnsmasq();
+    applyListenNow(db);
   } catch (err) {
     proxyLog('error', 'Failed to deactivate bypass', { error: err.message });
   }

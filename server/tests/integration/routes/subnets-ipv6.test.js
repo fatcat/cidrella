@@ -14,16 +14,9 @@ vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
     'applyResolver',
   ]),
 );
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    applyInterfaceConfig: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    signalDnsmasq: vi.fn(),
-    restartDnsmasq: vi.fn(),
-  };
-});
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
 const { default: rangeRouter } = await import('../../../src/routes/ranges.js');
@@ -215,23 +208,19 @@ describe('IPv6 networks', () => {
       allocation_state: 'unassigned',
     });
 
-    const bulk = await request(app)
-      .put(`/api/subnets/${netId}/ips/bulk-allocation`)
-      .send({
-        start_ip: 'fd00:1234:0:1::100',
-        end_ip: 'fd00:1234:0:1::103',
-        allocation_state: 'reserved',
-      });
+    const bulk = await request(app).put(`/api/subnets/${netId}/ips/bulk-allocation`).send({
+      start_ip: 'fd00:1234:0:1::100',
+      end_ip: 'fd00:1234:0:1::103',
+      allocation_state: 'reserved',
+    });
     expect(bulk.status).toBe(200);
     expect(bulk.body.count).toBe(4);
 
-    const tooBig = await request(app)
-      .put(`/api/subnets/${netId}/ips/bulk-allocation`)
-      .send({
-        start_ip: 'fd00:1234:0:1::',
-        end_ip: 'fd00:1234:0:1::ffff',
-        allocation_state: 'reserved',
-      });
+    const tooBig = await request(app).put(`/api/subnets/${netId}/ips/bulk-allocation`).send({
+      start_ip: 'fd00:1234:0:1::',
+      end_ip: 'fd00:1234:0:1::ffff',
+      allocation_state: 'reserved',
+    });
     expect(tooBig.status).toBe(400);
     expect(tooBig.body.error).toContain('1024');
 

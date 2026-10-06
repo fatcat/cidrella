@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { drainFinalized, ingestLine } from '../../../src/utils/dhcp-fingerprint.js';
+import { drainFinalized, ingestLine } from '../../../../src/backends/dnsmasq/dhcp-log-parser.js';
 
 // dnsmasq deliberately wraps requested options after roughly 40 characters and
 // writes the ACK before the option detail generated for that response.

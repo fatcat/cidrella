@@ -9,8 +9,9 @@ vi.mock('../../../src/db/init.js', () => ({
   getSetting: (k) => settings[k],
 }));
 
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
-  signalDnsmasq: vi.fn(),
+const onClockSynchronized = vi.fn();
+vi.mock('../../../src/backends/index.js', () => ({
+  getDnsBackend: () => ({ onClockSynchronized }),
 }));
 
 import { execFileSync } from 'child_process';
@@ -20,7 +21,6 @@ import {
   armDnssecTimecheckWhenSynced,
   stopTimesync,
 } from '../../../src/utils/timesync.js';
-import { signalDnsmasq } from '../../../src/backends/dnsmasq/dnsmasq.js';
 
 beforeEach(() => {
   vi.clearAllMocks();
@@ -90,7 +90,7 @@ describe('armDnssecTimecheckWhenSynced', () => {
     settings.dnssec_enabled = 'true';
     vi.mocked(execFileSync).mockReturnValue('yes\nyes\n');
     armDnssecTimecheckWhenSynced();
-    expect(signalDnsmasq).toHaveBeenCalledTimes(1);
+    expect(onClockSynchronized).toHaveBeenCalledTimes(1);
     stopTimesync();
   });
 
@@ -98,14 +98,14 @@ describe('armDnssecTimecheckWhenSynced', () => {
     settings.dnssec_enabled = 'false';
     vi.mocked(execFileSync).mockReturnValue('yes\nyes\n');
     armDnssecTimecheckWhenSynced();
-    expect(signalDnsmasq).not.toHaveBeenCalled();
+    expect(onClockSynchronized).not.toHaveBeenCalled();
   });
 
   it('does not SIGHUP while the clock is unsynchronized', () => {
     settings.dnssec_enabled = 'true';
     vi.mocked(execFileSync).mockReturnValue('yes\nno\n');
     armDnssecTimecheckWhenSynced();
-    expect(signalDnsmasq).not.toHaveBeenCalled();
+    expect(onClockSynchronized).not.toHaveBeenCalled();
     stopTimesync();
   });
 });

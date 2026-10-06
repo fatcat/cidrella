@@ -43,47 +43,20 @@ const { parseNetwork } = await import('../../../src/utils/cidr.js');
 const { insertSubnet, configureSubnet } = await import('../../../src/services/subnet-topology.js');
 const { invalidateSubnetCache } = await import('../../../src/utils/ip-sync.js');
 const { queueRegen } = await import('../../../src/utils/after-commit.js');
-const {
-  applyInterfaceConfig,
-  regenerateDnsmasqConf,
-  restartDnsmasq,
-  withValidatedDnsmasqUpdate,
-  dnsmasqRestartPending,
-  isCidrellaDnsmasqRunning,
-} = await import('../../../src/backends/dnsmasq/dnsmasq.js');
+const { applyAtBoot, applyListenNow } = await import('../../../src/services/backend-apply.js');
 const { syncLeasesNow } = await import('../../../src/services/dhcp-lease-sync.js');
 
 let db;
 let tmpDir;
 
-// The apply paths outside the after-commit hooks. Each mirrors its caller
-// line for line; the facade phases point these at the facade instead.
+// The apply paths outside the after-commit hooks, as index.js and the DNS
+// proxy run them.
 const applyPaths = {
-  // index.js boot block
-  boot() {
-    let ifaceChanged = false;
-    let confChanged = false;
-    try {
-      ({ ifaceChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
-        const ifaceChanged = applyInterfaceConfig(db);
-        const confChanged = regenerateDnsmasqConf(db);
-        return { ifaceChanged, confChanged, changed: ifaceChanged || confChanged };
-      }));
-    } catch (err) {
-      commands.push(`boot generation failed: ${err.message}`);
-    }
-    if (ifaceChanged || confChanged || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
-      restartDnsmasq();
-    } else {
-      commands.push('boot: unchanged, restart skipped');
-    }
-  },
-  // dns-proxy.js activateBypass / deactivateBypass
+  boot: () => applyAtBoot(db),
   bypass(on) {
     if (on) setSetting('dns_proxy_bypass', 'true');
     else db.prepare("DELETE FROM settings WHERE key = 'dns_proxy_bypass'").run();
-    withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db));
-    restartDnsmasq();
+    applyListenNow(db);
   },
   syncLeases: () => syncLeasesNow(db, { settleMs: 0 }),
 };

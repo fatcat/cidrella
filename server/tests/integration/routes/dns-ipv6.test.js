@@ -13,16 +13,9 @@ vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
     'applyResolver',
   ]),
 );
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    applyInterfaceConfig: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    signalDnsmasq: vi.fn(),
-    restartDnsmasq: vi.fn(),
-  };
-});
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 vi.mock('../../../src/utils/encrypted-forwarder.js', () => ({
   applyEncryptedForwarder: vi.fn(),
   getEncryptedForwarderStatus: vi.fn(() => ({ running: false })),

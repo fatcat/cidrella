@@ -8,15 +8,11 @@ vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
     'applyResolver',
   ]),
 );
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateDnsmasqConf: vi.fn(),
-    restartDnsmasq: vi.fn(),
-    dnsmasqSupportsDnssec: vi.fn(() => true),
-  };
-});
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule({
+    capabilities: { dnssec: true },
+  }),
+);
 vi.mock('../../../src/utils/timesync.js', () => ({
   getNtpStatus: vi.fn(() => ({ available: true, ntpEnabled: true, synchronized: true })),
   ensureNtpEnabled: vi.fn(),

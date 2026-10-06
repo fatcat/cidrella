@@ -17,9 +17,9 @@ export function createTestApp(router, prefix = '/api') {
   });
   app.use(actorMiddleware);
 
-  // Routes call req.afterCommit(hookName) to queue dnsmasq regens; the
-  // middleware attaches that method. In tests the hook bodies are mocked
-  // to no-ops via vi.mock on the dnsmasq/dhcp utils, but req.afterCommit
+  // Routes call req.afterCommit(hookName) to queue backend applies; the
+  // middleware attaches that method. Tests stub the apply ops themselves
+  // (stubBackendApply in helpers/fake-backends.js), but req.afterCommit
   // itself must exist so the route handlers don't throw.
   app.use(afterCommitMiddleware);
 

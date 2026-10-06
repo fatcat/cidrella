@@ -9,7 +9,6 @@ import { getSetting } from '../../db/init.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
 import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
 import {
-  DATA_DIR,
   resolveDnsmasqInternalPort,
   resolveDnsListenPort,
   DEFAULT_DNS_LISTEN_PORT,
@@ -20,10 +19,14 @@ import {
   validateTxtValue,
   isValidPtrName,
 } from '../../utils/config-value-validation.js';
-const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
-const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
-const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
-const DNSMASQ_CONF = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.conf');
+import {
+  CONF_DIR,
+  DHCP_HOSTS_DIR,
+  DNSMASQ_CONF,
+  DNSMASQ_PID,
+  HOSTS_DIR,
+  RESTART_PENDING,
+} from './paths.js';
 
 // The temp file sits beside its target, often in a directory dnsmasq watches
 // (hostsdir, dhcp-hostsdir). dnsmasq loads every file there but names that
@@ -511,9 +514,6 @@ export function isCidrellaDnsmasqRunning() {
     return false;
   }
 }
-
-const DNSMASQ_PID = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.pid');
-const RESTART_PENDING = path.join(DATA_DIR, 'runtime', 'dnsmasq-restart-pending');
 
 // True when a previous restartDnsmasq() could not complete, meaning the conf
 // on disk may be newer than what the running dnsmasq loaded. The boot path

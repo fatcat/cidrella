@@ -5,6 +5,7 @@
  */
 import fs from 'fs';
 import { DHCP_LEASE_WATCH_MS } from '../../config/defaults.js';
+import { CONF_DIR, DHCP_HOSTS_DIR, HOSTS_DIR } from './paths.js';
 import {
   applyInterfaceConfig,
   dnsmasqRestartPending,
@@ -18,14 +19,12 @@ import {
   signalDnsmasq,
   withValidatedDnsmasqUpdate,
 } from './dnsmasq.js';
-import {
-  parseLeaseFile,
-  regenerateReservations,
-  regenerateScopeConfigs,
-  removeLegacyLeaseHosts,
-} from './dhcp.js';
+import { parseLeaseFile, regenerateReservations, regenerateScopeConfigs } from './dhcp.js';
+import { removeLegacyLeaseHosts, retireLegacyBlocklistConf } from './legacy.js';
 import { LEASE_FILE, readServerDuid, readSettledLeaseFile } from './lease-file.js';
 import { releaseDnsmasqLease } from './lease-release.js';
+import { LOG_FILE, dhcpDirection, isDhcpLine, querySourceIp } from './log-format.js';
+import { createDhcpLogParser } from './dhcp-log-parser.js';
 
 function applyActivation(activation) {
   if (activation === 'restart') restartDnsmasq();
@@ -68,6 +67,8 @@ export function createDnsmasqBackend() {
       // DNSSEC starts lenient on signature times (dnssec-no-timecheck); a
       // SIGHUP after the clock syncs makes dnsmasq enforce them.
       onClockSynchronized: () => signalDnsmasq(),
+      // Optional op: clear what older releases left behind.
+      retireLegacyArtifacts: () => retireLegacyBlocklistConf(),
     },
 
     dhcp: {
@@ -127,5 +128,20 @@ export function createDnsmasqBackend() {
       return 'unchanged';
     },
     restart: () => restartDnsmasq(),
+    // The directories dnsmasq.conf points hostsdir, dhcp-hostsdir and
+    // conf-dir at; dnsmasq refuses to start without them.
+    prepare() {
+      for (const dir of [HOSTS_DIR, DHCP_HOSTS_DIR, CONF_DIR]) {
+        fs.mkdirSync(dir, { recursive: true });
+      }
+    },
+    // dnsmasq logs queries (log-queries) and DHCP detail (log-dhcp) to one file.
+    logSource: () => ({
+      path: LOG_FILE,
+      querySourceIp,
+      dhcpDirection,
+      isDhcpLine,
+      createDhcpParser: createDhcpLogParser,
+    }),
   };
 }

@@ -1,18 +1,10 @@
-import fs from 'fs';
-import path from 'path';
 import readline from 'node:readline';
 import { getDb, getSetting } from '../db/init.js';
-import { atomicWrite, restartDnsmasq, withValidatedDnsmasqUpdate } from '../backends/dnsmasq/dnsmasq.js';
+import { getDnsBackend } from '../backends/index.js';
 import { loadBlocklist, loadAllowlist } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
-import {
-  DATA_DIR,
-  BLOCKLIST_DOWNLOAD_TIMEOUT_MS,
-  BLOCKLIST_INSERT_BATCH,
-} from '../config/defaults.js';
+import { BLOCKLIST_DOWNLOAD_TIMEOUT_MS, BLOCKLIST_INSERT_BATCH } from '../config/defaults.js';
 import { openPinnedOutboundStream, TOO_LARGE_CODE } from './url-guard.js';
-const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
-const BLOCKLIST_CONF = path.join(CONF_DIR, 'blocklist.conf');
 
 // Domain validation
 const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -311,8 +303,8 @@ export async function refreshAllEnabled(db) {
 }
 
 /**
- * Reload blocklist, updates the proxy's in-memory Set and clears the old dnsmasq conf.
- * All blocking now happens in the DNS proxy, not via dnsmasq address= directives.
+ * Reload blocklist, updates the proxy's in-memory Set and clears the backend's
+ * legacy blocklist file. All blocking now happens in the DNS proxy.
  */
 export function generateBlocklistConfig(_db) {
   // Reload the proxy's in-memory blocklist + the global allowlist (the latter
@@ -320,16 +312,9 @@ export function generateBlocklistConfig(_db) {
   loadBlocklist();
   loadAllowlist();
 
-  // Clean up legacy blocklist.conf, proxy handles blocking now
+  // Clean up the legacy blocklist.conf; the proxy handles blocking now.
   try {
-    const existing = fs.existsSync(BLOCKLIST_CONF) ? fs.readFileSync(BLOCKLIST_CONF, 'utf-8') : '';
-    if (existing !== '') {
-      withValidatedDnsmasqUpdate(() => {
-        atomicWrite(BLOCKLIST_CONF, '');
-        return true;
-      });
-      restartDnsmasq();
-    }
+    getDnsBackend().retireLegacyArtifacts?.();
   } catch {
     /* ignore cleanup errors */
   }

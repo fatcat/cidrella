@@ -70,14 +70,8 @@ import {
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
-import {
-  applyInterfaceConfig,
-  regenerateDnsmasqConf,
-  restartDnsmasq,
-  isCidrellaDnsmasqRunning,
-  dnsmasqRestartPending,
-  withValidatedDnsmasqUpdate,
-} from './backends/dnsmasq/dnsmasq.js';
+import { uniqueServices } from './backends/index.js';
+import { applyAtBoot } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
@@ -104,18 +98,11 @@ async function main() {
   captureBootServiceHealth();
 
   // Ensure data directories exist
-  const dataDirs = [
-    'certs',
-    'backups',
-    'dnsmasq/hosts.d',
-    'dnsmasq/dhcp-hosts.d',
-    'dnsmasq/conf.d',
-    'blocklists',
-    'geoip',
-  ];
+  const dataDirs = ['certs', 'backups', 'blocklists', 'geoip'];
   for (const dir of dataDirs) {
     fs.mkdirSync(path.join(DATA_DIR, dir), { recursive: true });
   }
+  for (const service of uniqueServices()) service.prepare();
 
   // Initialize database
   await initDb(DATA_DIR);
@@ -228,31 +215,7 @@ async function main() {
   // doubles as "make sure DNS is up" and change-detection must not lose that.
   // (The blocklist scheduler's one-time legacy blocklist.conf blanking ~10s
   // in has its own restart guard and stays separate on purpose.)
-  let ifaceChanged = false;
-  let confChanged = false;
-  try {
-    ({ ifaceChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
-      const ifaceChanged = applyInterfaceConfig(getDb());
-      const confChanged = regenerateDnsmasqConf(getDb());
-      return { ifaceChanged, confChanged, changed: ifaceChanged || confChanged };
-    }));
-  } catch (err) {
-    // The validated writer restored the last config. Keep the management API
-    // available so the operator can correct the stored setting or record.
-    console.error('dnsmasq config generation failed; retained previous config:', err.message);
-  }
-  try {
-    // Restart when the config changed, when OUR unit is down (the specific
-    // unit, not any dnsmasq on the host), or when a previous restart failed
-    // and the running process may have loaded a stale config.
-    if (ifaceChanged || confChanged || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
-      restartDnsmasq();
-    } else {
-      console.log('dnsmasq config unchanged and service running, skipping boot restart');
-    }
-  } catch {
-    console.warn('dnsmasq restart failed (may not be installed)');
-  }
+  applyAtBoot(getDb());
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,
@@ -263,7 +226,7 @@ async function main() {
   }
 
   // Encrypted DNS forwarders: start the in-Node DoT/DoH stub if enabled
-  // (dnsmasq's server= already points at it via regenerateDnsmasqConf above).
+  // (dnsmasq's server= already points at it via applyAtBoot above).
   applyEncryptedForwarder();
 
   // 2. Initialize DuckDB analytics

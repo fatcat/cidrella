@@ -7,10 +7,9 @@ vi.mock('../../../src/db/init.js', () => ({
   getSetting: () => null,
   audit: () => {},
 }));
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
-  atomicWrite: () => {},
-  restartDnsmasq: () => {},
-}));
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { domainSuffixes } = await import('../../../src/utils/dns-proxy.js');
 

@@ -2,22 +2,18 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-// Stub dnsmasq (no real config writes / exec) and force DNSSEC support on.
+// Stub the backend (no real config writes or exec), with DNSSEC support on.
 vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
   (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
     'applyDns',
     'applyResolver',
   ]),
 );
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateDnsmasqConf: vi.fn(),
-    restartDnsmasq: vi.fn(),
-    dnsmasqSupportsDnssec: vi.fn(() => true),
-  };
-});
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule({
+    capabilities: { dnssec: true },
+  }),
+);
 
 // Stub timesync so the route doesn't shell out to timedatectl.
 vi.mock('../../../src/utils/timesync.js', () => ({
@@ -27,7 +23,11 @@ vi.mock('../../../src/utils/timesync.js', () => ({
 }));
 
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
-const { dnsmasqSupportsDnssec } = await import('../../../src/backends/dnsmasq/dnsmasq.js');
+const { backend } = await import('../../../src/backends/index.js');
+// What the backend reports for DNSSEC support; a test flips it.
+let dnssecSupported = true;
+const baseCapabilities = backend.capabilities;
+backend.capabilities = () => ({ ...baseCapabilities(), dnssec: dnssecSupported });
 const { ensureNtpEnabled, armDnssecTimecheckWhenSynced } =
   await import('../../../src/utils/timesync.js');
 const { default: request } = await import('supertest');
@@ -46,7 +46,7 @@ afterAll(() => {
 });
 
 beforeEach(() => {
-  vi.mocked(dnsmasqSupportsDnssec).mockReturnValue(true);
+  dnssecSupported = true;
   vi.mocked(ensureNtpEnabled).mockClear();
   vi.mocked(armDnssecTimecheckWhenSynced).mockClear();
 });
@@ -93,7 +93,7 @@ describe('PUT /api/dns/dnssec', () => {
   });
 
   it('refuses to enable when dnsmasq lacks DNSSEC support', async () => {
-    vi.mocked(dnsmasqSupportsDnssec).mockReturnValue(false);
+    dnssecSupported = false;
     const res = await request(app).put('/api/dns/dnssec').send({ enabled: true });
     expect(res.status).toBe(400);
     expect(res.body.error).toMatch(/DNSSEC support/i);

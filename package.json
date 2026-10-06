@@ -14,7 +14,7 @@
     "hunt:workspace": "cd client && MODEL_SEEDS=${MODEL_SEEDS:-300} MODEL_STEPS=${MODEL_STEPS:-30} npx vitest run tests/unit/views/networks-workspace/model/workspace-model.test.js",
     "test:sidecar": "python3 -m unittest discover -s server/anomaly/tests",
     "test:watch": "cd server && npx vitest",
-    "lint": "eslint .",
+    "lint": "eslint . && node scripts/check-backend-imports.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:db-ownership": "node scripts/check-db-ownership.js",

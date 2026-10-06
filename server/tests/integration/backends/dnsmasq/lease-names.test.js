@@ -6,7 +6,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
-import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb } from '../../../helpers/test-db.js';
 
 vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), execFile: vi.fn() }));
 
@@ -27,9 +27,9 @@ beforeAll(async () => {
   db = setup.db;
   tmpDir = setup.tmpDir;
   // DATA_DIR is read when backends/dnsmasq/dhcp.js loads, so it loads after setupTestDb.
-  ({ parseLeaseFile } = await import('../../src/backends/dnsmasq/dhcp.js'));
-  ({ ingestLeases, syncLeasesNow } = await import('../../src/services/dhcp-lease-sync.js'));
-  ({ invalidateSubnetCache } = await import('../../src/utils/ip-sync.js'));
+  ({ parseLeaseFile } = await import('../../../../src/backends/dnsmasq/dhcp.js'));
+  ({ ingestLeases, syncLeasesNow } = await import('../../../../src/services/dhcp-lease-sync.js'));
+  ({ invalidateSubnetCache } = await import('../../../../src/utils/ip-sync.js'));
   leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
   fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
 

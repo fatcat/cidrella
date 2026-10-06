@@ -145,6 +145,8 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
     },
     activate: ({ force = false } = {}) => (force ? 'restarted' : 'unchanged'),
     restart: () => applied.push('restart'),
+    prepare: () => {},
+    logSource: () => null,
     // Test hook: replace the lease set and tell the watchers.
     seedLeases(next) {
       leases = next;
@@ -152,4 +154,26 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
     },
   };
   return backend;
+}
+
+/**
+ * A stand-in for src/backends/index.js where every role is one fake backend:
+ *
+ *   vi.mock('<rel>/src/backends/index.js', async () =>
+ *     (await import('<rel>/helpers/fake-backends.js')).fakeBackendsModule(),
+ *   );
+ *
+ * The module also exports `backend`, so a test can read `backend.applied`
+ * or change what an op returns.
+ */
+export function fakeBackendsModule(options) {
+  const backend = createFakeBackend(options);
+  return {
+    backend,
+    getService: () => backend,
+    getDnsBackend: () => backend.dns,
+    getDhcpBackend: () => backend.dhcp,
+    getRaBackend: () => backend,
+    uniqueServices: () => [backend],
+  };
 }

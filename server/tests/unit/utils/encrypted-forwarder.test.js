@@ -4,10 +4,9 @@ import net from 'net';
 import https from 'https';
 
 // dns-proxy is imported transitively (framing helpers); stub its side-effecting deps.
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', () => ({
-  applyInterfaceConfig: vi.fn(),
-  restartDnsmasq: vi.fn(),
-}));
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
 const { buildServfail, forwardDoT, forwardDoH } =

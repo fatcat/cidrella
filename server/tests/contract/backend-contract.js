@@ -49,6 +49,13 @@ export function runBackendContract(label, makeHarness) {
       expect(typeof status.restartPending).toBe('boolean');
       const caps = h.backend.capabilities();
       for (const key of CAPABILITY_KEYS) expect(typeof caps[key]).toBe('boolean');
+      const log = h.backend.logSource();
+      if (log !== null) {
+        expect(typeof log.path).toBe('string');
+        for (const fn of ['querySourceIp', 'dhcpDirection', 'isDhcpLine', 'createDhcpParser']) {
+          expect(typeof log[fn]).toBe('function');
+        }
+      }
     });
 
     for (const [family, type, value] of [

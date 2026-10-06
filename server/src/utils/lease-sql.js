@@ -62,7 +62,9 @@ export function leaseExpiryMs(expiresAt) {
  * seconds, as dnsmasq reads them.
  */
 export function leaseDurationMs(text) {
-  const raw = String(text || '').trim().toLowerCase();
+  const raw = String(text || '')
+    .trim()
+    .toLowerCase();
   if (raw === 'infinite') return Infinity;
   const match = /^(\d+)([smhdw]?)$/.exec(raw);
   if (!match) return NaN;

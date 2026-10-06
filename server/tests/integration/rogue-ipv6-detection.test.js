@@ -9,8 +9,6 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import dgram from 'dgram';
-import fs from 'fs';
-import path from 'path';
 import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
 
 let tmpDir;
@@ -102,7 +100,7 @@ describe('DHCPv6 SOLICIT probe', () => {
       serverPort: server.port,
       clientPort: 0,
       interfaces: LO,
-      leaseFile: path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases'),
+      serverDuid: null,
       ...extra,
     });
 
@@ -142,16 +140,10 @@ describe('DHCPv6 SOLICIT probe', () => {
     expect(RogueDhcp.listEvents(db)).toEqual([]);
   });
 
-  it("trusts dnsmasq's own DUID from the lease file header", async () => {
-    const leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
-    fs.writeFileSync(leaseFile, `duid ${SERVER_DUID.toUpperCase()}\n`);
-    try {
-      const result = await probe();
-      expect(result.advertisements).toBe(1);
-      expect(result.rogues).toEqual([]);
-    } finally {
-      fs.rmSync(leaseFile, { force: true });
-    }
+  it("trusts the DHCP backend's own DUID", async () => {
+    const result = await probe({ serverDuid: SERVER_DUID });
+    expect(result.advertisements).toBe(1);
+    expect(result.rogues).toEqual([]);
   });
 
   it('reports no interfaces without opening a socket', async () => {

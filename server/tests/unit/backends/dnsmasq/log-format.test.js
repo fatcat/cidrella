@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { isDhcpLine } from '../../../src/routes/logs.js';
+import { isDhcpLine } from '../../../../src/backends/dnsmasq/log-format.js';
 
 describe('log line classification', () => {
   it('classifies dnsmasq DHCP option-detail lines as DHCP', () => {

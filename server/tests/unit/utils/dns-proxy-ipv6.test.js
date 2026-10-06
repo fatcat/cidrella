@@ -6,10 +6,9 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import os from 'os';
 import dnsPacket from 'dns-packet';
 
-vi.mock('../../../src/backends/dnsmasq/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return { ...original, applyInterfaceConfig: vi.fn(), restartDnsmasq: vi.fn() };
-});
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
