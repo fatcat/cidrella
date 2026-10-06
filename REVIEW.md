@@ -46,3 +46,23 @@ was suggested.
 - **Why:** The dialog predates the shared server rule and fills its form before saving.
 - **Fix:** Have the scope dialog ask the server for the filled set (the Bulk Change preview
   already computes it per scope), or move the rule to `@shared` and use it on both sides.
+
+## Found reading prod's logs (2026-10-06)
+
+#### DNSMASQ-01: dnsmasq warns of duplicate dhcp-host addresses that appear once in the file
+
+**low**, plausible (seen on prod, cause not found). `server/src/utils/dhcp.js` (`regenerateReservations`)
+
+- **What happens:** Prod's dnsmasq log has `duplicate dhcp-host IP address 10.0.8.222 at line
+  23` and `10.0.8.223 at line 24` of `dhcp-hosts.d/reservations.hosts`, 12 times each in
+  about 11 hours. Each address is on one line of that file and in no other dnsmasq config.
+  They are the last two lines, and both thermostat reservations predate CIDRella, so the
+  warning is not about recently added entries.
+- **Why:** Not established. The likeliest lead: `atomicWrite` (`utils/dnsmasq.js:24`) writes
+  `reservations.hosts.tmp.<pid>` inside the watched `dhcp-hostsdir` before renaming it, and
+  dnsmasq loads every file in that directory except names starting with `.` or ending in `~`,
+  so it can read the temp file and then the renamed one. dnsmasq keeps the first entry, so
+  nothing is served wrong today; it would matter if one of those reservations changed its MAC.
+- **Fix:** Reproduce on testerella (save a reservation, watch the log), then give the temp file
+  a name dnsmasq skips (a leading `.`), and check the other watched directories (`hosts.d`)
+  use the same write.

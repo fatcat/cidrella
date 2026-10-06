@@ -474,6 +474,12 @@ first on a 0.4.17 host.
     without a known MAC would have been scored with another device's model.
   - Finished network scans are pruned to the newest 100 per network. They
     were never deleted, about 175 a day on one install.
+- **Anomaly scores are no longer dropped for clients on short leases.** On
+  installs where the anomaly detector created its score table itself, a
+  client scored under its MAC and then under its IP in the same hour (its
+  lease lapsed in between) lost that hour's score to a leftover uniqueness
+  rule. Migration 081 rebuilds the table without it, keeping every score and
+  its id.
 - **A new NIC is no longer a conflict forever.** A host behind a DNS record
   or a gateway that got a new network card, or a VM recreated with one, was
   reported as a MAC mismatch on every scan, and nothing in the UI could change
