@@ -2,13 +2,12 @@ import { isValidDomain, isValidAddress, longToIp, parseNetwork } from '../utils/
 import { formatIp, parseIp, IPV4_BITS, IPV6_BITS } from '../utils/address.js';
 import { activeLeaseSql, infiniteLeaseFirstSql } from '../utils/lease-sql.js';
 import { canonicalHostnameForAllocation } from './ip-lifecycle.js';
+import {
+  fqdnForRecordName,
+  normalizeDnsName,
+  normalizeRecordNameForZone,
+} from '../utils/dns-names.js';
 
-function normalizeDnsName(name) {
-  return String(name || '')
-    .trim()
-    .replace(/\.$/, '')
-    .toLowerCase();
-}
 
 // A and AAAA records carry an address and drive the same PTR and lifecycle.
 function isAddressRecordType(type) {
@@ -21,54 +20,9 @@ function bumpZoneSerial(db, zoneId) {
   ).run(zoneId);
 }
 
-/**
- * The canonical stored form of a record name, relative to its zone.
- *
- * Storage is normalized at the sink so every query can rely on it. In
- * particular `r.name || '.' || z.name` is only a correct FQDN if the stored
- * name is lowercase and does NOT already carry the zone suffix, and two
- * queries build exactly that (utils/ip-sync.js reconcileDnsOrphans, and the
- * CNAME target check in routes/dns.js). Before this was enforced, a record
- * written with a device-reported name like "S24-Ultra" produced
- * "S24-Ultra.example.com" from SQL while the JS builder produced
- * "s24-ultra.example.com", and SQLite's `=` is case-sensitive, so the two
- * never matched and reconcileDnsOrphans would strip the hostname off an
- * address whose A record was still present and still pointing at it.
- *
- * Every write path must go through this: the API routes, the Pi-hole import,
- * and the DHCP/reservation lease sync, which is where the un-normalized names
- * actually came from. See REVIEW.md, duplicate-logic audit #8.
- */
-export function normalizeRecordNameForZone(name, zoneName) {
-  const raw = String(name || '')
-    .trim()
-    .toLowerCase();
-  const normalized = raw.replace(/\.$/, '');
-  const zone = normalizeDnsName(zoneName);
-  if (normalized === '@') return '@';
-  if (normalized === zone) return '@';
-  if (normalized.endsWith(`.${zone}`)) {
-    return normalized.slice(0, -(zone.length + 1));
-  }
-  if (normalized.includes('.')) {
-    return raw.endsWith('.') ? raw : normalized;
-  }
-  return normalized;
-}
-
-export function fqdnForRecordName(recordName, zoneName, type) {
-  const raw = String(recordName || '')
-    .trim()
-    .toLowerCase();
-  const normalized = raw.replace(/\.$/, '');
-  const zone = normalizeDnsName(zoneName);
-  if (normalized === '@' || normalized === zone) return zoneName;
-  if (normalized.endsWith(`.${zone}`)) return normalized;
-  // An SRV name is `_service._protocol` (routes/dns.js SRV_NAME_RE), dotted
-  // but always under its zone. Any other dotted name is taken as absolute.
-  if (normalized.includes('.') && type !== 'SRV') return raw.endsWith('.') ? raw : normalized;
-  return `${normalized}.${zoneName}`;
-}
+// The naming rule lives in utils/dns-names.js so the client shares it; these
+// re-exports keep every existing import of the model working.
+export { normalizeRecordNameForZone, fqdnForRecordName };
 
 /**
  * A manual A record in an enabled forward zone is the operator declaring "this
@@ -155,7 +109,9 @@ export function cnameTargetError(db, target, zone, extraKnownFqdns = null) {
       AND z.type = 'forward'
       AND r.enabled = 1
       AND r.type IN ('A', 'AAAA', 'CNAME')
-      AND lower(CASE WHEN r.name = '@' THEN z.name ELSE r.name || '.' || z.name END) = ?
+      AND lower(CASE WHEN r.name = '@' THEN z.name
+                     WHEN r.name LIKE '%.' THEN substr(r.name, 1, length(r.name) - 1)
+                     ELSE r.name || '.' || z.name END) = ?
     LIMIT 1
   `,
     )

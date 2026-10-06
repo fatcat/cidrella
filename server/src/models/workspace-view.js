@@ -169,7 +169,7 @@ function resolveDnsAssociations(records, zones, subnets) {
 
   for (const record of records) {
     const zone = zonesById.get(record.zone_id);
-    record.record_fqdn = fqdnForRecordName(record.name, zone?.name || '', record.type);
+    record.record_fqdn = fqdnForRecordName(record.name, zone?.name || '');
     const key = text(record.record_fqdn).replace(/\.$/, '');
     const existing = recordsByFqdn.get(key) || [];
     existing.push(record);

@@ -3,12 +3,9 @@
 // which SQLite evaluates case-sensitively. Normalizing at the sink is what makes
 // those comparisons correct without every call site remembering to lower().
 // See REVIEW.md, duplicate-logic audit #8.
-export function normalizeZoneName(name) {
-  return String(name || '')
-    .trim()
-    .replace(/\.$/, '')
-    .toLowerCase();
-}
+import { normalizeDnsName as normalizeZoneName } from '../utils/dns-names.js';
+
+export { normalizeZoneName };
 
 export function createZone(db, fields, soaDefaults) {
   const result = db

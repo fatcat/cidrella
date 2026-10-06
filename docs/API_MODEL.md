@@ -311,7 +311,7 @@ DNS read rows add DNS-specific fields:
 | --- | --- |
 | `record_type` | DNS RR type: `A`, `AAAA`, `CNAME`, `PTR`, `MX`, `TXT`, `SRV`. |
 | `dns_source` | DNS row provenance: `manual`, `dns`, `dhcp`, `reservation`, or `placeholder`. The internal `reservation` value identifies a generated DHCP Reservation PTR. Generated PTR rows use the latter four values; an operator-created PTR remains `manual`. |
-| `record_fqdn` | Fully qualified owner name derived from the record name and its zone. This is a DNS record fact and is distinct from the canonical IP `hostname`. |
+| `record_fqdn` | Fully qualified owner name derived from the record name and its zone by the zone-file rule (`docs/ARCHITECTURE.md`, Canonical IP Model): a name ending in `.` is absolute and is returned without the dot, any other name gets `.<zone>`. This is a DNS record fact and is distinct from the canonical IP `hostname`. |
 
 DNS write APIs still accept `type` because the submitted form is a DNS record
 write model. UI read paths should use `record_type` and `dns_source`; form

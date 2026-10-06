@@ -126,11 +126,16 @@ function detectZoneName(hosts, cnames) {
   return zone;
 }
 
-/** Strip zone suffix from hostname to get record name */
+/**
+ * The record name for a Pi-hole host in `zoneName`. Pi-hole names are full
+ * names, so one outside the zone keeps a trailing dot (absolute under the
+ * zone-file rule); a bare label stays relative to the zone.
+ */
 function recordName(hostname, zoneName) {
   if (hostname === zoneName) return '@';
   const suffix = `.${zoneName}`;
-  return hostname.endsWith(suffix) ? hostname.slice(0, -suffix.length) : hostname;
+  if (hostname.endsWith(suffix)) return hostname.slice(0, -suffix.length);
+  return hostname.includes('.') && !hostname.endsWith('.') ? `${hostname}.` : hostname;
 }
 
 function validateImportArray(value, field) {

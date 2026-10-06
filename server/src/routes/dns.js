@@ -28,6 +28,7 @@ import {
   reconcileManagedReverseDns,
   ipForPtrRecord,
 } from '../models/dns-record.js';
+import { normalizeDnsName } from '../utils/dns-names.js';
 import { createZone, updateZone, deleteZone } from '../models/dns-zone.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import { getWorkspaceDnsZones } from '../models/workspace-view.js';
@@ -56,7 +57,7 @@ const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
 function enrichDnsAddressRecords(db, records, zoneName) {
   for (const record of records) {
-    record.record_fqdn = fqdnForRecordName(record.name, zoneName, record.type);
+    record.record_fqdn = fqdnForRecordName(record.name, zoneName);
     if (record.type === 'PTR') {
       record.ip_address = ipForPtrRecord(record.name, zoneName);
       if (record.ip_address) {
@@ -72,12 +73,6 @@ function enrichDnsAddressRecords(db, records, zoneName) {
   return records;
 }
 
-function normalizeDnsName(name) {
-  return String(name || '')
-    .trim()
-    .replace(/\.$/, '')
-    .toLowerCase();
-}
 
 // A and AAAA records both allocate an address through the same lifecycle.
 function isAddressType(type) {

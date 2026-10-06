@@ -214,8 +214,7 @@ function servedHostsByAddress(db) {
     if (ip && !ptrNames.has(ip)) ptrNames.set(ip, lowerFqdn(ptr.value));
   }
 
-  // Each name keeps the spelling it is written with (an absolute external
-  // name keeps its trailing dot); `key` is the form PTR values compare by.
+  // `key` is the lowercase form PTR values compare by.
   const byAddress = new Map();
   for (const record of records) {
     const fqdn = fqdnForRecordName(record.name, record.zone_name);
@@ -327,7 +326,7 @@ export function regenerateConfDir(db) {
     }
 
     for (const r of records) {
-      const fqdn = fqdnForRecordName(r.name, zone.name, r.type);
+      const fqdn = fqdnForRecordName(r.name, zone.name);
       switch (r.type) {
         case 'CNAME':
           if (validateConfigSafeValue(r.value) != null) break;

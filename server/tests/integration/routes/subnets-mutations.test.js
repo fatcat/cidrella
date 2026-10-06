@@ -467,15 +467,16 @@ describe('DNS address metadata sync', () => {
     expect(records.body.find((record) => record.id === fqdn.body.id)?.record_fqdn).toBe(
       'host-one.dns-normalize.test',
     );
+    // Absolute by its trailing dot; the FQDN is the name without it.
     expect(records.body.find((record) => record.id === external.body.id)?.record_fqdn).toBe(
-      'host-two.google.com.',
+      'host-two.google.com',
     );
 
     const ips = await request(app).get(`/api/subnets/${s.id}/ips?page=1&pageSize=256`);
     const one = ips.body.ips.find((r) => r.ip_address === '10.83.0.50');
     const two = ips.body.ips.find((r) => r.ip_address === '10.83.0.51');
     expect(one.hostname).toBe('host-one.dns-normalize.test');
-    expect(two.hostname).toBe('host-two.google.com.');
+    expect(two.hostname).toBe('host-two.google.com');
   });
 
   it('renaming a DNS A record updates the ip_addresses row hostname', async () => {

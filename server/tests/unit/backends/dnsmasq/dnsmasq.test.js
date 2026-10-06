@@ -111,7 +111,9 @@ describe('applyZones reload behavior', () => {
     expect(conf).not.toContain('checker.the-mcnultys.org.the-mcnultys.org');
   });
 
-  it('preserves trailing dots for external absolute A-record names', () => {
+  // A trailing dot marks the name absolute (zone-file rule); the hosts line
+  // carries the name without it, which dnsmasq reads the same either way.
+  it('writes an absolute A-record name outside the zone without the zone', () => {
     applyZones(
       makeDb({
         aRecords: [{ name: 'host.google.com.', value: '10.0.3.232' }],
@@ -122,8 +124,8 @@ describe('applyZones reload behavior', () => {
       path.join(tmpDir, 'dnsmasq', 'hosts.d', 'records.hosts'),
       'utf-8',
     );
-    expect(hosts).toContain('10.0.3.232 host.google.com.');
-    expect(hosts).not.toContain('host.google.com.the-mcnultys.org');
+    expect(hosts).toMatch(/^10\.0\.3\.232 host\.google\.com$/m);
+    expect(hosts).not.toContain('the-mcnultys.org');
   });
 });
 

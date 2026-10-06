@@ -97,6 +97,20 @@ safely converge when their source changes. Every path that creates, changes,
 removes, imports, migrates, or reconciles one of those facts must converge on
 the same PTR result through the shared DNS/IP lifecycle boundary.
 
+A record name follows the zone-file rule. A name ending in `.` is absolute:
+its FQDN is the name without the dot. Every other name is relative to its
+zone, dotted or not (`www.sub` in `example.lan` is `www.sub.example.lan`,
+and an SRV name `_sip._tcp` is `_sip._tcp.example.lan`). Names are stored
+lowercase; `@`, the zone name itself, and a name ending in `.<zone>` (with or
+without the dot) are stored relative (`@`, or the part before the zone).
+`normalizeRecordNameForZone` is the one write sink for that form and
+`fqdnForRecordName` the one reader, and any SQL that builds an FQDN must give
+the same answer (`@` is the zone, a trailing dot is absolute, anything else
+gets `.<zone>`). Importers whose names are absolute by meaning, the Pi-hole
+import, mark an out-of-zone name with the trailing dot. Before 0.5.1 a dotted
+name without the dot was served as absolute; migration 082 added the dot to
+those so they kept serving the same name.
+
 A DHCP lease's name is its effective name (ADR 005), decided when leases are
 read from dnsmasq and before they are stored: unique within its forward zone
 and sticky to the address that holds it. A client whose name another address

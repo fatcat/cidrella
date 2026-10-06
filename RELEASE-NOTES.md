@@ -18,7 +18,8 @@ Groundwork for moving DHCP to Kea and DNS to PowerDNS. Every dnsmasq call now
 goes through one backend layer, with dnsmasq as its only adapter. A golden
 test snapshots every generated file and command for every apply path; the
 refactor left them byte for byte the same, and the fixes below are the only
-changes to what dnsmasq is given. No schema change.
+changes to what dnsmasq is given. Schema runs to 82 (migration 082, record
+names, below).
 
 ### Changed
 
@@ -69,6 +70,15 @@ changes to what dnsmasq is given. No schema change.
   block now sits above the DNSSEC block, where both writers leave it. The
   first boot after the upgrade may restart once if the last write before it
   was an Interfaces save. DNSMASQ-03.
+- **One rule for dotted record names.** A record named `nas.home.lan` in
+  zone `example.lan` was served as `nas.home.lan`, while the CNAME target
+  check read it as `nas.home.lan.example.lan`, so a CNAME could point at a
+  name nothing answered. Names now follow the zone-file rule: a name ending
+  in `.` is absolute, every other name is relative to its zone (`www.sub`
+  is `www.sub.example.lan`). Migration 082 adds the dot to existing dotted
+  names outside their zone, so every record keeps serving the name it
+  served, and the Pi-hole import marks out-of-zone names the same way. A
+  full name is now shown without its trailing dot. DNS-NAME-01.
 
 ### Developer notes
 

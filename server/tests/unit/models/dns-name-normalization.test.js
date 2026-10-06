@@ -49,8 +49,17 @@ describe('normalizeRecordNameForZone', () => {
     expect(normalizeRecordNameForZone('Example.COM', 'example.com')).toBe('@');
   });
 
-  it('leaves an out-of-zone name qualified', () => {
-    expect(normalizeRecordNameForZone('host.other.com', 'example.com')).toBe('host.other.com');
+  it('keeps the trailing dot that marks an out-of-zone name absolute', () => {
+    expect(normalizeRecordNameForZone('Host.Other.COM.', 'example.com')).toBe('host.other.com.');
+  });
+
+  it('keeps a dotted name without the dot relative', () => {
+    expect(normalizeRecordNameForZone('WWW.Sub', 'example.com')).toBe('www.sub');
+  });
+
+  it('stores an absolute name inside the zone as relative', () => {
+    expect(normalizeRecordNameForZone('www.example.com.', 'example.com')).toBe('www');
+    expect(normalizeRecordNameForZone('example.com.', 'example.com')).toBe('@');
   });
 
   it('is idempotent', () => {
@@ -95,23 +104,22 @@ describe('the SQL concatenation and the JS builder agree on normalized rows', ()
   });
 });
 
-describe('fqdnForRecordName', () => {
-  it('puts an SRV name under its zone, though it is dotted (DNSMASQ-04)', () => {
-    expect(fqdnForRecordName('_sip._tcp', 'example.lan', 'SRV')).toBe('_sip._tcp.example.lan');
-    expect(fqdnForRecordName('_ldap._tcp', 'corp.example.lan', 'SRV')).toBe(
-      '_ldap._tcp.corp.example.lan',
-    );
+describe('fqdnForRecordName (zone-file rule)', () => {
+  it('puts a dotted name without a trailing dot under its zone', () => {
+    expect(fqdnForRecordName('www.sub', 'example.lan')).toBe('www.sub.example.lan');
+    expect(fqdnForRecordName('_sip._tcp', 'example.lan')).toBe('_sip._tcp.example.lan');
+    expect(fqdnForRecordName('web', 'example.com')).toBe('web.example.com');
   });
 
-  it('does not double the zone on an SRV name that already carries it', () => {
-    expect(fqdnForRecordName('_sip._tcp.example.lan', 'example.lan', 'SRV')).toBe(
+  it('takes a trailing dot as absolute and returns the name without it', () => {
+    expect(fqdnForRecordName('host.other.com.', 'example.com')).toBe('host.other.com');
+    expect(fqdnForRecordName('Host.Other.COM.', 'example.com')).toBe('host.other.com');
+  });
+
+  it('does not double the zone on a name that already carries it', () => {
+    expect(fqdnForRecordName('_sip._tcp.example.lan', 'example.lan')).toBe(
       '_sip._tcp.example.lan',
     );
-  });
-
-  it('still takes any other dotted name as absolute', () => {
-    expect(fqdnForRecordName('host.other.com', 'example.com', 'A')).toBe('host.other.com');
-    expect(fqdnForRecordName('host.other.com', 'example.com')).toBe('host.other.com');
-    expect(fqdnForRecordName('web', 'example.com', 'TXT')).toBe('web.example.com');
+    expect(fqdnForRecordName('@', 'example.lan')).toBe('example.lan');
   });
 });

@@ -147,7 +147,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
   for the range dialogs' form grammar, `assets/analytics-layout.css` for
   the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
-  `utils/ip.js` and `utils/cidr.js`, `utils/reverse-zones.js` (`generateReverseName(s)`,
+  `utils/ip.js` and `utils/cidr.js`, `utils/dns-names.js` (`fqdnForRecordName`,
+  `normalizeRecordNameForZone`, `normalizeDnsName`: the zone-file rule for record names, a
+  trailing dot is absolute and anything else is under the zone; SQL that builds an FQDN must
+  agree with it), `utils/reverse-zones.js` (`generateReverseName(s)`,
   `reverseZoneNetwork`: the in-addr.arpa and ip6.arpa names for a CIDR and back),
   `utils/config-value-validation.js` (`validateConfigSafeValue` and the record-name and TXT
   checks: what a DNS or DHCP value may contain before any backend writes it),
