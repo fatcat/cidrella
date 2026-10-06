@@ -474,7 +474,7 @@ export function regenerateDnsmasqConf(_db) {
   return writeIfChanged(DNSMASQ_CONF, filtered.join('\n'));
 }
 
-export function isDnsmasqRunning() {
+function isDnsmasqRunning() {
   try {
     execSync('pidof dnsmasq', { stdio: 'ignore' });
     return true;

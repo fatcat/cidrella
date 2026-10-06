@@ -96,20 +96,6 @@ The facade (0.5.1) left these dnsmasq traits in place on purpose: changing them 
 change, and the release promised none. Each needs fixing before, or as part of, the Kea or
 PowerDNS adapter.
 
-#### DNSMASQ-05: The health check counts any dnsmasq on the host as ours
-
-**medium**, confirmed in the code. `server/src/backends/dnsmasq/dnsmasq.js:493`
-(`isDnsmasqRunning`), reported as `running` by `status()` in `backends/dnsmasq/index.js`
-
-- **What happens:** `/api/health/system` (`backends.*.running`, `services.dnsmasq`) and
-  `/api/metrics/services` report dnsmasq running whenever any process named dnsmasq is up. On a
-  host where libvirt, LXD or NetworkManager runs its own dnsmasq, a dead `cidrella-dnsmasq`
-  shows as running in the header chip, the Analytics rail and Needs attention.
-- **Why:** `status()` uses `pidof dnsmasq`. The restart decision already asks systemd about the
-  exact unit (`isCidrellaDnsmasqRunning`, same file), but the health read never switched.
-- **Fix:** Have `status()` use `isCidrellaDnsmasqRunning` (systemd unit, `pidof` only where
-  systemctl is missing, as in Docker). Test both branches with `execFileSync` mocked.
-
 #### DNSMASQ-06: The DHCP option catalog API carries a dnsmasq field
 
 **low**, confirmed in the code. `server/src/utils/dhcp-options.js` (every catalog entry),

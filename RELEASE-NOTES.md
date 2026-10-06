@@ -55,17 +55,21 @@ serves is the SRV fix below. No schema change.
   Boot renders the zones once, so existing SRV records are corrected on the
   upgrade without an edit (an unchanged install writes nothing and signals
   nothing). DNSMASQ-04.
+- **The dnsmasq health check means CIDRella's dnsmasq.** It asked `pidof
+  dnsmasq`, which also finds the dnsmasq that libvirt, LXD or NetworkManager
+  run, so a stopped `cidrella-dnsmasq` could show as running in the header,
+  the Analytics rail and Needs attention. It now asks systemd about the
+  `cidrella-dnsmasq` unit, the same check the restart decision already used,
+  and falls back to `pidof` only where there is no systemctl (Docker).
+  DNSMASQ-05.
 
 ### Known issues
 
 Found while building the golden test and the backend layer, and left as they
-were because this release changes no behavior beyond the fix above:
+were because this release changes no behavior beyond the fixes above:
 
 - With DNSSEC on, every boot restarts dnsmasq and drops its cache even when
   nothing changed (DNSMASQ-03).
-- The service health check counts any dnsmasq on the host, so a stopped
-  `cidrella-dnsmasq` can show as running next to libvirt's or LXD's
-  (DNSMASQ-05).
 
 ### Developer notes
 

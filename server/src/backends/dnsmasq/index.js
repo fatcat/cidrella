@@ -11,7 +11,6 @@ import {
   dnsmasqRestartPending,
   dnsmasqSupportsDnssec,
   isCidrellaDnsmasqRunning,
-  isDnsmasqRunning,
   regenerateConfDir,
   regenerateDnsmasqConf,
   regenerateHostsDir,
@@ -106,7 +105,7 @@ export function createDnsmasqBackend() {
 
     status: () => ({
       name: 'dnsmasq',
-      running: isDnsmasqRunning(),
+      running: isCidrellaDnsmasqRunning(),
       restartPending: dnsmasqRestartPending(),
     }),
     capabilities: () => ({
