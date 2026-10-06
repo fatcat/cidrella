@@ -86,10 +86,10 @@ and `created_at` (UTC, millisecond resolution). Types:
 | `dhcp_reservation_created`, `dhcp_reservation_removed` | a DHCP Reservation takes or leaves the address | MAC or DUID, hostname |
 | `dns_hold_taken`, `dns_hold_released` | a disabled record holds the address, or stops (ADR 004) | record name |
 | `dns_added`, `dns_removed` | a served A or AAAA record names the address, or stops | record name |
-| `lease_obtained`, `lease_expired` | a DHCP lease lands, or lapses | MAC |
+| `lease_obtained`, `lease_expired` | a DHCP lease lands (no lease, another client's, or an expired one before it; a renewal records nothing), or lapses | MAC |
 | `range_assigned`, `range_unassigned` | a Network Range Type covers the address, or stops | type name |
 | `hostname_changed`, `mac_changed`, `scan_enabled_changed` | the field changes | old and new |
-| `retired` | automatic cleanup frees a stale address | |
+| `retired` | automatic cleanup frees a stale address (an address with nothing learned on it records nothing) | |
 
 Range events are stored once per run of addresses (`ip_range_events`) and
 joined in by range, so a type covering a /16 or an IPv6 /64 is one row. Only

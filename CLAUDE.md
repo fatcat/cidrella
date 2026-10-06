@@ -150,7 +150,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   (`currentActor`, the signed-in user a write deep in a model should name), `models/ip-view.js` for every server-owned display field (status, type, and
   `dhcp_lease_state` from the newest lease; any read that shows an address feeds it
   `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own; a count of rogue
-  hosts runs rows through it too), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
+  hosts runs rows through it too), `macIsAuthoritative` in `models/ip-lifecycle.js` (whether DHCP sets an address's stored MAC; anything comparing an observed MAC with the stored one asks it), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
   stateless one; anything treating a scope as a dynamic pool asks it), `utils/dnsmasq-lease-file.js`
   (`LEASE_FILE`, `readServerDuid`), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor

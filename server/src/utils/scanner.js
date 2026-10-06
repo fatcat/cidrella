@@ -6,11 +6,18 @@ import { parseArpingMac, readArpCache } from './arp-cache.js';
 import { findNeighbor, readNdCache } from './nd-cache.js';
 import { observeIpv6Presence } from '../services/ip-lifecycle-service.js';
 import { ipv6DiscoveryPolicy } from '../models/dhcp-scope.js';
-import { ARPING_TIMEOUT_MS, PING_TIMEOUT_MS, SCAN_BATCH_SIZE } from '../config/defaults.js';
+import {
+  ARPING_TIMEOUT_MS,
+  OFFLINE_CONFIRM_PINGS,
+  PING_TIMEOUT_MS,
+  SCAN_BATCH_SIZE,
+  SCAN_HISTORY_KEEP,
+} from '../config/defaults.js';
 import { getSetting } from '../db/init.js';
 import { ipv6Enabled, IPV6_DISABLED_ERROR } from './ipv6-support.js';
 import { observeScanResult, reconcileScanRogues } from '../services/ip-lifecycle-service.js';
 import * as ScanRun from '../models/scan-run.js';
+import { macIsAuthoritative } from '../models/ip-lifecycle.js';
 
 /**
  * Run arping on a single IP. It only responds for directly-reachable peers;
@@ -62,16 +69,21 @@ function pingIp(ip, { count = 1 } = {}) {
  * the neighbor, and confirmByNeighborDiscovery reads that back. A link-local
  * address is only reachable through its interface, so it is pinged zoned.
  */
-async function probeIp(ip, iface = null) {
-  if (addressFamily(ip) === 6) {
-    const icmp = await pingIp(iface ? `${ip}%${iface}` : ip);
-    return { ...icmp, method: 'icmpv6' };
+async function probeIp(ip, iface = null, { wasOnline = false } = {}) {
+  const v6 = addressFamily(ip) === 6;
+  const target = v6 && iface ? `${ip}%${iface}` : ip;
+  const method = v6 ? 'icmpv6' : 'icmp';
+  if (!v6) {
+    const arp = await arpingIp(ip);
+    if (arp.responded) return { ...arp, method: 'arp' };
   }
-  const arp = await arpingIp(ip);
-  if (arp.responded) return { ...arp, method: 'arp' };
-
-  const icmp = await pingIp(ip);
-  return { ...icmp, method: 'icmp' };
+  const icmp = await pingIp(target);
+  if (icmp.responded || !wasOnline) return { ...icmp, method };
+  // A host that was online gets a few more echoes before it is called
+  // offline. Unicast frames are retried over WiFi and broadcast ARP is not,
+  // so a WiFi host can miss one probe of each while it is up.
+  const confirm = await pingIp(target, { count: OFFLINE_CONFIRM_PINGS });
+  return { ...confirm, method };
 }
 
 // Neighbor Discovery is the IPv6 counterpart of arping here. The echo makes
@@ -343,6 +355,13 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     )
     .all(subnetId);
   const assignmentMap = new Map(assignments.map((a) => [a.ip_address, a]));
+  // Hosts online before this scan: a miss is confirmed before it counts.
+  const onlineIps = new Set(
+    db
+      .prepare('SELECT ip_address FROM ip_addresses WHERE subnet_id = ? AND is_online = 1')
+      .all(subnetId)
+      .map((row) => row.ip_address),
+  );
 
   try {
     // Scan in batches for reasonable speed
@@ -363,7 +382,13 @@ export async function startScan(db, scanId, subnetId, options = {}) {
         }
 
         const iface = probeInterfaces.get(ip) || null;
-        promises.push(probeIp(ip, iface).then((result) => ({ ip, iface, ...result })));
+        promises.push(
+          probeIp(ip, iface, { wasOnline: onlineIps.has(ip) }).then((result) => ({
+            ip,
+            iface,
+            ...result,
+          })),
+        );
       }
 
       if (promises.length === 0) continue;
@@ -407,9 +432,12 @@ export async function startScan(db, scanId, subnetId, options = {}) {
           } else if (
             assignment?.mac_address &&
             result.mac &&
+            macIsAuthoritative(assignment.allocation_state) &&
             assignment.mac_address.toLowerCase() !== result.mac
           ) {
-            // MAC mismatch
+            // MAC mismatch, only where DHCP sets the MAC. Anywhere else the
+            // stored MAC is just the last one seen, and updateFromScan takes
+            // the new one.
             isConflict = 1;
             conflictReason = `MAC mismatch (expected ${assignment.mac_address}, got ${result.mac})`;
           }
@@ -465,9 +493,11 @@ export async function startScan(db, scanId, subnetId, options = {}) {
     // Mark completed
     ScanRun.markCompleted(db, scanId, { scannedIps: scannedCount, conflictsFound });
 
-    // Prune old scan_results, keep only this scan (skip for targeted probes)
+    // Prune old scan_results, keep only this scan, and old scan runs past
+    // SCAN_HISTORY_KEEP (skip for targeted probes)
     if (!isTargeted) {
       ScanRun.pruneOldResults(db, subnetId, scanId);
+      ScanRun.pruneOldScans(db, subnetId, SCAN_HISTORY_KEEP);
     }
   } catch (err) {
     ScanRun.markFailed(db, scanId, err.message);

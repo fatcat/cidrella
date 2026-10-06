@@ -206,3 +206,26 @@ export function pruneOldResults(db, subnetId, keepScanId) {
     )
     .run(subnetId, keepScanId);
 }
+
+/**
+ * Drop a network's finished scans (completed or failed) beyond the newest
+ * `keep`. A pending or running scan is never touched. Their scan_results go
+ * with them (ON DELETE CASCADE), though pruneOldResults has usually removed
+ * those already.
+ */
+export function pruneOldScans(db, subnetId, keep) {
+  return db
+    .prepare(
+      `
+    DELETE FROM network_scans
+    WHERE subnet_id = ?
+      AND status IN ('completed', 'failed')
+      AND id NOT IN (
+        SELECT id FROM network_scans
+        WHERE subnet_id = ? AND status IN ('completed', 'failed')
+        ORDER BY id DESC LIMIT ?
+      )
+  `,
+    )
+    .run(subnetId, subnetId, keep);
+}

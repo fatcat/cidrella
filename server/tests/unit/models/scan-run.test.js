@@ -99,4 +99,41 @@ describe('scan run ownership', () => {
     expect(ScanRun.getResults(db, oldScanId)).toHaveLength(0);
     expect(ScanRun.getResults(db, newScanId)).toHaveLength(1);
   });
+
+  it('keeps the newest finished scans per network and never a running one', () => {
+    const v6 = db
+      .prepare(
+        `INSERT INTO subnets (cidr, name, network_address, last_address, prefix_length,
+           address_family, status)
+         VALUES ('fd00:5c::/120', 'Scan6', 'fd00:5c::', 'fd00:5c::ff', 120, 6, 'allocated')`,
+      )
+      .run().lastInsertRowid;
+    const finished = (subnet, n) => {
+      const ids = [];
+      for (let i = 0; i < n; i++) {
+        const id = ScanRun.createPending(db, subnet);
+        if (i % 2) ScanRun.markFailed(db, id, 'probe error');
+        else ScanRun.markCompleted(db, id, { scannedIps: 1, conflictsFound: 0 });
+        ids.push(id);
+      }
+      return ids;
+    };
+    const v4Ids = finished(subnetId, 5);
+    const v6Ids = finished(v6, 5);
+    const running = ScanRun.createPending(db, subnetId);
+    ScanRun.markRunning(db, running, 1);
+    ScanRun.insertResult(db, v4Ids[0], { ip: '10.0.1.10', responded: true });
+
+    ScanRun.pruneOldScans(db, subnetId, 3);
+    ScanRun.pruneOldScans(db, v6, 3);
+
+    const ids = (subnet) =>
+      db
+        .prepare('SELECT id FROM network_scans WHERE subnet_id = ? ORDER BY id')
+        .all(subnet)
+        .map((row) => row.id);
+    expect(ids(subnetId)).toEqual([...v4Ids.slice(2), running]);
+    expect(ids(v6)).toEqual(v6Ids.slice(2));
+    expect(ScanRun.getResults(db, v4Ids[0])).toHaveLength(0);
+  });
 });

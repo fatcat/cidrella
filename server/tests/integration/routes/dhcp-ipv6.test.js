@@ -517,6 +517,33 @@ describe('DHCPv6 leases', () => {
         expect(res.body[0].duid).toBe('00:01:00:01:cc:dd:ee:ff:11:22');
       });
   });
+
+  it('records one lease_obtained per DHCPv6 lease, not one per renewal', () => {
+    const leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
+    const sync = (expiry, duid) => {
+      fs.writeFileSync(
+        leaseFile,
+        [
+          'duid 00:01:00:01:aa:bb:cc:dd:ee:ff:00:11',
+          `${expiry} 22345 fd00:a::1700 renew6 ${duid}`,
+        ].join('\n') + '\n',
+      );
+      syncLeases(db, { leaseFile });
+    };
+    const obtained = () =>
+      db
+        .prepare(
+          "SELECT count(*) n FROM ip_events WHERE ip_address = 'fd00:a::1700' AND event_type = 'lease_obtained'",
+        )
+        .get().n;
+    sync(4102444800, '00:01:00:01:cc:dd:ee:ff:17:00');
+    sync(4102444900, '00:01:00:01:cc:dd:ee:ff:17:00');
+    sync(4102445000, '00:01:00:01:cc:dd:ee:ff:17:00');
+    expect(obtained()).toBe(1);
+    // Another client on the address is a new lease.
+    sync(4102445100, '00:01:00:01:cc:dd:ee:ff:17:01');
+    expect(obtained()).toBe(2);
+  });
 });
 
 describe('DHCPv6 option defaults and scope options', () => {

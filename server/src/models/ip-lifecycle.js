@@ -87,6 +87,17 @@ export function canTransitionAllocation(from, to, source) {
   return ALLOCATION_TRANSITIONS[source]?.[from]?.includes(to) === true;
 }
 
+// The allocations whose MAC comes from DHCP: a reservation's client, or the
+// holder of a live lease. Another MAC answering there is a conflict. Every
+// other address's MAC is only what was last seen on it (a DNS record, a
+// gateway, an unassigned row), so a new one answering replaces it: a host
+// that got a new NIC, or a VM recreated with a new one, is not a conflict.
+const MAC_AUTHORITY_STATES = new Set([ALLOCATION_STATE.STATIC_DHCP, ALLOCATION_STATE.DYNAMIC_DHCP]);
+
+export function macIsAuthoritative(allocationState) {
+  return MAC_AUTHORITY_STATES.has(allocationState);
+}
+
 export function displayStatusFor({ allocationState, inDynamicPool = false }) {
   if (allocationState !== A.UNASSIGNED) return DISPLAY_STATUS.IN_USE;
   return inDynamicPool ? DISPLAY_STATUS.DHCP_SCOPE : DISPLAY_STATUS.AVAILABLE;

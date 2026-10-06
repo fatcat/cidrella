@@ -114,6 +114,54 @@ describe('replaceLeases', () => {
   });
 });
 
+describe('lease history', () => {
+  const obtained = (ip) =>
+    db
+      .prepare(
+        "SELECT count(*) n FROM ip_events WHERE ip_address = ? AND event_type = 'lease_obtained'",
+      )
+      .get(ip).n;
+  const lease = (ip, mac, expiresAt) => ({
+    ip,
+    mac,
+    hostname: 'renewer',
+    clientId: null,
+    expiresAt,
+    subnetId,
+  });
+  const inHours = (h) => new Date(Date.now() + h * 3600_000).toISOString();
+
+  it('records one lease_obtained per lease, not one per renewal', () => {
+    replaceLeases(db, [lease('10.0.1.60', 'aa:bb:cc:00:00:60', inHours(1))]);
+    replaceLeases(db, [lease('10.0.1.60', 'aa:bb:cc:00:00:60', inHours(2))]);
+    replaceLeases(db, [lease('10.0.1.60', 'aa:bb:cc:00:00:60', inHours(3))]);
+    expect(obtained('10.0.1.60')).toBe(1);
+    // Another client on the address is a new lease.
+    replaceLeases(db, [lease('10.0.1.60', 'aa:bb:cc:00:00:61', inHours(4))]);
+    expect(obtained('10.0.1.60')).toBe(2);
+  });
+
+  it('records a DHCP Reservation lease once, however often the sync runs', () => {
+    db.prepare(
+      `INSERT INTO dhcp_reservations (subnet_id, ip_address, mac_address, hostname, enabled)
+       VALUES (?, '10.0.1.61', 'aa:bb:cc:00:00:62', 'reserved-host', 1)`,
+    ).run(subnetId);
+    for (let i = 0; i < 5; i++) {
+      replaceLeases(db, [lease('10.0.1.61', 'aa:bb:cc:00:00:62', 'infinite')]);
+    }
+    expect(obtained('10.0.1.61')).toBe(1);
+  });
+
+  it('records a lease again when the client comes back after it expired', () => {
+    replaceLeases(db, [lease('10.0.1.62', 'aa:bb:cc:00:00:63', inHours(1))]);
+    db.prepare(
+      "UPDATE dhcp_leases SET expires_at = datetime('now', '-1 hour') WHERE ip_address = '10.0.1.62'",
+    ).run();
+    replaceLeases(db, [lease('10.0.1.62', 'aa:bb:cc:00:00:63', inHours(2))]);
+    expect(obtained('10.0.1.62')).toBe(2);
+  });
+});
+
 describe('syncDhcpDnsRecords', () => {
   it('creates DHCP-sourced A records for dynamic leases with hostnames', () => {
     syncDhcpDnsRecords(db, [

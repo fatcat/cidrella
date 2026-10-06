@@ -98,6 +98,10 @@ export const DNS_TEST_TIMEOUT_MS = 5000;
 export const DNS_TEST_RETRY_DELAY_MS = 5000;
 export const SCAN_BATCH_SIZE = 10;
 export const MAX_SCAN_SIZE = 4096;
+// Finished scans kept per network. The scan list shows the newest 50 and the
+// scheduler reads only the newest; older runs were never pruned (23,708 rows
+// on one install, 175 a day).
+export const SCAN_HISTORY_KEEP = 100;
 export const GEOIP_CACHE_MAX = 10000;
 export const GEOIP_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 export const GEOIP_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
@@ -106,6 +110,11 @@ export const GEOIP_DOWNLOAD_TIMEOUT_MS = 60000; // 60 seconds
 export const GEOIP_QUERY_TIMEOUT_MS = 5000;
 export const ARPING_TIMEOUT_MS = 5000;
 export const PING_TIMEOUT_MS = 1500;
+// Echoes sent before a host the scanner last saw online is called offline,
+// once its ARP and single echo both went unanswered. WiFi clients drop
+// broadcast ARP (about one in three on one install's Proxmox hosts) and now
+// and then a lone echo too; one reply out of these keeps the host online.
+export const OFFLINE_CONFIRM_PINGS = 3;
 export const AUDIT_PRUNE_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const DHCP_LEASE_WATCH_MS = 10000; // 10 seconds
 export const PASSIVE_LIVENESS_POLL_MS = 5000; // 5 seconds

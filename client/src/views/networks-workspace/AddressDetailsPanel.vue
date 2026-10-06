@@ -614,8 +614,12 @@ function deviceChangeDetail(change) {
   return change.device_type || change.os_family || change.vendor_class || 'Classification changed';
 }
 
+// Keyed by a string so only a different address resets the panel. The
+// workspace re-reads its rows every minute and hands over a new row object;
+// an array key is a new value each time, which sent an open Lifecycle tab
+// back to Overview and dropped a half-typed reservation note.
 watch(
-  () => [props.subnetId, props.row.address],
+  () => `${props.subnetId}|${props.row.address}`,
   () => {
     events.value = [];
     feedback.value = null;

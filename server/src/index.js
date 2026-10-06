@@ -6,6 +6,7 @@ import compression from 'compression';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 import morgan from 'morgan';
+import { skipAccessLog } from './utils/access-log.js';
 import { fileURLToPath } from 'url';
 
 // v0.4.15: backstop for any async handler that throws without a try/catch.
@@ -350,7 +351,7 @@ async function main() {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     next();
   });
-  app.use(morgan('short'));
+  app.use(morgan('short', { skip: skipAccessLog }));
   // gzip everything compressible above the default 1 KB. A full-network
   // address read (4,096 rows for a /20 in the grid view) is 4 MB of JSON
   // that shrinks about ten to one. The log stream is left alone: an event

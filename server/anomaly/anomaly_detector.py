@@ -106,6 +106,66 @@ def get_min_training_hours():
         return MIN_TRAINING_HOURS
 
 
+def _train_client(client_ip, device_key, sensitivity, min_hours):
+    """Train one device's model. Returns the number of training windows, or
+    None when the device has too little history to train yet."""
+    # Check if client has enough history. DNS history is only ever
+    # observable per-IP (DuckDB has no MAC), so this is scoped to
+    # the current IP even though the model itself is keyed by device.
+    hours = features.get_client_history_hours(client_ip)
+    if hours < min_hours:
+        meta = storage.get_model_metadata(device_key)
+        if not meta:
+            storage.update_model_metadata(device_key, client_ip, 0, status="learning")
+        log.debug("Client %s (%s) has %.1fh history (need %dh), skipping",
+                  client_ip, device_key, hours, min_hours)
+        return None
+
+    # Extract training data
+    training_data = features.extract_training_data(client_ip, TRAINING_LOOKBACK_DAYS)
+    if training_data is None or len(training_data) < 10:
+        log.debug("Client %s (%s): insufficient training windows (%s)", client_ip, device_key,
+                  len(training_data) if training_data is not None else 0)
+        return None
+
+    # Train model
+    models.train_model(device_key, training_data, sensitivity)
+    storage.update_model_metadata(device_key, client_ip, len(training_data), status="active")
+
+    # Cache median for explanation during scoring
+    _client_medians[device_key] = np.median(training_data, axis=0)
+
+    log.info("Trained model for %s (%s, %d windows)", client_ip, device_key, len(training_data))
+    return len(training_data)
+
+
+def _load_or_retrain(client_ip, device_key):
+    """The device's model, retrained first when the saved one came from
+    another scikit-learn version. None when there is no model to score with."""
+    try:
+        return models.load_model(device_key)
+    except models.StaleModelError:
+        log.info("Model for %s (%s) was saved by another scikit-learn version, retraining",
+                 client_ip, device_key)
+    if _train_client(client_ip, device_key, get_sensitivity(), get_min_training_hours()) is None:
+        return None
+    return models.load_model(device_key)
+
+
+def prune_orphan_models():
+    """Remove model files no anomaly_models row names. Runs after training,
+    so every model trained this cycle already has its row."""
+    try:
+        known = storage.get_model_device_keys()
+        if known is None:
+            return
+        removed = models.remove_orphan_models(known)
+        if removed:
+            log.info("Removed %d orphaned model files", len(removed))
+    except Exception:
+        log.error("Failed to prune orphaned models: %s", traceback.format_exc())
+
+
 def train_all_clients():
     """Train or retrain models for all active clients."""
     t0 = time.monotonic()
@@ -118,39 +178,16 @@ def train_all_clients():
     max_windows = 0
     for client_ip, device_key in targets:
         try:
-            # Check if client has enough history. DNS history is only ever
-            # observable per-IP (DuckDB has no MAC), so this is scoped to
-            # the current IP even though the model itself is keyed by device.
-            hours = features.get_client_history_hours(client_ip)
-            if hours < min_hours:
-                meta = storage.get_model_metadata(device_key)
-                if not meta:
-                    storage.update_model_metadata(device_key, client_ip, 0, status="learning")
-                log.debug("Client %s (%s) has %.1fh history (need %dh), skipping",
-                          client_ip, device_key, hours, min_hours)
+            windows = _train_client(client_ip, device_key, sensitivity, min_hours)
+            if windows is None:
                 continue
-
-            # Extract training data
-            training_data = features.extract_training_data(client_ip, TRAINING_LOOKBACK_DAYS)
-            if training_data is None or len(training_data) < 10:
-                log.debug("Client %s (%s): insufficient training windows (%s)", client_ip, device_key,
-                          len(training_data) if training_data is not None else 0)
-                continue
-
-            # Train model
-            models.train_model(device_key, training_data, sensitivity)
-            storage.update_model_metadata(device_key, client_ip, len(training_data), status="active")
-
-            # Cache median for explanation during scoring
-            _client_medians[device_key] = np.median(training_data, axis=0)
-
             trained += 1
-            if len(training_data) > max_windows:
-                max_windows = len(training_data)
-            log.info("Trained model for %s (%s, %d windows)", client_ip, device_key, len(training_data))
-
+            if windows > max_windows:
+                max_windows = windows
         except Exception:
             log.error("Failed to train model for %s (%s): %s", client_ip, device_key, traceback.format_exc())
+
+    prune_orphan_models()
 
     elapsed = round(time.monotonic() - t0, 2)
     log.info("Training complete: %d/%d models trained in %.2fs (max %d windows)",
@@ -183,7 +220,7 @@ def score_all_clients():
 
     for client_ip, device_key in targets:
         try:
-            model = models.load_model(device_key)
+            model = _load_or_retrain(client_ip, device_key)
             if model is None:
                 continue
 

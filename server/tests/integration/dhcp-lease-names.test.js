@@ -13,6 +13,7 @@ vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), exec
 let tmpDir;
 let db;
 let syncLeases;
+let syncSettledLeases;
 let invalidateSubnetCache;
 let leaseFile;
 
@@ -25,7 +26,7 @@ beforeAll(async () => {
   db = setup.db;
   tmpDir = setup.tmpDir;
   // DATA_DIR is read when utils/dhcp.js loads, so it loads after setupTestDb.
-  ({ syncLeases } = await import('../../src/utils/dhcp.js'));
+  ({ syncLeases, syncSettledLeases } = await import('../../src/utils/dhcp.js'));
   ({ invalidateSubnetCache } = await import('../../src/utils/ip-sync.js'));
   leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
   fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
@@ -173,6 +174,52 @@ describe('DHCP lease names (ADR 005)', () => {
     expect(
       db.prepare("SELECT mac_address FROM dhcp_leases WHERE ip_address = 'fd00:a1::1010'").get(),
     ).toEqual({ mac_address: null });
+  });
+
+  it('syncs a lease file only once dnsmasq has finished rewriting it', async () => {
+    // One IPv4 and one IPv6 lease (the IPv6 pool is the one the test above made).
+    const lines = [
+      `aa:bb:cc:00:00:70 10.0.1.70 nanoleaf *`,
+      `12348 fd00:a1::1070 lamp6 00:03:00:01:aa:bb:cc:00:00:71`,
+    ];
+    renew(lines);
+    const ips = ['10.0.1.70', 'fd00:a1::1070'];
+    const history = () =>
+      db
+        .prepare(
+          `SELECT ip_address, event_type FROM ip_events
+           WHERE ip_address IN (?, ?) ORDER BY id`,
+        )
+        .all(...ips);
+    const settled = history();
+    const whole = lines.map((line) => `${FAR} ${line}`).join('\n') + '\n';
+    const firstLine = whole.slice(0, whole.indexOf('\n') + 1);
+
+    // A read that stops part way through a line is left for the next sync.
+    fs.writeFileSync(leaseFile, whole.slice(0, whole.indexOf('nanoleaf') + 4));
+    expect(syncLeases(db, { leaseFile })).toEqual({ synced: 0, unsettled: true });
+
+    // dnsmasq truncates, then writes lease by lease: the reader waits until
+    // two reads agree, so the empty and the one-lease files are never synced.
+    const writes = [firstLine, whole, whole];
+    fs.writeFileSync(leaseFile, '');
+    const result = await syncSettledLeases(db, {
+      leaseFile,
+      wait: async () => fs.writeFileSync(leaseFile, writes.shift()),
+    });
+    expect(result).toMatchObject({ synced: 2 });
+    expect(history()).toEqual(settled);
+    expect(ips.map(leaseName)).toEqual(['nanoleaf', 'lamp6']);
+    expect(ips.map(canonicalName)).toEqual(['nanoleaf', 'lamp6']);
+
+    // A file that never settles syncs nothing.
+    let n = 0;
+    const churn = await syncSettledLeases(db, {
+      leaseFile,
+      wait: async () => fs.writeFileSync(leaseFile, n++ % 2 ? whole : firstLine),
+    });
+    expect(churn).toEqual({ synced: 0, unsettled: true });
+    expect(history()).toEqual(settled);
   });
 
   it('treats a manual record of the name as taken and leaves the record alone', () => {

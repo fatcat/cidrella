@@ -431,6 +431,59 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- **Address history stops repeating itself.** Three loops filled it on a
+  busy network:
+  - Every lease sync, about every 10 seconds, wrote "Lease obtained" again for
+    each DHCP Reservation address. One production install had 610,000 of
+    these in a week, nearly all of its history. A renewal now records
+    nothing; a lease is recorded when it is new to the address (no lease,
+    another client's, or an expired one before it).
+  - Devices that ignore the scanner's probe but renew DHCP or query DNS all
+    day flipped offline at every scan and back online minutes later. A missed
+    probe now leaves a host online when anything heard from it since the
+    previous scan, and marks it offline only after a whole scan interval of
+    silence.
+  - Hosts on WiFi flipped offline now and then while they were up, Proxmox
+    hosts with a WiFi management interface among them. WiFi drops broadcast
+    ARP (about one probe in three on one install) and sometimes a lone ping.
+    A host that was online now gets three more pings before the scanner
+    calls it offline.
+  - The cleanup sweep "retired" the same empty addresses every hour, because
+    an unanswered probe labeled them as found by the scanner. Only a reply
+    does that now, and retiring an address with nothing learned on it
+    records nothing.
+  - A lease sync that read the lease file while dnsmasq was rewriting it saw
+    some leases or none, released the rest, and restored them on the next
+    sync. Each one left a "Hostname changed" pair that showed the same name,
+    dozens of addresses at a time. The lease file is now synced only once two
+    reads a moment apart agree and it ends on a whole line.
+
+  Existing repeated rows age out with the usual history retention.
+- **Quieter logs and a smaller scan table.**
+  - The anomaly detector's own requests to the server, about one a second,
+    no longer go into the server's access log. On one install they were 9
+    of every 10 lines in its journal. A failed one is still logged.
+  - A device model saved by another scikit-learn version (a backup restored
+    from another machine, or a package upgrade) printed a warning on every
+    scoring cycle and could score wrongly. The detector now retrains that
+    device's model and uses the new one.
+  - Device model files nothing tracks are removed after each training run:
+    the files left under old IP names when models moved to MAC keys, and
+    the model of a device added to the allowlist. One install carried 32 of
+    them in every backup. A client that later held one of those addresses
+    without a known MAC would have been scored with another device's model.
+  - Finished network scans are pruned to the newest 100 per network. They
+    were never deleted, about 175 a day on one install.
+- **A new NIC is no longer a conflict forever.** A host behind a DNS record
+  or a gateway that got a new network card, or a VM recreated with one, was
+  reported as a MAC mismatch on every scan, and nothing in the UI could change
+  the stored MAC. The scan now takes the new MAC and records one "MAC changed"
+  event. A DHCP Reservation or a live lease still sets its MAC, and a
+  different one answering there is still reported.
+- **The address panel stays on the tab you picked.** The Networks
+  workspace refreshes its rows every minute, and each refresh sent an open
+  address panel back to Overview from Lifecycle or Device, and cleared a
+  reservation note being typed. Only choosing another address resets it now.
 - **A tab left open across an update no longer breaks on its next page.**
   It asked for script files the new build had replaced, the server answered
   with the app's page instead of a 404, and the browser stopped with "Failed

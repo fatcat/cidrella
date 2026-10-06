@@ -10,6 +10,7 @@ import { isAutomaticScanAllowed, scannerCoveredSql } from '../utils/scan-coverag
 import { ipv6Enabled } from '../utils/ipv6-support.js';
 import { canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import * as IpEvents from './ip-events.js';
+import { macIsAuthoritative } from './ip-lifecycle.js';
 
 // The reason string the passive path stamps on an unassigned address.
 export const PASSIVE_ROGUE_REASON = 'passive DNS query from unassigned address';
@@ -598,6 +599,15 @@ export function retireLearnedMetadata(db, row) {
   `,
     )
     .run(row.id);
+  // A row with nothing learned on it has nothing to retire: the event would
+  // repeat every sweep that reaches it.
+  const learned =
+    row.allocation_state !== 'unassigned' ||
+    row.is_rogue ||
+    [row.hostname, row.mac_address, row.last_seen_mac, row.last_seen_at].some(
+      (value) => value != null && value !== '',
+    );
+  if (!learned) return result;
   emit(db, row.id, row.subnet_id, row.ip_address, 'retired', {
     oldValue: row.allocation_state,
     newValue: 'unassigned',
@@ -791,7 +801,11 @@ export function clearRogueAfterScan(db, subnetId, { probedIps, exceptIps = new S
 export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, conflictReason }) {
   const existing = db
     .prepare(
-      'SELECT id, is_online, is_rogue, allocation_state, hostname, mac_address, last_seen_mac, scan_enabled, subnet_id, ip_address, detection_source FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?',
+      `SELECT id, is_online, is_rogue, allocation_state, hostname, mac_address, last_seen_mac,
+        scan_enabled, subnet_id, ip_address, detection_source,
+        (last_seen_at IS NOT NULL AND last_scanned_at IS NOT NULL
+          AND datetime(last_seen_at) > datetime(last_scanned_at)) AS seen_since_scan
+      FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?`,
     )
     .get(subnetId, ip);
 
@@ -805,29 +819,45 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
   }
 
   if (existing) {
+    // A missed probe is not the host going offline when something else (a
+    // DHCP renewal, a DNS query) heard from it since the previous scan: plenty
+    // of devices ignore probes and talk all day. It goes offline at the first
+    // miss after a whole scan interval of silence.
+    const online = responded || Boolean(existing.is_online && existing.seen_since_scan);
     const updates = [
       'is_online = ?',
       "last_scanned_at = datetime('now')",
-      'detection_source = COALESCE(detection_source, ?)',
+      // Only a reply makes the scanner the source that found the address. An
+      // unanswered probe of an empty row labeling it would make it a
+      // retirement candidate again after every retirement.
+      'detection_source = CASE WHEN ? THEN COALESCE(detection_source, ?) ELSE detection_source END',
       "updated_at = datetime('now')",
     ];
-    const params = [responded ? 1 : 0, 'scanner'];
+    const params = [online ? 1 : 0, responded ? 1 : 0, 'scanner'];
 
     if (responded) {
       updates.push("last_seen_at = datetime('now')");
       updates.push("first_seen_at = COALESCE(first_seen_at, datetime('now'))");
       updates.push('offline_since_at = NULL');
-    } else {
+    } else if (!online) {
       updates.push("offline_since_at = COALESCE(offline_since_at, datetime('now'))");
     }
+    // Where DHCP sets the MAC it stays put (a different one answering is a
+    // conflict); anywhere else the stored MAC is the last one seen, so a new
+    // NIC replaces it, once, with a mac_changed event.
+    const storedMac = existing.mac_address ? existing.mac_address.toLowerCase() : '';
+    const macReplaced =
+      Boolean(mac) &&
+      Boolean(storedMac) &&
+      storedMac !== mac.toLowerCase() &&
+      !macIsAuthoritative(existing.allocation_state);
     if (mac) {
       updates.push('last_seen_mac = ?');
       params.push(mac);
-      // Only set mac_address if currently empty
-      updates.push(
-        "mac_address = CASE WHEN mac_address IS NULL OR mac_address = '' THEN ? ELSE mac_address END",
-      );
-      params.push(mac);
+      if (!storedMac || macReplaced) {
+        updates.push('mac_address = ?');
+        params.push(mac);
+      }
     }
 
     if (responded) {
@@ -854,8 +884,15 @@ export function updateFromScan(db, subnetId, ip, { responded, mac, isConflict, c
     // state is last_scanned_at, not an event.
     if (responded && !existing.is_online) {
       emit(db, existing.id, subnetId, ip, 'online', { source: 'scanner' });
-    } else if (!responded && existing.is_online) {
+    } else if (!online && existing.is_online) {
       emit(db, existing.id, subnetId, ip, 'offline', { source: 'scanner' });
+    }
+    if (macReplaced) {
+      emit(db, existing.id, subnetId, ip, 'mac_changed', {
+        oldValue: existing.mac_address,
+        newValue: mac,
+        source: 'scanner',
+      });
     }
     if (effectiveConflict && !existing.is_rogue) {
       emit(db, existing.id, subnetId, ip, 'rogue_detected', {

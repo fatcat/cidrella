@@ -255,6 +255,30 @@ ARP should be attempted first where appropriate, with ICMP ping fallback inside
 the same probe. A probe updates `last_scanned_at`; address history records only
 a change of liveness (online, offline), never the probe itself.
 
+An unanswered probe marks a host offline only when nothing else heard from it
+since the previous scan. Many devices ignore probes and still renew DHCP or
+query DNS all day; while any source has seen the host after the last scan
+(`last_seen_at` newer than `last_scanned_at`), a missed probe leaves it online
+and writes no event. After a whole scan interval of silence the next miss marks
+it offline. An unanswered probe never makes the scanner the address's
+`detection_source`: only a reply does.
+
+A host that was online when the scan began is not called offline on one missed
+probe. When its ARP request (IPv4) and single echo both go unanswered, it gets
+`OFFLINE_CONFIRM_PINGS` more echoes, and one reply keeps it online. WiFi
+clients drop broadcast ARP, which the radio never retransmits, and miss a lone
+echo now and then; unicast echoes are retransmitted. A host already offline gets
+no retry, so a scan of empty addresses costs nothing extra.
+
+A stored MAC is authoritative only where DHCP sets it: a DHCP Reservation's
+client (`static_dhcp`) and a live lease's holder (`dynamic_dhcp`). A different
+MAC answering there is a scan conflict ("MAC mismatch"). Anywhere else (a DNS
+record, a gateway or other topology address, an unassigned row) the stored MAC
+is only the last one seen, so a scan that sees another replaces it once and
+records `mac_changed` with source `scanner`; a NIC swapped or a VM recreated is
+not a conflict on every scan after. `macIsAuthoritative` in
+`models/ip-lifecycle.js` is the one test of which is which.
+
 ## DNS/DHCP Config Generation
 
 dnsmasq files are generated from database state using atomic writes. Different

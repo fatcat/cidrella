@@ -24,7 +24,7 @@ import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { macFromDuid } from './duid.js';
 import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
-import { LEASE_FILE } from './dnsmasq-lease-file.js';
+import { LEASE_FILE, isWholeLeaseFile, readSettledLeaseFile } from './dnsmasq-lease-file.js';
 import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
 import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { upsertServerDnsDefault } from '../models/dhcp-option.js';
@@ -506,15 +506,20 @@ export function parseLeaseLine(line) {
 }
 
 /**
- * Sync leases from dnsmasq lease file into the database.
+ * Sync leases from dnsmasq lease file into the database. `content` is the
+ * file's text when the caller has already read it (readSettledLeaseFile);
+ * without it the file is read here. A file cut off partway through a line is
+ * one dnsmasq is still writing, and is left for the next sync.
  */
-export function syncLeases(db, { leaseFile = LEASE_FILE } = {}) {
-  let content;
-  try {
-    content = fs.readFileSync(leaseFile, 'utf-8');
-  } catch {
-    return { synced: 0 };
+export function syncLeases(db, { leaseFile = LEASE_FILE, content } = {}) {
+  if (content === undefined) {
+    try {
+      content = fs.readFileSync(leaseFile, 'utf-8');
+    } catch {
+      return { synced: 0 };
+    }
   }
+  if (!isWholeLeaseFile(content)) return { synced: 0, unsettled: true };
 
   const leases = [];
   for (const line of content.split('\n')) {
@@ -592,28 +597,53 @@ export function regenerateDhcpConfigs(db) {
 }
 
 /**
+ * Sync from the lease file once dnsmasq has finished writing it. Every
+ * runtime sync goes through here; a direct syncLeases read can land in the
+ * middle of a rewrite.
+ */
+export async function syncSettledLeases(db, { leaseFile = LEASE_FILE, ...settle } = {}) {
+  const content = await readSettledLeaseFile({ leaseFile, ...settle });
+  if (content === null) return { synced: 0, unsettled: true };
+  return syncLeases(db, { leaseFile, content });
+}
+
+/**
  * Watch the dnsmasq lease file for changes and sync to DB.
  */
 let leaseWatcherDb = null;
+let leaseSyncRunning = false;
+let leaseSyncAgain = false;
+
+// One sync at a time. A change seen while one runs is synced after it, once.
+async function runLeaseSync(label) {
+  if (leaseSyncRunning) {
+    leaseSyncAgain = true;
+    return;
+  }
+  leaseSyncRunning = true;
+  try {
+    do {
+      leaseSyncAgain = false;
+      try {
+        await syncSettledLeases(leaseWatcherDb);
+      } catch (err) {
+        console.warn(`${label}:`, err.message);
+      }
+    } while (leaseSyncAgain);
+  } finally {
+    leaseSyncRunning = false;
+  }
+}
 
 export function startLeaseWatcher(db) {
   leaseWatcherDb = db;
 
-  // Initial sync
-  try {
-    syncLeases(db);
-  } catch (err) {
-    console.warn('Initial lease sync failed:', err.message);
-  }
+  runLeaseSync('Initial lease sync failed');
 
   // Watch for changes (poll every 10 seconds since fs.watch can be unreliable)
   try {
     fs.watchFile(LEASE_FILE, { interval: DHCP_LEASE_WATCH_MS }, () => {
-      try {
-        syncLeases(leaseWatcherDb);
-      } catch (err) {
-        console.warn('Lease sync error:', err.message);
-      }
+      runLeaseSync('Lease sync error');
     });
     console.log('Lease file watcher started:', LEASE_FILE);
   } catch (err) {

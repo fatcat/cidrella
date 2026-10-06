@@ -211,6 +211,19 @@ def set_model_status(device_key, status):
         con.close()
 
 
+def get_model_device_keys():
+    """Every device key with an anomaly_models row, or None when the table
+    cannot be read (so a caller deciding what to delete deletes nothing)."""
+    con = _connect()
+    try:
+        rows = con.execute("SELECT identity FROM anomaly_models").fetchall()
+        return {row["identity"] for row in rows}
+    except sqlite3.OperationalError:
+        return None
+    finally:
+        con.close()
+
+
 def get_model_metadata(device_key):
     """Get model metadata for a device key."""
     con = _connect()

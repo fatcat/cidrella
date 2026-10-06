@@ -3,6 +3,7 @@ import { queueRegen } from '../utils/after-commit.js';
 import { addressInRange, isValidAddress } from '../utils/ip.js';
 import { addressFamily, sortKey } from '../utils/address.js';
 import { macFromDuid } from '../utils/duid.js';
+import { isLeaseActive } from '../utils/lease-sql.js';
 import { resolveEffectiveScopeOptions } from './dhcp-scope.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
@@ -40,12 +41,17 @@ export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
     const clientOf = (mac, duid) => String(duid || mac || '').toLowerCase();
     const observedLeases = leases.map((lease) => {
       const old = previous.get(`${lease.subnetId}|${lease.ip}`);
+      // A new lease is one the address did not hold a moment ago: no lease,
+      // another client's, or one that had expired. A renewal (same client,
+      // new expiry) is activity but not a new lease, so it writes no history.
+      const newLease =
+        !old ||
+        clientOf(old.mac_address, old.duid) !== clientOf(lease.mac, lease.duid) ||
+        !isLeaseActive(old.expires_at);
       return {
         ...lease,
-        observedActivity:
-          !old ||
-          clientOf(old.mac_address, old.duid) !== clientOf(lease.mac, lease.duid) ||
-          old.expires_at !== lease.expiresAt,
+        newLease,
+        observedActivity: newLease || old.expires_at !== lease.expiresAt,
       };
     });
     for (const l of observedLeases) {

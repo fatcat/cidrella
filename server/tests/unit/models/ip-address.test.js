@@ -739,8 +739,8 @@ describe('updateFromScan', () => {
     expect(row).toBeUndefined();
   });
 
-  it('fills mac_address only when empty', () => {
-    IpAddress.upsert(db, subnetId, '10.0.1.55', { mac_address: 'aa:aa:aa:aa:aa:aa' });
+  it('fills an empty mac_address from the scan', () => {
+    IpAddress.upsert(db, subnetId, '10.0.1.55', { is_online: 1 });
 
     IpAddress.updateFromScan(db, subnetId, '10.0.1.55', {
       responded: 1,
@@ -750,10 +750,9 @@ describe('updateFromScan', () => {
     });
 
     const row = IpAddress.findBySubnetAndIp(db, subnetId, '10.0.1.55');
-    // mac_address should NOT be overwritten
-    expect(row.mac_address).toBe('aa:aa:aa:aa:aa:aa');
-    // but last_seen_mac should be set
+    expect(row.mac_address).toBe('bb:bb:bb:bb:bb:bb');
     expect(row.last_seen_mac).toBe('bb:bb:bb:bb:bb:bb');
+    // Replacing a stored MAC: 'a new MAC answering on a scanned address'.
   });
 });
 
@@ -870,5 +869,186 @@ describe('rogue device goes offline', () => {
     expect(row.is_online).toBe(0);
     expect(row.is_rogue).toBe(0);
     expect(row.rogue_reason).toBe('MAC mismatch');
+  });
+});
+
+// ── the MAC a scan sees: adopted unless DHCP sets it ─────────────────────
+
+describe('a new MAC answering on a scanned address', () => {
+  let v6SubnetId;
+  beforeAll(() => {
+    db.prepare(
+      "INSERT INTO subnets (cidr, name, network_address, prefix_length, status, address_family) VALUES ('fd00:151::/64', 'Mac v6', 'fd00:151::', 64, 'allocated', 6)",
+    ).run();
+    v6SubnetId = db.prepare("SELECT id FROM subnets WHERE cidr = 'fd00:151::/64'").get().id;
+  });
+  beforeEach(() => db.prepare('DELETE FROM ip_events').run());
+
+  const row = (subnet, ip, state, mac) => {
+    IpAddress.upsert(db, subnet, ip, { is_online: 1, mac_address: mac });
+    db.prepare(
+      'UPDATE ip_addresses SET allocation_state = ? WHERE subnet_id = ? AND ip_address = ?',
+    ).run(state, subnet, ip);
+    db.prepare('DELETE FROM ip_events').run();
+  };
+  const answer = (subnet, ip, mac) =>
+    IpAddress.updateFromScan(db, subnet, ip, {
+      responded: 1,
+      mac,
+      isConflict: 0,
+      conflictReason: null,
+    });
+  const stored = (ip) =>
+    db.prepare('SELECT mac_address, last_seen_mac FROM ip_addresses WHERE ip_address = ?').get(ip);
+  const macEvents = (ip) =>
+    db
+      .prepare(
+        "SELECT old_value, new_value, source FROM ip_events WHERE ip_address = ? AND event_type = 'mac_changed'",
+      )
+      .all(ip);
+
+  it('takes the new MAC of a DNS-only address or gateway once, IPv4 and IPv6', () => {
+    const cases = [
+      [subnetId, '10.0.1.160', 'static_dns'],
+      [subnetId, '10.0.1.161', 'gateway'],
+      [v6SubnetId, 'fd00:151::60', 'static_dns'],
+    ];
+    for (const [subnet, ip, state] of cases) {
+      row(subnet, ip, state, 'aa:bb:cc:00:01:01');
+      answer(subnet, ip, 'aa:bb:cc:00:01:02');
+      answer(subnet, ip, 'aa:bb:cc:00:01:02');
+      expect(stored(ip)).toEqual({
+        mac_address: 'aa:bb:cc:00:01:02',
+        last_seen_mac: 'aa:bb:cc:00:01:02',
+      });
+      expect(macEvents(ip)).toEqual([
+        { old_value: 'aa:bb:cc:00:01:01', new_value: 'aa:bb:cc:00:01:02', source: 'scanner' },
+      ]);
+    }
+  });
+
+  it('keeps the MAC DHCP set, recording only what was seen, IPv4 and IPv6', () => {
+    for (const [subnet, ip] of [
+      [subnetId, '10.0.1.162'],
+      [v6SubnetId, 'fd00:151::62'],
+    ]) {
+      row(subnet, ip, 'static_dhcp', 'aa:bb:cc:00:02:01');
+      answer(subnet, ip, 'aa:bb:cc:00:02:02');
+      expect(stored(ip)).toEqual({
+        mac_address: 'aa:bb:cc:00:02:01',
+        last_seen_mac: 'aa:bb:cc:00:02:02',
+      });
+      expect(macEvents(ip)).toEqual([]);
+    }
+  });
+
+  it('treats a different letter case as the same MAC', () => {
+    row(subnetId, '10.0.1.163', 'static_dns', 'AA:BB:CC:00:03:01');
+    answer(subnetId, '10.0.1.163', 'aa:bb:cc:00:03:01');
+    expect(macEvents('10.0.1.163')).toEqual([]);
+  });
+});
+
+// ── history noise: liveness grace and empty-row retirement ──────────────
+
+describe('a missed probe after other activity', () => {
+  let v6SubnetId;
+  const cases = () => [
+    { family: 'IPv4', subnet: subnetId, ip: '10.0.1.150' },
+    { family: 'IPv6', subnet: v6SubnetId, ip: 'fd00:150::50' },
+  ];
+
+  beforeAll(() => {
+    db.prepare(
+      "INSERT INTO subnets (cidr, name, network_address, prefix_length, status, address_family) VALUES ('fd00:150::/64', 'Test v6', 'fd00:150::', 64, 'allocated', 6)",
+    ).run();
+    v6SubnetId = db.prepare("SELECT id FROM subnets WHERE cidr = 'fd00:150::/64'").get().id;
+  });
+  beforeEach(() => {
+    db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(v6SubnetId);
+    db.prepare('DELETE FROM ip_events').run();
+  });
+
+  const miss = (subnet, ip) =>
+    IpAddress.updateFromScan(db, subnet, ip, {
+      responded: 0,
+      mac: null,
+      isConflict: 0,
+      conflictReason: null,
+    });
+  const events = (ip) =>
+    db
+      .prepare(
+        "SELECT event_type FROM ip_events WHERE ip_address = ? AND event_type IN ('online', 'offline')",
+      )
+      .all(ip)
+      .map((row) => row.event_type);
+
+  it('keeps a host online that was seen since the previous scan', () => {
+    for (const { subnet, ip } of cases()) {
+      IpAddress.upsert(db, subnet, ip, { is_online: 1, detection_source: 'dhcp_lease' });
+      db.prepare(
+        "UPDATE ip_addresses SET last_scanned_at = datetime('now', '-30 minutes'), last_seen_at = datetime('now', '-2 minutes') WHERE subnet_id = ? AND ip_address = ?",
+      ).run(subnet, ip);
+      db.prepare('DELETE FROM ip_events').run();
+      miss(subnet, ip);
+      const row = IpAddress.findBySubnetAndIp(db, subnet, ip);
+      expect(row.is_online).toBe(1);
+      expect(row.offline_since_at).toBeNull();
+      expect(events(ip)).toEqual([]);
+      // The scan still counts as a scan, so the next miss needs fresh activity.
+      miss(subnet, ip);
+      expect(IpAddress.findBySubnetAndIp(db, subnet, ip).is_online).toBe(0);
+      expect(events(ip)).toEqual(['offline']);
+    }
+  });
+
+  it('marks a host offline when nothing heard from it since the previous scan', () => {
+    for (const { subnet, ip } of cases()) {
+      IpAddress.upsert(db, subnet, ip, { is_online: 1, detection_source: 'dhcp_lease' });
+      db.prepare(
+        "UPDATE ip_addresses SET last_scanned_at = datetime('now', '-30 minutes'), last_seen_at = datetime('now', '-40 minutes') WHERE subnet_id = ? AND ip_address = ?",
+      ).run(subnet, ip);
+      miss(subnet, ip);
+      const row = IpAddress.findBySubnetAndIp(db, subnet, ip);
+      expect(row.is_online).toBe(0);
+      expect(row.offline_since_at).toBeTruthy();
+      expect(events(ip)).toContain('offline');
+    }
+  });
+
+  it('does not label an empty row as found when the probe goes unanswered', () => {
+    for (const { subnet, ip } of cases()) {
+      IpAddress.upsert(db, subnet, ip, { description: 'kept' });
+      miss(subnet, ip);
+      expect(IpAddress.findBySubnetAndIp(db, subnet, ip).detection_source).toBeNull();
+      IpAddress.updateFromScan(db, subnet, ip, {
+        responded: 1,
+        mac: null,
+        isConflict: 0,
+        conflictReason: null,
+      });
+      expect(IpAddress.findBySubnetAndIp(db, subnet, ip).detection_source).toBe('scanner');
+    }
+  });
+
+  it('retires a row once, and an empty row with no event', () => {
+    for (const { subnet, ip } of cases()) {
+      IpAddress.upsert(db, subnet, ip, {
+        hostname: 'gone',
+        mac_address: 'aa:bb:cc:00:01:50',
+        detection_source: 'scanner',
+      });
+      const retired = () =>
+        db
+          .prepare(
+            "SELECT count(*) n FROM ip_events WHERE ip_address = ? AND event_type = 'retired'",
+          )
+          .get(ip).n;
+      IpAddress.retireLearnedMetadata(db, IpAddress.findBySubnetAndIp(db, subnet, ip));
+      expect(retired()).toBe(1);
+      IpAddress.retireLearnedMetadata(db, IpAddress.findBySubnetAndIp(db, subnet, ip));
+      expect(retired()).toBe(1);
+    }
   });
 });

@@ -347,7 +347,9 @@ export function syncLeasesToIps(db, leases) {
       syncCanonicalHostname(db, l.subnetId, l.ip);
     }
     IpAddress.clearRogue(db, l.subnetId, l.ip);
-    if (!before || before.allocation_state !== 'dynamic_dhcp') {
+    // replaceLeases knows whether the address held this lease a moment ago.
+    // A caller without that knowledge (newLease unset) records the lease.
+    if (l.newLease !== false) {
       IpAddress.emitEvent(db, l.subnetId, l.ip, 'lease_obtained', {
         newValue: l.mac || null,
         source: 'dhcp_lease',

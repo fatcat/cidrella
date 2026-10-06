@@ -88,6 +88,27 @@ describe('workspace address details panel', () => {
     expect(api.get).toHaveBeenLastCalledWith('/subnets/7/ips/10.0.0.33/events?limit=500');
   });
 
+  it('keeps the open tab when a refresh hands over the same address, IPv4 or IPv6', async () => {
+    for (const address of ['10.0.0.33', 'fd00:a::33']) {
+      const row = { ...availableRow, address, raw: { ...availableRow.raw, ip_address: address } };
+      const wrapper = mountPanel(row);
+      await flushPromises();
+      await wrapper.findAll('[role="tab"]')[1].trigger('click');
+      api.get.mockClear();
+
+      // The workspace's minute refresh: a new row object for the same address.
+      await wrapper.setProps({ row: { ...row, raw: { ...row.raw } } });
+      await flushPromises();
+      expect(wrapper.find('[role="tab"][aria-selected="true"]').text()).toBe('Lifecycle');
+      expect(api.get).not.toHaveBeenCalled();
+
+      // Another address starts over on Overview.
+      await wrapper.setProps({ row: { ...availableRow, address: '10.0.0.34' } });
+      await flushPromises();
+      expect(wrapper.find('[role="tab"][aria-selected="true"]').text()).toBe('Overview');
+    }
+  });
+
   it('creates an IP Reservation with an explicit note', async () => {
     const wrapper = mountPanel();
     await wrapper.find('button[data-track="workspace-create-ip-reservation"]').trigger('click');

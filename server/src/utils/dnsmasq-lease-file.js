@@ -25,3 +25,47 @@ export function readServerDuid({ leaseFile = LEASE_FILE } = {}) {
   }
   return null;
 }
+
+/**
+ * Whether lease file text could be a whole file. dnsmasq ends every line it
+ * writes with a newline, so text that stops partway through a line was read
+ * while dnsmasq was still writing it.
+ */
+export function isWholeLeaseFile(text) {
+  return text === '' || text.endsWith('\n');
+}
+
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function readOrNull(leaseFile) {
+  try {
+    return await fs.promises.readFile(leaseFile, 'utf8');
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The lease file once dnsmasq has finished writing it, or null when it never
+ * settles (or is missing). dnsmasq rewrites the file in place: it truncates
+ * it, then writes every lease. A read in between sees some leases or none,
+ * and syncing that would release every lease it missed and restore them on
+ * the next read, clearing and restoring their hostnames in address history.
+ * So the text is taken only when two reads `settleMs` apart agree and it
+ * ends on a whole line.
+ */
+export async function readSettledLeaseFile({
+  leaseFile = LEASE_FILE,
+  settleMs = 250,
+  attempts = 4,
+  wait = pause,
+} = {}) {
+  let previous = await readOrNull(leaseFile);
+  for (let i = 0; i < attempts; i++) {
+    await wait(settleMs);
+    const current = await readOrNull(leaseFile);
+    if (current !== null && current === previous && isWholeLeaseFile(current)) return current;
+    previous = current;
+  }
+  return null;
+}
