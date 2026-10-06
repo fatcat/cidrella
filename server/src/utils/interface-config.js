@@ -1,5 +1,6 @@
 import os from 'os';
 import { getSetting } from '../db/init.js';
+import { ipv6Enabled } from './ipv6-support.js';
 
 /**
  * One reading of the `interface_config` setting.
@@ -78,4 +79,16 @@ export function selectInterfaceNames(service, { config, sysIfaces } = {}) {
   }
 
   return { explicit, names };
+}
+
+// The addresses of one interface a resolver should bind: every IPv4 address
+// and, while IPv6 support is on, every IPv6 address that is not link-local.
+// Link-local needs a zone id on the wire and clients never send queries to
+// it. `ipv6` defaults to the global switch; tests pass it explicitly.
+export function listenableAddresses(addrs, { ipv6 = ipv6Enabled() } = {}) {
+  return (addrs || [])
+    .filter(
+      (a) => a.family === 'IPv4' || (ipv6 && a.family === 'IPv6' && !/^fe[89ab]/i.test(a.address)),
+    )
+    .map((a) => a.address);
 }

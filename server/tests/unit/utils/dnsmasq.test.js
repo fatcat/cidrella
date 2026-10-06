@@ -281,69 +281,6 @@ describe('IPv6 emission', () => {
   });
 });
 
-describe('generateReverseNames', () => {
-  it('names one ip6.arpa zone at the nibble boundary of the prefix', async () => {
-    const { generateReverseNames } = await import('../../../src/utils/dnsmasq.js');
-    expect(generateReverseNames('fd00:6::/64')).toEqual([
-      '0.0.0.0.0.0.0.0.6.0.0.0.0.0.d.f.ip6.arpa',
-    ]);
-    expect(generateReverseNames('2001:db8:1234::/50')).toEqual([
-      '4.3.2.1.8.b.d.0.1.0.0.2.ip6.arpa',
-    ]);
-    expect(generateReverseNames('2001:db8::/32')).toEqual(['8.b.d.0.1.0.0.2.ip6.arpa']);
-    expect(generateReverseNames('10.0.0.0/22')).toEqual([
-      '0.0.10.in-addr.arpa',
-      '1.0.10.in-addr.arpa',
-      '2.0.10.in-addr.arpa',
-      '3.0.10.in-addr.arpa',
-    ]);
-  });
-});
-
-describe('reverseZoneNetwork', () => {
-  it('turns a zone name back into the network it covers', async () => {
-    const { reverseZoneNetwork } = await import('../../../src/utils/dnsmasq.js');
-    expect(reverseZoneNetwork('1.0.10.in-addr.arpa')).toBe('10.0.1.0/24');
-    expect(reverseZoneNetwork('16.172.in-addr.arpa')).toBe('172.16.0.0/16');
-    expect(reverseZoneNetwork('10.in-addr.arpa')).toBe('10.0.0.0/8');
-    expect(reverseZoneNetwork('8.b.d.0.1.0.0.2.ip6.arpa')).toBe('2001:db8::/32');
-    expect(reverseZoneNetwork('0.0.0.0.0.0.0.0.6.0.0.0.0.0.d.f.ip6.arpa')).toBe('fd00:6::/64');
-    expect(reverseZoneNetwork('example.test')).toBeNull();
-    expect(reverseZoneNetwork('300.0.10.in-addr.arpa')).toBeNull();
-  });
-});
-
-describe('listenableAddresses', () => {
-  it('binds IPv4 and global or unique-local IPv6, never link-local', async () => {
-    const { listenableAddresses } = await import('../../../src/utils/dnsmasq.js');
-    expect(
-      listenableAddresses(
-        [
-          { family: 'IPv4', address: '10.0.1.2' },
-          { family: 'IPv6', address: 'fe80::1' },
-          { family: 'IPv6', address: 'fd00:a::2' },
-          { family: 'IPv6', address: '2001:db8::2' },
-        ],
-        { ipv6: true },
-      ),
-    ).toEqual(['10.0.1.2', 'fd00:a::2', '2001:db8::2']);
-    expect(listenableAddresses(undefined, { ipv6: true })).toEqual([]);
-  });
-
-  it('binds IPv4 only while IPv6 support is off', async () => {
-    const { listenableAddresses } = await import('../../../src/utils/dnsmasq.js');
-    expect(
-      listenableAddresses(
-        [
-          { family: 'IPv4', address: '10.0.1.2' },
-          { family: 'IPv6', address: 'fd00:a::2' },
-        ],
-        { ipv6: false },
-      ),
-    ).toEqual(['10.0.1.2']);
-  });
-});
-
 describe('atomicWrite', () => {
   it('writes through a dot-named temp file dnsmasq skips (DNSMASQ-01)', async () => {
     const { atomicWrite } = await import('../../../src/utils/dnsmasq.js');

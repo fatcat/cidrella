@@ -29,7 +29,7 @@ vi.mock('../../../src/utils/encrypted-forwarder.js', () => ({
 }));
 
 const { default: request } = await import('supertest');
-const { generateReverseNames } = await import('../../../src/utils/dnsmasq.js');
+const { generateReverseNames } = await import('../../../src/utils/reverse-zones.js');
 
 let tmpDir;
 let app;

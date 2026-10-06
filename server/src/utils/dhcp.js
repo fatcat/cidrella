@@ -1,5 +1,4 @@
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import {
@@ -23,11 +22,10 @@ import { findSubnetForIp } from './ip-sync.js';
 import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from './dhcp-options.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import { macFromDuid } from './duid.js';
-import { DATA_DIR, FALLBACK_SECONDARY_DNS, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
+import { DATA_DIR, DHCP_LEASE_WATCH_MS } from '../config/defaults.js';
 import { LEASE_FILE, isWholeLeaseFile, readSettledLeaseFile } from './dnsmasq-lease-file.js';
-import { validateDnsmasqConfigValue } from './dnsmasq-escape.js';
+import { validateConfigSafeValue } from './config-value-validation.js';
 import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
-import { upsertServerDnsDefault } from '../models/dhcp-option.js';
 import { dhcpLeaseRejectionReason } from '../services/ip-lifecycle-service.js';
 import { resolveEffectiveScopeOptions } from '../models/dhcp-scope.js';
 import { ipv6Enabled } from './ipv6-support.js';
@@ -203,12 +201,12 @@ function renderOptionValue(value, type, family) {
     if (resolved.length === 0) return null;
     const rendered = family === 6 ? resolved.map((ip) => `[${ip}]`) : resolved;
     const joined = rendered.join(',');
-    return validateDnsmasqConfigValue(joined, { allowComma: true }) == null ? joined : null;
+    return validateConfigSafeValue(joined, { allowComma: true }) == null ? joined : null;
   }
   if (type === 'text-list') {
-    return validateDnsmasqConfigValue(value, { allowComma: true }) == null ? value : null;
+    return validateConfigSafeValue(value, { allowComma: true }) == null ? value : null;
   }
-  return validateDnsmasqConfigValue(value) == null ? value : null;
+  return validateConfigSafeValue(value) == null ? value : null;
 }
 
 // IPv6 pool segments, reserved addresses carved out, as [start, end] BigInts.
@@ -648,37 +646,6 @@ export function startLeaseWatcher(db) {
     console.log('Lease file watcher started:', LEASE_FILE);
   } catch (err) {
     console.warn('Could not watch lease file:', err.message);
-  }
-}
-
-/**
- * Detect the server's primary IPv4 address and update the DNS Servers
- * global default (option 6) to "<server_ip>, <secondary>".
- * Runs at startup so a host IP change is always reflected.
- */
-export function syncServerDnsDefault(db) {
-  // Find the first non-internal IPv4 address
-  const ifaces = os.networkInterfaces();
-  let serverIp = null;
-  for (const addrs of Object.values(ifaces)) {
-    for (const addr of addrs) {
-      if (addr.family === 'IPv4' && !addr.internal) {
-        serverIp = addr.address;
-        break;
-      }
-    }
-    if (serverIp) break;
-  }
-
-  if (!serverIp) {
-    console.warn('Could not detect server IPv4 address for DNS default');
-    return;
-  }
-
-  const newValue = `${serverIp},${FALLBACK_SECONDARY_DNS}`;
-
-  if (upsertServerDnsDefault(db, newValue)) {
-    console.log(`DNS Servers default updated: ${newValue}`);
   }
 }
 

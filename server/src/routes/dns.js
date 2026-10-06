@@ -46,7 +46,7 @@ import {
 import { canonicalizeIp, isValidIpv6, addressFamily } from '../utils/address.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { isBlockedAddress } from '../utils/url-guard.js';
-import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
+import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/config-value-validation.js';
 import { validateSoaFields, isIntInRange, UNGROUPED } from '../utils/validation.js';
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 

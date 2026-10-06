@@ -82,7 +82,7 @@ describe('createBlockedResponse across families', () => {
 
 describe('proxy bind addresses', () => {
   it('covers IPv4 and global or unique-local IPv6 on the selected interfaces, never link-local', async () => {
-    const { listenableAddresses } = await import('../../../src/utils/dnsmasq.js');
+    const { listenableAddresses } = await import('../../../src/utils/interface-config.js');
     const spy = vi.spyOn(os, 'networkInterfaces').mockReturnValue({
       eth0: [
         { family: 'IPv4', address: '10.0.1.2', internal: false },

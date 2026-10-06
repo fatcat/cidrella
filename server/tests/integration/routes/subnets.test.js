@@ -9,7 +9,6 @@ vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
   return {
     ...original,
     regenerateConfigs: vi.fn(),
-    generateReverseNames: original.generateReverseNames,
   };
 });
 

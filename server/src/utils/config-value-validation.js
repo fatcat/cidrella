@@ -17,7 +17,7 @@
  * @param {boolean} [opts.allowComma=false]  Option-list fields (e.g. DNS servers) legitimately contain commas.
  * @param {boolean} [opts.allowEquals=false]  Rare, used only when the value is itself a quoted TXT record payload.
  */
-export function validateDnsmasqConfigValue(value, opts = {}) {
+export function validateConfigSafeValue(value, opts = {}) {
   const { allowComma = false, allowEquals = false } = opts;
   if (typeof value !== 'string') return 'must be a string';
   if (value.length === 0) return 'must not be empty';

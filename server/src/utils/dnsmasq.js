@@ -2,12 +2,12 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync, execSync } from 'child_process';
-import { parseNetwork, isValidAddress } from './ip.js';
+import { isValidAddress } from './ip.js';
 import { sortKey } from './address.js';
 import { ipForPtrRecord } from '../models/dns-record.js';
 import { getSetting } from '../db/init.js';
 import { ipv6Enabled } from './ipv6-support.js';
-import { selectInterfaceNames } from './interface-config.js';
+import { listenableAddresses, selectInterfaceNames } from './interface-config.js';
 import {
   DATA_DIR,
   resolveDnsmasqInternalPort,
@@ -15,7 +15,7 @@ import {
   DEFAULT_DNS_LISTEN_PORT,
   ENCRYPTED_FORWARDER_PORT,
 } from '../config/defaults.js';
-import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
+import { validateConfigSafeValue, validateTxtValue, isValidPtrName } from './config-value-validation.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
@@ -181,73 +181,6 @@ function toFqdn(recordName, zoneName) {
   return recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
 }
 
-export function generateReverseName(cidr) {
-  return generateReverseNames(cidr)[0];
-}
-
-/**
- * Generate the reverse zone names for a CIDR.
- * IPv4: /24+ → 1 zone, /17-/23 → multiple /24 zones, /16 → /16 zone, etc.
- * IPv6: one ip6.arpa zone at the nibble boundary of the prefix (the prefix
- * length rounded down to a multiple of four), never a walk of the space.
- */
-export function generateReverseNames(cidr) {
-  const parsed = parseNetwork(cidr);
-  if (parsed.family === 6) {
-    // A zone has at most 31 nibbles: with all 32 the zone name would be the
-    // PTR owner itself, which no PTR lookup tries, so a /128 uses its /124.
-    const zoneNibbles = Math.min(31, Math.max(1, Math.floor(parsed.prefix / 4)));
-    const nibbles = parsed.networkBig.toString(16).padStart(32, '0').split('');
-    return [`${nibbles.slice(0, zoneNibbles).reverse().join('.')}.ip6.arpa`];
-  }
-  const octets = parsed.network.split('.').map(Number);
-
-  if (parsed.prefix >= 24) {
-    return [`${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`];
-  } else if (parsed.prefix >= 17) {
-    // Split into individual /24 zones
-    const numBlocks = 1 << (24 - parsed.prefix);
-    const zones = [];
-    for (let i = 0; i < numBlocks; i++) {
-      zones.push(`${octets[2] + i}.${octets[1]}.${octets[0]}.in-addr.arpa`);
-    }
-    return zones;
-  } else if (parsed.prefix >= 16) {
-    return [`${octets[1]}.${octets[0]}.in-addr.arpa`];
-  } else if (parsed.prefix >= 8) {
-    return [`${octets[0]}.in-addr.arpa`];
-  }
-  return [`${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`];
-}
-
-/**
- * The network a reverse zone name covers, as a CIDR string, or null when the
- * name is not a whole-octet in-addr.arpa or nibble-aligned ip6.arpa zone.
- * This is the inverse of generateReverseNames for the shapes it produces:
- * "1.0.10.in-addr.arpa" is 10.0.1.0/24, "8.b.d.0.1.0.0.2.ip6.arpa" is
- * 2001:db8::/32.
- */
-export function reverseZoneNetwork(zoneName) {
-  const name = String(zoneName || '')
-    .toLowerCase()
-    .replace(/\.$/, '');
-  const v4 = name.match(/^((?:\d{1,3}\.){1,3})in-addr\.arpa$/);
-  if (v4) {
-    const octets = v4[1].split('.').filter(Boolean).reverse();
-    if (octets.some((o) => Number(o) > 255)) return null;
-    const padded = [...octets, ...Array(4 - octets.length).fill('0')];
-    return `${padded.join('.')}/${octets.length * 8}`;
-  }
-  const v6 = name.match(/^((?:[0-9a-f]\.){1,32})ip6\.arpa$/);
-  if (v6) {
-    const nibbles = v6[1].split('.').filter(Boolean).reverse();
-    const hex = [...nibbles, ...Array(32 - nibbles.length).fill('0')].join('');
-    const hextets = hex.match(/.{4}/g).join(':');
-    return `${parseNetwork(`${hextets}/${nibbles.length * 4}`).network}/${nibbles.length * 4}`;
-  }
-  return null;
-}
-
 // Every served A and AAAA name, grouped by address, with each address's
 // canonical PTR name first. dnsmasq answers a reverse lookup from the first
 // hosts line naming the address, so this order makes the hosts file serve the
@@ -350,7 +283,7 @@ export function regenerateConfDir(db) {
     // Skip any zone whose name carries characters that could break out of the
     // line or smuggle a directive (a legit name is a domain or dotted-decimal
     // in-addr.arpa, so no whitespace, commas, or control chars).
-    if (validateDnsmasqConfigValue(zone.name) != null) continue;
+    if (validateConfigSafeValue(zone.name) != null) continue;
 
     const records = db
       .prepare(
@@ -397,11 +330,11 @@ export function regenerateConfDir(db) {
       const fqdn = toFqdn(r.name, zone.name);
       switch (r.type) {
         case 'CNAME':
-          if (validateDnsmasqConfigValue(r.value) != null) break;
+          if (validateConfigSafeValue(r.value) != null) break;
           lines.push(`cname=${fqdn},${r.value}${r.ttl ? ',' + r.ttl : ''}`);
           break;
         case 'MX':
-          if (validateDnsmasqConfigValue(r.value) != null) break;
+          if (validateConfigSafeValue(r.value) != null) break;
           lines.push(`mx-host=${fqdn},${r.value},${r.priority || 10}`);
           break;
         case 'TXT':
@@ -413,7 +346,7 @@ export function regenerateConfDir(db) {
           lines.push(`txt-record=${fqdn},"${r.value.replace(/\\/g, '\\\\').replace(/"/g, '\\"')}"`);
           break;
         case 'SRV':
-          if (validateDnsmasqConfigValue(r.value) != null) break;
+          if (validateConfigSafeValue(r.value) != null) break;
           lines.push(`srv-host=${fqdn},${r.value},${r.port},${r.priority || 0},${r.weight || 0}`);
           break;
       }
@@ -424,7 +357,7 @@ export function regenerateConfDir(db) {
     // someone bypassed the route validator or edited the DB directly.
     for (const ptr of servedPtrs) {
       if (!isValidPtrName(ptr.name)) continue;
-      if (validateDnsmasqConfigValue(ptr.value) != null) continue;
+      if (validateConfigSafeValue(ptr.value) != null) continue;
       lines.push(`ptr-record=${ptr.name}.${zone.name},${ptr.value}`);
     }
 
@@ -644,18 +577,6 @@ export function restartDnsmasq() {
     console.warn('Could not restart dnsmasq');
     setRestartPending(true);
   }
-}
-
-// The addresses of one interface a resolver should bind: every IPv4 address
-// and, while IPv6 support is on, every IPv6 address that is not link-local.
-// Link-local needs a zone id on the wire and clients never send queries to
-// it. `ipv6` defaults to the global switch; tests pass it explicitly.
-export function listenableAddresses(addrs, { ipv6 = ipv6Enabled() } = {}) {
-  return (addrs || [])
-    .filter(
-      (a) => a.family === 'IPv4' || (ipv6 && a.family === 'IPv6' && !/^fe[89ab]/i.test(a.address)),
-    )
-    .map((a) => a.address);
 }
 
 export function applyInterfaceConfig(_db) {

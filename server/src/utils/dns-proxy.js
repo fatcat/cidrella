@@ -10,12 +10,11 @@ import dnsPacket from 'dns-packet';
 import maxmind from 'maxmind';
 import { LRUCache } from 'lru-cache';
 import { getDb, getSetting, setSetting } from '../db/init.js';
-import { selectInterfaceNames } from './interface-config.js';
+import { listenableAddresses, selectInterfaceNames } from './interface-config.js';
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import {
   applyInterfaceConfig,
-  listenableAddresses,
   restartDnsmasq,
   withValidatedDnsmasqUpdate,
 } from './dnsmasq.js';

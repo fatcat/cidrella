@@ -25,7 +25,7 @@ import {
   builtInCodeReason,
   isOptionCodeAllowed,
 } from '../utils/dhcp-options.js';
-import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
+import { validateConfigSafeValue } from '../utils/config-value-validation.js';
 import { normalizeDuid } from '../utils/duid.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
@@ -111,7 +111,7 @@ function validateScopeOption(opt, family = 4) {
   if (family === 4 && code === 51 && !LEASE_TIME_RE.test(value))
     return 'lease time must look like 3600, 1h, 30m, or 1d';
   const allowComma = type === 'ip-list' || type === 'text-list';
-  return validateDnsmasqConfigValue(value, { allowComma });
+  return validateConfigSafeValue(value, { allowComma });
 }
 
 function validateDefaultOption(opt, family = 4) {
@@ -290,14 +290,14 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   // directives; route them through the shared sanitizer.
   if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
     if (!isValidDomain(domain_name)) return res.status(400).json({ error: 'Invalid domain_name' });
-    if (validateDnsmasqConfigValue(domain_name) != null) {
+    if (validateConfigSafeValue(domain_name) != null) {
       return res.status(400).json({ error: 'domain_name contains disallowed characters' });
     }
   }
   if (domain_search !== undefined && domain_search !== null && domain_search !== '') {
     if (typeof domain_search !== 'string')
       return res.status(400).json({ error: 'domain_search must be a string' });
-    if (validateDnsmasqConfigValue(domain_search, { allowComma: true }) != null) {
+    if (validateConfigSafeValue(domain_search, { allowComma: true }) != null) {
       return res.status(400).json({ error: 'domain_search contains disallowed characters' });
     }
   }
@@ -448,14 +448,14 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   // v0.4.15 type + injection guards, symmetric to POST.
   if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
     if (!isValidDomain(domain_name)) return res.status(400).json({ error: 'Invalid domain_name' });
-    if (validateDnsmasqConfigValue(domain_name) != null) {
+    if (validateConfigSafeValue(domain_name) != null) {
       return res.status(400).json({ error: 'domain_name contains disallowed characters' });
     }
   }
   if (domain_search !== undefined && domain_search !== null && domain_search !== '') {
     if (typeof domain_search !== 'string')
       return res.status(400).json({ error: 'domain_search must be a string' });
-    if (validateDnsmasqConfigValue(domain_search, { allowComma: true }) != null) {
+    if (validateConfigSafeValue(domain_search, { allowComma: true }) != null) {
       return res.status(400).json({ error: 'domain_search contains disallowed characters' });
     }
   }

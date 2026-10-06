@@ -7,7 +7,7 @@ import { allocateStaticDns, deallocateStaticDns } from '../services/ip-lifecycle
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
-import { validateDnsmasqConfigValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
+import { validateConfigSafeValue, isValidRecordName } from '../utils/config-value-validation.js';
 import { addressFamily, canonicalizeIp, isValidIpv6 } from '../utils/address.js';
 import { findSubnetForIp } from '../utils/ip-sync.js';
 import { ipv6Enabled, IPV6_DISABLED_ERROR } from '../utils/ipv6-support.js';
@@ -151,7 +151,7 @@ function validateImportArray(value, field) {
  */
 function validateImportRecord(record, zoneName, db = null, zone = null, batchFqdns = null) {
   if (!isValidRecordName(record.name)) return 'Invalid hostname';
-  const nameErr = validateDnsmasqConfigValue(record.name, { allowComma: false });
+  const nameErr = validateConfigSafeValue(record.name, { allowComma: false });
   if (nameErr) return `hostname ${nameErr}`;
   if (record.type === 'A') {
     if (!isValidIpv4(record.value)) return 'Invalid IPv4 address';
@@ -171,7 +171,7 @@ function validateImportRecord(record, zoneName, db = null, zone = null, batchFqd
     ) {
       return 'CNAME target cannot reference itself';
     }
-    const valueErr = validateDnsmasqConfigValue(record.value, { allowComma: false });
+    const valueErr = validateConfigSafeValue(record.value, { allowComma: false });
     if (valueErr) return `CNAME target ${valueErr}`;
     if (db && zone) {
       const targetErr = cnameTargetError(db, record.value, zone, batchFqdns);
