@@ -12,7 +12,8 @@ repository workflow) live in AGENTS.md, imported here so Claude Code loads them 
 
 ## Layout
 
-- `server/`: Express API, SQLite models, dnsmasq config generation, DNS proxy. Entry:
+- `server/`: Express API, SQLite models, the DNS/DHCP backend layer (`src/backends/`: registry,
+  contract, and the dnsmasq adapter in `backends/dnsmasq/`), DNS proxy. Entry:
   `server/src/index.js` (prod boots via `server/src/launcher.js`).
 - `client/`: Vue 3 SPA. Built output is served by the server.
 - `scripts/`: install/update/rollback, release build (`build-release.sh`), systemd units,
@@ -146,7 +147,11 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
   for the range dialogs' form grammar, `assets/analytics-layout.css` for
   the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
-  `utils/ip.js` and `utils/cidr.js`, `services/ip-lifecycle-service.js` for every lifecycle
+  `utils/ip.js` and `utils/cidr.js`, `utils/reverse-zones.js` (`generateReverseName(s)`,
+  `reverseZoneNetwork`: the in-addr.arpa and ip6.arpa names for a CIDR and back),
+  `utils/config-value-validation.js` (`validateConfigSafeValue` and the record-name and TXT
+  checks: what a DNS or DHCP value may contain before any backend writes it),
+  `services/ip-lifecycle-service.js` for every lifecycle
   write, `models/ip-events.js` for address history (`ip_events` and `ip_range_events`; history
   is keyed by address, never by row, so it outlives the row), `utils/request-actor.js`
   (`currentActor`, the signed-in user a write deep in a model should name), `models/ip-view.js` for every server-owned display field (status, type, and

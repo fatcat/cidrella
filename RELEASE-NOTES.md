@@ -6,6 +6,80 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.5.1 — 2026-10-06
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+
+Groundwork for moving DHCP to Kea and DNS to PowerDNS. Every dnsmasq call now
+goes through one backend layer, with dnsmasq as its only adapter. Nothing
+dnsmasq serves changes: a golden test snapshots every generated file and
+command for every apply path, and those snapshots came through the release
+byte for byte. No schema change.
+
+### Changed
+
+- **DNS/DHCP backend layer.** `server/src/backends/` holds a registry
+  (`index.js`), the contract every adapter keeps (`contract.js`) and the
+  dnsmasq adapter (`backends/dnsmasq/`, the code that used to live in
+  `utils/dnsmasq.js`, `utils/dhcp.js` and the lease and log helpers). Apply
+  operations are desired state: each reads the database and reports whether
+  the daemon changed and what it took to apply. Adapters never write the
+  database. The after-commit hooks, boot, the Interfaces save, the DNS proxy
+  bypass, lease sync and release, the DHCPv6 probe, the clock-sync signal
+  and the four log readers all go through it.
+- **Health reports backends by role.** `/api/health/system` and
+  `/api/metrics/services` add `backends`: for DNS, DHCP and Router
+  Advertisements, the daemon's name, whether it is running, whether a restart
+  is pending, and what it can do. The header chips, the Analytics status rail
+  and Needs attention read it, one chip or row per daemon. With dnsmasq the
+  screen looks the same.
+- Boot validates the listen and resolver changes as one `dnsmasq --test`.
+
+### Deprecated
+
+- `services.dnsmasq` on `/api/health/system` and the top-level `dnsmasq` on
+  `/api/metrics/services`. Read `backends` instead; both go in 0.5.2.
+- `dnsmasqName` in `GET /api/dhcp/options`. It moves into the dnsmasq adapter
+  with the Kea release.
+
+### Known issues
+
+Found while building the golden test and the backend layer, and left as they
+were because this release changes no behavior:
+
+- SRV records are written without their zone, so `_sip._tcp` in
+  `example.lan` answers as `_sip._tcp` rather than `_sip._tcp.example.lan`
+  (REVIEW DNSMASQ-04).
+- With DNSSEC on, every boot restarts dnsmasq and drops its cache even when
+  nothing changed (DNSMASQ-03).
+- The service health check counts any dnsmasq on the host, so a stopped
+  `cidrella-dnsmasq` can show as running next to libvirt's or LXD's
+  (DNSMASQ-05).
+
+### Developer notes
+
+- Only `server/src/backends/**` may import an adapter. ESLint refuses static
+  imports and `scripts/check-backend-imports.js` (part of `npm run lint`)
+  refuses `import()` calls and test `vi.mock` paths.
+- `tests/contract/backend-contract.js` runs one contract against the dnsmasq
+  adapter and an in-memory fake (`tests/helpers/fake-backends.js`). Caller
+  tests stub `services/backend-apply.js` with `stubBackendApply`.
+- `utils/after-commit.js` takes its hook handlers from `registerHookHandlers`
+  at boot instead of importing them. That removed the last server import
+  cycle; the CI madge baseline is now 0.
+- Neutral helpers moved out of the dnsmasq code: `utils/reverse-zones.js`,
+  `utils/config-value-validation.js` (was `utils/dnsmasq-escape.js`),
+  `listenableAddresses` in `utils/interface-config.js`, and
+  `syncServerDnsDefault` in `models/dhcp-option.js`.
+- `docs/DNSMASQ-COUPLING.md` maps the seams and what is left before Kea,
+  including the stored lease-time syntax (DNSMASQ-07).
+
+---
+
 ## v0.5.0 — 2026-09-18
 
 ```yaml

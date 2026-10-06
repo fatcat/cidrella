@@ -13,7 +13,7 @@ guardrails to prevent new ad hoc writers.
 | UI | Vue 3, PrimeVue, Pinia, Vue Router |
 | Primary storage | SQLite via `better-sqlite3`, WAL mode |
 | Analytics storage | DuckDB |
-| DNS/DHCP | dnsmasq, generated config/state files |
+| DNS/DHCP | dnsmasq behind the backend layer (`server/src/backends/`), generated config/state files |
 | DNS filtering | Node DNS proxy for blocklist and GeoIP decisions |
 | Anomaly detection | Python sidecar using DuckDB features and SQLite status/scores |
 | Native process manager | systemd |
@@ -29,6 +29,7 @@ installs.
 | --- | --- |
 | `server/src/db/` | Connection lifecycle, migrations, low-level initialization, DB adapters. |
 | `server/src/models/` | Table or aggregate ownership. Models own write semantics and local invariants. |
+| `server/src/backends/` | DNS/DHCP backend adapters behind one contract (`contract.js`) and a registry (`index.js`). Adapters render, activate and read their daemon; they never write the database. |
 | `server/src/services/` | Cross-model workflows, transactions, audit coordination, queued side effects, process/file coordination. |
 | `server/src/routes/` | Auth, permission checks, input parsing, request validation, response shaping. |
 | `server/src/utils/` | Pure helpers or external process/file utilities. DB-writing utilities must be explicit exceptions. |
@@ -281,8 +282,21 @@ not a conflict on every scan after. `macIsAuthoritative` in
 
 ## DNS/DHCP Config Generation
 
-dnsmasq files are generated from database state using atomic writes. Different
-file classes have different reload behavior:
+Everything that changes what DNS or DHCP serve goes through the backend layer:
+an after-commit hook (`regenerate_dns`, `regenerate_dhcp`,
+`regenerate_dnsmasq_conf`) runs `services/backend-apply.js`, which calls the
+adapter for each role from `backends/index.js`. Apply operations are desired
+state: they read the database, make the daemon match it, and report
+`{changed, activation, activated}`. Adapters never write the database
+(`check-db-ownership` refuses it); neutral work such as `syncDhcpDnsRecords`
+and lease ingestion (`services/dhcp-lease-sync.js`) stays in services. Only
+`backends/**` imports an adapter, enforced by ESLint and
+`scripts/check-backend-imports.js`. `docs/DNSMASQ-COUPLING.md` maps the seams
+and what is left for Kea and PowerDNS.
+
+The dnsmasq adapter (`backends/dnsmasq/`) generates its files from database
+state using atomic writes. Different file classes have different reload
+behavior:
 
 - hosts-style files can usually be hot-read by dnsmasq
 - CNAME/MX/TXT/SRV and other `conf.d` changes require reload/SIGHUP

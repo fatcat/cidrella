@@ -51,7 +51,7 @@ was suggested.
 
 #### DNSMASQ-02: A reservation change reaches dnsmasq twice and logs a duplicate per line
 
-**low**, confirmed from prod's dnsmasq log (2026-10-06). `server/src/utils/dhcp.js:466`
+**low**, confirmed from prod's dnsmasq log (2026-10-06). `server/src/backends/dnsmasq/dhcp.js:418`
 (`regenerateReservations`)
 
 - **What happens:** Changing a DHCP Reservation logs `duplicate dhcp-host IP address ... at
@@ -71,8 +71,8 @@ was suggested.
 #### DNSMASQ-03: With DNSSEC on, every boot restarts dnsmasq
 
 **medium**, confirmed in the code and by `server/tests/integration/backends/__golden__/05-boot-unchanged.txt`.
-`server/src/index.js:233` (boot block), `server/src/utils/dnsmasq.js` (`applyInterfaceConfig`,
-`regenerateDnsmasqConf`)
+`server/src/services/backend-apply.js:41` (`applyAtBoot`), `server/src/backends/dnsmasq/dnsmasq.js`
+(`applyInterfaceConfig`, `regenerateDnsmasqConf`)
 
 - **What happens:** With `dnssec_enabled` true, a reboot with no setting changed still reports
   the conf changed, validates it and restarts dnsmasq, dropping its cache. The file on disk ends
@@ -93,7 +93,7 @@ was suggested.
 #### DNSMASQ-04: SRV records are written without their zone
 
 **high**, confirmed in the code and by `server/tests/integration/backends/__golden__/01-dns-zones.txt`.
-`server/src/utils/dnsmasq.js:168` (`toFqdn`), `server/src/routes/dns.js:51` (`SRV_NAME_RE`)
+`server/src/backends/dnsmasq/dnsmasq.js:184` (`toFqdn`), `server/src/routes/dns.js:55` (`SRV_NAME_RE`)
 
 - **What happens:** An SRV record `_sip._tcp` in zone `golden.test` is written as
   `srv-host=_sip._tcp,sip.golden.test,5060,1,2`, so dnsmasq answers `_sip._tcp` and not
@@ -104,3 +104,53 @@ was suggested.
   in the zone; or qualify SRV names explicitly before calling it. Check the other record types
   for dotted relative names (`www.sub` in a zone) at the same time. Add v4 and v6 zone cases,
   and update the golden snapshot.
+
+## Found building the backend facade (2026-10-06)
+
+The facade (0.5.1) left these dnsmasq traits in place on purpose: changing them is a behavior
+change, and the release promised none. Each needs fixing before, or as part of, the Kea or
+PowerDNS adapter.
+
+#### DNSMASQ-05: The health check counts any dnsmasq on the host as ours
+
+**medium**, confirmed in the code. `server/src/backends/dnsmasq/dnsmasq.js:493`
+(`isDnsmasqRunning`), reported as `running` by `status()` in `backends/dnsmasq/index.js`
+
+- **What happens:** `/api/health/system` (`backends.*.running`, `services.dnsmasq`) and
+  `/api/metrics/services` report dnsmasq running whenever any process named dnsmasq is up. On a
+  host where libvirt, LXD or NetworkManager runs its own dnsmasq, a dead `cidrella-dnsmasq`
+  shows as running in the header chip, the Analytics rail and Needs attention.
+- **Why:** `status()` uses `pidof dnsmasq`. The restart decision already asks systemd about the
+  exact unit (`isCidrellaDnsmasqRunning`, same file), but the health read never switched.
+- **Fix:** Have `status()` use `isCidrellaDnsmasqRunning` (systemd unit, `pidof` only where
+  systemctl is missing, as in Docker). Test both branches with `execFileSync` mocked.
+
+#### DNSMASQ-06: The DHCP option catalog API carries a dnsmasq field
+
+**low**, confirmed in the code. `server/src/utils/dhcp-options.js` (every catalog entry),
+`server/src/routes/dhcp.js:1336` (custom options in `GET /api/dhcp/options`)
+
+- **What happens:** Each option in `GET /api/dhcp/options` carries `dnsmasqName`
+  (`option:router`, `option6:23`), a dnsmasq config token. The client never reads it.
+- **Why:** The catalog doubles as the dnsmasq renderer's lookup table
+  (`backends/dnsmasq/dhcp.js` reads `optDef.dnsmasqName`), and the route returns it whole.
+- **Fix:** Move the name mapping into `backends/dnsmasq/` (a code-to-token table the renderer
+  owns), drop the field from the catalog and the route in the release that adds Kea. Deprecated
+  as of 0.5.1.
+
+#### DNSMASQ-07: Lease times are stored in dnsmasq's syntax
+
+**low**, confirmed in the code. `server/src/db/migrations/007_dhcp.sql:8` (`lease_time TEXT`,
+default `'24h'`), `server/src/routes/dhcp.js:58` (`LEASE_TIME_RE = /^\d+[smhd]?$/`),
+`server/src/config/defaults.js:26` (`default_lease_time: '1h'`)
+
+- **What happens:** `dhcp_scopes.lease_time`, the `default_lease_time` setting and option 51
+  hold strings like `12h` or `3600`, which the dnsmasq renderer writes into `dhcp-range=` as
+  they are. Kea wants `valid-lifetime` in seconds.
+- **Why:** The column was designed around dnsmasq's lease-time format, so the database stores a
+  backend's syntax rather than a duration.
+- **Fix:** Keep the stored strings (backups and the UI depend on them) and give the backend layer
+  one parser to seconds, shared by every adapter; the dnsmasq adapter keeps writing the string.
+  A migration to integer seconds is the cleaner end state but touches backups, the UI and
+  option 51 validation, so do it with the Kea adapter, not before.
+
