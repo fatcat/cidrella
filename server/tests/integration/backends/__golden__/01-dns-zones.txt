@@ -1,0 +1,83 @@
+##### files
+=== conf.d/zone-1.conf ===
+# SOA: ns1.localhost admin.localhost 2 3600 900 604800 86400
+ptr-record=12.0.60.10.in-addr.arpa,elsewhere.example.net
+
+=== conf.d/zone-2.conf ===
+# SOA: ns1.localhost admin.localhost 1 3600 900 604800 86400
+cname=www.golden.test,web.golden.test,300
+mx-host=golden.test,mail.golden.test,5
+txt-record=golden.test,"v=spf1 \"quoted\" -all"
+srv-host=_sip._tcp,sip.golden.test,5060,1,2
+
+=== dnsmasq.conf ===
+# CIDRella DNSmasq default configuration
+# This file is copied to /data/dnsmasq/dnsmasq.conf on first run
+
+# Don't read /etc/resolv.conf
+no-resolv
+
+# Upstream DNS servers
+server=8.8.8.8
+server=9.9.9.9
+
+# DNSSEC validation (managed by CIDRella, toggle via DNS settings UI).
+# When enabled, the server injects the block below automatically; do not edit
+# by hand. It validates answers against the root trust anchor and starts
+# lenient on signature timestamps (dnssec-no-timecheck) until the clock is
+# NTP-synced, at which point the backend SIGHUPs dnsmasq to enforce them.
+#dnssec
+#dnssec-check-unsigned
+#dnssec-no-timecheck
+#conf-file=/usr/share/dnsmasq/trust-anchors.conf
+
+# DNS listener (loopback only by default)
+listen-address=127.0.0.1
+
+# DHCP requires listening on a real interface IP.
+# Uncomment and set your server's IP to enable DHCP:
+#listen-address=192.168.1.1
+
+# bind-dynamic allows dnsmasq to bind to addresses that may appear later
+# and avoids conflicts with other DNS services (e.g. WSL2 DNS proxy)
+bind-dynamic
+
+# Watched directories for hot-reload (no restart needed)
+hostsdir=/data/dnsmasq/hosts.d
+dhcp-hostsdir=/data/dnsmasq/dhcp-hosts.d
+
+# Additional config directory (requires dnsmasq restart for reload)
+conf-dir=/data/dnsmasq/conf.d
+
+# PID file for signaling
+pid-file=/data/dnsmasq/dnsmasq.pid
+
+# Log to file (tailed by the web UI)
+log-facility=/data/dnsmasq/dnsmasq.log
+
+# Log queries for debugging (can be toggled via UI later)
+log-queries
+
+# DHCP lease file
+dhcp-leasefile=/data/dnsmasq/dnsmasq.leases
+
+# Log DHCP transactions
+log-dhcp
+
+# Cache size
+cache-size=1000
+
+# Don't forward plain names (without a dot)
+domain-needed
+
+# Don't forward addresses in the non-routed address spaces
+bogus-priv
+
+=== hosts.d/records.hosts ===
+10.60.0.10 web.golden.test
+fd00:63::10 web.golden.test
+
+##### commands
+dnsmasq --test --conf-file=<DATA_DIR>/dnsmasq/dnsmasq.conf
+dnsmasq --test --conf-file=<DATA_DIR>/dnsmasq/dnsmasq.conf
+systemctl restart cidrella-dnsmasq

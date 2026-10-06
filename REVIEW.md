@@ -65,3 +65,42 @@ was suggested.
 - **Fix:** Cosmetic, once per reservation change; leaving it is reasonable. To silence it, write
   reservations to a file dnsmasq reads only on reload (`dhcp-hostsfile` instead of
   `dhcp-hostsdir`), which also drops the inotify path.
+
+## Found writing the dnsmasq golden test (2026-10-06)
+
+#### DNSMASQ-03: With DNSSEC on, every boot restarts dnsmasq
+
+**medium**, confirmed in the code and by `server/tests/integration/backends/__golden__/05-boot-unchanged.txt`.
+`server/src/index.js:233` (boot block), `server/src/utils/dnsmasq.js` (`applyInterfaceConfig`,
+`regenerateDnsmasqConf`)
+
+- **What happens:** With `dnssec_enabled` true, a reboot with no setting changed still reports
+  the conf changed, validates it and restarts dnsmasq, dropping its cache. The file on disk ends
+  up byte for byte the same.
+- **Why:** Both writers strip their own lines and append them at the end of `dnsmasq.conf`. Boot
+  runs `applyInterfaceConfig` (moves the interface lines below the DNSSEC block, a directive
+  change) and then `regenerateDnsmasqConf` (moves the DNSSEC block back below them, another
+  change). Each write compares against the one before it, so both report a change even though
+  the pair is a round trip.
+- **Fix:** Have the boot block compare the final `dnsmasq.conf` with what was on disk before
+  either write (directives only, like `writeIfChanged`), or give each writer a fixed position
+  for its block instead of appending. `routes/interfaces.js` has the same flaw on its own: it
+  runs `applyInterfaceConfig` alone, which moves the interface lines below the DNSSEC block, so
+  saving the Interfaces page with DNSSEC on restarts dnsmasq even when nothing changed
+  (inferred from the same code path, not run). Fixing it changes the golden snapshot for step
+  05, which should then show no restart.
+
+#### DNSMASQ-04: SRV records are written without their zone
+
+**high**, confirmed in the code and by `server/tests/integration/backends/__golden__/01-dns-zones.txt`.
+`server/src/utils/dnsmasq.js:168` (`toFqdn`), `server/src/routes/dns.js:51` (`SRV_NAME_RE`)
+
+- **What happens:** An SRV record `_sip._tcp` in zone `golden.test` is written as
+  `srv-host=_sip._tcp,sip.golden.test,5060,1,2`, so dnsmasq answers `_sip._tcp` and not
+  `_sip._tcp.golden.test`. Clients looking up the service in the zone get no answer.
+- **Why:** The route only accepts the relative form (`_service._protocol`), and `toFqdn` treats
+  any name containing a dot as already absolute, so the zone is never appended.
+- **Fix:** In `toFqdn`, treat a name as absolute only when it ends with a dot or already ends
+  in the zone; or qualify SRV names explicitly before calling it. Check the other record types
+  for dotted relative names (`www.sub` in a zone) at the same time. Add v4 and v6 zone cases,
+  and update the golden snapshot.
