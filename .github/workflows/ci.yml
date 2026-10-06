@@ -67,13 +67,11 @@ jobs:
         run: node scripts/check-release-version.js .
 
       - name: Circular dependency check (server)
-        # Baseline = 1 known cycle: services/backend-apply.js → models/dhcp-lease.js →
-        # utils/after-commit.js → services/backend-apply.js. That one is a deliberate
-        # hook-registry pattern (imports only invoked at runtime; safe under
-        # ESM live bindings). Breaking it means inverting to runtime
-        # registration, tracked as a future refactor. This gate fails only
-        # when a NEW cycle appears. madge can't parse Vue SFCs, so client/
-        # is out of scope here.
+        # Baseline = 0. The last cycle (services/backend-apply.js ->
+        # models/dhcp-lease.js -> utils/after-commit.js) went in 0.5.1, when
+        # after-commit stopped importing the hook handlers and index.js began
+        # registering them at boot. Any cycle fails the gate. madge can't
+        # parse Vue SFCs, so client/ is out of scope here.
         #
         # Only static imports count. The repo-root .madgerc sets
         # skipAsyncImports, so a lazy `await import()` inside a function body
@@ -84,8 +82,8 @@ jobs:
         # gate had been red since 2026-09-07 with no real cycle behind it.
         run: |
           COUNT=$(npx -y madge --circular --extensions js --json server/src | jq 'length')
-          echo "Circular dependency chains: $COUNT (baseline: 1)"
-          if [ "$COUNT" -gt 1 ]; then
+          echo "Circular dependency chains: $COUNT (baseline: 0)"
+          if [ "$COUNT" -gt 0 ]; then
             npx -y madge --circular --extensions js server/src
             echo "New circular dependency introduced, see chains above."
             exit 1

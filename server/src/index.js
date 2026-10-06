@@ -32,7 +32,11 @@ import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.j
 import { sanitizeForLog } from './utils/validation.js';
 import { authMiddleware } from './auth/middleware.js';
 import { actorMiddleware } from './utils/request-actor.js';
-import { afterCommitMiddleware, resumePendingRegeneration } from './utils/after-commit.js';
+import {
+  afterCommitMiddleware,
+  registerHookHandlers,
+  resumePendingRegeneration,
+} from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import featuresRoutes from './routes/features.js';
@@ -71,7 +75,7 @@ import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { uniqueServices } from './backends/index.js';
-import { applyAtBoot } from './services/backend-apply.js';
+import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
@@ -103,6 +107,9 @@ async function main() {
     fs.mkdirSync(path.join(DATA_DIR, dir), { recursive: true });
   }
   for (const service of uniqueServices()) service.prepare();
+  // What each after-commit hook runs. Registered before anything can queue
+  // one (the pending-work resume below, request handlers, the lease watcher).
+  registerHookHandlers(HOOK_HANDLERS);
 
   // Initialize database
   await initDb(DATA_DIR);

@@ -3,6 +3,7 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 
 vi.mock('../../../src/utils/after-commit.js', () => ({
   queueRegen: vi.fn(),
+  registerHookHandlers: vi.fn(),
 }));
 
 let db;
