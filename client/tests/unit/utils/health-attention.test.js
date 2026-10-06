@@ -140,4 +140,21 @@ describe('attentionItems', () => {
     expect(row).toMatchObject({ id: 'dhcp-review', tone: 'muted', count: 1 });
     expect(row.detail).toBe('1 issue can be repaired safely');
   });
+
+  it('names each stopped backend, from the backends field when the server sends it', () => {
+    const up = { name: 'powerdns', running: true, restartPending: false };
+    const down = { name: 'kea', running: false, restartPending: false };
+    const rows = attentionItems({
+      ...healthy,
+      services: { backends: { dns: up, dhcp: down, ra: down }, dnsmasq: true },
+    });
+    expect(rows).toEqual([
+      expect.objectContaining({
+        id: 'kea-down',
+        tone: 'err',
+        title: 'kea is not running',
+        detail: 'No DHCP leases until it is back',
+      }),
+    ]);
+  });
 });

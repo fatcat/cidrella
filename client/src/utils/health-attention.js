@@ -13,6 +13,8 @@
 // err rows come first, then warn, then muted, and within a tone the order
 // below is kept: the things a person acts on first sit higher.
 
+import { backendUnits, outageDetail } from './backend-status.js';
+
 const TONE_ORDER = { err: 0, warn: 1, muted: 2 };
 const ROGUE_NETWORK_ROWS = 3;
 
@@ -34,12 +36,13 @@ export function attentionItems(snapshot = {}) {
   const { services, lifecycle, networkDhcp, rogueDhcp, anomalies } = snapshot;
   const rows = [];
 
-  if (services && services.dnsmasq === false) {
+  for (const unit of backendUnits(services)) {
+    if (unit.running) continue;
     rows.push({
-      id: 'dnsmasq-down',
+      id: `${unit.key}-down`,
       tone: 'err',
-      title: 'dnsmasq is not running',
-      detail: 'No DNS answers or DHCP leases until it is back',
+      title: `${unit.name} is not running`,
+      detail: outageDetail(unit),
       count: null,
       to: ATTENTION_ROUTES.serviceDown,
     });

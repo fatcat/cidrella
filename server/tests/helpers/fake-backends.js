@@ -15,6 +15,7 @@
  * name sync it sequences.
  */
 import { vi } from 'vitest';
+import { roleStatuses } from '../../src/backends/contract.js';
 
 export const APPLY_OPS = Object.freeze(['applyDns', 'applyDhcp', 'applyResolver']);
 
@@ -175,5 +176,6 @@ export function fakeBackendsModule(options) {
     getDhcpBackend: () => backend.dhcp,
     getRaBackend: () => backend,
     uniqueServices: () => [backend],
+    backendStatuses: () => roleStatuses(() => backend),
   };
 }

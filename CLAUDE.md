@@ -125,7 +125,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `formatNumber`, `displayOnlineStatus`, `EMPTY_CELL`), `utils/chart-config.js` (colors,
   `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`, `utils/keyboard.js` (`MOD_LABEL`, `isModShortcut`: Ctrl, or Command on a Mac, for every shortcut and its hint),
   `utils/proxy-perf.js` (the resolution and process figures from the proxy-perf rows),
-  `utils/service-chips.js` (the dnsmasq, proxy and forwarder chips), `utils/ipTableDisplay.js`
+  `utils/service-chips.js` (the backend, proxy and forwarder chips), `utils/backend-status.js`
+  (`backendUnits`: the DNS/DHCP backends from a health payload, one unit per daemon, with the
+  pre-0.5.1 dnsmasq flag as fallback; every chip or row naming a backend reads it), `utils/ipTableDisplay.js`
   (`ipSourceLabel`, the one label for a DNS, DHCP or detection source), and in
   `views/networks-workspace-data.js` the `ipRowFields` adapter that fills every shared IP
   column for the workspace tables (both the Addresses and DHCP adapters spread it; add a
@@ -153,7 +155,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   hosts runs rows through it too), `macIsAuthoritative` in `models/ip-lifecycle.js` (whether DHCP sets an address's stored MAC; anything comparing an observed MAC with the stored one asks it), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
   stateless one; anything treating a scope as a dynamic pool asks it), `backends/index.js` (the DNS/DHCP backend registry: `getDnsBackend`,
-  `getDhcpBackend`, `getService`; only `backends/**` imports an adapter, and an adapter never
+  `getDhcpBackend`, `getService`, `backendStatuses` for what the health endpoints report; only `backends/**` imports an adapter, and an adapter never
   writes the database), `services/backend-apply.js` (`applyDns`, `applyDhcp`, `applyResolver`:
   what the after-commit hooks run; `applyAtBoot` and `applyListenNow` for the paths that cannot
   wait for a hook; route and service tests stub them with `stubBackendApply`, or swap the

@@ -128,3 +128,22 @@ export function assertBackendShape(backend) {
     throw new Error(`Backend ${backend?.name || '(unnamed)'} is missing: ${problems.join(', ')}`);
   }
 }
+
+/**
+ * Status and capabilities per role, from `serviceFor(role)`:
+ * `{ dns: {name, running, restartPending, capabilities}, dhcp: {...}, ra: {...} }`.
+ * Each distinct service is asked once, so roles sharing a daemon cost one
+ * status check and report the same object.
+ */
+export function roleStatuses(serviceFor) {
+  const byService = new Map();
+  return Object.fromEntries(
+    ROLES.map((role) => {
+      const service = serviceFor(role);
+      if (!byService.has(service)) {
+        byService.set(service, { ...service.status(), capabilities: service.capabilities() });
+      }
+      return [role, byService.get(service)];
+    }),
+  );
+}

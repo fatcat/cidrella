@@ -89,4 +89,23 @@ describe('header host status', () => {
     await flushPromises();
     expect(wrapper.find('[data-track="header-chip-cpu"]').text()).toContain('CPU 50%');
   });
+
+  it('names the DNS/DHCP backends from the backends field, one chip per daemon', async () => {
+    const shared = { name: 'dnsmasq', running: true, restartPending: false, capabilities: {} };
+    let data = { ...HEALTH, backends: { dns: shared, dhcp: shared, ra: shared } };
+    const wrapper = mountHeader(() => Promise.resolve({ data }));
+    await flushPromises();
+    const dnsmasq = wrapper.find('[data-track="header-chip-dnsmasq"]');
+    expect(dnsmasq.text()).toBe('dnsmasq');
+    expect(dnsmasq.classes()).toContain('chip-ok');
+
+    const dns = { ...shared, name: 'powerdns' };
+    const dhcp = { ...shared, name: 'kea', running: false };
+    data = { ...HEALTH, backends: { dns, dhcp, ra: dhcp } };
+    await wrapper.vm.$.setupState.fetchHealth();
+    await flushPromises();
+    expect(wrapper.find('[data-track="header-chip-dnsmasq"]').exists()).toBe(false);
+    expect(wrapper.find('[data-track="header-chip-powerdns"]').classes()).toContain('chip-ok');
+    expect(wrapper.find('[data-track="header-chip-kea"]').classes()).toContain('chip-err');
+  });
 });

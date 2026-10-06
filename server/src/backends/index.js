@@ -6,7 +6,7 @@
  *
  * The instance is built on first use and does no I/O while being built.
  */
-import { ROLES } from './contract.js';
+import { ROLES, roleStatuses } from './contract.js';
 import { createDnsmasqBackend } from './dnsmasq/index.js';
 
 let dnsmasq = null;
@@ -26,3 +26,8 @@ export const getRaBackend = () => getService('ra');
 export function uniqueServices() {
   return [...new Set(ROLES.map(getService))];
 }
+
+/**
+ * What the health endpoints report per role: see roleStatuses in contract.js.
+ */
+export const backendStatuses = () => roleStatuses(getService);

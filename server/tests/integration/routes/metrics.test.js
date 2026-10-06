@@ -236,6 +236,15 @@ describe('GET /api/metrics/services', () => {
     expect(res.body).toHaveProperty('forwarders');
   });
 
+  it('reports the backend per role, and the legacy dnsmasq flag matches it', async () => {
+    const res = await request(app).get('/api/metrics/services');
+    expect(res.body.backends.dns.name).toBe('dnsmasq');
+    expect(res.body.backends.dhcp).toEqual(res.body.backends.dns);
+    expect(typeof res.body.backends.dns.running).toBe('boolean');
+    expect(res.body.backends.dns.capabilities).toHaveProperty('dnssec');
+    expect(res.body.dnsmasq).toBe(res.body.backends.dns.running);
+  });
+
   it('returns mocked proxy status values', async () => {
     const res = await request(app).get('/api/metrics/services');
     expect(res.body.geoip_proxy).toBe(true);
