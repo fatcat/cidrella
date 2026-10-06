@@ -343,3 +343,25 @@ describe('listenableAddresses', () => {
     ).toEqual(['10.0.1.2']);
   });
 });
+
+describe('atomicWrite', () => {
+  it('writes through a dot-named temp file dnsmasq skips (DNSMASQ-01)', async () => {
+    const { atomicWrite } = await import('../../../src/utils/dnsmasq.js');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-atomic-'));
+    const target = path.join(dir, 'reservations.hosts');
+    const rename = vi.spyOn(fs, 'renameSync');
+    try {
+      atomicWrite(target, 'aa:bb:cc:00:00:01,10.0.0.5,host,infinite\n');
+      const [from, to] = rename.mock.calls.at(-1);
+      expect(to).toBe(target);
+      expect(path.dirname(from)).toBe(dir);
+      // dnsmasq ignores names that start with '.' in a watched directory.
+      expect(path.basename(from)).toBe(`.reservations.hosts.tmp.${process.pid}`);
+      expect(fs.readdirSync(dir)).toEqual(['reservations.hosts']);
+      expect(fs.readFileSync(target, 'utf8')).toBe('aa:bb:cc:00:00:01,10.0.0.5,host,infinite\n');
+    } finally {
+      rename.mockRestore();
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+});

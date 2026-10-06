@@ -474,6 +474,10 @@ first on a 0.4.17 host.
     without a known MAC would have been scored with another device's model.
   - Finished network scans are pruned to the newest 100 per network. They
     were never deleted, about 175 a day on one install.
+- **dnsmasq no longer reads CIDRella's half-written files.** DNS records and
+  DHCP Reservations are written through a temp file beside the real one, in a
+  directory dnsmasq watches, and dnsmasq loaded the temp file too, once
+  mid-write. The temp file's name now starts with a dot, which dnsmasq skips.
 - **Anomaly scores are no longer dropped for clients on short leases.** On
   installs where the anomaly detector created its score table itself, a
   client scored under its MAC and then under its IP in the same hour (its

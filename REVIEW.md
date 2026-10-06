@@ -49,20 +49,19 @@ was suggested.
 
 ## Found reading prod's logs (2026-10-06)
 
-#### DNSMASQ-01: dnsmasq warns of duplicate dhcp-host addresses that appear once in the file
+#### DNSMASQ-02: A reservation change reaches dnsmasq twice and logs a duplicate per line
 
-**low**, plausible (seen on prod, cause not found). `server/src/utils/dhcp.js` (`regenerateReservations`)
+**low**, confirmed from prod's dnsmasq log (2026-10-06). `server/src/utils/dhcp.js:466`
+(`regenerateReservations`)
 
-- **What happens:** Prod's dnsmasq log has `duplicate dhcp-host IP address 10.0.8.222 at line
-  23` and `10.0.8.223 at line 24` of `dhcp-hosts.d/reservations.hosts`, 12 times each in
-  about 11 hours. Each address is on one line of that file and in no other dnsmasq config.
-  They are the last two lines, and both thermostat reservations predate CIDRella, so the
-  warning is not about recently added entries.
-- **Why:** Not established. The likeliest lead: `atomicWrite` (`utils/dnsmasq.js:24`) writes
-  `reservations.hosts.tmp.<pid>` inside the watched `dhcp-hostsdir` before renaming it, and
-  dnsmasq loads every file in that directory except names starting with `.` or ending in `~`,
-  so it can read the temp file and then the renamed one. dnsmasq keeps the first entry, so
-  nothing is served wrong today; it would matter if one of those reservations changed its MAC.
-- **Fix:** Reproduce on testerella (save a reservation, watch the log), then give the temp file
-  a name dnsmasq skips (a leading `.`), and check the other watched directories (`hosts.d`)
-  use the same write.
+- **What happens:** Changing a DHCP Reservation logs `duplicate dhcp-host IP address ... at
+  line N of .../dhcp-hosts.d/reservations.hosts` once for every line of the file (24 on prod at
+  11:26:36). CIDRella wrote the file at 11:26:34.74 and reloaded dnsmasq (SIGHUP) at
+  11:26:34.84, which read every reservation; dnsmasq then handled the queued inotify event for
+  the same write and read the file again on top. Both copies are identical and dnsmasq keeps
+  the first, so nothing is served wrong.
+- **Why:** The change reaches dnsmasq by SIGHUP and by inotify on `dhcp-hostsdir`. The reload is
+  still needed: dnsmasq notices a removed reservation only on SIGHUP.
+- **Fix:** Cosmetic, once per reservation change; leaving it is reasonable. To silence it, write
+  reservations to a file dnsmasq reads only on reload (`dhcp-hostsfile` instead of
+  `dhcp-hostsdir`), which also drops the inotify path.

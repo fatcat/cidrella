@@ -21,8 +21,16 @@ const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
 const DNSMASQ_CONF = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.conf');
 
+// The temp file sits beside its target, often in a directory dnsmasq watches
+// (hostsdir, dhcp-hostsdir). dnsmasq loads every file there but names that
+// start with '.' or end in '~', so a plain `<file>.tmp.<pid>` was read while
+// half written (DNSMASQ-01). The leading dot keeps dnsmasq off it.
+function atomicWriteTempPath(filePath) {
+  return path.join(path.dirname(filePath), `.${path.basename(filePath)}.tmp.${process.pid}`);
+}
+
 export function atomicWrite(filePath, content) {
-  const tmpPath = filePath + '.tmp.' + process.pid;
+  const tmpPath = atomicWriteTempPath(filePath);
   fs.writeFileSync(tmpPath, content, 'utf-8');
   fs.renameSync(tmpPath, filePath);
 }
