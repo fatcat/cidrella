@@ -98,6 +98,8 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
         'restart',
       ),
       onClockSynchronized: () => applied.push('clock'),
+      // Serves every record's own TTL, falling back to an hour.
+      servedTtl: (record) => record.ttl ?? 3600,
     },
     dhcp: {
       applyScopes: applyOp(

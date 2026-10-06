@@ -192,13 +192,13 @@ function onlineValue(row, { unknownWhenUnaddressed = false } = {}) {
 
 const LEASE_LABEL = { active: 'Active', expired: 'Expired' };
 
-// The TTL a record answers with. A record with no TTL of its own takes the
-// zone's, and says so, the way Scanning says "inherited". Seconds, as the SOA
-// form states them.
+// The TTL a record is answered with, as the DNS server reports it
+// (served_ttl). When that is not the record's own TTL, because it has none or
+// the server cannot serve it, it says so, the way Scanning says "inherited".
 function recordTtl(record) {
-  if (record.ttl != null) return formatNumber(record.ttl);
-  const zoneTtl = record.zone_soa_minimum_ttl;
-  return zoneTtl != null ? `${formatNumber(zoneTtl)} · inherited` : EMPTY_CELL;
+  const served = record.served_ttl;
+  if (served == null) return EMPTY_CELL;
+  return record.ttl === served ? formatNumber(served) : `${formatNumber(served)} · default`;
 }
 
 // Whether a held address sits inside a dynamic pool of its scope. The server
@@ -280,21 +280,15 @@ export function mapAddressRows(rows) {
 
 export function mapDnsRows(zoneRecords) {
   return (zoneRecords || []).flatMap(({ zone, records }) =>
-    (records || []).map((record) => {
-      const withZone = {
-        ...record,
-        zone_soa_minimum_ttl: record.zone_soa_minimum_ttl ?? zone.soa_minimum_ttl ?? null,
-      };
-      return {
-        id: `dns:${zone.id}:${record.id}`,
-        ...ipRowFields(withZone, { dns: withZone }),
-        name: record.name || '@',
-        // The row's own switch: a disabled record recedes in the table.
-        enabled: flag(record.enabled),
-        zone: zone.name,
-        zoneType: zone.type,
-      };
-    }),
+    (records || []).map((record) => ({
+      id: `dns:${zone.id}:${record.id}`,
+      ...ipRowFields(record, { dns: record }),
+      name: record.name || '@',
+      // The row's own switch: a disabled record recedes in the table.
+      enabled: flag(record.enabled),
+      zone: zone.name,
+      zoneType: zone.type,
+    })),
   );
 }
 

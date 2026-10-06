@@ -134,14 +134,23 @@ describe('networks workspace data adapter', () => {
     expect(free.pool).toBeNull();
   });
 
-  it('shows a record without its own TTL as inheriting the zone TTL', () => {
+  it('shows the TTL the server answers with, marked when it is not the record\'s own', () => {
     const zone = { id: 4, name: 'example.test', type: 'forward', soa_minimum_ttl: 3600 };
     const record = { id: 1, record_type: 'A', name: 'a', value: '10.0.0.1', enabled: 1 };
-    const [inherited, own, unknown] = mapDnsRows([
-      { zone, records: [record, { ...record, id: 2, ttl: 300 }] },
-      { zone: { id: 5, name: 'other.test', type: 'forward' }, records: [{ ...record, id: 3 }] },
+    const [none, ignored, own, unknown] = mapDnsRows([
+      {
+        zone,
+        records: [
+          { ...record, served_ttl: 60 },
+          // A stored TTL the server cannot serve shows what it does serve.
+          { ...record, id: 2, ttl: 900, served_ttl: 60 },
+          { ...record, id: 3, record_type: 'CNAME', ttl: 300, served_ttl: 300 },
+          { ...record, id: 4 },
+        ],
+      },
     ]);
-    expect(inherited.ttl).toBe('3,600 · inherited');
+    expect(none.ttl).toBe('60 · default');
+    expect(ignored.ttl).toBe('60 · default');
     expect(own.ttl).toBe('300');
     expect(unknown.ttl).toBe(EMPTY_CELL);
   });
@@ -328,7 +337,7 @@ describe('one IP table model', () => {
           value: '10.0.3.228',
           enabled: 0,
           dns_source: 'manual',
-          zone_soa_minimum_ttl: 3600,
+          served_ttl: 60,
         },
       },
     ]);
@@ -336,7 +345,7 @@ describe('one IP table model', () => {
       dnsName: 'hass.the-mcnultys.org',
       recordType: 'A',
       value: '10.0.3.228',
-      ttl: '3,600 · inherited',
+      ttl: '60 · default',
       recordEnabled: false,
       recordSource: 'Manual',
       assignment: null,

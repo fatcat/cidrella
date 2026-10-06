@@ -520,7 +520,7 @@
         <div class="field">
           <label>TTL (seconds)</label>
           <InputNumber v-model="recordForm.ttl" class="w-full" :min="0" placeholder="Default" />
-          <small class="field-help">Leave empty to use zone default</small>
+          <small class="field-help">{{ ttlHelp }}</small>
         </div>
         <div class="field">
           <label>Enabled</label>
@@ -1133,6 +1133,15 @@ async function doDeleteZone() {
     savingZone.value = false;
   }
 }
+
+// What the TTL field promises. The DNS server decides the TTL a record is
+// answered with (dnsmasq serves most records with one fixed TTL), so an
+// existing record says what it is served with now.
+const ttlHelp = computed(() => {
+  const served = editingRecord.value?.served_ttl;
+  const fallback = "Leave empty for the DNS server's default.";
+  return served == null ? fallback : `Served with a ${served} second TTL. ${fallback}`;
+});
 
 // Record CRUD
 function openRecordDialog(record = null, defaults = {}) {

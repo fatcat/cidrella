@@ -117,7 +117,7 @@ const plainValue = computed(() => {
     case 'port':
       return displayCell(props.row.port);
     case 'ttl':
-      return displayCell(props.row.ttl ?? props.soaMinimumTtl);
+      return displayCell(props.row.served_ttl ?? props.row.ttl ?? props.soaMinimumTtl);
     case 'source':
       return source.value;
     case 'mac_address':

@@ -87,7 +87,10 @@ describe('records API', () => {
     expect(fqdn('AAAA', 'fd00:70::10')).toBe(`www6.sub.${ZONE}`);
 
     const list = await request(app).get(`/api/dns/zones/${zoneId}/records`);
-    expect(list.body.find((r) => r.value === '10.70.0.10').record_fqdn).toBe(`www.sub.${ZONE}`);
+    const www = list.body.find((r) => r.value === '10.70.0.10');
+    expect(www.record_fqdn).toBe(`www.sub.${ZONE}`);
+    // The TTL comes from the backend (the fake serves an hour without one).
+    expect(www.served_ttl).toBe(3600);
   });
 
   it('takes a trailing dot as absolute, and an absolute name in the zone as relative', async () => {

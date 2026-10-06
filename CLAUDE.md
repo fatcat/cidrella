@@ -163,7 +163,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   hosts runs rows through it too), `macIsAuthoritative` in `models/ip-lifecycle.js` (whether DHCP sets an address's stored MAC; anything comparing an observed MAC with the stored one asks it), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
   stateless one; anything treating a scope as a dynamic pool asks it), `backends/index.js` (the DNS/DHCP backend registry: `getDnsBackend`,
-  `getDhcpBackend`, `getService`, `backendStatuses` for what the health endpoints report; only `backends/**` imports an adapter, and an adapter never
+  `getDhcpBackend`, `getService`, `backendStatuses` for what the health endpoints report,
+  `getDnsBackend().servedTtl(record)` for the TTL a record is answered with: every record read
+  carries it as `served_ttl`, and a TTL display shows that, never the stored `ttl`; only `backends/**` imports an adapter, and an adapter never
   writes the database), `services/backend-apply.js` (`applyDns`, `applyDhcp`, `applyResolver`:
   what the after-commit hooks run; `applyAtBoot` and `applyListenNow` for the paths that cannot
   wait for a hook; route and service tests stub them with `stubBackendApply`, or swap the

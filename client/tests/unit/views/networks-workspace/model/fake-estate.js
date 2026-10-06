@@ -182,6 +182,8 @@ export function recordRow(entry) {
     zone_type: owner.type,
     zone_folder_id: owner.folder_id,
     zone_soa_minimum_ttl: owner.soa_minimum_ttl,
+    // What the server's record reads carry: dnsmasq serves one local TTL.
+    served_ttl: 60,
     record_fqdn:
       owner.type === 'forward' ? `${entry.name}.${owner.name}` : `${entry.name}.${owner.name}`,
     ip_address: ip,

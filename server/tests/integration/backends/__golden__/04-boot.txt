@@ -50,8 +50,12 @@ id:00:01:00:01:2a:2b:2c:2d:aa:bb:cc:00:00:03,[fd00:63::50],nas,infinite
 # CIDRella DNSmasq default configuration
 # This file is copied to /data/dnsmasq/dnsmasq.conf on first run
 
-# Don't read /etc/resolv.conf
+# Don't read /etc/resolv.conf, and don't serve this host's /etc/hosts (it maps
+# the host's own name to 127.0.1.1). Local records get a 60 second TTL.
+# Managed by CIDRella.
 no-resolv
+no-hosts
+local-ttl=60
 server=127.0.0.1#5356
 
 # Upstream DNS servers

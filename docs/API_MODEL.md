@@ -261,7 +261,7 @@ table's own fields never collide with them:
 
 | Field | On | Meaning |
 | --- | --- | --- |
-| `dns_record` | Addresses, DHCP rows | The forward A/AAAA record behind the address: the one the allocation names, else the lowest-id served record, else the lowest-id record. `record_fqdn`, `record_type`, `value`, `ttl`, `priority`, `port`, `enabled`, `dns_source`, `zone_soa_minimum_ttl`; null when none. |
+| `dns_record` | Addresses, DHCP rows | The forward A/AAAA record behind the address: the one the allocation names, else the lowest-id served record, else the lowest-id record. `record_fqdn`, `record_type`, `value`, `ttl`, `served_ttl`, `priority`, `port`, `enabled`, `dns_source`, `zone_soa_minimum_ttl`; null when none. `ttl` is what the operator stored; `served_ttl` is what the DNS backend answers with (`servedTtl` in `backends/contract.js`), which is what a TTL display shows. DNS record reads carry `served_ttl` too. |
 | `dns_record_count` | Addresses, DHCP rows | How many forward address records name the address. |
 | `dhcp` | Addresses, DNS rows | The DHCP Reservation, else the active lease, else the newest lease for the address: `dhcp_assignment_type`, `lease_status`, `enabled`, `duid`, `iaid`, `subnet_name`, `related_scope_ids`; null when none. |
 

@@ -44,6 +44,9 @@ export const ROLES = Object.freeze(['dns', 'dhcp', 'ra']);
  * - applyResolver(db, opts) -> ApplyResult: forwarders, recursion, DNSSEC
  * - applyListen(db, opts) -> ApplyResult: listen addresses, ports, interfaces
  * - onClockSynchronized() -> void: the system clock is now trustworthy
+ * - servedTtl({type, ttl}) -> number: the TTL in seconds the backend answers
+ *   that record with. A backend that cannot serve a record's own TTL says what
+ *   it serves instead, so the UI never shows a TTL nobody receives.
  * - retireLegacyArtifacts?() -> boolean: optional; clear files an older
  *   release left that would serve stale data
  */
@@ -52,6 +55,7 @@ export const DNS_OPS = Object.freeze([
   'applyResolver',
   'applyListen',
   'onClockSynchronized',
+  'servedTtl',
 ]);
 
 /**

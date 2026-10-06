@@ -15,6 +15,7 @@ import {
   regenerateDnsmasqConf,
   regenerateHostsDir,
   restartDnsmasq,
+  servedRecordTtl,
   signalDnsmasq,
   withValidatedDnsmasqUpdate,
 } from './dnsmasq.js';
@@ -66,6 +67,7 @@ export function createDnsmasqBackend() {
       // DNSSEC starts lenient on signature times (dnssec-no-timecheck); a
       // SIGHUP after the clock syncs makes dnsmasq enforce them.
       onClockSynchronized: () => signalDnsmasq(),
+      servedTtl: (record) => servedRecordTtl(record),
       // Optional op: clear what older releases left behind.
       retireLegacyArtifacts: () => retireLegacyBlocklistConf(),
     },

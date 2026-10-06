@@ -24,6 +24,8 @@ let withValidatedDnsmasqUpdate;
 
 const BASE_CONF = [
   'no-resolv',
+  'no-hosts',
+  'local-ttl=60',
   'server=8.8.8.8',
   'server=9.9.9.9',
   'listen-address=127.0.0.1',
@@ -95,6 +97,16 @@ describe('regenerateDnsmasqConf: change detection', () => {
     expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=127.0.0.1#5356');
 
     // Second pass with identical settings must be a no-op.
+    expect(regenerateDnsmasqConf({})).toBe(false);
+  });
+
+  it('gives a pre-0.5.1 conf no-hosts and local-ttl once, replacing an old local-ttl', () => {
+    const old = BASE_CONF.replace('no-hosts\nlocal-ttl=60\n', '') + 'local-ttl=0\n';
+    fs.writeFileSync(DNSMASQ_CONF, old);
+    expect(regenerateDnsmasqConf({})).toBe(true);
+    const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
+    expect(conf.split('\n').filter((l) => l === 'no-hosts')).toHaveLength(1);
+    expect(conf.split('\n').filter((l) => l.startsWith('local-ttl='))).toEqual(['local-ttl=60']);
     expect(regenerateDnsmasqConf({})).toBe(false);
   });
 

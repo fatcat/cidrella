@@ -14,8 +14,12 @@ srv-host=_sip._tcp.golden.test,sip.golden.test,5060,1,2
 # CIDRella DNSmasq default configuration
 # This file is copied to /data/dnsmasq/dnsmasq.conf on first run
 
-# Don't read /etc/resolv.conf
+# Don't read /etc/resolv.conf, and don't serve this host's /etc/hosts (it maps
+# the host's own name to 127.0.1.1). Local records get a 60 second TTL.
+# Managed by CIDRella.
 no-resolv
+no-hosts
+local-ttl=60
 
 # Upstream DNS servers
 server=8.8.8.8

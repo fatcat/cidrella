@@ -49,6 +49,14 @@ export function runBackendContract(label, makeHarness) {
       expect(typeof status.restartPending).toBe('boolean');
       const caps = h.backend.capabilities();
       for (const key of CAPABILITY_KEYS) expect(typeof caps[key]).toBe('boolean');
+      for (const record of [
+        { type: 'A', ttl: null },
+        { type: 'AAAA', ttl: 900 },
+        { type: 'CNAME', ttl: 900 },
+      ]) {
+        const ttl = h.backend.dns.servedTtl(record);
+        expect(Number.isInteger(ttl) && ttl >= 0, `${record.type} ${record.ttl}`).toBe(true);
+      }
       const log = h.backend.logSource();
       if (log !== null) {
         expect(typeof log.path).toBe('string');

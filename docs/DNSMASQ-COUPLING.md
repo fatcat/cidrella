@@ -49,8 +49,8 @@ The contract (`backends/contract.js` has the full typedefs):
 - **Apply ops are desired state.** Each reads the database and makes the backend match it,
   returning `{changed, activation: 'none'|'reload'|'restart', activated}`. A second call with
   nothing changed reports `changed: false`. Adapters never write the database.
-- **Roles:** `dns` (applyZones, applyResolver, applyListen, onClockSynchronized, optional
-  retireLegacyArtifacts), `dhcp` (applyScopes, readLeases, watchLeases, releaseLease,
+- **Roles:** `dns` (applyZones, applyResolver, applyListen, onClockSynchronized, servedTtl,
+  optional retireLegacyArtifacts), `dhcp` (applyScopes, readLeases, watchLeases, releaseLease,
   serverIdentity) and `ra` (a slot; dnsmasq sends Router Advertisements from its DHCPv6 scope
   files, so `applyScopes` covers them).
 - **Service ops** run once per daemon, however many roles it fills: status, capabilities,
@@ -76,7 +76,7 @@ What enforces it:
 
 | #   | Seam                                | Backend op                                                              | dnsmasq adapter today                                                                                                                                                                                 | Kea/PowerDNS equivalent                                          | Adapter gap                                                                                 |
 | --- | ----------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| 1   | **DNS records/zones**               | `dns.applyZones`                                                        | `backends/dnsmasq/dnsmasq.js` renders `hosts.d/records.hosts` (A/AAAA, each address's canonical PTR name first) and `conf.d/zone-*.conf` (CNAME/MX/TXT/SRV, PTRs the hosts file can't answer); SIGHUP | PowerDNS Auth `PATCH /zones/:zone` (rrsets)                      | full file regen vs targeted rrset PATCH                                                     |
+| 1   | **DNS records/zones**               | `dns.applyZones`                                                        | `backends/dnsmasq/dnsmasq.js` renders `hosts.d/records.hosts` (A/AAAA, each address's canonical PTR name first) and `conf.d/zone-*.conf` (CNAME/MX/TXT/SRV, PTRs the hosts file can't answer); SIGHUP | PowerDNS Auth `PATCH /zones/:zone` (rrsets)                      | full file regen vs targeted rrset PATCH; one TTL (`local-ttl=60`) for every record but a CNAME, so `servedTtl` reports that, not the stored TTL |
 | 2   | **DHCP scopes and reservations**    | `dhcp.applyScopes`                                                      | `backends/dnsmasq/dhcp.js` renders `dhcp-range=`, `dhcp-host=`, options; restart or SIGHUP                                                                                                            | Kea `subnet4`/`reservation` via `config-set`/`reservation-add`   | per-scope option mapping (`dnsmasqName`, REVIEW DNSMASQ-06); lease time syntax (DNSMASQ-07) |
 | 3   | **Lease ingestion**                 | `dhcp.readLeases`, `dhcp.watchLeases`                                   | `backends/dnsmasq/lease-file.js` reads `dnsmasq.leases` once it settles; `fs.watchFile`                                                                                                               | Kea `lease4-get-all` / `lease6-get-all`, or its lease DB         | file poll vs API; `services/dhcp-lease-sync.js` is already neutral                          |
 | 4   | **Lease release**                   | `dhcp.releaseLease`                                                     | `backends/dnsmasq/lease-release.js` (`dhcp_release`/`dhcp_release6`)                                                                                                                                  | Kea `lease4-del` / `lease6-del`                                  | none expected                                                                               |
@@ -109,6 +109,8 @@ Deliberate, each with a reason:
   `dnsmasq` in the `/api/interfaces` save response.
 - `dnsmasqName` in the DHCP option catalog (REVIEW DNSMASQ-06) and the stored `lease_time`
   syntax (DNSMASQ-07).
+- `no-hosts` and `local-ttl` are managed in `dnsmasq.conf`, not `conf.d/`, because the
+  installer's include mode points a host's own dnsmasq at `conf.d/`.
 - Router Advertisements are rendered inside the DHCPv6 scope files, so the `ra` role cannot
   move to another daemon until that render is split out.
 
