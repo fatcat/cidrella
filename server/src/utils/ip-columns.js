@@ -62,7 +62,7 @@ export const IP_COLUMNS = Object.freeze({
     kind: 'none',
     get: (row, t) => {
       const dns = dnsOf(row, t);
-      return dns ? (dns.ttl ?? dns.zone_soa_minimum_ttl ?? null) : null;
+      return dns?.served_ttl ?? null;
     },
   },
   record_enabled: {

@@ -10,7 +10,7 @@ import {
   IpLifecycleConflictError,
 } from '../services/ip-lifecycle-service.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
-import { dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
+import { dnsmasqSupportsDnssec, servedRecordTtl } from '../utils/dnsmasq.js';
 import { ensureNtpEnabled, getNtpStatus, armDnssecTimecheckWhenSynced } from '../utils/timesync.js';
 import {
   applyEncryptedForwarder,
@@ -53,6 +53,7 @@ const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 function enrichDnsAddressRecords(db, records, zoneName) {
   for (const record of records) {
     record.record_fqdn = fqdnForRecordName(record.name, zoneName);
+    record.served_ttl = servedRecordTtl(record);
     if (record.type === 'PTR') {
       record.ip_address = ipForPtrRecord(record.name, zoneName);
       if (record.ip_address) {

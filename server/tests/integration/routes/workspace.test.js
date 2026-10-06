@@ -545,8 +545,8 @@ describe('extended inventory routes', () => {
 describe('one IP table model', () => {
   it('shows the same DNS and DHCP facts for one address in all three reads', async () => {
     db.prepare(
-      `INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
-       VALUES (?, 'leased-host', 'A', '10.20.0.11', 'dhcp', 1)`,
+      `INSERT INTO dns_records (zone_id, name, type, value, source, enabled, ttl)
+       VALUES (?, 'leased-host', 'A', '10.20.0.11', 'dhcp', 1, 900)`,
     ).run(zoneId);
 
     const dhcp = await request(app)
@@ -568,6 +568,9 @@ describe('one IP table model', () => {
       record_type: 'A',
       value: '10.20.0.11',
       dns_source: 'dhcp',
+      // dnsmasq serves an A record with local-ttl, not the 900 it stores.
+      ttl: 900,
+      served_ttl: 60,
     };
     expect(dhcpRow.dns_record).toMatchObject(record);
     expect(addressRow.dns_record).toMatchObject(record);

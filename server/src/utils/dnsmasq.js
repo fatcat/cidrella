@@ -398,6 +398,7 @@ export function regenerateConfDir(db) {
       switch (r.type) {
         case 'CNAME':
           if (validateDnsmasqConfigValue(r.value) != null) break;
+          // The one local record dnsmasq takes a TTL for (servedRecordTtl).
           lines.push(`cname=${fqdn},${r.value}${r.ttl ? ',' + r.ttl : ''}`);
           break;
         case 'MX':
@@ -497,6 +498,30 @@ function buildDnssecLines() {
   return lines;
 }
 
+// The TTL dnsmasq answers local records with. Hosts files carry no TTL and
+// mx-host, txt-record, srv-host and ptr-record take none, so everything but a
+// CNAME with its own TTL is served with this. Short, so an edit or a new
+// lease name reaches clients within a minute; dnsmasq's default of 0 made
+// clients look the name up again on every request.
+export const LOCAL_TTL = 60;
+
+/** The TTL dnsmasq serves `record` ({type, ttl}) with. */
+export function servedRecordTtl(record) {
+  return record.type === 'CNAME' && record.ttl ? record.ttl : LOCAL_TTL;
+}
+
+// What CIDRella's own dnsmasq answers beyond its records. no-hosts keeps the
+// appliance's /etc/hosts off the network: Proxmox and Debian map the host's own
+// name to 127.0.1.1 there, which dnsmasq would otherwise hand to every client
+// next to the real addresses. These live in dnsmasq.conf, not conf.d, because
+// the installer's include mode points a host's own dnsmasq at conf.d.
+const LOCAL_ANSWER_LINES = ['no-hosts', `local-ttl=${LOCAL_TTL}`];
+
+function isManagedLocalAnswerLine(line) {
+  const t = line.trim();
+  return t === 'no-hosts' || /^local-ttl=/.test(t);
+}
+
 export function regenerateDnsmasqConf(_db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return false;
 
@@ -510,7 +535,10 @@ export function regenerateDnsmasqConf(_db) {
   const lines = content.split('\n');
   // Strip existing server= lines and any DNSSEC-managed lines so regen is
   // idempotent regardless of which setting changed.
-  const filtered = lines.filter((line) => !/^server=/.test(line) && !isManagedDnssecLine(line));
+  const filtered = lines.filter(
+    (line) =>
+      !/^server=/.test(line) && !isManagedDnssecLine(line) && !isManagedLocalAnswerLine(line),
+  );
 
   // Insert server lines after no-resolv or at the start. When recursion is
   // disabled, emit NO upstreams (authoritative-only). Otherwise, when encrypted
@@ -523,7 +551,7 @@ export function regenerateDnsmasqConf(_db) {
     : encryption === 'tls' || encryption === 'https'
       ? [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`]
       : servers.map((s) => `server=${s}`);
-  filtered.splice(insertIdx, 0, ...serverLines);
+  filtered.splice(insertIdx, 0, ...LOCAL_ANSWER_LINES, ...serverLines);
 
   // Append the DNSSEC block when enabled and the local dnsmasq supports it.
   if (dnssecEnabled) {
