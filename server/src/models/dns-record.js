@@ -56,7 +56,7 @@ export function normalizeRecordNameForZone(name, zoneName) {
   return normalized;
 }
 
-export function fqdnForRecordName(recordName, zoneName) {
+export function fqdnForRecordName(recordName, zoneName, type) {
   const raw = String(recordName || '')
     .trim()
     .toLowerCase();
@@ -64,7 +64,9 @@ export function fqdnForRecordName(recordName, zoneName) {
   const zone = normalizeDnsName(zoneName);
   if (normalized === '@' || normalized === zone) return zoneName;
   if (normalized.endsWith(`.${zone}`)) return normalized;
-  if (normalized.includes('.')) return raw.endsWith('.') ? raw : normalized;
+  // An SRV name is `_service._protocol` (routes/dns.js SRV_NAME_RE), dotted
+  // but always under its zone. Any other dotted name is taken as absolute.
+  if (normalized.includes('.') && type !== 'SRV') return raw.endsWith('.') ? raw : normalized;
   return `${normalized}.${zoneName}`;
 }
 

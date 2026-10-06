@@ -94,3 +94,24 @@ describe('the SQL concatenation and the JS builder agree on normalized rows', ()
     expect(fromSql).toBe(fqdnForRecordName(stored, zoneName));
   });
 });
+
+describe('fqdnForRecordName', () => {
+  it('puts an SRV name under its zone, though it is dotted (DNSMASQ-04)', () => {
+    expect(fqdnForRecordName('_sip._tcp', 'example.lan', 'SRV')).toBe('_sip._tcp.example.lan');
+    expect(fqdnForRecordName('_ldap._tcp', 'corp.example.lan', 'SRV')).toBe(
+      '_ldap._tcp.corp.example.lan',
+    );
+  });
+
+  it('does not double the zone on an SRV name that already carries it', () => {
+    expect(fqdnForRecordName('_sip._tcp.example.lan', 'example.lan', 'SRV')).toBe(
+      '_sip._tcp.example.lan',
+    );
+  });
+
+  it('still takes any other dotted name as absolute', () => {
+    expect(fqdnForRecordName('host.other.com', 'example.com', 'A')).toBe('host.other.com');
+    expect(fqdnForRecordName('host.other.com', 'example.com')).toBe('host.other.com');
+    expect(fqdnForRecordName('web', 'example.com', 'TXT')).toBe('web.example.com');
+  });
+});

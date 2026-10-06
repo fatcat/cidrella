@@ -4,7 +4,7 @@ import os from 'os';
 import { execFileSync, execSync } from 'child_process';
 import { isValidAddress } from '../../utils/ip.js';
 import { sortKey } from '../../utils/address.js';
-import { ipForPtrRecord } from '../../models/dns-record.js';
+import { fqdnForRecordName, ipForPtrRecord } from '../../models/dns-record.js';
 import { getSetting } from '../../db/init.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
 import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
@@ -181,22 +181,6 @@ export function cleanStaleFiles(dir, prefix, suffix, activeIds) {
   return removed;
 }
 
-function toFqdn(recordName, zoneName) {
-  const raw = String(recordName || '').trim();
-  const normalized = raw.replace(/\.$/, '');
-  const zone = String(zoneName || '').replace(/\.$/, '');
-  if (
-    normalized.toLowerCase() === zone.toLowerCase() ||
-    normalized.toLowerCase().endsWith(`.${zone.toLowerCase()}`)
-  ) {
-    return normalized;
-  }
-  if (normalized.includes('.')) {
-    return raw.endsWith('.') ? raw : normalized;
-  }
-  return recordName === '@' ? zoneName : `${recordName}.${zoneName}`;
-}
-
 // Every served A and AAAA name, grouped by address, with each address's
 // canonical PTR name first. dnsmasq answers a reverse lookup from the first
 // hosts line naming the address, so this order makes the hosts file serve the
@@ -234,7 +218,7 @@ function servedHostsByAddress(db) {
   // name keeps its trailing dot); `key` is the form PTR values compare by.
   const byAddress = new Map();
   for (const record of records) {
-    const fqdn = toFqdn(record.name, record.zone_name);
+    const fqdn = fqdnForRecordName(record.name, record.zone_name);
     const names = byAddress.get(record.value) || [];
     if (!names.some((name) => name.key === lowerFqdn(fqdn))) {
       names.push({ fqdn, key: lowerFqdn(fqdn) });
@@ -343,7 +327,7 @@ export function regenerateConfDir(db) {
     }
 
     for (const r of records) {
-      const fqdn = toFqdn(r.name, zone.name);
+      const fqdn = fqdnForRecordName(r.name, zone.name, r.type);
       switch (r.type) {
         case 'CNAME':
           if (validateConfigSafeValue(r.value) != null) break;

@@ -15,10 +15,10 @@ security: false
 ```
 
 Groundwork for moving DHCP to Kea and DNS to PowerDNS. Every dnsmasq call now
-goes through one backend layer, with dnsmasq as its only adapter. Nothing
-dnsmasq serves changes: a golden test snapshots every generated file and
-command for every apply path, and those snapshots came through the release
-byte for byte. No schema change.
+goes through one backend layer, with dnsmasq as its only adapter. A golden
+test snapshots every generated file and command for every apply path; the
+refactor left them byte for byte the same, and the one change to what dnsmasq
+serves is the SRV fix below. No schema change.
 
 ### Changed
 
@@ -46,14 +46,21 @@ byte for byte. No schema change.
 - `dnsmasqName` in `GET /api/dhcp/options`. It moves into the dnsmasq adapter
   with the Kea release.
 
+### Fixed
+
+- **SRV records answer under their zone.** An SRV record `_sip._tcp` in
+  `example.lan` was written as `srv-host=_sip._tcp,...`, so dnsmasq answered
+  `_sip._tcp` and a client asking for `_sip._tcp.example.lan` got nothing. It
+  is now qualified with its zone, and the DNS tables show the full name too.
+  Boot renders the zones once, so existing SRV records are corrected on the
+  upgrade without an edit (an unchanged install writes nothing and signals
+  nothing). DNSMASQ-04.
+
 ### Known issues
 
 Found while building the golden test and the backend layer, and left as they
-were because this release changes no behavior:
+were because this release changes no behavior beyond the fix above:
 
-- SRV records are written without their zone, so `_sip._tcp` in
-  `example.lan` answers as `_sip._tcp` rather than `_sip._tcp.example.lan`
-  (REVIEW DNSMASQ-04).
 - With DNSSEC on, every boot restarts dnsmasq and drops its cache even when
   nothing changed (DNSMASQ-03).
 - The service health check counts any dnsmasq on the host, so a stopped

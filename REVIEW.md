@@ -90,21 +90,6 @@ was suggested.
   (inferred from the same code path, not run). Fixing it changes the golden snapshot for step
   05, which should then show no restart.
 
-#### DNSMASQ-04: SRV records are written without their zone
-
-**high**, confirmed in the code and by `server/tests/integration/backends/__golden__/01-dns-zones.txt`.
-`server/src/backends/dnsmasq/dnsmasq.js:184` (`toFqdn`), `server/src/routes/dns.js:55` (`SRV_NAME_RE`)
-
-- **What happens:** An SRV record `_sip._tcp` in zone `golden.test` is written as
-  `srv-host=_sip._tcp,sip.golden.test,5060,1,2`, so dnsmasq answers `_sip._tcp` and not
-  `_sip._tcp.golden.test`. Clients looking up the service in the zone get no answer.
-- **Why:** The route only accepts the relative form (`_service._protocol`), and `toFqdn` treats
-  any name containing a dot as already absolute, so the zone is never appended.
-- **Fix:** In `toFqdn`, treat a name as absolute only when it ends with a dot or already ends
-  in the zone; or qualify SRV names explicitly before calling it. Check the other record types
-  for dotted relative names (`www.sub` in a zone) at the same time. Add v4 and v6 zone cases,
-  and update the golden snapshot.
-
 ## Found building the backend facade (2026-10-06)
 
 The facade (0.5.1) left these dnsmasq traits in place on purpose: changing them is a behavior
@@ -153,4 +138,22 @@ default `'24h'`), `server/src/routes/dhcp.js:58` (`LEASE_TIME_RE = /^\d+[smhd]?$
   one parser to seconds, shared by every adapter; the dnsmasq adapter keeps writing the string.
   A migration to integer seconds is the cleaner end state but touches backups, the UI and
   option 51 validation, so do it with the Kea adapter, not before.
+
+#### DNS-NAME-01: SQL and JavaScript disagree on a dotted record name outside the zone
+
+**low**, confirmed in the code, not seen in the field. `server/src/models/dns-record.js:158`
+(CNAME target check) against `fqdnForRecordName` in the same file; also
+`server/src/db/migrations/063_system_address_scope.sql:42`
+
+- **What happens:** An A record stored as `a.b` in zone `example.lan` is served and shown as
+  `a.b` (`fqdnForRecordName` takes a dotted name as absolute), but the CNAME target check builds
+  `r.name || '.' || z.name` = `a.b.example.lan` in SQL. A CNAME pointing at `a.b.example.lan`
+  passes the check while no record answers that name.
+- **Why:** `normalizeRecordNameForZone` keeps an out-of-zone dotted name as it is, and the SQL
+  form assumes every stored name is relative. Found fixing DNSMASQ-04, where SRV was the one
+  type that is dotted and always relative.
+- **Fix:** Decide the policy for dotted names in a zone (zone-file convention says relative
+  unless it ends with a dot), then make the write sink store one form and have the SQL and
+  `fqdnForRecordName` agree. Changing the policy changes what existing records serve, so it
+  needs a migration that inventories dotted names first.
 

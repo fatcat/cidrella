@@ -39,7 +39,7 @@ ptr-record=12.0.60.10.in-addr.arpa,elsewhere.example.net
 cname=www.golden.test,web.golden.test,300
 mx-host=golden.test,mail.golden.test,5
 txt-record=golden.test,"v=spf1 \"quoted\" -all"
-srv-host=_sip._tcp,sip.golden.test,5060,1,2
+srv-host=_sip._tcp.golden.test,sip.golden.test,5060,1,2
 
 === dhcp-hosts.d/reservations.hosts ===
 aa:bb:cc:00:00:01,10.60.0.50,printer,infinite
@@ -174,7 +174,7 @@ ptr-record=12.0.60.10.in-addr.arpa,elsewhere.example.net
 cname=www.golden.test,web.golden.test,300
 mx-host=golden.test,mail.golden.test,5
 txt-record=golden.test,"v=spf1 \"quoted\" -all"
-srv-host=_sip._tcp,sip.golden.test,5060,1,2
+srv-host=_sip._tcp.golden.test,sip.golden.test,5060,1,2
 
 === dhcp-hosts.d/reservations.hosts ===
 aa:bb:cc:00:00:01,10.60.0.50,printer,infinite

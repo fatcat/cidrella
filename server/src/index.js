@@ -34,6 +34,7 @@ import { authMiddleware } from './auth/middleware.js';
 import { actorMiddleware } from './utils/request-actor.js';
 import {
   afterCommitMiddleware,
+  queueRegen,
   registerHookHandlers,
   resumePendingRegeneration,
 } from './utils/after-commit.js';
@@ -124,6 +125,11 @@ async function main() {
   }
   console.log('Database initialized');
   resumePendingRegeneration();
+  // Render the zones once per boot, so a release that changes what the
+  // generator writes (0.5.1 qualifying SRV names) reaches existing installs
+  // without waiting for a DNS edit. Unchanged files are not rewritten and
+  // nothing is signaled.
+  queueRegen('regenerate_dns');
 
   // Migrate legacy DHCP scope columns to scope_options table
   migrateLegacyScopeOptions(getDb());
