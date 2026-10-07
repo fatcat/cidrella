@@ -17,9 +17,21 @@
       :value-label="filterValueLabel"
       @open="emit('filter-open')"
     />
-    <label v-if="activeView === 'addresses' || activeView === 'dhcp'" class="available-switch">
+    <label
+      v-if="activeView === 'addresses' || activeView === 'dhcp'"
+      class="toolbar-switch available-switch"
+    >
       <input v-model="showAvailable" type="checkbox" />
       <span /> Show available
+    </label>
+    <label
+      v-if="activeView === 'dns'"
+      class="toolbar-switch domain-names-switch"
+      title="Off: names as a zone file writes them (@, relative names, absolute ones ending in a dot)"
+      data-track="workspace-show-domain-names"
+    >
+      <input v-model="showDomainNames" type="checkbox" />
+      <span /> Show domain names
     </label>
     <span class="toolbar-space" />
     <div
@@ -112,6 +124,7 @@ const emit = defineEmits([
 const tableQuery = defineModel('tableQuery', { type: String, default: '' });
 const filters = defineModel('filters', { type: Object, required: true });
 const showAvailable = defineModel('showAvailable', { type: Boolean, default: true });
+const showDomainNames = defineModel('showDomainNames', { type: Boolean, default: true });
 const presentation = defineModel('presentation', { type: String, default: 'table' });
 </script>
 
@@ -196,7 +209,7 @@ button {
   color: var(--cid-text-color);
   padding: 0.25rem 0.55rem;
 }
-.available-switch {
+.toolbar-switch {
   display: flex;
   align-items: center;
   gap: 0.4rem;
@@ -204,12 +217,12 @@ button {
   font-size: 0.66rem;
   cursor: pointer;
 }
-.available-switch input {
+.toolbar-switch input {
   position: absolute;
   opacity: 0;
   pointer-events: none;
 }
-.available-switch span {
+.toolbar-switch span {
   position: relative;
   width: 1.65rem;
   height: 0.92rem;
@@ -217,7 +230,7 @@ button {
   background: var(--cid-surface-300);
   transition: background 0.15s;
 }
-.available-switch span::after {
+.toolbar-switch span::after {
   content: '';
   position: absolute;
   top: 2px;
@@ -229,10 +242,10 @@ button {
   transition: transform 0.15s;
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.2);
 }
-.available-switch input:checked + span {
+.toolbar-switch input:checked + span {
   background: var(--preview-accent);
 }
-.available-switch input:checked + span::after {
+.toolbar-switch input:checked + span::after {
   transform: translateX(0.72rem);
 }
 .toolbar-space {
@@ -265,7 +278,7 @@ button {
   font-size: 0.66rem;
   transform: scale(0.82);
 }
-.available-switch {
+.toolbar-switch {
   font-size: var(--workspace-font-small);
 }
 .table-search input,
