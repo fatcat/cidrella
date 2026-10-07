@@ -41,8 +41,8 @@ export const DOH_PROVIDERS = [
     id: 'adguard',
     label: 'AdGuard — unfiltered (94.140.14.140)',
     addresses: ['94.140.14.140', '94.140.14.141'],
-    hostname: 'unfiltered.dns.adguard-dns.com',
-    doh_url: 'https://unfiltered.dns.adguard-dns.com/dns-query',
+    hostname: 'unfiltered.adguard-dns.com',
+    doh_url: 'https://unfiltered.adguard-dns.com/dns-query',
     dnssecTransparent: true,
   },
 ];

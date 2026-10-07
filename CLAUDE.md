@@ -157,6 +157,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   stateless one; anything treating a scope as a dynamic pool asks it), `utils/dnsmasq-lease-file.js`
   (`LEASE_FILE`, `readServerDuid`), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
+  `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder
+  upstream, DoT or DoH: reused connections, retry, address failover, fail closed),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
   enabled set, blanks filled from its network; new scopes and Bulk Change),
   `isTopologyAddress` in `utils/cidr.js` (is this the network or broadcast address topology

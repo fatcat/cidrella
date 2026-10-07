@@ -448,10 +448,12 @@ first on a 0.4.17 host.
   day on one install). `conf.d/local-zones.conf` now makes every enabled
   zone local, so these get an immediate NXDOMAIN or NODATA. A zone that needs
   its unknown names looked up publicly can opt out in its settings.
-- **Encrypted forwarding keeps its connections open.** With DNS-over-TLS on,
-  every lookup that missed dnsmasq's cache opened a new TCP and TLS
-  connection to the upstream: about 46 ms an answer against a 10 ms round
-  trip. One connection per upstream address now carries every query, and a
+- **Encrypted forwarding keeps its connections open.** With DNS-over-TLS or
+  DNS-over-HTTPS on, every lookup that missed dnsmasq's cache opened a new
+  TCP and TLS connection to the upstream: about 46 ms an answer against a
+  10 ms round trip. One connection per upstream address now carries every
+  query (DoT pipelined, DoH over HTTP/2 with one stream per query, or
+  keep-alive HTTP/1.1 for a server that offers nothing newer), and a
   reconnect resumes the TLS session; a repeat lookup takes about 12 ms. A
   connection the upstream closed while a query was in flight is retried once
   on a new one, an address that refuses the connection moves to the
@@ -460,6 +462,10 @@ first on a 0.4.17 host.
   fallback. Failures of the encrypted path now reach the journal, at most one
   line a minute with a count of the ones in between; before, they were only
   counted.
+- **The AdGuard preset works.** It named `unfiltered.dns.adguard-dns.com`,
+  which doesn't resolve and which AdGuard's servers refuse, so every
+  encrypted query to it failed. It is now `unfiltered.adguard-dns.com`, and
+  migration 084 moves an upstream saved from the old preset.
 - **Local names get a 60 second TTL, and the appliance's `/etc/hosts` stays
   home.** dnsmasq answered every local record with a TTL of 0, so clients
   looked a name up again for nearly every request. On a client that also

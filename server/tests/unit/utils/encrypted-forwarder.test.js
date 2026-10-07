@@ -1,7 +1,6 @@
 import { describe, it, expect, vi } from 'vitest';
 import dnsPacket from 'dns-packet';
 import net from 'net';
-import https from 'https';
 
 // dns-proxy is imported transitively (framing helpers); stub its side-effecting deps.
 vi.mock('../../../src/utils/dnsmasq.js', () => ({
@@ -12,6 +11,7 @@ vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
 const { buildServfail, forwardDoT, forwardDoH } =
   await import('../../../src/utils/encrypted-forwarder.js');
+const { pinnedLookup } = await import('../../../src/utils/upstream-pool.js');
 
 function encodeQuery(name, { withDo = false } = {}) {
   const msg = {
@@ -151,25 +151,15 @@ describe('DoH connects to the configured upstream address', () => {
   it.each([
     ['2606:4700:4700::1111', 6],
     ['1.1.1.1', 4],
-  ])('answers the lookup for %s with family %i in both callback forms', async (address, family) => {
-    const spy = vi.spyOn(https, 'request').mockImplementation(() => {
-      throw new Error('captured');
-    });
-    try {
-      await forwardDoH(encodeQuery('example.com'), {
-        addresses: [address],
-        hostname: 'doh.test',
-        doh_url: 'https://doh.test/dns-query',
-      }).catch(() => null);
-      const { lookup } = spy.mock.calls[0][0];
-      const single = vi.fn();
-      lookup('doh.test', {}, single);
-      expect(single).toHaveBeenCalledWith(null, address, family);
-      const all = vi.fn();
-      lookup('doh.test', { all: true }, all);
-      expect(all).toHaveBeenCalledWith(null, [{ address, family }]);
-    } finally {
-      spy.mockRestore();
-    }
+  ])('pins the lookup for %s to family %i in both callback forms', (address, family) => {
+    // The HTTP/1.1 fallback connects through Node's lookup; it must hand back
+    // the configured address in its own family.
+    const lookup = pinnedLookup(address);
+    const single = vi.fn();
+    lookup('doh.test', {}, single);
+    expect(single).toHaveBeenCalledWith(null, address, family);
+    const all = vi.fn();
+    lookup('doh.test', { all: true }, all);
+    expect(all).toHaveBeenCalledWith(null, [{ address, family }]);
   });
 });
