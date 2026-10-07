@@ -1,4 +1,9 @@
 ##### files
+=== conf.d/local-zones.conf ===
+local=/0.0.0.0.0.0.0.0.3.6.0.0.0.0.d.f.ip6.arpa/
+local=/0.60.10.in-addr.arpa/
+local=/golden.test/
+
 === conf.d/zone-1.conf ===
 # SOA: ns1.localhost admin.localhost 2 3600 900 604800 86400
 ptr-record=12.0.60.10.in-addr.arpa,elsewhere.example.net

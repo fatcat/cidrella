@@ -556,6 +556,31 @@ refresh_ntp_defaults() {
   fi
 }
 
+check_dns_providers() {
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would query every encrypted DNS preset address over DoT and DoH."
+    return 0
+  fi
+
+  echo "Checking encrypted DNS presets..."
+  set +e
+  node "$PROJECT_DIR/scripts/check-dns-providers.js"
+  local rc=$?
+  set -e
+  if [ "$rc" -eq 3 ]; then
+    echo ""
+    echo "WARNING: this host could not reach the presets over DoT or DoH (see above), so they were not fully checked."
+    if ! confirm_yn "Proceed without checking the encrypted DNS presets?" "n"; then
+      echo "Build stopped so the encrypted DNS presets can be checked."
+      exit 1
+    fi
+  elif [ "$rc" -ne 0 ]; then
+    echo ""
+    echo "Build stopped: fix the encrypted DNS presets named above, commit, and rerun."
+    exit 1
+  fi
+}
+
 echo "=== CIDRella Release Builder ==="
 echo "Version: $VERSION"
 echo "Tag:     $TAG"
@@ -645,6 +670,7 @@ fi
 
 run_release_health_check
 refresh_ntp_defaults
+check_dns_providers
 
 # Check minisign is installed (needed for all modes)
 if ! command -v minisign &>/dev/null; then

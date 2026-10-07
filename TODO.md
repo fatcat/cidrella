@@ -10,7 +10,7 @@ TODO list for CIDRella
 - [x] implement IPv6 for management, DNS, DHCP and blocklists (backend and rogue DHCPv6/RA
       detection landed 2026-09-17, the UI pass with the global IPv6 switch 2026-09-18; what is
       left is in BACKLOG.md under "IPv6, in flight")
-- [ ] rework the Analytics page, current implementation is really just a placeholder
+- [x] rework the Analytics page, current implementation is really just a placeholder
 - [ ] self-service address requests (agreed shape 2026-09-22, not started). A range opts in
       with a `self_service` flag; a requester names a range (not a type, the same type can
       exist in several networks) and a hostname, and supplies a MAC. The allocation is a DHCP

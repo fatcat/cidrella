@@ -1,0 +1,13 @@
+-- A zone answers every name under it itself unless told otherwise. Before,
+-- dnsmasq answered only the exact names and types CIDRella had records for and
+-- sent every other query in the zone upstream: the AAAA and HTTPS lookups
+-- browsers make for a host with only an A record, service discovery, typos.
+-- For a domain that is also public those ended at its public nameservers, and
+-- a slow one stalled the lookup for seconds.
+--
+-- forward_unknown = 1 keeps the old behavior for one zone: a split-horizon
+-- domain whose public records CIDRella doesn't hold.
+--
+-- Numbered 083 on 0.5.0 because 082 belongs to 0.5.1; the runner applies any
+-- version it has not recorded, so the gap fills on that upgrade.
+ALTER TABLE dns_zones ADD COLUMN forward_unknown INTEGER NOT NULL DEFAULT 0;

@@ -17,15 +17,13 @@
 
 import dgram from 'dgram';
 import net from 'net';
-import tls from 'tls';
-import https from 'https';
 import dnsPacket from 'dns-packet';
 import { getSetting } from '../db/init.js';
 import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
+import { createUpstreamPool } from './upstream-pool.js';
 import { ENCRYPTED_FORWARDER_PORT, ENCRYPTED_FORWARDER_TIMEOUT_MS } from '../config/defaults.js';
 
 const HOST = '127.0.0.1';
-const dohAgent = new https.Agent({ keepAlive: true, maxSockets: 8 });
 
 // Module state
 let udpSocket = null;
@@ -52,9 +50,27 @@ function efLog(level, msg, extra) {
   else console.log(`${prefix} ${msg}${suffix}`);
 }
 
-function recordError(e) {
-  errorTimes.push(Date.now());
+// Failures also go to the journal, at most one line a minute: the first
+// failure at once, then the next one after the minute is up, carrying how many
+// were left out in between. Without these lines a burst of upstream failures
+// (and the SERVFAILs or DNSSEC BOGUS answers they cause) left no trace.
+const ERROR_LOG_INTERVAL_MS = 60 * 1000;
+let lastErrorLoggedAt = -Infinity;
+let unloggedErrors = 0;
+
+function recordError(e, upstream = null, address = null) {
+  const now = Date.now();
+  errorTimes.push(now);
   lastError = e?.message || String(e);
+  if (now - lastErrorLoggedAt < ERROR_LOG_INTERVAL_MS) {
+    unloggedErrors++;
+    return;
+  }
+  const extra = { mode, upstream: upstream?.hostname || upstream?.label || null, address };
+  if (unloggedErrors) extra.notLoggedSinceLastLine = unloggedErrors;
+  efLog('warn', `Upstream query failed: ${lastError}`, extra);
+  lastErrorLoggedAt = now;
+  unloggedErrors = 0;
 }
 
 // Build a SERVFAIL preserving the query id + question and echoing the client's
@@ -97,129 +113,33 @@ function pickUpstream() {
   return upstreams[rrIndex++ % upstreams.length];
 }
 
-// ── DoT: per-query TLS connection (validate cert vs hostname, connect by IP).
-// Pooling/session-resumption is a future optimization; dnsmasq's cache keeps
-// upstream QPS low so the handshake cost is bounded.
-export function forwardDoT(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIMEOUT_MS) {
-  return new Promise((resolve) => {
-    const ip = upstream.addresses?.[0];
-    if (!ip) {
-      recordError(new Error('no upstream address'));
-      return resolve(null);
-    }
-    let buf = Buffer.alloc(0);
-    let done = false;
-    const socket = tls.connect({ host: ip, port: 853, servername: upstream.hostname });
-    const finish = (val) => {
-      if (done) return;
-      done = true;
-      try {
-        socket.destroy();
-      } catch {
-        /* ignore */
-      }
-      resolve(val);
-    };
-    socket.setTimeout(timeoutMs, () => {
-      recordError(new Error('DoT timeout'));
-      finish(null);
-    });
-    socket.on('secureConnect', () => {
-      // tls.connect validates the chain + hostname against `servername` using
-      // Node's CA store; `authorized` is false on any failure.
-      if (!socket.authorized) {
-        recordError(socket.authorizationError || new Error('cert not authorized'));
-        return finish(null);
-      }
-      socket.write(frameTcpMessage(reqBuf));
-    });
-    socket.on('data', (chunk) => {
-      buf = Buffer.concat([buf, chunk]);
-      if (buf.length < 2) return;
-      const { messages } = extractTcpMessages(buf);
-      if (messages.length > 0) finish(messages[0]);
-    });
-    socket.on('error', (e) => {
-      recordError(e);
-      finish(null);
-    });
-    socket.on('close', () => finish(null));
-  });
+// ── DoT and DoH: connections to each upstream address stay open and carry
+// every query (utils/upstream-pool.js), validated against the upstream's
+// hostname. DoH connects by address too, so no bootstrap DNS is needed. One
+// pool per protocol and timeout, since tests pass short timeouts.
+const pools = new Map();
+
+function poolFor(protocol, timeoutMs) {
+  const key = `${protocol}|${timeoutMs}`;
+  let pool = pools.get(key);
+  if (!pool) {
+    pool = createUpstreamPool({ protocol, timeoutMs, onError: recordError });
+    pools.set(key, pool);
+  }
+  return pool;
 }
 
-// ── DoH: HTTPS POST application/dns-message, connecting by IP (custom lookup)
-// with SNI/cert validation against the hostname, no bootstrap DNS needed.
-export function forwardDoH(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIMEOUT_MS) {
-  return new Promise((resolve) => {
-    let url;
-    try {
-      url = new URL(upstream.doh_url);
-    } catch (e) {
-      recordError(e);
-      return resolve(null);
-    }
-    const ip = upstream.addresses?.[0];
-    if (!ip) {
-      recordError(new Error('no upstream address'));
-      return resolve(null);
-    }
-    let settled = false;
-    const done = (val) => {
-      if (settled) return;
-      settled = true;
-      resolve(val);
-    };
+export function forwardDoT(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIMEOUT_MS) {
+  return poolFor('dot', timeoutMs).query(reqBuf, upstream);
+}
 
-    const req = https.request(
-      {
-        method: 'POST',
-        hostname: url.hostname,
-        port: url.port || 443,
-        path: url.pathname + url.search,
-        servername: upstream.hostname || url.hostname,
-        // Connect by IP, validate the cert against the hostname. Node asks
-        // for { all: true } (an array) when autoSelectFamily is on, and the
-        // family must be the address's own or an IPv6 upstream gets an IPv4
-        // socket.
-        lookup: (_h, opts, cb) => {
-          const family = net.isIP(ip);
-          return opts?.all ? cb(null, [{ address: ip, family }]) : cb(null, ip, family);
-        },
-        headers: {
-          'content-type': 'application/dns-message',
-          accept: 'application/dns-message',
-          'content-length': reqBuf.length,
-        },
-        timeout: timeoutMs,
-        agent: dohAgent,
-      },
-      (res) => {
-        if (res.statusCode !== 200) {
-          recordError(new Error(`DoH HTTP ${res.statusCode}`));
-          res.resume();
-          return done(null);
-        }
-        const chunks = [];
-        res.on('data', (c) => chunks.push(c));
-        res.on('end', () => done(Buffer.concat(chunks)));
-        res.on('error', (e) => {
-          recordError(e);
-          done(null);
-        });
-      },
-    );
-    req.on('timeout', () => {
-      recordError(new Error('DoH timeout'));
-      req.destroy();
-      done(null);
-    });
-    req.on('error', (e) => {
-      recordError(e);
-      done(null);
-    });
-    req.write(reqBuf);
-    req.end();
-  });
+export function forwardDoH(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIMEOUT_MS) {
+  return poolFor('doh', timeoutMs).query(reqBuf, upstream);
+}
+
+function closePools() {
+  for (const pool of pools.values()) pool.closeAll();
+  pools.clear();
 }
 
 async function handleQuery(reqBuf) {
@@ -234,7 +154,7 @@ async function handleQuery(reqBuf) {
             ? await forwardDoH(reqBuf, upstream)
             : null;
     } catch (e) {
-      recordError(e);
+      recordError(e, upstream);
       resp = null;
     }
   }
@@ -320,6 +240,8 @@ export function applyEncryptedForwarder() {
   }
   errorTimes = [];
   lastError = null;
+  // A changed upstream list or mode starts on fresh connections.
+  closePools();
 
   // With recursion disabled, CIDRella forwards nothing, don't run the stub even
   // if an encryption mode is still persisted (preference is preserved for when
@@ -336,6 +258,7 @@ export function applyEncryptedForwarder() {
 
 export function stopEncryptedForwarder() {
   stopListeners();
+  closePools();
 }
 
 export function getEncryptedForwarderStatus() {

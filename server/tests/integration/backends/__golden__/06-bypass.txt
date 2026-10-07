@@ -30,6 +30,11 @@ dhcp-range=set:scope4,fd00:63::1000,fd00:63::1fff,64,1h
 dhcp-option=tag:scope4,option6:domain-search,golden.test
 dhcp-option=tag:scope4,option6:ntp-server,[2602:fcac:0:7b::74],[2603:c020:0:8369:feed:feed:feed:feed],[2600:1702:4a73:e00f:c3ee:91f2:71d8:5243],[2607:f710:35::29c:0:6]
 
+=== conf.d/local-zones.conf ===
+local=/0.0.0.0.0.0.0.0.3.6.0.0.0.0.d.f.ip6.arpa/
+local=/0.60.10.in-addr.arpa/
+local=/golden.test/
+
 === conf.d/zone-1.conf ===
 # SOA: ns1.localhost admin.localhost 3 3600 900 604800 86400
 ptr-record=12.0.60.10.in-addr.arpa,elsewhere.example.net
@@ -168,6 +173,11 @@ ra-param=*,0,0
 dhcp-range=set:scope4,fd00:63::1000,fd00:63::1fff,64,1h
 dhcp-option=tag:scope4,option6:domain-search,golden.test
 dhcp-option=tag:scope4,option6:ntp-server,[2602:fcac:0:7b::74],[2603:c020:0:8369:feed:feed:feed:feed],[2600:1702:4a73:e00f:c3ee:91f2:71d8:5243],[2607:f710:35::29c:0:6]
+
+=== conf.d/local-zones.conf ===
+local=/0.0.0.0.0.0.0.0.3.6.0.0.0.0.d.f.ip6.arpa/
+local=/0.60.10.in-addr.arpa/
+local=/golden.test/
 
 === conf.d/zone-1.conf ===
 # SOA: ns1.localhost admin.localhost 3 3600 900 604800 86400

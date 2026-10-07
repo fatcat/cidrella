@@ -149,6 +149,13 @@ line. No page, theme or stylesheet changed as a result; the swap was audited
 file by file and every theme verified against the values captured under
 PrimeVue.
 
+Every enabled DNS zone now answers the names under it itself. A name that
+exists only in the domain's public DNS, such as an apex address or MX records
+hosted elsewhere, stops resolving for LAN clients until it is added to the
+zone in CIDRella, or the zone's "Look up names this zone doesn't have
+upstream" switch is turned on. Migration 083 adds that switch, off for every
+zone.
+
 `min_from` stays at 0.4.17: installs on 0.4.17, 0.4.18 or any 0.4.18
 pre-release upgrade directly. The 0.4.18 lifecycle reconciliation still runs
 first on a 0.4.17 host.
@@ -528,6 +535,34 @@ first on a 0.4.17 host.
 
 ### Fixed
 
+- **Names under a CIDRella zone are answered locally.** dnsmasq answered only
+  the exact names and types CIDRella had records for and sent every other
+  query in the zone upstream: the AAAA and HTTPS lookups browsers make for a
+  host with only an A record, service discovery (`lb._dns-sd._udp`), and ad
+  names with the search suffix appended after the blocklist refused them. For
+  a domain that is also public those ended at its public nameservers, and one
+  slow to answer stalled the lookup for 2 to 3 seconds (3,305 such lookups a
+  day on one install). `conf.d/local-zones.conf` now makes every enabled
+  zone local, so these get an immediate NXDOMAIN or NODATA. A zone that needs
+  its unknown names looked up publicly can opt out in its settings.
+- **Encrypted forwarding keeps its connections open.** With DNS-over-TLS or
+  DNS-over-HTTPS on, every lookup that missed dnsmasq's cache opened a new
+  TCP and TLS connection to the upstream: about 46 ms an answer against a
+  10 ms round trip. One connection per upstream address now carries every
+  query (DoT pipelined, DoH over HTTP/2 with one stream per query, or
+  keep-alive HTTP/1.1 for a server that offers nothing newer), and a
+  reconnect resumes the TLS session; a repeat lookup takes about 12 ms. A
+  connection the upstream closed while a query was in flight is retried once
+  on a new one, an address that refuses the connection moves to the
+  upstream's next address (only the first was ever used), and every answer
+  is still verified against the upstream's certificate with no plaintext
+  fallback. Failures of the encrypted path now reach the journal, at most one
+  line a minute with a count of the ones in between; before, they were only
+  counted.
+- **The AdGuard preset works.** It named `unfiltered.dns.adguard-dns.com`,
+  which doesn't resolve and which AdGuard's servers refuse, so every
+  encrypted query to it failed. It is now `unfiltered.adguard-dns.com`, and
+  migration 084 moves an upstream saved from the old preset.
 - **Local names get a 60 second TTL, and the appliance's `/etc/hosts` stays
   home.** dnsmasq answered every local record with a TTL of 0, so clients
   looked a name up again for nearly every request. On a client that also
