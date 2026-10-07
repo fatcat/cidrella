@@ -151,6 +151,13 @@ Deliberate, each with a reason:
 
 ## Kea (0.5.2)
 
+> **Two stacks (decided 2026-10-07).** A host will run either dnsmasq for everything or
+> PowerDNS + Kea (0.5.3, released as 0.6.0), never dnsmasq beside Kea. What follows describes
+> 0.5.2, where Kea fills the DHCP role next to dnsmasq's DNS; that mixed mode (dnsmasq's
+> not-serving render, both daemons on UDP 547) is interim, hidden from the UI, and goes in
+> 0.5.3. The adapter, the lease handover and the packaging carry over. The plan is in
+> `BACKLOG.md` (PowerDNS + Kea stack).
+
 `backends/kea/` fills the DHCP role with ISC Kea 3.0, one daemon per family. dnsmasq keeps DNS
 and the Router Advertisements. The configuration is file-canonical like dnsmasq's: `applyScopes`
 renders `DATA_DIR/kea/kea-dhcp4.conf` and `kea-dhcp6.conf`, `kea-dhcp4 -t` checks them inside

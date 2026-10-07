@@ -15,11 +15,15 @@ security: false
 ```
 
 Kea as a second DHCP backend, on a backend contract that describes what each
-backend can do.
+backend can do. A development line: 0.5.2 and 0.5.3 get release candidates
+only, and ship together as 0.6.0, where a host runs either dnsmasq or the
+PowerDNS + Kea stack (0.5.3). Until that stack lands, Kea is not offered.
 
 ### Added
 
-- **Choose the DHCP server.** Settings > DHCP > Server shows which server
+- **Choose the DHCP server** (not shown yet: the panel returns in 0.5.3 as
+  the stack choice, and `/api/dhcp/server` stays for testing). Settings >
+  DHCP > Server shows which server
   hands out addresses, what switching to the other would add or lose, and
   switches with the leases: every IPv4 and IPv6 lease moves, under the same
   DHCPv6 server identity, so clients keep their addresses and renew as
@@ -34,7 +38,8 @@ backend can do.
   units so they never take ports 67 and 547, and adds the `cidrella`
   account to group `_kea`. Kea stays off until you switch to it; CIDRella
   then runs it as `cidrella-kea@dhcp4` and `cidrella-kea@dhcp6`. Updates
-  never restart it, the same rule as dnsmasq. If the install fails, the
+  never restart it, the same rule as dnsmasq. Nothing switches to it while
+  it is hidden. If the install fails, the
   update goes on and dnsmasq keeps serving. The Docker image carries
   Alpine's Kea 3.0 and its hooks, down until switched to.
 - **Kea's audit log follows the audit log retention.** Kea's legal log
