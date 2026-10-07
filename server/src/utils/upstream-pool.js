@@ -69,6 +69,7 @@ class Connection {
     this.open = false;
     this.ended = false;
     this.failure = null;
+    this.closeOnTimeout = true; // HTTP/1.1 opts out: its timeout destroys only that socket
   }
 
   get usable() {
@@ -81,6 +82,11 @@ class Connection {
     call.timer = setTimeout(() => {
       onTimeout();
       this.finish(call, { fail: FAIL.TIMEOUT, error: new Error(`${label} timeout`) });
+      // A connection that let a query time out may be half open (NAT state
+      // gone, upstream silent), and steady traffic would keep it from ever
+      // idling out. Drop it: the next query connects fresh, and any other
+      // query still on it fails as closed and is retried on the new one.
+      if (this.closeOnTimeout) this.close();
     }, this.timeoutMs);
     this.inflight.add(call);
     return call;
@@ -302,6 +308,7 @@ class DohH1Connection extends Connection {
     this.tlsOptions = opts.tlsOptions;
     this.agent = new https.Agent({ keepAlive: true, maxSockets: 8 });
     this.open = true;
+    this.closeOnTimeout = false;
   }
 
   send(query) {

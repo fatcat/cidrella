@@ -271,6 +271,21 @@ describe.each(KINDS)('$kind', ({ kind, protocol, label, probe }) => {
     }
   });
 
+  it('drops a connection that let a query time out, so the next one connects fresh', async () => {
+    // A half-open connection would otherwise take every later query down with it.
+    behavior = (_name, count) => (count === 1 ? 'hang' : 'answer');
+    const p = pool({ timeoutMs: 150 });
+    const upstream = upstreamFor(v4);
+    try {
+      expect(await p.query(query(1, 'lost.example'), upstream)).toBeNull();
+      const out = await p.query(query(2, 'next.example'), upstream);
+      expect(dnsPacket.decode(out).answers[0].name).toBe('next.example');
+      expect(connections).toBe(2 + probe);
+    } finally {
+      p.closeAll();
+    }
+  });
+
   it('moves to the next address when one refuses the connection', async () => {
     const p = pool();
     try {
