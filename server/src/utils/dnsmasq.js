@@ -2,8 +2,8 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync, execSync } from 'child_process';
-import { parseNetwork, isValidAddress } from './ip.js';
-import { sortKey } from './address.js';
+import { parseNetwork, isValidAddress, isGloballyRoutableCidr } from './ip.js';
+import { sortKey, addressFamily } from './address.js';
 import { ipForPtrRecord } from '../models/dns-record.js';
 import { getSetting } from '../db/init.js';
 import { ipv6Enabled } from './ipv6-support.js';
@@ -537,9 +537,84 @@ export function servedRecordTtl(record) {
 // the installer's include mode points a host's own dnsmasq at conf.d.
 const LOCAL_ANSWER_LINES = ['no-hosts', `local-ttl=${LOCAL_TTL}`];
 
+// Names reserved for local use, which CIDRella answers itself (NXDOMAIN, or
+// its own record) rather than forwards: RFC 6761 (localhost, invalid, test),
+// 7686 (onion), 9462 (resolver.arpa, the DDR probe) and the RFC 6303 reverse
+// zones for loopback, link-local, "this network", broadcast and documentation
+// addresses in both families, plus the IPv4 private ranges bogus-priv already
+// keeps from upstreams. Public resolvers make up answers for these with no
+// DNSSEC proof (Quad9 sends EDE 29 and an empty authority section), so with
+// DNSSEC on dnsmasq calls them BOGUS and the client gets SERVFAIL.
+const RESERVED_LOCAL_DOMAINS = [
+  'localhost',
+  'invalid',
+  'test',
+  'onion',
+  'resolver.arpa',
+  '0.in-addr.arpa',
+  '127.in-addr.arpa',
+  '254.169.in-addr.arpa',
+  '255.255.255.255.in-addr.arpa',
+  '2.0.192.in-addr.arpa',
+  '100.51.198.in-addr.arpa',
+  '113.0.203.in-addr.arpa',
+  '10.in-addr.arpa',
+  ...Array.from({ length: 16 }, (_, i) => `${16 + i}.172.in-addr.arpa`),
+  '168.192.in-addr.arpa',
+  `${'0.'.repeat(32)}ip6.arpa`, // ::
+  `1.${'0.'.repeat(31)}ip6.arpa`, // ::1
+  '8.e.f.ip6.arpa', // fe80::/10
+  '9.e.f.ip6.arpa',
+  'a.e.f.ip6.arpa',
+  'b.e.f.ip6.arpa',
+  '8.b.d.0.1.0.0.2.ip6.arpa', // 2001:db8::/32
+];
+
+// Reserved for sites rather than for nobody: an office resolver may serve
+// corp.internal or an AD domain under .local, a homenet router home.arpa, and
+// either the PTRs of a ULA prefix. These stay local only while every upstream
+// is a public address, so CIDRella never hides a private resolver's zone.
+const SITE_LOCAL_DOMAINS = ['home.arpa', 'internal', 'local', 'd.f.ip6.arpa'];
+
+const MANAGED_LOCAL_DOMAINS = new Set([...RESERVED_LOCAL_DOMAINS, ...SITE_LOCAL_DOMAINS]);
+
+function settingList(key) {
+  const raw = getSetting(key);
+  if (Array.isArray(raw)) return raw;
+  try {
+    const parsed = JSON.parse(raw || '[]');
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+// The addresses dnsmasq's forwarded queries end up at: the encrypted
+// forwarder's upstreams when it is on, the plain servers otherwise.
+function forwardedAddresses(encrypted) {
+  if (!encrypted) return settingList('dns_upstream_servers');
+  return settingList('forwarder_encrypted_upstreams').flatMap((u) => u?.addresses || []);
+}
+
+function isPublicAddress(address) {
+  if (!isValidAddress(address)) return false;
+  return isGloballyRoutableCidr(`${address}/${addressFamily(address) === 6 ? 128 : 32}`);
+}
+
+/** The local=/domain/ lines for the reserved names, given where queries go. */
+export function reservedLocalLines({ addresses = [] } = {}) {
+  const domains = addresses.every(isPublicAddress)
+    ? [...RESERVED_LOCAL_DOMAINS, ...SITE_LOCAL_DOMAINS]
+    : RESERVED_LOCAL_DOMAINS;
+  return domains.map((domain) => `local=/${domain}/`);
+}
+
 function isManagedLocalAnswerLine(line) {
   const t = line.trim();
-  return t === 'no-hosts' || /^local-ttl=/.test(t);
+  const local = /^local=\/([^/]+)\/$/.exec(t);
+  return (
+    t === 'no-hosts' || /^local-ttl=/.test(t) || (!!local && MANAGED_LOCAL_DOMAINS.has(local[1]))
+  );
 }
 
 export function regenerateDnsmasqConf(_db) {
@@ -566,12 +641,16 @@ export function regenerateDnsmasqConf(_db) {
   // instead of the plain upstream IPs (the stub encrypts to the real upstreams).
   const noResolvIdx = filtered.findIndex((l) => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
+  const encrypted = encryption === 'tls' || encryption === 'https';
   const serverLines = noRecursion
     ? []
-    : encryption === 'tls' || encryption === 'https'
+    : encrypted
       ? [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`]
       : servers.map((s) => `server=${s}`);
-  filtered.splice(insertIdx, 0, ...LOCAL_ANSWER_LINES, ...serverLines);
+  const localLines = reservedLocalLines({
+    addresses: noRecursion ? [] : forwardedAddresses(encrypted),
+  });
+  filtered.splice(insertIdx, 0, ...LOCAL_ANSWER_LINES, ...localLines, ...serverLines);
 
   // Append the DNSSEC block when enabled and the local dnsmasq supports it.
   if (dnssecEnabled) {

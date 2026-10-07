@@ -473,6 +473,23 @@ first on a 0.4.17 host.
   in the All Allocated Networks view and vanished from a network's DNS tab
   even with its zone picked. Such a record now shows under every network
   whose domain is its zone, with Zone-wide as its Network.
+- **Reserved names no longer fail DNSSEC validation.** Names set aside for
+  local use (`localhost`, `.internal`, `home.arpa`, `.local`, `.onion`,
+  `_dns.resolver.arpa`, the encrypted-DNS discovery probe, and the reverse
+  zones of loopback, link-local and private addresses in both families) were
+  forwarded upstream. Quad9 makes up an answer for them with no DNSSEC proof,
+  so with DNSSEC on dnsmasq called it BOGUS and the client got SERVFAIL:
+  2,192 times in one day's log on one install. dnsmasq now answers them
+  itself. `.internal`, `home.arpa`, `.local` and the IPv6 ULA reverse zone
+  stay forwarded when an upstream is a private address, since a site
+  resolver may serve them.
+- **Encrypted forwarding rides out Quad9 dropping its connections.** Quad9
+  ends a DoT connection after anything from 1 to 25 seconds, busy or not,
+  and the queries in flight went with it. A dropped query was sent once more
+  and then given up, which surfaced as SERVFAIL, often on the DNSSEC lookups
+  behind an answer. It is now sent up to three times on fresh connections
+  before the next address is tried, and only a query that finally fails is
+  logged as an upstream error.
 - **Encrypted forwarding keeps its connections open.** With DNS-over-TLS or
   DNS-over-HTTPS on, every lookup that missed dnsmasq's cache opened a new
   TCP and TLS connection to the upstream: about 46 ms an answer against a
