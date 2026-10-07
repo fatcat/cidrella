@@ -33,28 +33,6 @@ was suggested.
   knows by name, as `option-names.js` already does for DHCPv6. Either changes the dnsmasq
   goldens, so it belongs in its own commit.
 
-## Found packaging Kea (2026-10-07)
-
-#### DOCKER-01: the Docker image does not build
-
-**high**, confirmed by `docker build .` on 2026-10-07 (node:24-alpine on Alpine 3.24).
-
-- **What happens:** Two steps fail, one after the other:
-  - The first `apk add` stops with "unable to select packages": Alpine's `arping` (2.28) and
-    `iputils` (which now provides `iputils-arping`) conflict over the `arping` command.
-  - With that worked around, the client stage's `vite build` fails with "Could not load
-    ../server/src/utils/ip.js": the client imports `@shared/*` from `server/src/utils`, and
-    the client stage copies only `client/`.
-- **Why:** The image is not built in CI, so nothing noticed when Alpine split arping into
-  iputils, or when the client began importing shared server modules.
-- **Fix:**
-  - Copy `server/src/` into the client stage (`COPY server/src/ /build/server/src/`; with that
-    the build succeeds).
-  - Install one arping. Dropping `arping` leaves iputils' arping. The scanner's arping
-    arguments must then be checked against iputils' flags before that is the fix.
-  - Add `docker build` to CI so it stays building. The Kea Docker check of 2026-10-07 used a
-    scratch Dockerfile with both changes.
-
 ## Found building DHCP Bulk Change (2026-10-05)
 
 #### DHCP-01: A default option with a value is served to every scope, ticked or not

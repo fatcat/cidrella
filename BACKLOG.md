@@ -249,8 +249,7 @@ Left:
   test there starts both daemons on the rendered estate. Not yet run: the `cidrella-kea@` unit
   and polkit under systemd, which is the `kea-switch` harness scenario on testerella, once a
   pre-release carries it. The Docker image switched dnsmasq to Kea and back, and kept Kea
-  across a restart, in a container built from a scratch Dockerfile (the real one does not
-  build: DOCKER-01 in `REVIEW.md`).
+  across a restart.
 - **Log viewer per role.** `routes/logs.js` reads the DNS backend's log and filters DHCP lines out
   of it. Under Kea that file holds only dnsmasq's "ignored" DHCP lines; the DHCP filter should
   read the DHCP role's `logSource()` (Kea's legal log) instead, with its own offset in the SSE

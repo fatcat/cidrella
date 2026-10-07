@@ -109,3 +109,29 @@ jobs:
         # so this fires only on NEW duplication. Namespace imports are exempt,
         # since a local wrapper delegating to Namespace.fn() is deliberate.
         run: node scripts/check-duplicate-exports.js .
+
+  docker:
+    # The image went unbuilt for months and stopped building twice over
+    # (fixed 2026-10-07): Alpine moved arping into iputils, and the client
+    # began importing server/src. Building it on every push keeps that from
+    # happening quietly again. Nothing is pushed.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Build the image
+        run: docker build -t cidrella:ci .
+
+      - name: Smoke check
+        # The binaries the app runs as cidrella carry the capabilities they
+        # need (a missing one fails only at runtime), and Kea is there.
+        run: |
+          docker run --rm --entrypoint sh cidrella:ci -c '
+            set -e
+            getcap /usr/sbin/arping | grep -q cap_net_raw
+            getcap /usr/sbin/kea-dhcp4 | grep -q cap_net_bind_service
+            getcap /usr/sbin/kea-dhcp6 | grep -q cap_net_bind_service
+            kea-dhcp4 -V >/dev/null
+            test -f /app/client/dist/index.html
+            node -e "require(\"/app/server/node_modules/better-sqlite3\")"
+          '

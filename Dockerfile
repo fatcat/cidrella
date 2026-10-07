@@ -6,6 +6,9 @@ WORKDIR /build/client
 COPY client/package.json client/package-lock.json* ./
 RUN npm install
 COPY client/ ./
+# The client imports the helpers it shares with the server (@shared/* ->
+# server/src/utils), so they have to be here for the build.
+COPY server/src/ /build/server/src/
 RUN VITE_TRACKING=$DEV_TRACKING npx vite build
 
 FROM node:24-alpine
@@ -28,13 +31,19 @@ RUN apk add --no-cache \
     dnsmasq \
     dnsmasq-utils \
     openssl \
-    arping \
     iputils \
     bind-tools \
     sudo \
     tzdata \
     libcap && \
-    command -v dhcp_release
+    command -v dhcp_release && \
+    setcap cap_net_raw+ep /usr/sbin/arping
+
+# arping is iputils' (Alpine's separate arping package now conflicts with
+# iputils over the command). The scanner runs it as cidrella, which has no
+# capabilities of its own, so the binary carries CAP_NET_RAW; compose's
+# cap_add grants it. Without it every ARP probe failed and the scanner fell
+# back to ICMP.
 
 # Kea, the other DHCP server. It stays down until CIDRella serves DHCP from
 # it (rootfs/etc/s6-overlay/scripts/kea.sh). It runs as cidrella, so the

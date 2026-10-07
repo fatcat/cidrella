@@ -68,6 +68,15 @@ backend can do.
 
 ### Fixed
 
+- **The Docker image did not build.** Alpine's `arping` package now
+  conflicts with `iputils`, and the client build stage lacked the server
+  helpers the client shares. The image uses iputils' arping, and CI now
+  builds the image on every push.
+- **Docker: the scanner's ARP probe never ran.** arping runs as the
+  unprivileged `cidrella` account and had no capability to open its raw
+  socket, so every probe fell back to ICMP. The arping binary now carries
+  `CAP_NET_RAW`, which compose already grants.
+
 - **DHCPv6 Captive Portal (option 103) broke dnsmasq's config.** dnsmasq has
   no name for option 103, so the line it was written as
   (`option6:captive-portal`) failed its config check. It is written by number.
