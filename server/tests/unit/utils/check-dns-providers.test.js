@@ -108,6 +108,25 @@ describe('checkProviders and report', () => {
     }
   });
 
+  it('tries a failed address once more before calling the preset broken', async () => {
+    const seen = new Set();
+    const probe = vi.fn(async ({ address, protocol }) => {
+      const key = `${address} ${protocol}`;
+      if (address === '192.0.2.1' && protocol === 'dot' && !seen.has(key)) {
+        seen.add(key);
+        return { problem: 'connection closed', connected: false };
+      }
+      return { problem: null, connected: true };
+    });
+    const log = vi.spyOn(console, 'log').mockImplementation(() => {});
+    try {
+      expect(report(await checkProviders(providers, probe))).toBe(0);
+      expect(probe).toHaveBeenCalledTimes(7);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
   it('blames the network, not the presets, when one protocol never answered', async () => {
     const probe = async ({ protocol }) =>
       protocol === 'dot'

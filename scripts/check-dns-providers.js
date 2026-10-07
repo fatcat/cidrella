@@ -79,15 +79,23 @@ async function probeAddress({ createUpstreamPool, provider, address, protocol })
   }
 }
 
+// A failed probe is tried once more, on a new connection, before it counts:
+// a resolver's anycast node closing one connection is not a broken preset.
+const ATTEMPTS = 2;
+
 async function checkProviders(providers, probe) {
   const failures = [];
   const answered = Object.fromEntries(PROTOCOLS.map(({ label }) => [label, 0]));
   for (const provider of providers) {
     for (const address of provider.addresses) {
       for (const { protocol, label } of PROTOCOLS) {
-        const { problem, connected } = await probe({ provider, address, protocol });
-        if (connected) answered[label]++;
-        if (problem) failures.push({ provider, address, label, problem });
+        let result;
+        for (let attempt = 0; attempt < ATTEMPTS; attempt++) {
+          result = await probe({ provider, address, protocol });
+          if (!result.problem) break;
+        }
+        if (result.connected) answered[label]++;
+        if (result.problem) failures.push({ provider, address, label, problem: result.problem });
       }
     }
   }
