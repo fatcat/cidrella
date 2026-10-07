@@ -1,13 +1,12 @@
 import { isValidDomain, isValidAddress, longToIp, parseNetwork } from '../utils/ip.js';
 import { formatIp, parseIp, IPV4_BITS, IPV6_BITS } from '../utils/address.js';
-import { activeLeaseSql, infiniteLeaseFirstSql } from '../utils/lease-sql.js';
+import { activeLeaseSql, reservedLeaseFirstSql } from '../utils/lease-sql.js';
 import { canonicalHostnameForAllocation } from './ip-lifecycle.js';
 import {
   fqdnForRecordName,
   normalizeDnsName,
   normalizeRecordNameForZone,
 } from '../utils/dns-names.js';
-
 
 // A and AAAA records carry an address and drive the same PTR and lifecycle.
 function isAddressRecordType(type) {
@@ -198,7 +197,7 @@ export function findAHostnameConflict(
       AND ${activeLeaseSql('l')}
     ORDER BY
       s.prefix_length DESC,
-      ${infiniteLeaseFirstSql('l')},
+      ${reservedLeaseFirstSql('l')},
       datetime(l.expires_at) DESC,
       l.id DESC
     LIMIT 1
@@ -570,7 +569,7 @@ export function reconcileManagedReverseDns(
     JOIN subnets s ON s.id = l.subnet_id
     WHERE l.hostname IS NOT NULL AND trim(l.hostname) != ''
       AND ${activeLeaseSql('l')}
-    ORDER BY ${infiniteLeaseFirstSql('l')}, datetime(l.expires_at) DESC, l.id DESC
+    ORDER BY ${reservedLeaseFirstSql('l')}, datetime(l.expires_at) DESC, l.id DESC
   `,
     )
     .all()) {

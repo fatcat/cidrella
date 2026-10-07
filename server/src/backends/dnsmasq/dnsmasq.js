@@ -1,13 +1,15 @@
 import fs from 'fs';
 import path from 'path';
 import os from 'os';
-import { execFileSync, execSync } from 'child_process';
+import { execFileSync } from 'child_process';
 import { isValidAddress } from '../../utils/ip.js';
 import { sortKey } from '../../utils/address.js';
 import { fqdnForRecordName, ipForPtrRecord } from '../../models/dns-record.js';
 import { getSetting } from '../../db/init.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
 import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
+import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
+import { createUnitControl } from '../shared/unit-control.js';
 import {
   resolveDnsmasqInternalPort,
   resolveDnsListenPort,
@@ -28,58 +30,6 @@ import {
   RESTART_PENDING,
 } from './paths.js';
 
-// The temp file sits beside its target, often in a directory dnsmasq watches
-// (hostsdir, dhcp-hostsdir). dnsmasq loads every file there but names that
-// start with '.' or end in '~', so a plain `<file>.tmp.<pid>` was read while
-// half written (DNSMASQ-01). The leading dot keeps dnsmasq off it.
-function atomicWriteTempPath(filePath) {
-  return path.join(path.dirname(filePath), `.${path.basename(filePath)}.tmp.${process.pid}`);
-}
-
-export function atomicWrite(filePath, content) {
-  const tmpPath = atomicWriteTempPath(filePath);
-  fs.writeFileSync(tmpPath, content, 'utf-8');
-  fs.renameSync(tmpPath, filePath);
-}
-
-function collectConfigFiles(target, files = new Map()) {
-  if (!fs.existsSync(target)) return files;
-  const stat = fs.lstatSync(target);
-  if (stat.isFile()) {
-    files.set(target, { content: fs.readFileSync(target), mode: stat.mode });
-    return files;
-  }
-  if (!stat.isDirectory()) return files;
-  for (const entry of fs.readdirSync(target, { withFileTypes: true })) {
-    if (entry.isFile() || entry.isDirectory()) {
-      collectConfigFiles(path.join(target, entry.name), files);
-    }
-  }
-  return files;
-}
-
-function snapshotDnsmasqConfig() {
-  const files = new Map();
-  for (const target of [DNSMASQ_CONF, HOSTS_DIR, CONF_DIR, DHCP_HOSTS_DIR]) {
-    collectConfigFiles(target, files);
-  }
-  return files;
-}
-
-function restoreDnsmasqConfig(snapshot) {
-  const current = snapshotDnsmasqConfig();
-  for (const filePath of current.keys()) {
-    if (!snapshot.has(filePath)) fs.unlinkSync(filePath);
-  }
-  for (const [filePath, saved] of snapshot) {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    const tmpPath = `${filePath}.rollback.${process.pid}`;
-    fs.writeFileSync(tmpPath, saved.content);
-    fs.chmodSync(tmpPath, saved.mode);
-    fs.renameSync(tmpPath, filePath);
-  }
-}
-
 export function validateDnsmasqConfig() {
   if (!fs.existsSync(DNSMASQ_CONF)) return { ok: true, skipped: 'no-config' };
   try {
@@ -97,27 +47,12 @@ export function validateDnsmasqConfig() {
   }
 }
 
-// Depth of the validated update in progress. A nested call (an apply op
-// run inside a backend transaction) joins the outer one: the outer call
-// owns the snapshot, the single `dnsmasq --test` and the rollback.
-let validatedUpdateDepth = 0;
-
-export function withValidatedDnsmasqUpdate(update) {
-  if (validatedUpdateDepth > 0) return update();
-  const snapshot = snapshotDnsmasqConfig();
-  validatedUpdateDepth++;
-  try {
-    const result = update();
-    const changed = typeof result === 'boolean' ? result : Boolean(result?.changed);
-    if (changed) validateDnsmasqConfig();
-    return result;
-  } catch (err) {
-    restoreDnsmasqConfig(snapshot);
-    throw err;
-  } finally {
-    validatedUpdateDepth--;
-  }
-}
+// One validated update: snapshot every file dnsmasq reads, `dnsmasq --test`
+// when something changed, roll back on failure.
+export const withValidatedDnsmasqUpdate = createValidatedFiles({
+  targets: () => [DNSMASQ_CONF, HOSTS_DIR, CONF_DIR, DHCP_HOSTS_DIR],
+  validate: () => validateDnsmasqConfig(),
+});
 
 /**
  * Strip everything dnsmasq ignores: blank lines and whole-line comments.
@@ -521,106 +456,31 @@ export function regenerateDnsmasqConf(_db) {
   return writeIfChanged(DNSMASQ_CONF, filtered.join('\n'));
 }
 
-function isDnsmasqRunning() {
-  try {
-    execSync('pidof dnsmasq', { stdio: 'ignore' });
-    return true;
-  } catch {
-    return false;
-  }
-}
+const dnsmasqUnit = createUnitControl({
+  unit: 'cidrella-dnsmasq',
+  processName: 'dnsmasq',
+  pidFile: DNSMASQ_PID,
+  restartPendingFile: RESTART_PENDING,
+});
 
-// Liveness of OUR dnsmasq specifically. `pidof dnsmasq` matches any dnsmasq
-// on the host (libvirt, LXD, and NetworkManager all spawn their own), so a
-// dead cidrella-dnsmasq could look alive. Ask systemd about the exact unit;
-// fall back to pidof only where systemctl doesn't exist (Docker/s6, where
-// the only dnsmasq in the container is ours).
-export function isCidrellaDnsmasqRunning() {
-  try {
-    execFileSync('systemctl', ['is-active', '--quiet', 'cidrella-dnsmasq'], { stdio: 'ignore' });
-    return true;
-  } catch (err) {
-    if (err && err.code === 'ENOENT') return isDnsmasqRunning();
-    // systemctl exists and says the unit is not active
-    return false;
-  }
-}
+// Liveness of OUR dnsmasq specifically (DNSMASQ-05): libvirt, LXD and
+// NetworkManager all spawn their own dnsmasq.
+export const isCidrellaDnsmasqRunning = () => dnsmasqUnit.isRunning();
 
-// True when a previous restartDnsmasq() could not complete, meaning the conf
-// on disk may be newer than what the running dnsmasq loaded. The boot path
+// True when a previous restartDnsmasq() could not complete. The boot path
 // checks this so change-detection can't skip the restart that would heal a
 // stale-loaded config.
-export function dnsmasqRestartPending() {
-  return fs.existsSync(RESTART_PENDING);
-}
+export const dnsmasqRestartPending = () => dnsmasqUnit.restartPending();
 
-function setRestartPending(pending) {
-  try {
-    if (pending) {
-      fs.mkdirSync(path.dirname(RESTART_PENDING), { recursive: true });
-      fs.writeFileSync(RESTART_PENDING, new Date().toISOString());
-    } else {
-      fs.rmSync(RESTART_PENDING, { force: true });
-    }
-  } catch {
-    /* marker is best-effort */
-  }
-}
-
+// cidrella-dnsmasq.service has ExecReload=/bin/kill -HUP $MAINPID (v0.4.11).
 export function signalDnsmasq() {
   validateDnsmasqConfig();
-  // Reload dnsmasq via systemctl. cidrella-dnsmasq.service has
-  // ExecReload=/bin/kill -HUP $MAINPID (added in v0.4.11), and the cidrella
-  // service account is authorized to reload that exact unit by
-  // /etc/polkit-1/rules.d/49-cidrella.rules, no sudo, no setuid escalation.
-  //
-  // This path replaces the sudo+wrapper path (cidrella-dnsmasq-hup) which
-  // was broken from v0.4.8 onward by the systemd hardening on
-  // cidrella.service implicitly setting NoNewPrivileges=yes.
-  try {
-    execFileSync('systemctl', ['reload', 'cidrella-dnsmasq'], { stdio: 'pipe' });
-    return;
-  } catch (err) {
-    const stderr = err?.stderr?.toString?.().trim();
-    if (stderr) console.warn('systemctl reload cidrella-dnsmasq failed:', stderr);
-  }
-
-  // Docker / dev fallback: try to send SIGHUP directly. This works inside
-  // the s6-supervised container where cidrella-dnsmasq.service doesn't
-  // exist and the cidrella process has the same uid as dnsmasq.
-  try {
-    const pid = parseInt(fs.readFileSync(DNSMASQ_PID, 'utf-8').trim(), 10);
-    if (pid) process.kill(pid, 'SIGHUP');
-  } catch {
-    console.warn('Could not send SIGHUP to dnsmasq (may not be running)');
-  }
+  dnsmasqUnit.reload();
 }
 
 export function restartDnsmasq() {
   validateDnsmasqConfig();
-  // Native installs: polkit-gated systemctl restart (no sudo).
-  try {
-    execFileSync('systemctl', ['restart', 'cidrella-dnsmasq'], { stdio: 'pipe' });
-    console.log('dnsmasq restarted via systemctl');
-    setRestartPending(false);
-    return;
-  } catch (err) {
-    const stderr = err?.stderr?.toString?.().trim();
-    if (stderr) console.warn('systemctl restart cidrella-dnsmasq failed:', stderr);
-  }
-
-  // Docker / supervisor fallback: terminate and let the supervisor restart.
-  try {
-    execFileSync('pkill', ['-TERM', '-x', 'dnsmasq'], { stdio: 'pipe' });
-    console.log('dnsmasq terminated (supervisor will restart)');
-    setRestartPending(false);
-  } catch {
-    // Both restart paths failed: the conf on disk may now be ahead of the
-    // running process. Leave a marker so the next boot restarts even if
-    // change-detection sees an unchanged file.
-    console.warn('Could not restart dnsmasq');
-    setRestartPending(true);
-  }
+  dnsmasqUnit.restart();
 }
 
 export function applyInterfaceConfig(_db) {

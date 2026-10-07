@@ -6,6 +6,59 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.5.2 — 2026-10-07
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+
+Kea as a second DHCP backend, on a backend contract that describes what each
+backend can do. In progress: this section grows with each phase.
+
+### Changed
+
+- **Backend features.** `server/src/backends/features.js` lists every
+  feature CIDRella offers, or may offer, that depends on which DNS or DHCP
+  backend fills a role (60 of them, from the feature survey of 2026-10-07).
+  Each backend says which it supports, and `GET /api/features` reports them
+  with the reason a feature is off. A write that needs a feature the active
+  backend lacks gets 409 `BACKEND_FEATURE_UNSUPPORTED`. With dnsmasq nothing
+  that works today changes.
+- **Health and metrics.** `backends.<role>.features` carries the same
+  support per role. The 0.5.1 `capabilities` keys stay one more release,
+  derived from it. The `services.dnsmasq` field of `/api/health/system` and
+  the top-level `dnsmasq` field of `/api/metrics/services`, deprecated in
+  0.5.1, are gone: read `backends`.
+- **Lease times** are read by one parser shared by the server and the
+  client (`utils/lease-time.js`); the stored text ("12h", "3600") is
+  unchanged.
+
+### Fixed
+
+- **DHCPv6 Captive Portal (option 103) broke dnsmasq's config.** dnsmasq has
+  no name for option 103, so the line it was written as
+  (`option6:captive-portal`) failed its config check. It is written by number.
+- **The update preflight could restart DNS and DHCP.** The probe update.sh
+  runs before switching slots rendered config into its own directory, then
+  restarted the host's dnsmasq if it was down. It now starts nothing. This
+  takes effect from the update after 0.5.2: the first update into it still
+  runs the old script.
+
+### Developer notes
+
+- The DHCP option catalog no longer carries `dnsmasqName`; the dnsmasq
+  adapter spells options itself (`backends/dnsmasq/option-names.js`).
+- `releaseLease` takes a `BackendLease` and may return a promise;
+  `retireStaleDynamicAddresses` is async.
+- Where several leases name one address, the reserved client's is read
+  first by its DHCP Reservation as well as by dnsmasq's `infinite` expiry
+  (`reservedLeaseFirstSql`), so a backend that reports real expiries ranks
+  the same way.
+
+---
+
 ## v0.5.1 — 2026-10-06
 
 ```yaml

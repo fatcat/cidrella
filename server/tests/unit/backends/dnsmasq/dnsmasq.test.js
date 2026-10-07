@@ -350,7 +350,7 @@ describe('IPv6 emission', () => {
 
 describe('atomicWrite', () => {
   it('writes through a dot-named temp file dnsmasq skips (DNSMASQ-01)', async () => {
-    const { atomicWrite } = await import('../../../../src/backends/dnsmasq/dnsmasq.js');
+    const { atomicWrite } = await import('../../../../src/backends/shared/validated-files.js');
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-atomic-'));
     const target = path.join(dir, 'reservations.hosts');
     const rename = vi.spyOn(fs, 'renameSync');

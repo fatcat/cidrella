@@ -559,7 +559,7 @@ describe('DHCPv6 option defaults and scope options', () => {
     expect(codes).toContain(23);
     expect(codes).toContain(56);
     expect(codes).not.toContain(3);
-    expect(res.body.catalog.find((o) => o.code === 23).dnsmasqName).toBe('option6:dns-server');
+    expect(res.body.catalog.some((o) => 'dnsmasqName' in o)).toBe(false);
     expect(res.body.catalog.find((o) => o.code === 14)).toMatchObject({
       name: 'rapid-commit',
       builtIn: true,
@@ -655,10 +655,8 @@ describe('DHCPv6 option defaults and scope options', () => {
     expect(rapid.body.error).toMatch(/always on/);
 
     const v6 = (await request(app).get('/api/dhcp/options?family=6')).body.catalog;
-    expect(v6.find((o) => o.code === 200)).toMatchObject({
-      custom: true,
-      dnsmasqName: 'option6:200',
-    });
+    expect(v6.find((o) => o.code === 200)).toMatchObject({ custom: true });
+    expect(v6.find((o) => o.code === 200)).not.toHaveProperty('dnsmasqName');
 
     expect((await request(app).delete('/api/dhcp/options/custom/200')).status).toBe(200);
     expect(

@@ -7,11 +7,12 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 
 const calls = [];
-const fake = { current: null };
+const fake = { current: null, dhcpService: null };
 vi.mock('../../../src/backends/index.js', () => ({
   getDnsBackend: () => fake.current.dns,
   getDhcpBackend: () => fake.current.dhcp,
   getService: () => fake.current,
+  uniqueServices: () => [fake.current, fake.dhcpService].filter(Boolean),
 }));
 vi.mock('../../../src/models/dhcp-lease.js', async (importOriginal) => ({
   ...(await importOriginal()),
@@ -19,7 +20,8 @@ vi.mock('../../../src/models/dhcp-lease.js', async (importOriginal) => ({
 }));
 
 const { createFakeBackend } = await import('../../helpers/fake-backends.js');
-const { applyDhcp, HOOK_HANDLERS } = await import('../../../src/services/backend-apply.js');
+const { applyAtBoot, applyDhcp, HOOK_HANDLERS } =
+  await import('../../../src/services/backend-apply.js');
 
 let db;
 let tmpDir;
@@ -38,6 +40,7 @@ beforeEach(() => {
   };
   backend.applyActivation = (activation) => calls.push(`activate ${activation}`);
   fake.current = backend;
+  fake.dhcpService = null;
 });
 
 describe('applyDhcp', () => {
@@ -52,6 +55,41 @@ describe('applyDhcp', () => {
     };
     expect(() => applyDhcp(db)).toThrow('validation failed');
     expect(calls).toEqual([]);
+  });
+});
+
+describe('applyAtBoot', () => {
+  const recordActivate = (service) => {
+    service.activate = vi.fn(({ force }) => (force ? 'restarted' : 'unchanged'));
+    return service;
+  };
+
+  it('forces the DNS service when its config changed, and only checks the others', () => {
+    recordActivate(fake.current);
+    fake.dhcpService = recordActivate(createFakeBackend({ name: 'kea' }));
+    expect(applyAtBoot(db, { preflight: false })).toEqual({ fake: 'restarted', kea: 'unchanged' });
+    expect(fake.current.activate).toHaveBeenCalledWith({ force: true });
+    expect(fake.dhcpService.activate).toHaveBeenCalledWith({ force: false });
+    // Nothing changed the second time.
+    expect(applyAtBoot(db, { preflight: false })).toEqual({ fake: 'unchanged', kea: 'unchanged' });
+  });
+
+  it('renders but starts or restarts nothing in an update preflight', () => {
+    recordActivate(fake.current);
+    fake.dhcpService = recordActivate(createFakeBackend({ name: 'kea' }));
+    expect(applyAtBoot(db, { preflight: true })).toEqual({ fake: 'skipped', kea: 'skipped' });
+    expect(fake.current.activate).not.toHaveBeenCalled();
+    expect(fake.dhcpService.activate).not.toHaveBeenCalled();
+  });
+
+  it('reads the preflight flag from CIDRELLA_PREFLIGHT', () => {
+    recordActivate(fake.current);
+    vi.stubEnv('CIDRELLA_PREFLIGHT', '1');
+    try {
+      expect(applyAtBoot(db)).toEqual({ fake: 'skipped' });
+    } finally {
+      vi.unstubAllEnvs();
+    }
   });
 });
 

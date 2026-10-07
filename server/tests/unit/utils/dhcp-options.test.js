@@ -10,11 +10,10 @@ import {
 } from '../../../src/utils/dhcp-options.js';
 
 describe('DHCPv6 option catalog', () => {
-  it('has unique codes, option6 names and no code dnsmasq builds itself', () => {
+  it('has unique codes and no code dnsmasq builds itself', () => {
     const codes = DHCP6_OPTIONS.map((o) => o.code);
     expect(new Set(codes).size).toBe(codes.length);
     for (const opt of DHCP6_OPTIONS.filter((o) => !o.builtIn)) {
-      expect(opt.dnsmasqName).toBe(`option6:${opt.name}`);
       expect(DHCP6_INTERNAL_CODES.has(opt.code)).toBe(false);
       expect(['ip-list', 'text-list', 'text', 'number']).toContain(opt.type);
       expect(opt.rfcUrl).toMatch(/^https:\/\/datatracker\.ietf\.org\//);
@@ -27,7 +26,7 @@ describe('DHCPv6 option catalog', () => {
   it('lists Rapid Commit (14) as built in: shown, never settable or written', () => {
     const builtIn = DHCP6_OPTIONS.filter((o) => o.builtIn);
     expect(builtIn.map((o) => o.code)).toEqual([14]);
-    expect(DHCP6_OPTIONS_BY_CODE[14]).toMatchObject({ name: 'rapid-commit', dnsmasqName: null });
+    expect(DHCP6_OPTIONS_BY_CODE[14]).toMatchObject({ name: 'rapid-commit' });
     expect(DHCP6_INTERNAL_CODES.has(14)).toBe(true);
     expect(isOptionCodeAllowed(14, 6)).toBe(false);
     expect(builtInCodeReason(14, 6)).toBe('Rapid Commit (14) is always on and has nothing to set');

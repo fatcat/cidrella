@@ -115,8 +115,6 @@ router.get('/services', requirePerm('analytics:read'), async (req, res) => {
 
   res.json({
     backends,
-    // Deprecated: read `backends`. Removed in 0.5.2.
-    dnsmasq: backends.dns.running,
     geoip_proxy: geoipStatus.running,
     geoip_bypassed: geoipStatus.bypassed,
     geoip_port: geoipStatus.port,

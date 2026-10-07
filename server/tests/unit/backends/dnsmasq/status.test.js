@@ -2,7 +2,7 @@ import '../../../helpers/isolated-data-dir.js';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 // DNSMASQ-05: the health read must report OUR dnsmasq, not any process named
-// dnsmasq on the host. `pidof` (execSync) answers yes to libvirt's or LXD's.
+// dnsmasq on the host. `pidof` answers yes to libvirt's or LXD's.
 const execFileSync = vi.fn();
 const execSync = vi.fn();
 vi.mock('child_process', () => ({ execFileSync, execSync, spawnSync: vi.fn() }));
@@ -26,28 +26,28 @@ describe('dnsmasq status().running', () => {
       ['is-active', '--quiet', 'cidrella-dnsmasq'],
       { stdio: 'ignore' },
     );
-    expect(execSync).not.toHaveBeenCalled();
   });
 
   it('reports a stopped unit as down even while another dnsmasq runs on the host', () => {
-    execFileSync.mockImplementation(() => {
-      throw inactive();
+    execFileSync.mockImplementation((cmd) => {
+      if (cmd === 'systemctl') throw inactive();
+      return ''; // pidof dnsmasq would find libvirt's
     });
-    execSync.mockReturnValue(''); // pidof dnsmasq would find libvirt's
     expect(backend.status().running).toBe(false);
-    expect(execSync).not.toHaveBeenCalled();
+    expect(execFileSync).not.toHaveBeenCalledWith('pidof', expect.anything(), expect.anything());
   });
 
   it('falls back to pidof where there is no systemctl (Docker with s6)', () => {
-    execFileSync.mockImplementation(() => {
-      throw enoent();
+    let pidofAnswers = true;
+    execFileSync.mockImplementation((cmd) => {
+      if (cmd === 'systemctl') throw enoent();
+      if (!pidofAnswers) throw new Error('no process');
+      return '';
     });
     expect(backend.status().running).toBe(true);
-    expect(execSync).toHaveBeenCalledWith('pidof dnsmasq', { stdio: 'ignore' });
+    expect(execFileSync).toHaveBeenCalledWith('pidof', ['dnsmasq'], { stdio: 'ignore' });
 
-    execSync.mockImplementation(() => {
-      throw new Error('no process');
-    });
+    pidofAnswers = false;
     expect(backend.status().running).toBe(false);
   });
 });

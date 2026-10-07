@@ -25,6 +25,36 @@ import { LEASE_FILE, readServerDuid, readSettledLeaseFile } from './lease-file.j
 import { releaseDnsmasqLease } from './lease-release.js';
 import { LOG_FILE, dhcpDirection, isDhcpLine, querySourceIp } from './log-format.js';
 import { createDhcpLogParser } from './dhcp-log-parser.js';
+import { declareSupport } from '../features.js';
+
+const ROLES = ['dns', 'dhcp', 'ra'];
+
+// What CIDRella does through dnsmasq today. dnsmasq could do more (CAA,
+// conditional forwarding, cache tuning); a feature turns true here when
+// CIDRella renders it, not when dnsmasq has the directive.
+const SUPPORTED = [
+  'dns-core-records',
+  'dns-local-zones',
+  'rec-forwarders',
+  'dhcp-scopes',
+  'dhcp-res-mac',
+  'dhcp-ping-check',
+  'dhcp-options',
+  'dhcp6-stateful',
+  'dhcp6-stateless',
+  'dhcp6-duid-res',
+  'ra',
+  'ra-names',
+  'lease-release',
+  'fingerprint',
+];
+
+const NOTES = {
+  'dns-record-ttl': 'dnsmasq answers every record but a CNAME with one TTL (local-ttl).',
+  'dns-soa-ns': 'dnsmasq serves SOA and NS records only in its authoritative mode.',
+  'dhcp-stats': 'dnsmasq has no statistics interface.',
+  'forensic-log': 'dnsmasq keeps no DHCP audit log of its own.',
+};
 
 function applyActivation(activation) {
   if (activation === 'restart') restartDnsmasq();
@@ -49,7 +79,7 @@ function apply(write, { activate = true } = {}) {
 export function createDnsmasqBackend() {
   return {
     name: 'dnsmasq',
-    roles: ['dns', 'dhcp', 'ra'],
+    roles: ROLES,
 
     dns: {
       // dnsmasq rereads hostsdir on SIGHUP but not conf-dir, so a change to
@@ -110,13 +140,15 @@ export function createDnsmasqBackend() {
       running: isCidrellaDnsmasqRunning(),
       restartPending: dnsmasqRestartPending(),
     }),
-    capabilities: () => ({
-      dnssec: dnsmasqSupportsDnssec(),
-      routerAdvertisements: true,
-      dhcpv6: true,
-      leaseRelease: true,
-      encryptedUpstream: false,
-    }),
+    capabilities: () =>
+      declareSupport(ROLES, [
+        ...SUPPORTED,
+        ...(dnsmasqSupportsDnssec() ? ['rec-dnssec-validate'] : []),
+      ]),
+    capabilityNotes: () =>
+      dnsmasqSupportsDnssec()
+        ? NOTES
+        : { ...NOTES, 'rec-dnssec-validate': 'This dnsmasq build has no DNSSEC support.' },
     transaction: (fn) => withValidatedDnsmasqUpdate(fn),
     applyActivation,
     // Restart when asked to, when a previous restart failed (the running

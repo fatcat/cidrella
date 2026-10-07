@@ -15,7 +15,8 @@
  * name sync it sequences.
  */
 import { vi } from 'vitest';
-import { roleStatuses } from '../../src/backends/contract.js';
+import { featureReportFor, featureSupported, roleStatuses } from '../../src/backends/contract.js';
+import { declareSupport } from '../../src/backends/features.js';
 
 export const APPLY_OPS = Object.freeze(['applyDns', 'applyDhcp', 'applyResolver']);
 
@@ -36,7 +37,22 @@ export function stubBackendApply(original, ops = APPLY_OPS) {
  * An in-memory backend that keeps the contract (backends/contract.js): apply
  * ops snapshot what they read and report a change when it differs, leases are
  * whatever the test seeded. `applied` lists the activations performed.
+ * `capabilities` overrides feature support (backends/features.js ids) on top
+ * of a dnsmasq-like default with DNSSEC off.
  */
+const FAKE_SUPPORTED = [
+  'dns-core-records',
+  'rec-forwarders',
+  'dhcp-scopes',
+  'dhcp-res-mac',
+  'dhcp-options',
+  'dhcp6-stateful',
+  'dhcp6-stateless',
+  'dhcp6-duid-res',
+  'ra',
+  'lease-release',
+];
+
 export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
   const state = {};
   const applied = [];
@@ -112,7 +128,9 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
             )
             .all(),
           reservations: db
-            .prepare('SELECT ip_address, mac_address, duid FROM dhcp_reservations ORDER BY id')
+            .prepare(
+              'SELECT ip_address, mac_address, duid FROM dhcp_reservations WHERE enabled = 1 ORDER BY id',
+            )
             .all(),
         }),
         'restart',
@@ -129,19 +147,16 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
         return () => watchers.delete(onChange);
       },
       releaseLease: (lease) =>
-        lease?.ip_address ? { released: true } : { released: false, skipped: 'invalid-identity' },
+        lease?.ip ? { released: true } : { released: false, skipped: 'invalid-identity' },
       serverIdentity: () => ({ duid: null }),
     },
     ra: {},
     status: () => ({ name, running: true, restartPending: false }),
-    capabilities: () => ({
-      dnssec: false,
-      routerAdvertisements: true,
-      dhcpv6: true,
-      leaseRelease: true,
-      encryptedUpstream: false,
-      ...capabilities,
-    }),
+    capabilities: () =>
+      declareSupport(backend.roles, {
+        ...Object.fromEntries(FAKE_SUPPORTED.map((id) => [id, true])),
+        ...capabilities,
+      }),
     transaction: (fn) => fn(),
     applyActivation: (activation) => {
       if (activation !== 'none') applied.push(activation);
@@ -179,5 +194,7 @@ export function fakeBackendsModule(options) {
     getRaBackend: () => backend,
     uniqueServices: () => [backend],
     backendStatuses: () => roleStatuses(() => backend),
+    supports: (id) => featureSupported(() => backend, id),
+    featureReport: () => featureReportFor(() => backend),
   };
 }

@@ -7,7 +7,7 @@
  * applyDhcp here also skips the DHCP name sync, as stubbing the old
  * regenerateDhcpConfigs did.
  */
-import { getDhcpBackend, getDnsBackend, getService } from '../backends/index.js';
+import { getDhcpBackend, getDnsBackend, getService, uniqueServices } from '../backends/index.js';
 import { syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 
 export function applyDns(db) {
@@ -35,14 +35,16 @@ export function applyDhcp(db) {
 
 /**
  * Boot: write the listen and resolver config as one validated change, then
- * make sure the backend runs it. A clean reboot with nothing changed and the
- * service up costs no restart. Returns 'restarted', 'unchanged' or 'failed'.
+ * make sure every backend service runs its config. A clean reboot with
+ * nothing changed and the services up costs no restart. Returns what
+ * happened to each service by name ('restarted', 'unchanged', 'failed', or
+ * 'skipped' in an update preflight).
  */
-export function applyAtBoot(db) {
-  const service = getService('dns');
-  let changed = false;
+export function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT === '1' } = {}) {
+  const dns = getService('dns');
+  let dnsChanged = false;
   try {
-    ({ changed } = service.transaction(() => {
+    ({ changed: dnsChanged } = dns.transaction(() => {
       const listen = getDnsBackend().applyListen(db, { activate: false });
       const resolver = getDnsBackend().applyResolver(db, { activate: false });
       return { changed: listen.changed || resolver.changed };
@@ -50,21 +52,31 @@ export function applyAtBoot(db) {
   } catch (err) {
     // The validated writer restored the last config. Keep the management API
     // available so the operator can correct the stored setting or record.
-    console.error('dnsmasq config generation failed; retained previous config:', err.message);
+    console.error(`${dns.name} config generation failed; retained previous config:`, err.message);
   }
-  try {
-    // Restart when the config changed, when OUR unit is down (the specific
-    // unit, not any dnsmasq on the host), or when a previous restart failed
-    // and the running process may have loaded a stale config.
-    const outcome = service.activate({ force: changed });
-    if (outcome === 'unchanged') {
-      console.log('dnsmasq config unchanged and service running, skipping boot restart');
+  const outcomes = {};
+  for (const service of uniqueServices()) {
+    // update.sh's preflight probe renders into its own data dir; the units
+    // on the host belong to the running release, so it never touches them.
+    if (preflight) {
+      outcomes[service.name] = 'skipped';
+      continue;
     }
-    return outcome;
-  } catch {
-    console.warn('dnsmasq restart failed (may not be installed)');
-    return 'failed';
+    try {
+      // Restart when the config changed, when OUR unit is down (the specific
+      // unit, not any daemon of that name on the host), or when a previous
+      // restart failed and the running process may hold a stale config.
+      const outcome = service.activate({ force: service === dns && dnsChanged });
+      if (outcome === 'unchanged') {
+        console.log(`${service.name} config unchanged and service running, skipping boot restart`);
+      }
+      outcomes[service.name] = outcome;
+    } catch {
+      console.warn(`${service.name} restart failed (may not be installed)`);
+      outcomes[service.name] = 'failed';
+    }
   }
+  return outcomes;
 }
 
 /**

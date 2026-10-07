@@ -11,7 +11,7 @@ vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
 );
 vi.mock('../../../src/backends/index.js', async () =>
   (await import('../../helpers/fake-backends.js')).fakeBackendsModule({
-    capabilities: { dnssec: true },
+    capabilities: { 'rec-dnssec-validate': true },
   }),
 );
 
@@ -27,7 +27,10 @@ const { backend } = await import('../../../src/backends/index.js');
 // What the backend reports for DNSSEC support; a test flips it.
 let dnssecSupported = true;
 const baseCapabilities = backend.capabilities;
-backend.capabilities = () => ({ ...baseCapabilities(), dnssec: dnssecSupported });
+backend.capabilities = () => ({
+  ...baseCapabilities(),
+  'rec-dnssec-validate': dnssecSupported,
+});
 const { ensureNtpEnabled, armDnssecTimecheckWhenSynced } =
   await import('../../../src/utils/timesync.js');
 const { default: request } = await import('supertest');

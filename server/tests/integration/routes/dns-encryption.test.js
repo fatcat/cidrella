@@ -10,7 +10,7 @@ vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
 );
 vi.mock('../../../src/backends/index.js', async () =>
   (await import('../../helpers/fake-backends.js')).fakeBackendsModule({
-    capabilities: { dnssec: true },
+    capabilities: { 'rec-dnssec-validate': true },
   }),
 );
 vi.mock('../../../src/utils/timesync.js', () => ({

@@ -33,6 +33,8 @@
  *   to the caller (Service.applyActivation), e.g. to batch two changes
  */
 
+import { FEATURES, featureById } from './features.js';
+
 export const ACTIVATIONS = Object.freeze(['none', 'reload', 'restart']);
 
 /** Roles a backend can fill. One backend may fill several. */
@@ -63,7 +65,8 @@ export const DNS_OPS = Object.freeze([
  * - applyScopes(db, opts) -> ApplyResult: scopes, pools, options, reservations
  * - readLeases(opts) -> Promise<{ leases: BackendLease[] } | { leases: null, unsettled: true }>
  * - watchLeases(onChange) -> stop(): calls onChange when leases may have changed
- * - releaseLease(leaseRow) -> { released, skipped?, error? }: never throws
+ * - releaseLease(BackendLease) -> { released, skipped?, error? }, or a Promise
+ *   of it: never throws or rejects
  * - serverIdentity() -> { duid: string|null }: the server's own DHCPv6 DUID
  */
 export const DHCP_OPS = Object.freeze([
@@ -77,7 +80,10 @@ export const DHCP_OPS = Object.freeze([
 /**
  * Per process (a backend filling two roles is one service).
  * - status() -> { name, running, restartPending }
- * - capabilities() -> object of booleans, keys in CAPABILITY_KEYS
+ * - capabilities() -> { [featureId]: boolean } for every feature of the roles
+ *   it fills (backends/features.js; build it with declareSupport)
+ * - capabilityNotes?() -> { [featureId]: string }: optional; why a feature is
+ *   off, or what it depends on, in words the UI can show
  * - transaction(fn) -> fn's result: apply ops inside are validated and rolled
  *   back as one
  * - applyActivation(activation) -> void
@@ -87,7 +93,11 @@ export const DHCP_OPS = Object.freeze([
  * - prepare() -> void: create what the backend needs on disk before it starts
  * - logSource() -> null, or { path, querySourceIp(line), dhcpDirection(line),
  *   isDhcpLine(line), createDhcpParser() } for a backend whose log the
- *   liveness, metrics, log viewer and fingerprint readers can use
+ *   liveness, metrics, log viewer and fingerprint readers can use.
+ *   `path` is read on every poll, so a log that moves to a new file is
+ *   followed (createLogFollower in utils/log-reader.js). dhcpDirection
+ *   answers 'client', 'server' or null. Readers take the DNS role's log for
+ *   queries and the DHCP role's for DHCP.
  */
 export const SERVICE_OPS = Object.freeze([
   'status',
@@ -100,13 +110,21 @@ export const SERVICE_OPS = Object.freeze([
   'logSource',
 ]);
 
-export const CAPABILITY_KEYS = Object.freeze([
-  'dnssec',
-  'routerAdvertisements',
-  'dhcpv6',
-  'leaseRelease',
-  'encryptedUpstream',
-]);
+/**
+ * The capability keys 0.5.1 reported in /api/health/system and /api/metrics,
+ * each read from the feature catalog. Deprecated: read `features`. Removed in
+ * 0.5.3. No adapter encrypts upstream queries itself (CIDRella's forwarder
+ * does), so encryptedUpstream stays false.
+ */
+export function legacyCapabilities(caps) {
+  return {
+    dnssec: caps['rec-dnssec-validate'] === true,
+    routerAdvertisements: caps.ra === true,
+    dhcpv6: caps['dhcp6-stateful'] === true,
+    leaseRelease: caps['lease-release'] === true,
+    encryptedUpstream: false,
+  };
+}
 
 /**
  * Throw unless `backend` has every operation for the roles it claims. The
@@ -135,7 +153,9 @@ export function assertBackendShape(backend) {
 
 /**
  * Status and capabilities per role, from `serviceFor(role)`:
- * `{ dns: {name, running, restartPending, capabilities}, dhcp: {...}, ra: {...} }`.
+ * `{ dns: {name, running, restartPending, features, capabilities}, dhcp: {...}, ra: {...} }`,
+ * where `features` is the service's capabilities() and `capabilities` the
+ * deprecated legacy keys.
  * Each distinct service is asked once, so roles sharing a daemon cost one
  * status check and report the same object.
  */
@@ -145,9 +165,58 @@ export function roleStatuses(serviceFor) {
     ROLES.map((role) => {
       const service = serviceFor(role);
       if (!byService.has(service)) {
-        byService.set(service, { ...service.status(), capabilities: service.capabilities() });
+        const features = service.capabilities();
+        byService.set(service, {
+          ...service.status(),
+          features,
+          capabilities: legacyCapabilities(features),
+        });
       }
       return [role, byService.get(service)];
     }),
   );
+}
+
+/**
+ * Does the service `serviceFor(role)` filling the feature's role support it?
+ * `id` is a backends/features.js id; an unknown one throws.
+ */
+export function featureSupported(serviceFor, id) {
+  const feature = featureById(id);
+  if (!feature) throw new Error(`Unknown backend feature: ${id}`);
+  return serviceFor(feature.role).capabilities()[id] === true;
+}
+
+/**
+ * Every catalog feature with whether the service filling its role supports
+ * it, which backend that is, the backend's note on it, and (when off) the
+ * reason the API answers and the UI shows. Each service is asked once.
+ */
+export function featureReportFor(serviceFor) {
+  const byService = new Map();
+  const answers = (service) => {
+    if (!byService.has(service)) {
+      byService.set(service, {
+        supported: service.capabilities(),
+        notes: service.capabilityNotes?.() || {},
+      });
+    }
+    return byService.get(service);
+  };
+  return FEATURES.map((f) => {
+    const service = serviceFor(f.role);
+    const { supported, notes } = answers(service);
+    const ok = supported[f.id] === true;
+    const note = notes[f.id] || null;
+    const base = `${f.label} is not available with ${service.name}.`;
+    return {
+      id: f.id,
+      role: f.role,
+      label: f.label,
+      backend: service.name,
+      supported: ok,
+      note,
+      reason: ok ? null : note ? `${base} ${note}` : base,
+    };
+  });
 }

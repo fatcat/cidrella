@@ -7,7 +7,7 @@
 
 import { parseNetwork } from './ip.js';
 import { parseIp } from './address.js';
-import { activeLeaseSql, infiniteLeaseFirstSql } from './lease-sql.js';
+import { activeLeaseSql, reservedLeaseFirstSql } from './lease-sql.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
 import { setPtrForIp, fqdnForRecordName } from '../models/dns-record.js';
@@ -105,7 +105,7 @@ export function resolveCanonicalHostname(db, subnetId, ip) {
       AND trim(hostname) != ''
       AND ${activeLeaseSql()}
     ORDER BY
-      ${infiniteLeaseFirstSql()},
+      ${reservedLeaseFirstSql()},
       datetime(expires_at) DESC,
       id DESC
     LIMIT 1
@@ -256,7 +256,7 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
         AND ip_address = ?
         AND ${activeLeaseSql()}
       ORDER BY
-        ${infiniteLeaseFirstSql()},
+        ${reservedLeaseFirstSql()},
         datetime(expires_at) DESC,
         id DESC
       LIMIT 1

@@ -10,7 +10,7 @@ import {
   IpLifecycleConflictError,
 } from '../services/ip-lifecycle-service.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
-import { getDnsBackend, getService } from '../backends/index.js';
+import { getDnsBackend, supports } from '../backends/index.js';
 import { ensureNtpEnabled, getNtpStatus, armDnssecTimecheckWhenSynced } from '../utils/timesync.js';
 import {
   applyEncryptedForwarder,
@@ -73,7 +73,6 @@ function enrichDnsAddressRecords(db, records, zoneName) {
   );
   return records;
 }
-
 
 // A and AAAA records both allocate an address through the same lifecycle.
 function isAddressType(type) {
@@ -1046,7 +1045,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
 router.get('/dnssec', requirePerm('dns:read'), (req, res) => {
   res.json({
     enabled: getSetting('dnssec_enabled') === 'true',
-    supported: getService('dns').capabilities().dnssec,
+    supported: supports('rec-dnssec-validate'),
     ntp: getNtpStatus(),
   });
 });
@@ -1059,7 +1058,7 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'enabled must be a boolean' });
   }
-  if (enabled && !getService('dns').capabilities().dnssec) {
+  if (enabled && !supports('rec-dnssec-validate')) {
     return res
       .status(400)
       .json({ error: 'dnsmasq on this host was not built with DNSSEC support' });

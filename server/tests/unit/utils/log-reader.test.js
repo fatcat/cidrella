@@ -2,7 +2,7 @@ import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import { afterEach, describe, expect, it } from 'vitest';
-import { readLogTail } from '../../../src/utils/log-reader.js';
+import { createLogFollower, readLogTail } from '../../../src/utils/log-reader.js';
 
 const dirs = [];
 
@@ -34,5 +34,33 @@ describe('readLogTail', () => {
   it('returns all complete lines and advances to EOF', () => {
     const file = logFile('one\ntwo\n');
     expect(readLogTail(file, 0)).toEqual({ lines: ['one', 'two'], newOffset: 8 });
+  });
+});
+
+describe('createLogFollower', () => {
+  it('starts at the end of the log and returns what is written after', () => {
+    const file = logFile('old line\n');
+    const log = createLogFollower({ path: file });
+    expect(log.read()).toEqual([]);
+    fs.appendFileSync(file, 'new line\n');
+    expect(log.read()).toEqual(['new line']);
+  });
+
+  it('follows the log onto a new file from its start', () => {
+    const dir = path.dirname(logFile(''));
+    const source = { path: null };
+    const log = createLogFollower(source);
+    expect(log.read()).toEqual([]);
+    source.path = path.join(dir, 'kea-legal4.20261007.txt');
+    fs.writeFileSync(source.path, 'first day\n');
+    expect(log.read()).toEqual(['first day']);
+    source.path = path.join(dir, 'kea-legal4.20261008.txt');
+    fs.writeFileSync(source.path, 'second day\n');
+    expect(log.read()).toEqual(['second day']);
+    expect(log.path).toBe(source.path);
+  });
+
+  it('reads nothing without a source', () => {
+    expect(createLogFollower(null).read()).toEqual([]);
   });
 });

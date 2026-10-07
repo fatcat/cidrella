@@ -41,6 +41,7 @@ import {
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import featuresRoutes from './routes/features.js';
+import { BackendFeatureError } from './utils/backend-features.js';
 import subnetRoutes from './routes/subnets.js';
 import rangeTypeRoutes from './routes/range-types.js';
 import rangeRoutes from './routes/ranges.js';
@@ -502,6 +503,9 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
       return res.status(413).json({ error: 'Request body too large' });
     }
     // 4xx errors, route code already wrote a clean message; trust it.
+    if (err instanceof BackendFeatureError) {
+      return res.status(status).json({ error: msg, code: err.code, feature: err.feature });
+    }
     res.status(status).json({ error: msg });
   });
 

@@ -101,7 +101,10 @@ export default [
         {
           patterns: [
             {
-              group: ['**/backends/dnsmasq', '**/backends/dnsmasq/**'],
+              // Every directory under backends/ (an adapter, or shared/
+              // code adapters use); the registry and catalog files are
+              // the way in.
+              group: ['**/backends/*/**'],
               message:
                 'Only server/src/backends/** may import a backend adapter. Use backends/index.js or services/backend-apply.js.',
             },

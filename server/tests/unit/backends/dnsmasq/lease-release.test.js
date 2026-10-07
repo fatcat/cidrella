@@ -40,9 +40,9 @@ describe('releaseDnsmasqLease', () => {
 
     expect(
       releaseDnsmasqLease({
-        ip_address: '10.0.1.23',
-        mac_address: 'aa:bb:cc:dd:ee:23',
-        client_id: 'client-23',
+        ip: '10.0.1.23',
+        mac: 'aa:bb:cc:dd:ee:23',
+        clientId: 'client-23',
       }),
     ).toEqual({ released: true, interface: 'br0' });
     expect(execFileSync).toHaveBeenLastCalledWith(
@@ -55,8 +55,8 @@ describe('releaseDnsmasqLease', () => {
   it('skips unsafe identities and reports a missing utility', () => {
     expect(
       releaseDnsmasqLease({
-        ip_address: '10.0.1.23;reboot',
-        mac_address: 'aa:bb:cc:dd:ee:23',
+        ip: '10.0.1.23;reboot',
+        mac: 'aa:bb:cc:dd:ee:23',
       }),
     ).toEqual({ released: false, skipped: 'invalid-identity' });
     expect(execFileSync).not.toHaveBeenCalled();
@@ -70,8 +70,8 @@ describe('releaseDnsmasqLease', () => {
       });
     expect(
       releaseDnsmasqLease({
-        ip_address: '10.0.1.23',
-        mac_address: 'aa:bb:cc:dd:ee:23',
+        ip: '10.0.1.23',
+        mac: 'aa:bb:cc:dd:ee:23',
       }),
     ).toEqual({ released: false, skipped: 'dhcp_release-not-installed' });
   });
@@ -86,8 +86,8 @@ describe('releaseDnsmasqLease for DHCPv6', () => {
       .mockReturnValueOnce('');
     expect(
       releaseDnsmasqLease({
-        ip_address: 'fd00:a::1600',
-        dhcp_version: 6,
+        ip: 'fd00:a::1600',
+        dhcpVersion: 6,
         duid: '00:01:00:01:cc:dd:ee:ff:11:22',
         iaid: 12345,
       }),
@@ -121,8 +121,8 @@ describe('releaseDnsmasqLease for DHCPv6', () => {
       execFileSync.mockReturnValueOnce('fd00:a::1600 dev eth0 src fd00:a::2\n');
       expect(
         releaseDnsmasqLease({
-          ip_address: 'fd00:a::1600',
-          dhcp_version: 6,
+          ip: 'fd00:a::1600',
+          dhcpVersion: 6,
           duid: '00:01:00:01:cc:dd:ee:ff:11:22',
           iaid: 12345,
         }),
@@ -134,7 +134,7 @@ describe('releaseDnsmasqLease for DHCPv6', () => {
   });
 
   it('skips an IPv6 lease without a DUID or IAID', () => {
-    expect(releaseDnsmasqLease({ ip_address: 'fd00:a::1600', dhcp_version: 6 })).toEqual({
+    expect(releaseDnsmasqLease({ ip: 'fd00:a::1600', dhcpVersion: 6 })).toEqual({
       released: false,
       skipped: 'invalid-identity',
     });

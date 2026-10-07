@@ -58,6 +58,7 @@ import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
+import { activeLeaseSql } from '../utils/lease-sql.js';
 import {
   buildDividePlan,
   buildMergePlan,
@@ -1175,7 +1176,7 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     SELECT id, ip_address, mac_address, hostname, expires_at
     FROM dhcp_leases
     WHERE subnet_id = ?
-      AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+      AND ${activeLeaseSql()}
   `,
     )
     .all(parentId);

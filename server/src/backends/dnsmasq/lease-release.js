@@ -25,24 +25,23 @@ export function routeInterfaceForIp(ip) {
  * Ask the local dnsmasq process to forget a DHCPv4 lease. dhcp_release emits
  * the same DHCPRELEASE packet the client would send, so dnsmasq updates its
  * in-memory state and lease file instead of CIDRella editing a daemon-owned
- * file behind its back.
+ * file behind its back. `lease` is a BackendLease (backends/contract.js).
  */
 export function releaseDnsmasqLease(lease) {
-  if (lease?.dhcp_version === 6 || (lease && isValidIpv6(lease.ip_address))) {
+  if (lease?.dhcpVersion === 6 || (lease && isValidIpv6(lease.ip))) {
     return releaseDnsmasqLease6(lease);
   }
-  if (!lease || !isValidIpv4(lease.ip_address) || !MAC_RE.test(lease.mac_address || '')) {
+  if (!lease || !isValidIpv4(lease.ip) || !MAC_RE.test(lease.mac || '')) {
     return { released: false, skipped: 'invalid-identity' };
   }
-  const interfaceName = routeInterfaceForIp(lease.ip_address);
+  const interfaceName = routeInterfaceForIp(lease.ip);
   if (!interfaceName) return { released: false, skipped: 'no-route-interface' };
 
   try {
-    execFileSync(
-      'dhcp_release',
-      [interfaceName, lease.ip_address, lease.mac_address, lease.client_id || '*'],
-      { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] },
-    );
+    execFileSync('dhcp_release', [interfaceName, lease.ip, lease.mac, lease.clientId || '*'], {
+      encoding: 'utf8',
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
     return { released: true, interface: interfaceName };
   } catch (err) {
     if (err?.code === 'ENOENT') {
@@ -68,14 +67,14 @@ const RELEASE_TIMEOUT_MS = 8000;
  * those, or without the utility, the lease is left alone.
  */
 function releaseDnsmasqLease6(lease) {
-  const duid = lease?.duid || lease?.client_id;
-  if (!lease || !isValidIpv6(lease.ip_address) || !DUID_RE.test(duid || '')) {
+  const duid = lease?.duid || lease?.clientId;
+  if (!lease || !isValidIpv6(lease.ip) || !DUID_RE.test(duid || '')) {
     return { released: false, skipped: 'invalid-identity' };
   }
   if (lease.iaid == null || !/^\d+$/.test(String(lease.iaid))) {
     return { released: false, skipped: 'invalid-identity' };
   }
-  const interfaceName = routeInterfaceForIp(lease.ip_address);
+  const interfaceName = routeInterfaceForIp(lease.ip);
   if (!interfaceName) return { released: false, skipped: 'no-route-interface' };
   const serverDuid = readServerDuid();
   if (!serverDuid) return { released: false, skipped: 'no-server-duid' };
@@ -93,7 +92,7 @@ function releaseDnsmasqLease6(lease) {
         '--iaid',
         String(lease.iaid),
         '--ip',
-        lease.ip_address,
+        lease.ip,
       ],
       { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'], timeout: RELEASE_TIMEOUT_MS },
     );

@@ -1,14 +1,14 @@
 import { describe, it, expect } from 'vitest';
 import {
   activeLeaseSql,
-  infiniteLeaseFirstSql,
+  reservedLeaseFirstSql,
   isLeaseActive,
   leaseExpiryMs,
 } from '../../../src/utils/lease-sql.js';
 
 /**
  * Duplicate-logic audit #26. The active-lease predicate was hand-written in 13
- * queries and the infinite-first ordering in 3 more, across five files.
+ * queries across five files.
  *
  * The important property is that the extraction changed NOTHING: these assert
  * the emitted text against the exact strings that were in the source before, so
@@ -30,15 +30,6 @@ describe('#26: emitted SQL is byte-identical to the copies it replaced', () => {
       "(expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))",
     );
     expect(activeLeaseSql('')).toBe(activeLeaseSql());
-  });
-
-  it('ordering fragment, aliased and not', () => {
-    expect(infiniteLeaseFirstSql()).toBe(
-      "CASE WHEN expires_at = 'infinite' THEN 1 ELSE 0 END DESC",
-    );
-    expect(infiniteLeaseFirstSql('l')).toBe(
-      "CASE WHEN l.expires_at = 'infinite' THEN 1 ELSE 0 END DESC",
-    );
   });
 
   it('is parenthesised, so it can be dropped into a WHERE next to AND', () => {
@@ -68,15 +59,51 @@ describe('#26: the predicate actually runs and selects the right rows', () => {
     // being special-cased. Worth pinning because it is not obvious by reading.
     expect(rows).not.toContain('10.0.0.4');
 
-    const ordered = db
-      .prepare(
-        `SELECT ip_address FROM dhcp_leases WHERE ${activeLeaseSql()} ORDER BY ${infiniteLeaseFirstSql()}`,
-      )
-      .pluck()
-      .all();
-    expect(ordered[0]).toBe('10.0.0.1');
     db.close();
   });
+});
+
+describe('reservedLeaseFirstSql', () => {
+  // Two leases on one address: another client's later one, and the reserved
+  // client's. dnsmasq marks the reserved one 'infinite'; Kea gives it a real,
+  // earlier expiry. Either way the reserved client's lease comes first.
+  async function rank({ alias, reservedExpiry, family }) {
+    const { default: Database } = await import('better-sqlite3');
+    const db = new Database(':memory:');
+    db.exec(`CREATE TABLE dhcp_leases (subnet_id INTEGER, ip_address TEXT, mac_address TEXT,
+      duid TEXT, expires_at TEXT, hostname TEXT)`);
+    db.exec(`CREATE TABLE dhcp_reservations (subnet_id INTEGER, ip_address TEXT,
+      mac_address TEXT, duid TEXT, enabled INTEGER)`);
+    const ip = family === 4 ? '10.0.0.5' : 'fd00:5::5';
+    const reserved = family === 4 ? ['AA:BB:CC:00:00:05', null] : [null, '00:01:00:01:aa:bb:00:05'];
+    const other = family === 4 ? ['aa:bb:cc:00:00:99', null] : [null, '00:01:00:01:aa:bb:00:99'];
+    db.prepare('INSERT INTO dhcp_reservations VALUES (1, ?, ?, ?, 1)').run(ip, ...reserved);
+    const insert = db.prepare('INSERT INTO dhcp_leases VALUES (1, ?, ?, ?, ?, ?)');
+    insert.run(ip, ...other, '2100-01-02 00:00:00', 'other');
+    insert.run(ip, reserved[0]?.toLowerCase() ?? null, reserved[1], reservedExpiry, 'reserved');
+    const from = alias ? `dhcp_leases ${alias}` : 'dhcp_leases';
+    const ref = alias ? `${alias}.` : '';
+    const first = db
+      .prepare(
+        `SELECT hostname FROM ${from} ORDER BY ${reservedLeaseFirstSql(alias)},
+           datetime(${ref}expires_at) DESC LIMIT 1`,
+      )
+      .pluck()
+      .get();
+    db.close();
+    return first;
+  }
+
+  for (const family of [4, 6]) {
+    for (const alias of ['', 'l']) {
+      it(`ranks the reserved IPv${family} client first, dnsmasq or Kea (alias '${alias}')`, async () => {
+        expect(await rank({ alias, family, reservedExpiry: 'infinite' })).toBe('reserved');
+        expect(await rank({ alias, family, reservedExpiry: '2100-01-01 00:00:00' })).toBe(
+          'reserved',
+        );
+      });
+    }
+  }
 });
 
 describe('#26: the known divergence from the JS twin', () => {

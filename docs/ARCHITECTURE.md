@@ -117,6 +117,15 @@ and sticky to the address that holds it. A client whose name another address
 holds gets the first free suffix `-00` through `-FF`; a client that sends no
 name keeps the name its address holds before any vendor fallback applies.
 
+Leases reach CIDRella from the DHCP backend in one shape (`BackendLease` in
+`backends/contract.js`). Only dnsmasq writes a DHCP Reservation's lease with
+the expiry `infinite`; Kea reports its real expiry. Where several stored
+leases name one address, the one whose name and expiry are shown is the
+reserved client's: a lease that is `infinite`, or whose MAC (DHCPv4) or DUID
+(DHCPv6) matches an enabled DHCP Reservation for that address
+(`reservedLeaseFirstSql` in `utils/lease-sql.js`). That ranking chooses which
+lease to read; it decides no allocation, which stays with `allocation_state`.
+
 dnsmasq serves the PTR result from its hosts file: every A and AAAA name is
 written to `hosts.d/records.hosts` with each address's canonical PTR name
 first, since dnsmasq answers a reverse lookup with the first hosts line for an

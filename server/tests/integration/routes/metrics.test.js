@@ -224,7 +224,7 @@ describe('GET /api/metrics/services', () => {
   it('returns service status including proxy fields', async () => {
     const res = await request(app).get('/api/metrics/services');
     expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('dnsmasq');
+    expect(res.body).toHaveProperty('backends');
     expect(res.body).toHaveProperty('geoip_proxy');
     expect(res.body).toHaveProperty('geoip_bypassed');
     expect(res.body).toHaveProperty('geoip_port');
@@ -236,13 +236,14 @@ describe('GET /api/metrics/services', () => {
     expect(res.body).toHaveProperty('forwarders');
   });
 
-  it('reports the backend per role, and the legacy dnsmasq flag matches it', async () => {
+  it('reports the backend per role with its features', async () => {
     const res = await request(app).get('/api/metrics/services');
     expect(res.body.backends.dns.name).toBe('dnsmasq');
     expect(res.body.backends.dhcp).toEqual(res.body.backends.dns);
     expect(typeof res.body.backends.dns.running).toBe('boolean');
     expect(res.body.backends.dns.capabilities).toHaveProperty('dnssec');
-    expect(res.body.dnsmasq).toBe(res.body.backends.dns.running);
+    expect(res.body.backends.dns.features).toHaveProperty('ra', true);
+    expect(res.body).not.toHaveProperty('dnsmasq');
   });
 
   it('returns mocked proxy status values', async () => {

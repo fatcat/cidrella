@@ -170,8 +170,22 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   what the after-commit hooks run; `applyAtBoot` and `applyListenNow` for the paths that cannot
   wait for a hook; route and service tests stub them with `stubBackendApply`, or swap the
   registry with `fakeBackendsModule`, both in `tests/helpers/fake-backends.js`; a new adapter
-  passes `tests/contract/backend-contract.js`; anything reading the backend's log asks
-  `getService(role).logSource()`),
+  passes `tests/contract/backend-contract.js`, and its golden seeds `seedBackendEstate` from
+  `tests/helpers/backend-estate.js`; anything reading the backend's log asks
+  `getService(role).logSource()` and follows it with `createLogFollower` in
+  `utils/log-reader.js`), `backends/features.js` (the catalog of backend-dependent
+  features; an adapter's `capabilities()` is `declareSupport(roles, [...ids])`; ask
+  `supports(id)` from the registry, gate a write with `refuseUnlessSupported(res, id)` or
+  `assertSupported(id)` in `utils/backend-features.js`, and in the client
+  `useFeatures().supports(id)`/`reason(id)`), `backends/shared/` (what more than one adapter
+  needs: `loadDhcpScopes` and `loadDhcpReservations` in `dhcp-scope-model.js` for what every
+  DHCP adapter serves, options merged and resolved; `poolSegments` for a pool minus its
+  reserved addresses; `atomicWrite` and `createValidatedFiles` for a rendered config written as
+  one checked transaction; `createUnitControl` for starting, reloading and checking a daemon),
+  `utils/lease-time.js` (`leaseSeconds`, `isValidLeaseTime`: every read of a stored lease
+  time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and
+  `activeLeaseSql` in `utils/lease-sql.js` (which lease to believe for an address, and is a
+  lease active),
   `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder

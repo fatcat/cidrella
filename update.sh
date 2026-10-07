@@ -1114,11 +1114,14 @@ if ! PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT"); then
   write_progress "failed" 5 "Update failed" "No usable node runtime found"
   exit 1
 fi
+# CIDRELLA_PREFLIGHT keeps the probe off the host's DNS and DHCP services: it
+# renders config into its own data dir but never starts or restarts a unit.
 sudo -u cidrella env \
   HTTPS_PORT=$PREFLIGHT_PORT \
   HTTP_PORT=$((PREFLIGHT_PORT + 1)) \
   DATA_DIR="$PREFLIGHT_DATA" \
   NODE_ENV=production \
+  CIDRELLA_PREFLIGHT=1 \
   "$PREFLIGHT_NODE" "$TARGET_SLOT/server/src/index.js" \
   > "$TMPDIR/preflight.log" 2>&1 &
 PREFLIGHT_PID=$!

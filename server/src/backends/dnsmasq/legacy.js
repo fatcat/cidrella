@@ -5,7 +5,8 @@
 import fs from 'fs';
 import path from 'path';
 import { CONF_DIR, HOSTS_DIR } from './paths.js';
-import { atomicWrite, restartDnsmasq, withValidatedDnsmasqUpdate } from './dnsmasq.js';
+import { restartDnsmasq, withValidatedDnsmasqUpdate } from './dnsmasq.js';
+import { atomicWrite } from '../shared/validated-files.js';
 
 const BLOCKLIST_CONF = path.join(CONF_DIR, 'blocklist.conf');
 

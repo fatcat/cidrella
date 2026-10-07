@@ -6,7 +6,7 @@
  * the server ACKed), classifies it offline (device-classifier.js + MAC OUI),
  * and stores a per-MAC fingerprint. No raw sockets and no DHCP hook script.
  *
- * Mirrors the watcher shape of passive-liveness.js (readLogTail + poll loop).
+ * Mirrors the watcher shape of passive-liveness.js (createLogFollower + poll loop).
  *
  * DHCPv4 only, deliberately: the fingerprint is option 55 and option 60, which
  * are DHCPv4 option codes, keyed by the client's MAC. A DHCPv6 exchange
@@ -15,8 +15,7 @@
  * option-55 fingerprint, so an IPv6-only device gets no device_type from DHCP.
  */
 
-import fs from 'fs';
-import { readLogTail } from './log-reader.js';
+import { createLogFollower } from './log-reader.js';
 import { lookupVendor } from './mac-vendor.js';
 import { classify } from './device-classifier.js';
 import { getByMac, upsertFingerprint } from '../models/device-fingerprint.js';
@@ -54,21 +53,13 @@ function persist(db, tx) {
 export function startDhcpFingerprintWatcher(db) {
   const source = getService('dhcp').logSource();
   if (!source?.createDhcpParser) return null;
-  const logFile = source.path;
   const parser = source.createDhcpParser();
-  let offset = 0;
-
   // Start at EOF, don't replay history.
-  try {
-    offset = fs.statSync(logFile).size;
-  } catch {
-    /* not created yet */
-  }
+  const log = createLogFollower(source);
 
   function poll() {
     try {
-      const { lines, newOffset } = readLogTail(logFile, offset);
-      offset = newOffset;
+      const lines = log.read();
       const now = Date.now();
       for (const line of lines) parser.ingest(line, now);
       for (const finalized of parser.drain({ now })) {
@@ -84,6 +75,6 @@ export function startDhcpFingerprintWatcher(db) {
   }
 
   const interval = setInterval(poll, DHCP_FINGERPRINT_POLL_MS);
-  console.log(`[dhcp-fingerprint] Watching ${logFile} (poll ${DHCP_FINGERPRINT_POLL_MS / 1000}s)`);
+  console.log(`[dhcp-fingerprint] Watching ${log.path} (poll ${DHCP_FINGERPRINT_POLL_MS / 1000}s)`);
   return interval;
 }

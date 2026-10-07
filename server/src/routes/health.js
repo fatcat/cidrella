@@ -198,7 +198,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   // clock synced). Before NTP sync, dnsmasq runs lenient (dnssec-no-timecheck).
   const ntp = getNtpStatus();
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
-  const dnssecSupported = backends.dns.capabilities.dnssec;
+  const dnssecSupported = backends.dns.features['rec-dnssec-validate'];
 
   // Rogue DHCP detection, `unacknowledged > 0` drives the header Ops chip's
   // yellow warning state (red is reserved for an actual service-down condition).
@@ -239,8 +239,6 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
     disk,
     uptime: { system: systemUptime, process: processUptime },
     backends,
-    // Deprecated: read `backends`. Removed in 0.5.2.
-    services: { dnsmasq: backends.dns.running },
     service: getBootServiceHealth(),
     dnssec: {
       enabled: dnssecEnabled,

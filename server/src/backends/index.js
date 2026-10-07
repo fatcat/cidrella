@@ -6,7 +6,7 @@
  *
  * The instance is built on first use and does no I/O while being built.
  */
-import { ROLES, roleStatuses } from './contract.js';
+import { ROLES, featureReportFor, featureSupported, roleStatuses } from './contract.js';
 import { createDnsmasqBackend } from './dnsmasq/index.js';
 
 let dnsmasq = null;
@@ -31,3 +31,9 @@ export function uniqueServices() {
  * What the health endpoints report per role: see roleStatuses in contract.js.
  */
 export const backendStatuses = () => roleStatuses(getService);
+
+/** Does the backend filling the feature's role support it? See featureSupported. */
+export const supports = (id) => featureSupported(getService, id);
+
+/** Every catalog feature and its support: see featureReportFor in contract.js. */
+export const featureReport = () => featureReportFor(getService);

@@ -60,7 +60,7 @@ const setSwitch = (on) => request(app).put('/api/interfaces/config').send({ ipv6
 
 describe('default state', () => {
   it('is off for a fresh database, and the generic settings row says so', async () => {
-    expect((await request(app).get('/api/features')).body).toEqual({ ipv6: false });
+    expect((await request(app).get('/api/features')).body).toMatchObject({ ipv6: false });
     expect((await request(app).get('/api/interfaces/config')).body.ipv6_enabled).toBe(false);
     expect(db.prepare("SELECT value FROM settings WHERE key = 'ipv6_enabled'").get().value).toBe(
       'false',
@@ -131,7 +131,7 @@ describe('switching on, creating IPv6 objects, switching off', () => {
     const res = await setSwitch(true);
     expect(res.status).toBe(200);
     expect(res.body.ipv6_enabled).toBe(true);
-    expect((await request(app).get('/api/features')).body).toEqual({ ipv6: true });
+    expect((await request(app).get('/api/features')).body).toMatchObject({ ipv6: true });
     expect((await request(app).get('/api/interfaces/config')).body.ipv6_enabled).toBe(true);
     const audit = db
       .prepare(
