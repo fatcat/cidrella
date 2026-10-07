@@ -69,4 +69,27 @@ describe('holdLeaseSync', () => {
     (await holding)();
     expect(held).toBe(true);
   });
+
+  it('catches up on a change seen during a sync that a hold then stopped', async () => {
+    let finish;
+    backend.dhcp.readLeases = () => {
+      reads();
+      return new Promise((resolve) => {
+        finish = () => resolve({ leases: [] });
+      });
+    };
+    backend.seedLeases([]);
+    await settle();
+    // A second change while that sync runs, then a hold before it loops.
+    backend.seedLeases([]);
+    const holding = holdLeaseSync();
+    const before = reads.mock.calls.length;
+    finish();
+    const release = await holding;
+    expect(reads).toHaveBeenCalledTimes(before);
+    release();
+    await settle();
+    expect(reads).toHaveBeenCalledTimes(before + 1);
+    finish();
+  });
 });

@@ -92,6 +92,12 @@ function runLeaseSync(label) {
           console.warn(`${label}:`, err.message);
         }
       } while (syncAgain && holds === 0);
+      // A change seen during this sync that a hold kept from running is
+      // synced when the hold ends.
+      if (syncAgain) {
+        syncAgain = false;
+        skippedWhileHeld = true;
+      }
     } finally {
       running = null;
     }
