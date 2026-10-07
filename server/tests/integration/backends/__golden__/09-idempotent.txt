@@ -61,6 +61,47 @@ id:00:01:00:01:2a:2b:2c:2d:aa:bb:cc:00:00:03,[fd00:63::50],nas,infinite
 no-resolv
 no-hosts
 local-ttl=60
+local=/localhost/
+local=/invalid/
+local=/test/
+local=/onion/
+local=/resolver.arpa/
+local=/0.in-addr.arpa/
+local=/127.in-addr.arpa/
+local=/254.169.in-addr.arpa/
+local=/255.255.255.255.in-addr.arpa/
+local=/2.0.192.in-addr.arpa/
+local=/100.51.198.in-addr.arpa/
+local=/113.0.203.in-addr.arpa/
+local=/10.in-addr.arpa/
+local=/16.172.in-addr.arpa/
+local=/17.172.in-addr.arpa/
+local=/18.172.in-addr.arpa/
+local=/19.172.in-addr.arpa/
+local=/20.172.in-addr.arpa/
+local=/21.172.in-addr.arpa/
+local=/22.172.in-addr.arpa/
+local=/23.172.in-addr.arpa/
+local=/24.172.in-addr.arpa/
+local=/25.172.in-addr.arpa/
+local=/26.172.in-addr.arpa/
+local=/27.172.in-addr.arpa/
+local=/28.172.in-addr.arpa/
+local=/29.172.in-addr.arpa/
+local=/30.172.in-addr.arpa/
+local=/31.172.in-addr.arpa/
+local=/168.192.in-addr.arpa/
+local=/0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa/
+local=/1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa/
+local=/8.e.f.ip6.arpa/
+local=/9.e.f.ip6.arpa/
+local=/a.e.f.ip6.arpa/
+local=/b.e.f.ip6.arpa/
+local=/8.b.d.0.1.0.0.2.ip6.arpa/
+local=/home.arpa/
+local=/internal/
+local=/local/
+local=/d.f.ip6.arpa/
 
 # Upstream DNS servers
 

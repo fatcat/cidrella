@@ -245,7 +245,7 @@ describe.each(KINDS)('$kind', ({ kind, protocol, label, probe }) => {
     }
   });
 
-  it('retries once on a new connection when a reused one drops mid-query', async () => {
+  it('sends again on a new connection when a reused one drops mid-query', async () => {
     behavior = (_name, count) => (count === 2 ? 'close' : 'answer');
     const p = pool();
     const upstream = upstreamFor(v4);
@@ -254,6 +254,57 @@ describe.each(KINDS)('$kind', ({ kind, protocol, label, probe }) => {
       const out = await p.query(query(9, 'retry.example'), upstream);
       expect(dnsPacket.decode(out).answers[0].name).toBe('retry.example');
       expect(connections).toBe(2 + probe);
+      // Answered in the end, so not a failure.
+      expect(p.errors).toHaveLength(0);
+    } finally {
+      p.closeAll();
+    }
+  });
+
+  // An HTTP/1.1 request dropped on a fresh socket reads as a connect failure,
+  // so only the reused connection gets resent there; these two are DoT and h2.
+  it.skipIf(kind === 'doh-h1')(
+    'rides out connections dropped twice in a row, as Quad9 does',
+    async () => {
+      const p = pool();
+      const upstream = upstreamFor(v4);
+      try {
+        await p.query(query(8, 'first.example'), upstream);
+        let drops = 0;
+        behavior = () => (drops++ < 2 ? 'close' : 'answer');
+        const out = await p.query(query(9, 'again.example'), upstream);
+        expect(dnsPacket.decode(out).answers[0].name).toBe('again.example');
+        expect(p.errors).toHaveLength(0);
+      } finally {
+        p.closeAll();
+      }
+    },
+  );
+
+  it.skipIf(kind === 'doh-h1')(
+    'moves to the next address when one keeps dropping the query',
+    async () => {
+      const p = pool();
+      try {
+        let drops = 0;
+        behavior = () => (drops++ < 3 ? 'close' : 'answer');
+        const out = await p.query(
+          query(9, 'next.example'),
+          upstreamFor(v4, { addresses: ['127.0.0.1', '127.0.0.1'] }),
+        );
+        expect(dnsPacket.decode(out).answers[0].name).toBe('next.example');
+        expect(p.errors.map((e) => e.address)).toEqual(['127.0.0.1']);
+      } finally {
+        p.closeAll();
+      }
+    },
+  );
+
+  it('gives up on an address that never stops dropping the query', async () => {
+    behavior = () => 'close';
+    const p = pool();
+    try {
+      expect(await p.query(query(1, 'gone.example'), upstreamFor(v4))).toBeNull();
       expect(p.errors).toHaveLength(1);
     } finally {
       p.closeAll();
