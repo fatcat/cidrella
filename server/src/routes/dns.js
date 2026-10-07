@@ -310,6 +310,7 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     name,
     type,
     description,
+    forward_unknown,
     soa_primary_ns,
     soa_admin_email,
     soa_refresh,
@@ -343,6 +344,9 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     const err = validateDisplayString(description, { maxLength: 1024 });
     if (err) return res.status(400).json({ error: `description ${err}` });
   }
+  if (forward_unknown !== undefined && typeof forward_unknown !== 'boolean') {
+    return res.status(400).json({ error: 'forward_unknown must be a boolean' });
+  }
   {
     const err = validateSoaFields({
       soa_primary_ns,
@@ -368,6 +372,7 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
       name,
       type,
       description,
+      forward_unknown,
       soa_primary_ns,
       soa_admin_email,
       soa_refresh,
@@ -390,6 +395,7 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
     name,
     description,
     enabled,
+    forward_unknown,
     soa_primary_ns,
     soa_admin_email,
     soa_refresh,
@@ -406,6 +412,9 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
   if (description !== undefined) {
     const err = validateDisplayString(description, { maxLength: 1024 });
     if (err) return res.status(400).json({ error: `description ${err}` });
+  }
+  if (forward_unknown !== undefined && typeof forward_unknown !== 'boolean') {
+    return res.status(400).json({ error: 'forward_unknown must be a boolean' });
   }
   {
     const err = validateSoaFields({
@@ -432,6 +441,7 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
       name,
       description,
       enabled,
+      forward_unknown,
       soa_primary_ns,
       soa_admin_email,
       soa_refresh,

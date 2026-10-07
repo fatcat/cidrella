@@ -438,8 +438,28 @@ export function regenerateConfDir(db) {
   }
 
   if (cleanStaleFiles(CONF_DIR, 'zone-', '.conf', activeIds)) changed = true;
+  if (writeLocalZones(zones)) changed = true;
 
   return changed;
+}
+
+// Every enabled zone answers the names under it itself (local=/zone/), so a
+// name or type CIDRella has no record for gets NXDOMAIN or NODATA here rather
+// than a trip upstream: the AAAA and HTTPS lookups browsers send for a host with
+// only an A record would otherwise end at the domain's public nameservers. A
+// zone with forward_unknown set still forwards them (split horizon). local=
+// only stops forwarding; hostsdir and the zone lines answer as before.
+const LOCAL_ZONES_FILE = path.join(CONF_DIR, 'local-zones.conf');
+
+function writeLocalZones(zones) {
+  const lines = zones
+    .filter((zone) => !zone.forward_unknown && validateDnsmasqConfigValue(zone.name) == null)
+    .map((zone) => `local=/${zone.name}/`)
+    .sort();
+  if (lines.length) return writeIfChanged(LOCAL_ZONES_FILE, lines.join('\n') + '\n');
+  if (!fs.existsSync(LOCAL_ZONES_FILE)) return false;
+  fs.rmSync(LOCAL_ZONES_FILE, { force: true });
+  return true;
 }
 
 // ─── DNSSEC ──────────────────────────────────────────────

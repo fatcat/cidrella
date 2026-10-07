@@ -321,6 +321,11 @@ submission should map `record_type` back to `type` only when editing a record.
 beside `zone_id`: with `subnet_id` it returns every record in that network's
 reverse zones, the reverse picker's network-wide choice.
 
+A zone carries `forward_unknown` (0 or 1, set with a boolean on
+`POST`/`PUT /api/dns/zones`). At 0, the default, the zone answers every name
+under it itself; at 1, names it has no record for are looked up upstream, for a
+split-horizon domain.
+
 ### Bulk record actions
 
 `POST /api/dns/records/bulk` (`dns:write`) takes `{ action, ids }`: `action`

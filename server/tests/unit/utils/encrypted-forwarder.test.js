@@ -74,6 +74,30 @@ describe('fail-closed forwarding (no plaintext fallback)', () => {
   });
 });
 
+describe('upstream failures in the journal', () => {
+  it('logs the first failure, holds the rest for a minute, then says how many it held', async () => {
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    // Start well clear of any line an earlier test logged.
+    const start = Date.now() + 10 * 60 * 1000;
+    const now = vi.spyOn(Date, 'now').mockReturnValue(start);
+    const unreachable = { addresses: [], hostname: 'dns.example' };
+    try {
+      for (let i = 0; i < 3; i++) await forwardDoT(encodeQuery('x.com'), unreachable, 200);
+      expect(warn).toHaveBeenCalledTimes(1);
+      expect(warn.mock.calls[0][0]).toContain('Upstream query failed: no upstream address');
+      expect(warn.mock.calls[0][0]).toContain('"upstream":"dns.example"');
+
+      now.mockReturnValue(start + 61 * 1000);
+      await forwardDoT(encodeQuery('x.com'), unreachable, 200);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[1][0]).toContain('"notLoggedSinceLastLine":2');
+    } finally {
+      warn.mockRestore();
+      now.mockRestore();
+    }
+  });
+});
+
 /**
  * DoH connects to the configured address, not to whatever the hostname
  * resolves to, through a custom `lookup`. Node (20 and later, with

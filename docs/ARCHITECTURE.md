@@ -109,6 +109,13 @@ address and reloads that file without a restart. Only a PTR the hosts file
 cannot answer (an operator override, or a PTR with no matching A record) is
 written as a `ptr-record` line in `conf.d`, which needs a restart.
 
+Every enabled zone, forward or reverse, answers the names under it itself:
+`conf.d/local-zones.conf` holds a `local=/zone/` line for each, so a name or
+type CIDRella has no record for gets NXDOMAIN or NODATA from dnsmasq instead
+of a lookup upstream. A zone with `forward_unknown` set is left out, for a
+split-horizon domain whose public records CIDRella does not hold; its unknown
+names go upstream as before.
+
 IPv6 topology follows the same model with three differences. The subnet-router
 anycast address is the network address of the prefix and is the only IPv6
 `system` row; there is no broadcast address, no Broadcast range, and no

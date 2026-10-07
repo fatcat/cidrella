@@ -14,15 +14,16 @@ export function createZone(db, fields, soaDefaults) {
   const result = db
     .prepare(
       `
-    INSERT INTO dns_zones (name, type, description,
+    INSERT INTO dns_zones (name, type, description, forward_unknown,
       soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
   `,
     )
     .run(
       normalizeZoneName(fields.name),
       fields.type,
       fields.description || null,
+      fields.forward_unknown ? 1 : 0,
       fields.soa_primary_ns || soaDefaults.soa_primary_ns,
       fields.soa_admin_email || soaDefaults.soa_admin_email,
       fields.soa_refresh ?? soaDefaults.soa_refresh,
@@ -43,7 +44,7 @@ export function updateZone(db, zone, fields) {
 
     db.prepare(
       `
-      UPDATE dns_zones SET name = ?, description = ?, enabled = ?,
+      UPDATE dns_zones SET name = ?, description = ?, enabled = ?, forward_unknown = ?,
         soa_primary_ns = ?, soa_admin_email = ?, soa_serial = ?,
         soa_refresh = ?, soa_retry = ?, soa_expire = ?, soa_minimum_ttl = ?,
         updated_at = datetime('now')
@@ -53,6 +54,11 @@ export function updateZone(db, zone, fields) {
       newName ?? zone.name,
       fields.description !== undefined ? fields.description : zone.description,
       fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : zone.enabled,
+      fields.forward_unknown !== undefined
+        ? fields.forward_unknown
+          ? 1
+          : 0
+        : (zone.forward_unknown ?? 0),
       fields.soa_primary_ns !== undefined ? fields.soa_primary_ns : zone.soa_primary_ns,
       fields.soa_admin_email !== undefined ? fields.soa_admin_email : zone.soa_admin_email,
       newSerial,

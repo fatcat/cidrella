@@ -375,6 +375,18 @@
           <label>Enabled</label>
           <ToggleSwitch v-model="zoneForm.enabled" />
         </div>
+        <div class="field">
+          <label for="zone-forward-unknown">Look up names this zone doesn't have upstream</label>
+          <ToggleSwitch
+            v-model="zoneForm.forward_unknown"
+            input-id="zone-forward-unknown"
+            data-track="dns-zone-forward-unknown"
+          />
+          <small class="field-help"
+            >Off: CIDRella answers every name in this zone. Turn on for a domain that also has
+            public records CIDRella doesn't hold.</small
+          >
+        </div>
 
         <!-- SOA Fields -->
         <div class="soa-section">
@@ -817,6 +829,7 @@ const zoneForm = ref({
   type: 'forward',
   description: '',
   enabled: true,
+  forward_unknown: false,
   soa_primary_ns: '',
   soa_admin_email: '',
   soa_refresh: null,
@@ -1065,6 +1078,7 @@ async function openZoneDialog(zone = null) {
       type: zone.type,
       description: zone.description || '',
       enabled: !!zone.enabled,
+      forward_unknown: !!zone.forward_unknown,
       // A stored zone can hold NULL in these columns. Fall back to the SERVER's
       // defaults, not to a second set of numbers written down over here.
       soa_primary_ns: zone.soa_primary_ns || soaDefaults.soa_primary_ns,
@@ -1080,6 +1094,7 @@ async function openZoneDialog(zone = null) {
       type: zoneTab.value || 'forward',
       description: '',
       enabled: true,
+      forward_unknown: false,
       ...soaDefaults,
     };
   }

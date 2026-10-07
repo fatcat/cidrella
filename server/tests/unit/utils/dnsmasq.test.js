@@ -12,8 +12,14 @@ vi.mock('child_process', () => ({
 let tmpDir;
 let regenerateConfigs;
 
-function makeDb({ aRecords = [], otherRecords = [], ptrRecords = [], zone = {} } = {}) {
-  const zones = [{ id: 10, name: 'the-mcnultys.org', ...zone }];
+function makeDb({
+  aRecords = [],
+  otherRecords = [],
+  ptrRecords = [],
+  zone = {},
+  extraZones = [],
+} = {}) {
+  const zones = [{ id: 10, name: 'the-mcnultys.org', ...zone }, ...extraZones];
   // The hosts writer reads records joined to their zone.
   const inZone = (rows) => rows.map((row) => ({ zone_name: zones[0].name, ...row }));
   aRecords = inZone(aRecords);
@@ -58,6 +64,9 @@ describe('regenerateConfigs reload behavior', () => {
     regenerateConfigs(
       makeDb({
         aRecords: [{ name: 'container-host', value: '10.0.3.231' }],
+        // A forwarding zone writes no local= line, so conf.d stays empty and
+        // only the hosts file changes.
+        zone: { forward_unknown: 1 },
       }),
     );
 
@@ -123,6 +132,61 @@ describe('regenerateConfigs reload behavior', () => {
     );
     expect(hosts).toContain('10.0.3.232 host.google.com.');
     expect(hosts).not.toContain('host.google.com.the-mcnultys.org');
+  });
+});
+
+describe('zones answer their own names', () => {
+  const localZones = () => {
+    try {
+      return fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'conf.d', 'local-zones.conf'), 'utf-8');
+    } catch {
+      return null;
+    }
+  };
+
+  it('makes every zone local but one that forwards unknown names, in either family', () => {
+    regenerateConfigs(
+      makeDb({
+        extraZones: [
+          { id: 11, name: '0.10.in-addr.arpa', type: 'reverse' },
+          { id: 12, name: '0.0.0.0.0.0.0.0.0.0.0.0.0.d.f.ip6.arpa', type: 'reverse' },
+          { id: 13, name: 'split.example', forward_unknown: 1 },
+          // A name that could smuggle a directive is never written.
+          { id: 14, name: 'bad\nserver=1.2.3.4' },
+        ],
+      }),
+    );
+    expect(localZones()).toBe(
+      [
+        'local=/0.0.0.0.0.0.0.0.0.0.0.0.0.d.f.ip6.arpa/',
+        'local=/0.10.in-addr.arpa/',
+        'local=/the-mcnultys.org/',
+        '',
+      ].join('\n'),
+    );
+    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], {
+      stdio: 'pipe',
+    });
+  });
+
+  it('leaves dnsmasq alone when the local zones are unchanged', () => {
+    regenerateConfigs(makeDb());
+    vi.clearAllMocks();
+    regenerateConfigs(makeDb());
+    expect(execFileSync).not.toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], {
+      stdio: 'pipe',
+    });
+  });
+
+  it('removes the file, and restarts, once no zone is local', () => {
+    regenerateConfigs(makeDb());
+    expect(localZones()).toBe('local=/the-mcnultys.org/\n');
+    vi.clearAllMocks();
+    regenerateConfigs(makeDb({ zone: { forward_unknown: 1 } }));
+    expect(localZones()).toBeNull();
+    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], {
+      stdio: 'pipe',
+    });
   });
 });
 

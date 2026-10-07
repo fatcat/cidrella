@@ -17,11 +17,11 @@
 
 import dgram from 'dgram';
 import net from 'net';
-import tls from 'tls';
 import https from 'https';
 import dnsPacket from 'dns-packet';
 import { getSetting } from '../db/init.js';
 import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
+import { createDotPool } from './dot-pool.js';
 import { ENCRYPTED_FORWARDER_PORT, ENCRYPTED_FORWARDER_TIMEOUT_MS } from '../config/defaults.js';
 
 const HOST = '127.0.0.1';
@@ -52,9 +52,27 @@ function efLog(level, msg, extra) {
   else console.log(`${prefix} ${msg}${suffix}`);
 }
 
-function recordError(e) {
-  errorTimes.push(Date.now());
+// Failures also go to the journal, at most one line a minute: the first
+// failure at once, then the next one after the minute is up, carrying how many
+// were left out in between. Without these lines a burst of upstream failures
+// (and the SERVFAILs or DNSSEC BOGUS answers they cause) left no trace.
+const ERROR_LOG_INTERVAL_MS = 60 * 1000;
+let lastErrorLoggedAt = -Infinity;
+let unloggedErrors = 0;
+
+function recordError(e, upstream = null, address = null) {
+  const now = Date.now();
+  errorTimes.push(now);
   lastError = e?.message || String(e);
+  if (now - lastErrorLoggedAt < ERROR_LOG_INTERVAL_MS) {
+    unloggedErrors++;
+    return;
+  }
+  const extra = { mode, upstream: upstream?.hostname || upstream?.label || null, address };
+  if (unloggedErrors) extra.notLoggedSinceLastLine = unloggedErrors;
+  efLog('warn', `Upstream query failed: ${lastError}`, extra);
+  lastErrorLoggedAt = now;
+  unloggedErrors = 0;
 }
 
 // Build a SERVFAIL preserving the query id + question and echoing the client's
@@ -97,54 +115,27 @@ function pickUpstream() {
   return upstreams[rrIndex++ % upstreams.length];
 }
 
-// ── DoT: per-query TLS connection (validate cert vs hostname, connect by IP).
-// Pooling/session-resumption is a future optimization; dnsmasq's cache keeps
-// upstream QPS low so the handshake cost is bounded.
+// ── DoT: connections to each upstream address stay open and carry every query
+// (utils/dot-pool.js), validated against the upstream's hostname. One pool per
+// timeout, since tests pass short ones.
+const dotPools = new Map();
+
+function dotPool(timeoutMs) {
+  let pool = dotPools.get(timeoutMs);
+  if (!pool) {
+    pool = createDotPool({ timeoutMs, onError: recordError });
+    dotPools.set(timeoutMs, pool);
+  }
+  return pool;
+}
+
 export function forwardDoT(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIMEOUT_MS) {
-  return new Promise((resolve) => {
-    const ip = upstream.addresses?.[0];
-    if (!ip) {
-      recordError(new Error('no upstream address'));
-      return resolve(null);
-    }
-    let buf = Buffer.alloc(0);
-    let done = false;
-    const socket = tls.connect({ host: ip, port: 853, servername: upstream.hostname });
-    const finish = (val) => {
-      if (done) return;
-      done = true;
-      try {
-        socket.destroy();
-      } catch {
-        /* ignore */
-      }
-      resolve(val);
-    };
-    socket.setTimeout(timeoutMs, () => {
-      recordError(new Error('DoT timeout'));
-      finish(null);
-    });
-    socket.on('secureConnect', () => {
-      // tls.connect validates the chain + hostname against `servername` using
-      // Node's CA store; `authorized` is false on any failure.
-      if (!socket.authorized) {
-        recordError(socket.authorizationError || new Error('cert not authorized'));
-        return finish(null);
-      }
-      socket.write(frameTcpMessage(reqBuf));
-    });
-    socket.on('data', (chunk) => {
-      buf = Buffer.concat([buf, chunk]);
-      if (buf.length < 2) return;
-      const { messages } = extractTcpMessages(buf);
-      if (messages.length > 0) finish(messages[0]);
-    });
-    socket.on('error', (e) => {
-      recordError(e);
-      finish(null);
-    });
-    socket.on('close', () => finish(null));
-  });
+  return dotPool(timeoutMs).query(reqBuf, upstream);
+}
+
+function closeDotPools() {
+  for (const pool of dotPools.values()) pool.closeAll();
+  dotPools.clear();
 }
 
 // ── DoH: HTTPS POST application/dns-message, connecting by IP (custom lookup)
@@ -155,12 +146,12 @@ export function forwardDoH(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIM
     try {
       url = new URL(upstream.doh_url);
     } catch (e) {
-      recordError(e);
+      recordError(e, upstream);
       return resolve(null);
     }
     const ip = upstream.addresses?.[0];
     if (!ip) {
-      recordError(new Error('no upstream address'));
+      recordError(new Error('no upstream address'), upstream);
       return resolve(null);
     }
     let settled = false;
@@ -195,7 +186,7 @@ export function forwardDoH(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIM
       },
       (res) => {
         if (res.statusCode !== 200) {
-          recordError(new Error(`DoH HTTP ${res.statusCode}`));
+          recordError(new Error(`DoH HTTP ${res.statusCode}`), upstream, ip);
           res.resume();
           return done(null);
         }
@@ -203,18 +194,18 @@ export function forwardDoH(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIM
         res.on('data', (c) => chunks.push(c));
         res.on('end', () => done(Buffer.concat(chunks)));
         res.on('error', (e) => {
-          recordError(e);
+          recordError(e, upstream, ip);
           done(null);
         });
       },
     );
     req.on('timeout', () => {
-      recordError(new Error('DoH timeout'));
+      recordError(new Error('DoH timeout'), upstream, ip);
       req.destroy();
       done(null);
     });
     req.on('error', (e) => {
-      recordError(e);
+      recordError(e, upstream, ip);
       done(null);
     });
     req.write(reqBuf);
@@ -234,7 +225,7 @@ async function handleQuery(reqBuf) {
             ? await forwardDoH(reqBuf, upstream)
             : null;
     } catch (e) {
-      recordError(e);
+      recordError(e, upstream);
       resp = null;
     }
   }
@@ -320,6 +311,8 @@ export function applyEncryptedForwarder() {
   }
   errorTimes = [];
   lastError = null;
+  // A changed upstream list or mode starts on fresh connections.
+  closeDotPools();
 
   // With recursion disabled, CIDRella forwards nothing, don't run the stub even
   // if an encryption mode is still persisted (preference is preserved for when
@@ -336,6 +329,7 @@ export function applyEncryptedForwarder() {
 
 export function stopEncryptedForwarder() {
   stopListeners();
+  closeDotPools();
 }
 
 export function getEncryptedForwarderStatus() {
