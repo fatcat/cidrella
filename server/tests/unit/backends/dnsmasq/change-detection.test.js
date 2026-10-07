@@ -21,17 +21,8 @@ let regenerateDnsmasqConf;
 let applyInterfaceConfig;
 let validateDnsmasqConfig;
 let withValidatedDnsmasqUpdate;
-
-const BASE_CONF = [
-  'no-resolv',
-  'no-hosts',
-  'local-ttl=60',
-  'server=8.8.8.8',
-  'server=9.9.9.9',
-  'listen-address=127.0.0.1',
-  'bind-dynamic',
-  '',
-].join('\n');
+let reservedLocalLines;
+let BASE_CONF;
 
 beforeAll(async () => {
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-changedet-test-'));
@@ -44,7 +35,19 @@ beforeAll(async () => {
     applyInterfaceConfig,
     validateDnsmasqConfig,
     withValidatedDnsmasqUpdate,
+    reservedLocalLines,
   } = await import('../../../../src/backends/dnsmasq/dnsmasq.js'));
+  BASE_CONF = [
+    'no-resolv',
+    'no-hosts',
+    'local-ttl=60',
+    ...reservedLocalLines({ addresses: ['8.8.8.8'] }),
+    'server=8.8.8.8',
+    'server=9.9.9.9',
+    'listen-address=127.0.0.1',
+    'bind-dynamic',
+    '',
+  ].join('\n');
 });
 
 beforeEach(() => {
@@ -108,6 +111,66 @@ describe('regenerateDnsmasqConf: change detection', () => {
     expect(conf.split('\n').filter((l) => l === 'no-hosts')).toHaveLength(1);
     expect(conf.split('\n').filter((l) => l.startsWith('local-ttl='))).toEqual(['local-ttl=60']);
     expect(regenerateDnsmasqConf({})).toBe(false);
+  });
+
+  describe('reserved names', () => {
+    const locals = () =>
+      fs
+        .readFileSync(DNSMASQ_CONF, 'utf-8')
+        .split('\n')
+        .filter((l) => l.startsWith('local=/'));
+
+    it('answers reserved and site names locally behind public upstreams', () => {
+      expect(regenerateDnsmasqConf({})).toBe(false);
+      expect(locals()).toEqual(
+        expect.arrayContaining([
+          'local=/resolver.arpa/',
+          'local=/localhost/',
+          'local=/10.in-addr.arpa/',
+          'local=/31.172.in-addr.arpa/',
+          'local=/254.169.in-addr.arpa/',
+          'local=/b.e.f.ip6.arpa/',
+          'local=/internal/',
+          'local=/home.arpa/',
+          'local=/d.f.ip6.arpa/',
+        ]),
+      );
+      expect(locals()).not.toContain('local=/example/');
+    });
+
+    it.each([
+      ['an IPv4', ['8.8.8.8', '192.168.1.53']],
+      ['an IPv6', ['2001:4860:4860::8888', 'fd00::53']],
+    ])('leaves site names to %s private upstream', (_family, servers) => {
+      settings.dns_upstream_servers = servers;
+      expect(regenerateDnsmasqConf({})).toBe(true);
+      expect(locals()).toContain('local=/resolver.arpa/');
+      expect(locals()).toContain('local=/10.in-addr.arpa/');
+      for (const site of ['internal', 'home.arpa', 'local', 'd.f.ip6.arpa']) {
+        expect(locals()).not.toContain(`local=/${site}/`);
+      }
+      expect(regenerateDnsmasqConf({})).toBe(false);
+    });
+
+    it('judges the encrypted forwarder by its own upstreams', () => {
+      settings.forwarder_encryption = 'tls';
+      settings.forwarder_encrypted_upstreams = JSON.stringify([
+        { hostname: 'resolver.corp', addresses: ['10.1.1.1'] },
+      ]);
+      expect(regenerateDnsmasqConf({})).toBe(true);
+      expect(locals()).not.toContain('local=/internal/');
+      settings.forwarder_encrypted_upstreams = [
+        { hostname: 'dns10.quad9.net', addresses: ['9.9.9.10', '2620:fe::10'] },
+      ];
+      expect(regenerateDnsmasqConf({})).toBe(true);
+      expect(locals()).toContain('local=/internal/');
+    });
+
+    it('keeps a zone of its own and a hand-written local= line', () => {
+      fs.writeFileSync(DNSMASQ_CONF, `${BASE_CONF}local=/lab.example/\n`);
+      expect(regenerateDnsmasqConf({})).toBe(false);
+      expect(locals()).toContain('local=/lab.example/');
+    });
   });
 
   it('keeps a hand-written comment in dnsmasq.conf and reports no change', () => {

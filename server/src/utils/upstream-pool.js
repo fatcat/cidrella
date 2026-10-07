@@ -34,6 +34,10 @@ import { extractTcpMessages, frameTcpMessage } from './dns-wire.js';
 
 const DOT_PORT = 853;
 const IDLE_MS = 30_000;
+// Quad9 ends DoT connections after anything from 1 to 25 seconds, busy or not,
+// taking the queries in flight with them. A dropped query is sent again on a
+// fresh connection this many times before the pool moves to the next address.
+const CLOSED_RETRIES = 2;
 const DNS_MESSAGE = 'application/dns-message';
 
 // Why a query got no answer on a connection.
@@ -247,7 +251,9 @@ class DohH2Connection extends Connection {
   // once the session is up.
   send(query) {
     return new Promise((resolve) => {
-      const call = this.begin(resolve, 'DoH', () => call.stream?.close(http2.constants.NGHTTP2_CANCEL));
+      const call = this.begin(resolve, 'DoH', () =>
+        call.stream?.close(http2.constants.NGHTTP2_CANCEL),
+      );
       if (this.open) this.request(call, query);
       else this.queued.push(() => this.request(call, query));
     });
@@ -363,7 +369,8 @@ class DohH1Connection extends Connection {
  * @param {'dot'|'doh'} opts.protocol
  * @param {number} opts.timeoutMs   per query
  * @param {(error: Error, upstream: object, address: string|null) => void} [opts.onError]
- *   every failed attempt
+ *   every address the pool gave up on (a dropped query it resent and got an
+ *   answer for is not a failure)
  * @param {number} [opts.port]      DoT port, 853 except in tests (DoH takes its URL's)
  * @param {number} [opts.idleMs]
  * @param {object} [opts.tlsOptions] extra TLS options (tests pass `ca`)
@@ -409,8 +416,7 @@ export function createUpstreamPool({
     return connection;
   }
 
-  const send = (address, upstream, url, query) =>
-    connectionFor(address, upstream, url).send(query);
+  const send = (address, upstream, url, query) => connectionFor(address, upstream, url).send(query);
 
   /** The upstream's answer to `query`, or null. */
   async function query(query, upstream) {
@@ -434,13 +440,14 @@ export function createUpstreamPool({
         http1Only.add(target(address, upstream, url).key);
         result = await send(address, upstream, url, query);
       }
-      if (result.fail === FAIL.CLOSED) {
-        onError(result.error, upstream, address);
+      for (let retry = 0; result.fail === FAIL.CLOSED && retry < CLOSED_RETRIES; retry++) {
         result = await send(address, upstream, url, query);
       }
       if (result.response) return result.response;
       onError(result.error, upstream, address);
-      if (result.fail !== FAIL.CONNECT) return null;
+      // A connection that never opened, or kept dropping, is this address's
+      // problem: try the next. A timeout or an error status is the answer.
+      if (result.fail !== FAIL.CONNECT && result.fail !== FAIL.CLOSED) return null;
     }
     return null;
   }
