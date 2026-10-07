@@ -108,6 +108,39 @@ describe('checkProviders and report', () => {
     }
   });
 
+  it('blames the network, not the presets, when one protocol never answered', async () => {
+    const probe = async ({ protocol }) =>
+      protocol === 'dot'
+        ? { problem: 'connect ETIMEDOUT', connected: false }
+        : { problem: null, connected: true };
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(report(await checkProviders(providers, probe))).toBe(3);
+      const lines = err.mock.calls.map(([line]) => line).join('\n');
+      expect(lines).toContain(
+        'No preset answered over DoT; check that this host can reach TCP port 853.',
+      );
+      expect(lines).not.toContain('Broken encrypted DNS presets');
+    } finally {
+      err.mockRestore();
+    }
+  });
+
+  it('still stops on a broken preset when the other protocol is blocked', async () => {
+    const probe = async ({ address, protocol }) =>
+      protocol === 'dot'
+        ? { problem: 'connect ETIMEDOUT', connected: false }
+        : address === '198.51.100.1'
+          ? { problem: 'answered SERVFAIL for example.com', connected: true }
+          : { problem: null, connected: true };
+    const err = vi.spyOn(console, 'error').mockImplementation(() => {});
+    try {
+      expect(report(await checkProviders(providers, probe))).toBe(1);
+    } finally {
+      err.mockRestore();
+    }
+  });
+
   it('calls it the network when nothing answered at all', async () => {
     const probe = async () => ({ problem: 'connect ENETUNREACH', connected: false });
     const err = vi.spyOn(console, 'error').mockImplementation(() => {});

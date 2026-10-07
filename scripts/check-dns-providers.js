@@ -13,7 +13,8 @@
 // a fixed preset reaches new configurations only.
 //
 // Exit codes: 0 every preset works; 1 a preset is broken; 3 nothing answered
-// at all, which is the build host's network rather than the presets.
+// over DoT or over DoH, which is the build host's network rather than the
+// presets.
 const path = require('path');
 const { createRequire } = require('module');
 const { pathToFileURL } = require('url');
@@ -80,12 +81,12 @@ async function probeAddress({ createUpstreamPool, provider, address, protocol })
 
 async function checkProviders(providers, probe) {
   const failures = [];
-  let answered = 0;
+  const answered = Object.fromEntries(PROTOCOLS.map(({ label }) => [label, 0]));
   for (const provider of providers) {
     for (const address of provider.addresses) {
       for (const { protocol, label } of PROTOCOLS) {
         const { problem, connected } = await probe({ provider, address, protocol });
-        if (connected) answered++;
+        if (connected) answered[label]++;
         if (problem) failures.push({ provider, address, label, problem });
       }
     }
@@ -93,29 +94,38 @@ async function checkProviders(providers, probe) {
   return { failures, answered };
 }
 
+// A protocol nothing answered over is the build host's network (port 853 or
+// 443 blocked, or no network at all), not every preset at once; failures
+// over a protocol that did answer elsewhere are broken presets.
 function report({ failures, answered }) {
   if (!failures.length) {
     console.log('Encrypted DNS presets OK: every address answers DoT and DoH.');
     return 0;
   }
-  if (!answered) {
-    console.error("No encrypted DNS preset answered at all; check this host's network.");
-    for (const f of failures)
-      console.error(`  ${f.provider.id} ${f.address} ${f.label}: ${f.problem}`);
-    return 3;
-  }
-  console.error('Broken encrypted DNS presets in server/src/data/doh-providers.js:');
-  for (const f of failures) {
+  const silent = Object.keys(answered).filter((label) => !answered[label]);
+  const broken = failures.filter((f) => !silent.includes(f.label));
+  if (broken.length) {
+    console.error('Broken encrypted DNS presets in server/src/data/doh-providers.js:');
+    for (const f of broken) {
+      console.error(
+        `  ${f.provider.id} ${f.address} ${f.label} (hostname ${f.provider.hostname}` +
+          `${f.label === 'DoH' ? `, ${f.provider.doh_url}` : ''}): ${f.problem}`,
+      );
+    }
     console.error(
-      `  ${f.provider.id} ${f.address} ${f.label} (hostname ${f.provider.hostname}` +
-        `${f.label === 'DoH' ? `, ${f.provider.doh_url}` : ''}): ${f.problem}`,
+      "Find the provider's current hostname or addresses, fix the preset, and add a" +
+        ' migration for upstreams saved from the old one (see 084_adguard_upstream_hostname.sql).',
     );
   }
-  console.error(
-    "Find the provider's current hostname or addresses, fix the preset, and add a" +
-      ' migration for upstreams saved from the old one (see 084_adguard_upstream_hostname.sql).',
-  );
-  return 1;
+  for (const label of silent) {
+    const port = label === 'DoT' ? 853 : 443;
+    console.error(
+      `No preset answered over ${label}; check that this host can reach TCP port ${port}.`,
+    );
+    const first = failures.find((f) => f.label === label);
+    console.error(`  first error (${first.provider.id} ${first.address}): ${first.problem}`);
+  }
+  return broken.length ? 1 : 3;
 }
 
 async function main() {

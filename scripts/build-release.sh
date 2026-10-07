@@ -569,7 +569,7 @@ check_dns_providers() {
   set -e
   if [ "$rc" -eq 3 ]; then
     echo ""
-    echo "WARNING: no encrypted DNS preset answered, so the presets could not be checked."
+    echo "WARNING: this host could not reach the presets over DoT or DoH (see above), so they were not fully checked."
     if ! confirm_yn "Proceed without checking the encrypted DNS presets?" "n"; then
       echo "Build stopped so the encrypted DNS presets can be checked."
       exit 1
