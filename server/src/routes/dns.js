@@ -119,6 +119,17 @@ function normalizeARecordName(db, name, ip, zoneName) {
   return normalizeRecordNameForZone(name, domainName);
 }
 
+// The name as stored. A forward zone's record may be written as the table
+// shows it, by its full name (www.example.com, the zone's own name for @, an
+// SRV's _sip._tcp.example.com); it is stored relative to the zone. An address
+// record is relative to its network's domain when that is not the zone.
+function normalizeRecordName(db, type, name, value, zone) {
+  if (zone.type !== 'forward')
+    return type === 'PTR' && typeof name === 'string' ? name.toLowerCase() : name;
+  if (isAddressType(type)) return normalizeARecordName(db, name, value, zone.name);
+  return normalizeRecordNameForZone(name, zone.name);
+}
+
 function cnameNameErrorForZone(name, zoneName) {
   const normalized = normalizeDnsName(name);
   const zone = normalizeDnsName(zoneName);
@@ -568,14 +579,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     }
   }
 
-  const normalizedName =
-    isAddressType(type) && zone.type === 'forward'
-      ? normalizeARecordName(db, name, value, zone.name)
-      : type === 'CNAME' && zone.type === 'forward'
-        ? normalizeRecordNameForZone(name, zone.name)
-        : type === 'PTR' && typeof name === 'string'
-          ? name.toLowerCase()
-          : name;
+  const normalizedName = normalizeRecordName(db, type, name, value, zone);
   const normalizedValue = normalizeRecordValue(type, value);
 
   const validationError = validateRecord(
@@ -763,14 +767,7 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
   }
   const rawNewName = name ?? record.name;
   const rawNewValue = value ?? record.value;
-  const newName =
-    isAddressType(newType) && zone.type === 'forward'
-      ? normalizeARecordName(db, rawNewName, rawNewValue, zone.name)
-      : newType === 'CNAME' && zone.type === 'forward'
-        ? normalizeRecordNameForZone(rawNewName, zone.name)
-        : newType === 'PTR' && typeof rawNewName === 'string'
-          ? rawNewName.toLowerCase()
-          : rawNewName;
+  const newName = normalizeRecordName(db, newType, rawNewName, rawNewValue, zone);
   const newValue = normalizeRecordValue(newType, rawNewValue);
   const newPriority = priority !== undefined ? priority : record.priority;
   const newWeight = weight !== undefined ? weight : record.weight;

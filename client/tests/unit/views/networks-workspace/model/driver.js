@@ -2,7 +2,7 @@
 // The things an operator can do to the Networks workspace, each a short
 // label a failing walk prints and a regression test replays:
 //
-//   estate · unallocated · breadcrumb · reload · available · hierarchy
+//   estate · unallocated · breadcrumb · reload · available · domain-names · hierarchy
 //   folder <id|ungrouped> · toggle-folder <id|ungrouped>
 //   network <id> [ctrl|shift] · tab <view> · stat <view>
 //   zone <id> · pick-zone <id> · pick-network <id> · scope <id>
@@ -83,6 +83,7 @@ export function candidates() {
   }
   if (one('thead .check-cell input')) out.push('check-all');
   if (one('.available-switch input')) out.push('available');
+  if (one('.domain-names-switch input')) out.push('domain-names');
   if (one('[data-track="workspace-unallocated-hierarchy"]')) out.push('hierarchy');
   if (one('[aria-label="Close details"]')) out.push('close-details');
   // Filters and sorting on the columns the table shows.
@@ -214,6 +215,9 @@ export async function perform(session, label) {
     }
     case 'available':
       click(one('.available-switch input'));
+      break;
+    case 'domain-names':
+      click(one('.domain-names-switch input'));
       break;
     case 'hierarchy':
       click(

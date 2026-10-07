@@ -103,6 +103,7 @@
             v-model:table-query="tableQuery"
             v-model:filters="filters"
             v-model:show-available="showAvailable"
+            v-model:show-domain-names="showDomainNames"
             v-model:presentation="addressPresentation"
             :allow-grid="!isV6Network"
             :active-view="activeView"
@@ -462,6 +463,7 @@ import {
   dnsRecordSummary,
   mapDhcpScopeRows,
   mapDhcpRows,
+  inZoneFileForm,
   mapDnsRows,
   mapDnsZoneRows,
   mapNetworkRows,
@@ -554,6 +556,10 @@ const addressSparse = ref(false);
 // Show available is a preference, kept per browser like the zone side below.
 const SHOW_AVAILABLE_KEY = 'cidrella_workspace_show_available';
 const showAvailable = ref(loadJson(SHOW_AVAILABLE_KEY, true) !== false);
+// Off, the DNS table writes names as a zone file does: @, relative names, and
+// absolute ones with a trailing dot.
+const SHOW_DOMAIN_NAMES_KEY = 'cidrella_workspace_show_domain_names';
+const showDomainNames = ref(loadJson(SHOW_DOMAIN_NAMES_KEY, true) !== false);
 // { column: [value, ...] }. The three IP tables filter on the server, over
 // every row; the other lists (networks, zones, scopes, ranges) are loaded
 // whole and filter here.
@@ -1191,6 +1197,7 @@ const currentRows = computed(() => {
   else rows = rangeRows.value;
   if (activeView.value === 'dns' && selectedZoneFilter.value)
     rows = rows.filter((row) => Number(row.raw.zone_id) === Number(selectedZoneFilter.value.id));
+  if (activeView.value === 'dns' && !showDomainNames.value) rows = inZoneFileForm(rows);
   if (activeView.value === 'dns' && reverseNetworkFilter.value)
     rows = rows.filter(
       (row) =>
@@ -2542,6 +2549,7 @@ async function filterToReverseNetwork(network) {
   selectedScopeFilter.value = null;
   rememberDnsZoneSide({ type: 'reverse' });
   tableQuery.value = '';
+  currentPage.value = 1;
   await updateWorkspaceRoute();
   if (contextKind.value === 'network') await loadNetworkContext();
   else await refreshAggregateTable();
@@ -2557,6 +2565,8 @@ async function filterToZone(zone) {
   rememberDnsZoneSide(selectedZoneFilter.value);
   selectedScopeFilter.value = null;
   tableQuery.value = '';
+  // A new zone is a new list; the page of the last one may be past its end.
+  currentPage.value = 1;
   await updateWorkspaceRoute();
   if (contextKind.value === 'network') await loadNetworkContext();
   else await refreshAggregateTable();
@@ -2566,6 +2576,7 @@ async function filterToScope(scope) {
   selectedZoneFilter.value = null;
   reverseNetworkFilter.value = null;
   tableQuery.value = '';
+  currentPage.value = 1;
   await updateWorkspaceRoute();
   if (contextKind.value === 'network') await loadNetworkContext();
   else await refreshAggregateTable();
@@ -2950,6 +2961,7 @@ async function refreshCurrentContext() {
   }
 }
 
+watch(showDomainNames, () => saveJson(SHOW_DOMAIN_NAMES_KEY, showDomainNames.value));
 watch(showAvailable, () => {
   saveJson(SHOW_AVAILABLE_KEY, showAvailable.value);
   if (activeView.value !== 'addresses' || contextKind.value !== 'network') return;
