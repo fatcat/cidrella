@@ -544,7 +544,16 @@ first on a 0.4.17 host.
   slow to answer stalled the lookup for 2 to 3 seconds (3,305 such lookups a
   day on one install). `conf.d/local-zones.conf` now makes every enabled
   zone local, so these get an immediate NXDOMAIN or NODATA. A zone that needs
-  its unknown names looked up publicly can opt out in its settings.
+  its unknown names looked up publicly can opt out in its settings. The
+  zones are rendered at every start, so an upgraded install gets the file
+  without waiting for a DNS edit.
+- **A zone's record list no longer fails with an internal error** when one
+  name has both an address record and one without an address, such as an
+  apex with an A and an MX. Sorting tied on the name and then compared the
+  missing address, which threw. Records without an address now sort first.
+- **MX and SRV targets take a trailing dot**, as a zone file writes them
+  (`aspmx.l.google.com.`). CNAME already did. The dot is dropped when the
+  record is stored, on create and on edit.
 - **Encrypted forwarding keeps its connections open.** With DNS-over-TLS or
   DNS-over-HTTPS on, every lookup that missed dnsmasq's cache opened a new
   TCP and TLS connection to the upstream: about 46 ms an answer against a

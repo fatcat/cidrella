@@ -126,9 +126,9 @@ async function main() {
   console.log('Database initialized');
   resumePendingRegeneration();
   // Render the zones once per boot, so a release that changes what the
-  // generator writes (0.5.1 qualifying SRV names) reaches existing installs
-  // without waiting for a DNS edit. Unchanged files are not rewritten and
-  // nothing is signaled.
+  // generator writes (0.5.0 local zones, 0.5.1 qualifying SRV names) reaches
+  // existing installs without waiting for a DNS edit. Unchanged files are not
+  // rewritten and nothing is signaled.
   queueRegen('regenerate_dns');
 
   // Migrate legacy DHCP scope columns to scope_options table

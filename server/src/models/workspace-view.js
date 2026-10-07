@@ -242,13 +242,16 @@ function allDnsRows(db) {
   return { records, zones, subnets, associations };
 }
 
+// A row with no address (an MX, a CNAME) sorts before every address.
+const addressKey = (value) => sortKey(value) ?? '';
+
 function compareRows(field, order) {
   const direction = order === 'desc' ? -1 : 1;
   return (a, b) => {
     let result;
-    if (field === 'ip_address') result = sortKey(a[field]).localeCompare(sortKey(b[field]));
+    if (field === 'ip_address') result = addressKey(a[field]).localeCompare(addressKey(b[field]));
     else result = text(a[field]).localeCompare(text(b[field]), undefined, { numeric: true });
-    if (!result) result = sortKey(a.ip_address).localeCompare(sortKey(b.ip_address));
+    if (!result) result = addressKey(a.ip_address).localeCompare(addressKey(b.ip_address));
     if (!result) result = text(a.protocol_id || a.id).localeCompare(text(b.protocol_id || b.id));
     return result * direction;
   };

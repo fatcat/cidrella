@@ -75,6 +75,18 @@ function enrichDnsAddressRecords(db, records, zoneName) {
 }
 
 
+// The value as stored. A target name (CNAME, MX, SRV) may be written as a
+// zone file writes it, with a trailing dot; the stored name has none, as
+// dnsmasq takes it. An AAAA value is stored in its canonical spelling so
+// equality holds across the lifecycle tables; validation still sees the raw
+// input when it is not an address at all.
+const TARGET_NAME_TYPES = new Set(['CNAME', 'MX', 'SRV']);
+function normalizeRecordValue(type, value) {
+  if (TARGET_NAME_TYPES.has(type)) return normalizeDnsName(value);
+  if (type === 'AAAA') return canonicalizeIp(value) || value;
+  return value;
+}
+
 // A and AAAA records both allocate an address through the same lifecycle.
 function isAddressType(type) {
   return type === 'A' || type === 'AAAA';
@@ -565,15 +577,7 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
         : type === 'PTR' && typeof name === 'string'
           ? name.toLowerCase()
           : name;
-  // An AAAA value is stored in its canonical spelling so equality holds
-  // across the lifecycle tables; validation below still sees the raw input
-  // when it is not an address at all.
-  const normalizedValue =
-    type === 'CNAME'
-      ? normalizeDnsName(value)
-      : type === 'AAAA'
-        ? canonicalizeIp(value) || value
-        : value;
+  const normalizedValue = normalizeRecordValue(type, value);
 
   const validationError = validateRecord(
     type,
@@ -768,12 +772,7 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
         : newType === 'PTR' && typeof rawNewName === 'string'
           ? rawNewName.toLowerCase()
           : rawNewName;
-  const newValue =
-    newType === 'CNAME'
-      ? normalizeDnsName(rawNewValue)
-      : newType === 'AAAA'
-        ? canonicalizeIp(rawNewValue) || rawNewValue
-        : rawNewValue;
+  const newValue = normalizeRecordValue(newType, rawNewValue);
   const newPriority = priority !== undefined ? priority : record.priority;
   const newWeight = weight !== undefined ? weight : record.weight;
   const newPort = port !== undefined ? port : record.port;

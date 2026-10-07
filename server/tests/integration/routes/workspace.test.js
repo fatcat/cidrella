@@ -220,6 +220,42 @@ describe('workspace read routes', () => {
     ).toBe(400);
   });
 
+  it('lists a name with an address record and one without, in either sort', async () => {
+    // An apex A or AAAA beside the apex MX: the two tie on the name, and the
+    // tiebreak on the address met the MX's missing one (a 500 on prod).
+    const apexZone = Number(
+      db
+        .prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('apex.test', 'forward', 1)")
+        .run().lastInsertRowid,
+    );
+    db.prepare(
+      `INSERT INTO dns_records (zone_id, name, type, value, priority, source, enabled)
+       VALUES (?, '@', 'A', '203.0.113.7', NULL, 'manual', 1),
+              (?, '@', 'AAAA', '2001:db8::7', NULL, 'manual', 1),
+              (?, '@', 'MX', 'mx.example.net', 10, 'manual', 1)`,
+    ).run(apexZone, apexZone, apexZone);
+    try {
+      for (const query of [
+        {},
+        { sort_field: 'ip_address' },
+        { sort_field: 'ip_address', sort_order: 'desc' },
+      ]) {
+        const res = await request(app)
+          .get('/api/workspace/dns-records')
+          .query({ zone_id: apexZone, ...query });
+        expect(res.status).toBe(200);
+        expect(res.body.items.map((row) => row.record_type).sort()).toEqual(['A', 'AAAA', 'MX']);
+      }
+      const byAddress = await request(app)
+        .get('/api/workspace/dns-records')
+        .query({ zone_id: apexZone, sort_field: 'ip_address' });
+      expect(byAddress.body.items.map((row) => row.record_type)).toEqual(['MX', 'A', 'AAAA']);
+    } finally {
+      db.prepare('DELETE FROM dns_records WHERE zone_id = ?').run(apexZone);
+      db.prepare('DELETE FROM dns_zones WHERE id = ?').run(apexZone);
+    }
+  });
+
   it('matches one address exactly with ip_address, unlike the substring table_q', async () => {
     const substring = await request(app)
       .get('/api/workspace/dns-records')
