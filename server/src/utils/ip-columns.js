@@ -17,6 +17,10 @@ import { sortKey } from './address.js';
 
 const TABLES = new Set(['addresses', 'dns', 'dhcp']);
 
+// The Network of a DNS record that serves its whole zone rather than one
+// network (models/workspace-view.js sets `zone_wide`). The client shows it too.
+export const ZONE_WIDE_NETWORK = 'Zone-wide';
+
 const dnsOf = (row, table) => (table === 'dns' ? row : row.dns_record) || null;
 const dhcpOf = (row, table) => (table === 'dhcp' ? row : row.dhcp) || null;
 const bool = (value) => (value == null ? null : Boolean(Number(value) || value === true));
@@ -90,7 +94,10 @@ export const IP_COLUMNS = Object.freeze({
   lease: { kind: 'enum', get: (row) => str(row.dhcp_lease_state) },
   network: {
     kind: 'enum',
-    get: (row, t) => str(row.subnet_name || row.subnet_cidr || dhcpOf(row, t)?.subnet_name),
+    get: (row, t) =>
+      row.zone_wide
+        ? ZONE_WIDE_NETWORK
+        : str(row.subnet_name || row.subnet_cidr || dhcpOf(row, t)?.subnet_name),
   },
   expires: { kind: 'none', get: (row) => str(row.dhcp_expires_at) },
   assignment: { kind: 'enum', get: (row, t) => str(dhcpOf(row, t)?.dhcp_assignment_type) },

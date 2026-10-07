@@ -103,6 +103,9 @@ export const RECORDS = [
   record(1012, 204, '10', 'PTR', 'lab-a.lab.example', { dns_source: 'dns', ip: '172.16.0.10' }),
   record(1013, 205, '1', 'PTR', '1.1.2.1', { dns_source: 'placeholder', ip: '1.1.2.1' }),
   record(1014, 207, '7', 'PTR', 'ext.outside.example', { ip: '198.51.99.7' }),
+  // Zone-wide: no address of its own, so it is listed under every network
+  // whose domain is home.example.
+  record(1015, 101, '@', 'MX', 'mx.mail.example', { priority: 10 }),
   // Enough hosts for home.example to span pages at the smaller page sizes,
   // every seventh one disabled.
   ...Array.from({ length: 70 }, (_, index) =>
@@ -176,6 +179,9 @@ export function recordRow(entry) {
   const owner = zoneById(entry.zone_id);
   const ip = entry.ip ?? entry.ip_address ?? (entry.record_type === 'A' ? entry.value : null);
   const network = networkOf(ip);
+  // What models/workspace-view.js derives: a record with no network of its own
+  // in a zone that is some network's domain is zone-wide.
+  const zoneWide = !network && zoneNetworks(owner).length > 0;
   return {
     ...entry,
     zone_name: owner.name,
@@ -189,10 +195,23 @@ export function recordRow(entry) {
     ip_address: ip,
     is_online: 0,
     related_subnet_ids: network ? [network.id] : [],
+    zone_wide: zoneWide,
     subnet_id: network?.id ?? null,
     subnet_name: network?.name ?? null,
   };
 }
+
+// The networks whose domain a forward zone is.
+function zoneNetworks(zone) {
+  if (zone.type !== 'forward') return [];
+  return allocatedLeaves()
+    .filter((network) => network.domain_name === zone.name)
+    .map((network) => network.id);
+}
+
+// The networks a record row is listed under, as the server lists it.
+const listedUnder = (row) =>
+  row.zone_wide ? zoneNetworks(zoneById(row.zone_id)) : row.related_subnet_ids;
 
 export function zoneRow(entry) {
   const records = RECORDS.filter((row) => row.zone_id === entry.id);
@@ -295,7 +314,7 @@ export function queryDnsRecords(params = {}) {
   let rows = RECORDS.map(recordRow);
   const subnetId = params.subnet_id != null ? Number(params.subnet_id) : null;
   const folderId = folderParam(params.folder_id);
-  if (subnetId != null) rows = rows.filter((row) => row.related_subnet_ids.includes(subnetId));
+  if (subnetId != null) rows = rows.filter((row) => listedUnder(row).includes(subnetId));
   if (folderId !== undefined) {
     const folderNets = new Set(
       allocatedLeaves()
@@ -305,7 +324,7 @@ export function queryDnsRecords(params = {}) {
     rows = rows.filter(
       (row) =>
         (folderId !== null && row.zone_folder_id === folderId) ||
-        row.related_subnet_ids.some((id) => folderNets.has(id)),
+        listedUnder(row).some((id) => folderNets.has(id)),
     );
   }
   if (params.zone_id != null) rows = rows.filter((row) => row.zone_id === Number(params.zone_id));

@@ -177,9 +177,8 @@ function resolveDnsAssociations(records, zones, subnets) {
     existing.push(record);
     recordsByFqdn.set(key, existing);
     // Record membership is derived from the address the record represents,
-    // not from the zone's domain association. MX/TXT/SRV records remain
-    // visible in whole-zone context without being attributed to every network
-    // that uses the zone.
+    // not from the zone's domain association. A record with none (an MX, an
+    // apex on a public address) is zone-wide instead: see allDnsRows.
     const ids = new Set();
     const ip = zone ? directRecordIp(record, zone.name) : null;
     const subnet = ip ? containingSubnet(subnets, ip) : null;
@@ -225,8 +224,14 @@ function allDnsRows(db) {
     )
     .all();
   const associations = resolveDnsAssociations(records, zones, subnets);
+  const zoneNetworks = new Map(zones.map((zone) => [zone.id, [...zoneSubnetIds(zone, subnets)]]));
   for (const record of records) {
     record.related_subnet_ids = [...(associations.get(record.id) || [])].sort((a, b) => a - b);
+    // A record with no network of its own in a zone that is some network's
+    // domain serves that whole domain. It is listed under every such network,
+    // and its Network column says so rather than naming one.
+    record.zone_wide =
+      !record.related_subnet_ids.length && zoneNetworks.get(record.zone_id).length > 0;
     if (!record.ip_address && record.type === 'PTR') {
       record.ip_address = canonicalizeIp(ipForPtrRecord(record.name, record.zone_name));
     }
@@ -239,8 +244,13 @@ function allDnsRows(db) {
     records.filter((row) => row.ip_address),
     { fillFromIpAddress: true },
   );
-  return { records, zones, subnets, associations };
+  return { records, zones, subnets, associations, zoneNetworks };
 }
+
+// The networks a record is listed under: its own, or for a zone-wide record
+// every network whose domain is its zone.
+const listedUnder = (zoneNetworks) => (row) =>
+  row.zone_wide ? zoneNetworks.get(row.zone_id) : row.related_subnet_ids;
 
 // A row with no address (an MX, a CNAME) sorts before every address.
 const addressKey = (value) => sortKey(value) ?? '';
@@ -279,11 +289,11 @@ export function getWorkspaceDnsRecords(
     sortOrder = 'asc',
   } = {},
 ) {
-  let { records } = allDnsRows(db);
+  let { records, zoneNetworks } = allDnsRows(db);
+  const networksOf = listedUnder(zoneNetworks);
   // Any column any IP table has: the DHCP facts behind each record's address.
   attachDhcpFacts(db, records);
-  if (subnetId !== undefined)
-    records = records.filter((row) => row.related_subnet_ids.includes(subnetId));
+  if (subnetId !== undefined) records = records.filter((row) => networksOf(row).includes(subnetId));
   if (folderId !== undefined) {
     const folderSubnetIds = new Set(
       allocatedLeaves(db)
@@ -295,7 +305,7 @@ export function getWorkspaceDnsRecords(
     records = records.filter(
       (row) =>
         (folderId !== null && row.zone_folder_id === folderId) ||
-        row.related_subnet_ids.some((id) => folderSubnetIds.has(id)),
+        networksOf(row).some((id) => folderSubnetIds.has(id)),
     );
   }
   if (zoneId !== undefined) records = records.filter((row) => row.zone_id === zoneId);

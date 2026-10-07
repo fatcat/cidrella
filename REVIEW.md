@@ -65,3 +65,19 @@ was suggested.
 - **Fix:** Cosmetic, once per reservation change; leaving it is reasonable. To silence it, write
   reservations to a file dnsmasq reads only on reload (`dhcp-hostsfile` instead of
   `dhcp-hostsdir`), which also drops the inotify path.
+
+## Found checking prod's DNS table (2026-10-07)
+
+#### A11Y-01: Rows with no address get a "Select null" checkbox label
+
+**low**, confirmed on prod. `client/src/views/networks-workspace/WorkspaceTable.vue:49`
+
+- **What happens:** In a DNS table, the row checkbox of an MX, CNAME, TXT or SRV record is
+  labeled "Select null" for screen readers; every such row has the same label. Seen on prod's
+  the-mcnultys.org zone (the MX and CNAME rows).
+- **Why:** The label is `` `Select ${row.address}` ``, and a record with no address has
+  `address` null. Address and DHCP rows always have one, so it only shows in the DNS tables.
+- **Fix:** Label the row by what names it in its table: the address when there is one, else the
+  record's name and type (for example "Select the-mcnultys.org MX aspmx.l.google.com"). One
+  helper in `WorkspaceTable.vue`, with a test that no row's label contains "null" or
+  "undefined".

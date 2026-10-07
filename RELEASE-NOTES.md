@@ -457,6 +457,11 @@ first on a 0.4.17 host.
 - **MX and SRV targets take a trailing dot**, as a zone file writes them
   (`aspmx.l.google.com.`). CNAME already did. The dot is dropped when the
   record is stored, on create and on edit.
+- **A network's DNS tab lists its domain's zone-wide records.** An MX, a TXT,
+  or an apex A on a public address has no network of its own, so it was only
+  in the All Allocated Networks view and vanished from a network's DNS tab
+  even with its zone picked. Such a record now shows under every network
+  whose domain is its zone, with Zone-wide as its Network.
 - **Encrypted forwarding keeps its connections open.** With DNS-over-TLS or
   DNS-over-HTTPS on, every lookup that missed dnsmasq's cache opened a new
   TCP and TLS connection to the upstream: about 46 ms an answer against a
