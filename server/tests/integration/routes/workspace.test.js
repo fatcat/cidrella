@@ -183,10 +183,13 @@ describe('workspace read routes', () => {
     });
     expect(response.body.items[0].related_subnet_ids).toEqual([subnetA]);
 
+    // Beta shares the zone but none of its addresses: only the zone-wide MX.
     const otherNetwork = await request(app)
       .get('/api/workspace/dns-records')
       .query({ subnet_id: subnetB });
-    expect(otherNetwork.body.total).toBe(0);
+    expect(otherNetwork.body.items.map((row) => [row.record_type, row.zone_wide])).toEqual([
+      ['MX', true],
+    ]);
 
     const wholeZone = await request(app)
       .get('/api/workspace/dns-records')
@@ -218,6 +221,52 @@ describe('workspace read routes', () => {
     expect(
       (await request(app).get('/api/workspace/dns-records').query({ zone_type: 'both' })).status,
     ).toBe(400);
+  });
+
+  it('lists a zone-wide record under each network whose domain is its zone', async () => {
+    // shared.test is Alpha's and Beta's domain. Its MX has no address, so it
+    // serves the whole domain: listed under both, with Zone-wide as its
+    // Network, and filterable by it.
+    for (const subnetId of [subnetA, subnetB]) {
+      const res = await request(app)
+        .get('/api/workspace/dns-records')
+        .query({ subnet_id: subnetId, zone_id: zoneId, record_type: 'MX', facets: 1 });
+      expect(res.status).toBe(200);
+      expect(res.body.items).toHaveLength(1);
+      expect(res.body.items[0]).toMatchObject({ zone_wide: true, related_subnet_ids: [] });
+      expect(res.body.facets.network).toEqual([{ value: 'Zone-wide', count: 1 }]);
+    }
+    const filtered = await request(app)
+      .get('/api/workspace/dns-records')
+      .query({ subnet_id: subnetA, filters: JSON.stringify({ network: ['Zone-wide'] }) });
+    expect(filtered.body.items.map((row) => row.record_type)).toEqual(['MX']);
+
+    // A zone that is no network's domain has no zone-wide records: its
+    // addressless MX is under no network.
+    const loneZone = Number(
+      db
+        .prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('lone.test', 'forward', 1)")
+        .run().lastInsertRowid,
+    );
+    db.prepare(
+      `INSERT INTO dns_records (zone_id, name, type, value, priority, source, enabled)
+       VALUES (?, '@', 'MX', 'mx.example.net', 10, 'manual', 1)`,
+    ).run(loneZone);
+    try {
+      const whole = await request(app)
+        .get('/api/workspace/dns-records')
+        .query({ zone_id: loneZone });
+      expect(whole.body.items[0].zone_wide).toBe(false);
+      for (const subnetId of [subnetA, subnetB]) {
+        const res = await request(app)
+          .get('/api/workspace/dns-records')
+          .query({ subnet_id: subnetId, zone_id: loneZone });
+        expect(res.body.total).toBe(0);
+      }
+    } finally {
+      db.prepare('DELETE FROM dns_records WHERE zone_id = ?').run(loneZone);
+      db.prepare('DELETE FROM dns_zones WHERE id = ?').run(loneZone);
+    }
   });
 
   it('lists a name with an address record and one without, in either sort', async () => {
@@ -317,17 +366,16 @@ describe('workspace read routes', () => {
         subnet_id: null,
       });
 
-      const network = await request(app)
-        .get('/api/workspace/dns-records')
-        .query({ subnet_id: subnetA, table_q: 'v6-host' });
-      expect(network.status).toBe(200);
-      expect(network.body.total).toBe(0);
-
-      const external = await request(app)
-        .get('/api/workspace/dns-records')
-        .query({ subnet_id: subnetA, table_q: 'external-v4' });
-      expect(external.status).toBe(200);
-      expect(external.body.total).toBe(0);
+      // Neither address is in a network, so neither is Alpha's: each is
+      // listed under Alpha as zone-wide, its own network still none.
+      for (const name of ['v6-host', 'external-v4']) {
+        const network = await request(app)
+          .get('/api/workspace/dns-records')
+          .query({ subnet_id: subnetA, table_q: name });
+        expect(network.status).toBe(200);
+        expect(network.body.items).toHaveLength(1);
+        expect(network.body.items[0]).toMatchObject({ zone_wide: true, related_subnet_ids: [] });
+      }
     } finally {
       db.prepare("DELETE FROM dns_records WHERE name IN ('v6-host', 'external-v4')").run();
       db.pragma('ignore_check_constraints = OFF');
@@ -364,7 +412,8 @@ describe('workspace read routes', () => {
       .query({ folder_id: folderId });
 
     expect(response.status).toBe(200);
-    expect(response.body.items).toHaveLength(3);
+    // host, alias and the PTR by address; the MX as zone-wide (Alpha's domain).
+    expect(response.body.items).toHaveLength(4);
   });
 
   // Ungrouped has no folder id. Leaving folder_id off read the whole estate
@@ -376,13 +425,14 @@ describe('workspace read routes', () => {
     expect(networks.status).toBe(200);
     expect(networks.body.items.map((row) => row.id)).toEqual([subnetB]);
 
-    // Every record here belongs to Alpha, in the folder; a zone with no
-    // folder of its own is not thereby Ungrouped.
+    // Every addressed record here belongs to Alpha, in the folder; a zone with
+    // no folder of its own is not thereby Ungrouped. The zone-wide MX is listed
+    // under Beta, whose domain shared.test also is.
     const records = await request(app)
       .get('/api/workspace/dns-records')
       .query({ folder_id: 'ungrouped' });
     expect(records.status).toBe(200);
-    expect(records.body.items).toEqual([]);
+    expect(records.body.items.map((row) => row.record_type)).toEqual(['MX']);
 
     const dhcp = await request(app)
       .get('/api/workspace/dhcp-addresses')
