@@ -12,8 +12,10 @@ import {
   buildExplorerFolders,
   mapNetworkRows,
 } from '../../../../../src/views/networks-workspace-data.js';
+import { zoneFileName, zoneFileValue } from '../../../../../src/utils/dnsZoneFile.js';
 import {
   FOLDERS,
+  RECORDS,
   allocatedLeaves,
   applyColumnFilters,
   queryAddresses,
@@ -22,6 +24,7 @@ import {
   queryNetworks,
   queryScopes,
   queryZones,
+  recordRow,
   subnetTree,
   unallocatedLeaves,
 } from './fake-estate.js';
@@ -116,6 +119,7 @@ export function observe() {
   const explorerSearch = one('[data-track="workspace-global-search"]');
   const tableSearch = one('.table-search input');
   const available = one('.available-switch input');
+  const domainNames = one('.domain-names-switch input');
   return {
     title: one('.context-title-row h2')?.textContent.trim() ?? null,
     activeEstate,
@@ -146,6 +150,8 @@ export function observe() {
     q: explorerSearch?.value.trim() ?? '',
     tableQ: tableSearch?.value.trim() ?? '',
     showAvailable: available ? available.checked : null,
+    showDomainNames: domainNames ? domainNames.checked : null,
+    dnsCells: dnsCells(),
     rows: all('tbody tr[data-row-id]').map((row) => row.dataset.rowId),
     checked: all('tbody tr[data-row-id]')
       .filter((row) => row.querySelector('.check-cell input')?.checked)
@@ -159,6 +165,18 @@ export function observe() {
     filters: savedFilters(),
     loadError: one('.load-error, .workspace-error')?.textContent.trim() || null,
   };
+}
+
+// The DNS Name and Value cell of each DNS row on screen, by record id.
+function dnsCells() {
+  const headers = all('thead th');
+  const at = (key) => headers.findIndex((th) => th.dataset.column === key);
+  const [name, value] = [at('dns_hostname'), at('value')];
+  return all('tbody tr[data-row-id^="dns:"]').map((row) => {
+    const cells = row.querySelectorAll('td');
+    const text = (index) => (index < 0 ? null : (cells[index]?.textContent.trim() ?? null));
+    return { id: recordIdOf(row.dataset.rowId), name: text(name), value: text(value) };
+  });
 }
 
 function pagerOf(element) {
@@ -434,6 +452,26 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
   } else if (view === 'addresses' && context.kind === 'network') {
     const shown = state.rows.map((id) => id.slice('address:'.length));
     checkPage(out, 'address', shown, expectedAddresses(state, context), state.pager);
+  }
+
+  // 4a. DNS names read as the switch says: in full, or as the zone's file
+  // writes them (@, relative, absolute with a trailing dot).
+  if (view === 'dns' && state.showDomainNames != null) {
+    for (const cell of state.dnsCells) {
+      const entry = RECORDS.find((record) => record.id === cell.id);
+      if (!entry) continue;
+      const record = recordRow(entry);
+      const name = state.showDomainNames
+        ? record.record_fqdn
+        : zoneFileName(record.record_fqdn, record.zone_name);
+      const value = state.showDomainNames
+        ? record.value
+        : zoneFileValue(record.record_type, record.value, record.zone_name);
+      if (cell.name != null && cell.name !== name)
+        out.push(`DNS record ${cell.id} name "${cell.name}", expected "${name}"`);
+      if (cell.value != null && cell.value !== String(value))
+        out.push(`DNS record ${cell.id} value "${cell.value}", expected "${value}"`);
+    }
   }
 
   // 4b. The chips are the filters in force.

@@ -41,6 +41,17 @@ describe('Networks workspace regressions', () => {
   it('a search on one view does not take zones from another context', () =>
     walk(['tab dns', 'search "laptop"', 'tab dhcp', 'search "172.16"', 'network 13', 'stat dns']));
 
+  // Choosing a zone, a network's reverse zones or a scope kept the page of
+  // the list before it, past the end of a shorter one.
+  it('choosing a zone starts its list on the first page', () =>
+    walk(['page-size 32', 'tab dns', 'page next', 'pick-zone 201']));
+
+  // Not a bug found, a guard on the switch: zone-file names (@ for the apex
+  // MX, relative hosts, the MX target absolute) in the estate and a network,
+  // and still off after the reload every walk ends with.
+  it('Show domain names off writes names as the zone file does, across a reload', () =>
+    walk(['tab dns', 'domain-names', 'network 11', 'tab dns', 'zone 101']));
+
   it('Show available stays off across a reload', () =>
     walk(['network 13', 'available', 'tab dhcp', 'tab addresses']));
 

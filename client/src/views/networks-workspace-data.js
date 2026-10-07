@@ -9,6 +9,7 @@ import {
 } from '../utils/format.js';
 import { addressToBig, sortKey } from '../utils/ip.js';
 import { allocationSourceLabel, recordSourceLabel } from '../utils/ipTableDisplay.js';
+import { zoneFileName, zoneFileValue } from '../utils/dnsZoneFile.js';
 
 // A server boolean, which arrives as true, 1 or '1' depending on the route.
 function flag(value) {
@@ -288,8 +289,20 @@ export function mapDnsRows(zoneRecords) {
       enabled: flag(record.enabled),
       zone: zone.name,
       zoneType: zone.type,
+      // The name and value as the zone's file writes them, shown in place of
+      // the full ones when "Show domain names" is off (inZoneFileForm).
+      zoneFile: {
+        dnsName: zoneFileName(record.record_fqdn, zone.name),
+        value: zoneFileValue(record.record_type, record.value, zone.name),
+      },
     })),
   );
+}
+
+// The DNS rows as a zone file writes them: @, relative names, and absolute
+// ones with a trailing dot.
+export function inZoneFileForm(rows) {
+  return rows.map((row) => (row.zoneFile ? { ...row, ...row.zoneFile } : row));
 }
 
 export function mapDhcpRows(rows) {

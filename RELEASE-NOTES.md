@@ -554,6 +554,17 @@ first on a 0.4.17 host.
 - **MX and SRV targets take a trailing dot**, as a zone file writes them
   (`aspmx.l.google.com.`). CNAME already did. The dot is dropped when the
   record is stored, on create and on edit.
+- **An SRV record can be entered by its full name**
+  (`_sip._tcp.example.com`), as the DNS table shows it. Every other type
+  already took its full name; an SRV took only `_sip._tcp`.
+- **Show domain names, in the DNS table's toolbar.** On, as before, every
+  name is shown in full. Off, names read as a zone file writes them: the
+  apex is `@`, names in the zone are relative, and anything else is absolute
+  with a trailing dot, targets (CNAME, MX, SRV, PTR) included. The choice is
+  kept per browser.
+- **Choosing a zone, a network's reverse zones or a DHCP scope starts its
+  table on page 1.** It kept the page of the list before it, so a short zone
+  picked from page 2 of a long one showed an empty page.
 - **A network's DNS tab lists its domain's zone-wide records.** An MX, a TXT,
   or an apex A on a public address has no network of its own, so it was only
   in the All Allocated Networks view and vanished from a network's DNS tab
