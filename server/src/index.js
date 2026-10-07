@@ -32,7 +32,11 @@ import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.j
 import { sanitizeForLog } from './utils/validation.js';
 import { authMiddleware } from './auth/middleware.js';
 import { actorMiddleware } from './utils/request-actor.js';
-import { afterCommitMiddleware, resumePendingRegeneration } from './utils/after-commit.js';
+import {
+  afterCommitMiddleware,
+  queueRegen,
+  resumePendingRegeneration,
+} from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import featuresRoutes from './routes/features.js';
@@ -129,6 +133,11 @@ async function main() {
   }
   console.log('Database initialized');
   resumePendingRegeneration();
+  // Render the zones once per boot, so a release that changes what the
+  // generator writes (0.5.0 local zones in conf.d/local-zones.conf) reaches
+  // existing installs without waiting for a DNS edit. Unchanged files are not
+  // rewritten and nothing is signaled.
+  queueRegen('regenerate_dns');
 
   // Migrate legacy DHCP scope columns to scope_options table
   migrateLegacyScopeOptions(getDb());
