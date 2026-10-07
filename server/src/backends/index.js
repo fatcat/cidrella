@@ -84,6 +84,9 @@ export function onBackendChanged(fn) {
   return () => listeners.delete(fn);
 }
 
+/** Every backend CIDRella has, whether or not it fills a role now. */
+export const allBackends = () => Object.keys(FACTORIES).map(getBackend);
+
 /** Each backend service once, however many roles it fills. */
 export function uniqueServices() {
   return [...new Set(ROLES.map(getService))];

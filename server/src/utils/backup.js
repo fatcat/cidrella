@@ -7,7 +7,7 @@ import { upsertSettingWithConflict, deleteSetting } from '../models/setting.js';
 import * as User from '../models/user.js';
 import * as BackupCode from '../models/backup-code.js';
 import { getDb, getSetting, setSetting } from '../db/init.js';
-import { DATA_DIR } from '../config/defaults.js';
+import { BACKEND_RESTART_MARKER, DATA_DIR } from '../config/defaults.js';
 import { APP_VERSION } from './version.js';
 import { compareSemver } from './semver.js';
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
@@ -34,6 +34,20 @@ const RUNTIME_ARTIFACT_EXCLUDES = [
 // archive-producing paths (create + restore); the snapshot path doesn't need
 // these because the globs above fully cover DATA_DIR/dnsmasq/.
 const DEFENSIVE_EXCLUDES = ['--exclude=dnsmasq.log', '--exclude=dnsmasq.pid'];
+// Kea's directory (backends/kea/paths.js) rides along for its leases and the
+// DHCPv6 server DUID. Left out: the control API password (a backup is not a
+// place for a secret; the host keeps its own, see KEPT_ON_RESTORE), the
+// logs and sockets, and the configuration, which CIDRella renders from the
+// database at boot.
+const KEA_EXCLUDES = [
+  '--exclude=kea/secret',
+  '--exclude=kea/log',
+  '--exclude=kea/run',
+  '--exclude=kea/kea-dhcp*.conf',
+];
+// Paths inside a carried directory that a restore keeps from this host
+// rather than taking from the archive (which never has them).
+const KEPT_ON_RESTORE = ['kea/secret'];
 function isRuntimeArtifact(name) {
   return /\.log(\.|-|$)/i.test(name) || /\.pid$/i.test(name);
 }
@@ -102,6 +116,9 @@ export function createBackup(db) {
   // hours of DNS training data; losing them forces a full re-learn cycle.
   if (fs.existsSync(path.join(DATA_DIR, 'anomaly'))) includes.push('anomaly');
 
+  // Kea's leases and server DUID, when Kea has ever served here.
+  if (fs.existsSync(path.join(DATA_DIR, 'kea'))) includes.push('kea');
+
   if (includes.length === 0) {
     throw new Error('No data files found to backup');
   }
@@ -128,6 +145,7 @@ export function createBackup(db) {
         // of this file.
         ...RUNTIME_ARTIFACT_EXCLUDES,
         ...DEFENSIVE_EXCLUDES,
+        ...KEA_EXCLUDES,
         '--warning=no-file-changed',
         // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
         // POSIX keyletter form doesn't coexist with long --exclude options
@@ -501,7 +519,7 @@ function takePreRestoreSnapshot(db) {
   // logs and pids are runtime artifacts, not state, so the snapshot
   // skips them. tar -c | tar -x with the same --exclude flags as
   // createBackup keeps the two paths consistent.
-  for (const sub of ['certs', 'dnsmasq']) {
+  for (const sub of ['certs', 'dnsmasq', 'kea']) {
     const src = path.join(DATA_DIR, sub);
     if (!fs.existsSync(src)) continue;
     // Use tar pipe so excludes apply during the read pass; cp -a can't
@@ -509,6 +527,7 @@ function takePreRestoreSnapshot(db) {
     // between the two tars, no shell, no shell-injection surface.
     const reader = spawnSync('tar', [
       ...RUNTIME_ARTIFACT_EXCLUDES,
+      ...KEA_EXCLUDES,
       '-cf',
       '-',
       '-C',
@@ -864,6 +883,16 @@ export function restoreBackup(
       fs.rmSync(path.join(DATA_DIR, 'ipam.db-shm'), { force: true });
     }
 
+    for (const kept of KEPT_ON_RESTORE) {
+      const [top] = kept.split('/');
+      const current = path.join(DATA_DIR, kept);
+      const staged = path.join(stagingDir, kept);
+      if (stagedItems.includes(top) && fs.existsSync(current) && !fs.existsSync(staged)) {
+        fs.mkdirSync(path.dirname(staged), { recursive: true });
+        fs.renameSync(current, staged);
+      }
+    }
+
     for (const name of stagedItems) {
       const src = path.join(stagingDir, name);
       const dst = path.join(DATA_DIR, name);
@@ -912,6 +941,15 @@ export function restoreBackup(
     );
     wrapped.cause = copyErr;
     throw wrapped;
+  }
+
+  // The DNS/DHCP daemons hold their leases in memory and would write them
+  // over the restored files; the next boot restarts them so they read these.
+  try {
+    fs.mkdirSync(path.dirname(BACKEND_RESTART_MARKER), { recursive: true });
+    fs.writeFileSync(BACKEND_RESTART_MARKER, new Date().toISOString());
+  } catch (err) {
+    console.warn('Restore: could not ask for a backend restart at boot:', err.message);
   }
 
   // Happy path: clean up staging, close the DB handle, schedule exit.

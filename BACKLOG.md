@@ -241,11 +241,16 @@ the DHCP leases table columns for DUID/IAID default to hidden. No IPv6 NTP defau
 ### Kea DHCP backend (0.5.2), in flight
 
 Plan: `~/.claude/plans/tender-moseying-pascal.md`; design in `docs/DNSMASQ-COUPLING.md` (Kea).
-Phases 0 to 2 are in (adapter, selection, the switch in Settings > DHCP > Server). Left:
+Phases 0 to 3 are in (adapter, selection, the switch in Settings > DHCP > Server, packaging).
+Left:
 
-- **Packaging (phase 3).** Units, the `_kea` group, polkit, Cloudsmith repository, Alpine
-  packages and s6, backups carrying `kea/`, a harness scenario. Until it lands the switch
-  refuses with "Kea is not installed".
+- **Run the native packaging on a systemd host.** `install_kea` ran in a `node:22-trixie`
+  container (repository, key fingerprint, packages, `_kea`, the unit file), and the KEA_LIVE
+  test there starts both daemons on the rendered estate. Not yet run: the `cidrella-kea@` unit
+  and polkit under systemd, which is the `kea-switch` harness scenario on testerella, once a
+  pre-release carries it. The Docker image switched dnsmasq to Kea and back, and kept Kea
+  across a restart, in a container built from a scratch Dockerfile (the real one does not
+  build: DOCKER-01 in `REVIEW.md`).
 - **Log viewer per role.** `routes/logs.js` reads the DNS backend's log and filters DHCP lines out
   of it. Under Kea that file holds only dnsmasq's "ignored" DHCP lines; the DHCP filter should
   read the DHCP role's `logSource()` (Kea's legal log) instead, with its own offset in the SSE

@@ -15,7 +15,7 @@ security: false
 ```
 
 Kea as a second DHCP backend, on a backend contract that describes what each
-backend can do. In progress: this section grows with each phase.
+backend can do.
 
 ### Added
 
@@ -27,8 +27,18 @@ backend can do. In progress: this section grows with each phase.
   restarts once. If the new server does not start, the old one takes DHCP
   back; a switch a crash interrupts is undone at the next boot. Admins only,
   and audited. dnsmasq keeps DNS and the IPv6 Router Advertisements either
-  way. Kea itself ships with the packaging in a later phase, so until then
-  the panel says it is not installed.
+  way.
+- **Kea ships with CIDRella.** A native install or update adds ISC's Kea 3.0
+  repository (its signing key checked by fingerprint), installs
+  `isc-kea-dhcp4`, `isc-kea-dhcp6` and `isc-kea-hooks`, masks ISC's own Kea
+  units so they never take ports 67 and 547, and adds the `cidrella`
+  account to group `_kea`. Kea stays off until you switch to it; CIDRella
+  then runs it as `cidrella-kea@dhcp4` and `cidrella-kea@dhcp6`. Updates
+  never restart it, the same rule as dnsmasq. If the install fails, the
+  update goes on and dnsmasq keeps serving. The Docker image carries
+  Alpine's Kea 3.0 and its hooks, down until switched to.
+- **Kea's audit log follows the audit log retention.** Kea's legal log
+  (one file a day) is pruned with the audit log, by the same setting.
 - A setting naming Kea on a host without it (a backup restored from another
   host) falls back to dnsmasq at boot and says so in the log.
 
@@ -49,6 +59,12 @@ backend can do. In progress: this section grows with each phase.
 - **Lease times** are read by one parser shared by the server and the
   client (`utils/lease-time.js`); the stored text ("12h", "3600") is
   unchanged.
+
+- **Backups carry Kea's leases and server identity** (`kea/`), but not its
+  control password, logs, sockets or rendered config: a restore keeps the
+  host's password, and the next boot renders the config and restarts DNS
+  and DHCP on what was restored.
+- **Docker:** port 547/udp is listed with the others in the image.
 
 ### Fixed
 
@@ -95,7 +111,12 @@ backend can do. In progress: this section grows with each phase.
   come from the DHCP backend's own counters where it keeps them
   (`dhcpCounters`), from its log otherwise.
 - dnsmasq and Kea share their service control
-  (`backends/shared/unit-control.js`).
+  (`backends/shared/unit-control.js`). Its `enableFile` keeps a daemon s6
+  supervises down until it is wanted: Kea's s6 run script waits for it.
+- A backend may prune its own audit log (`pruneLogs(days)`), called from the
+  daily audit log prune for every backend (`allBackends()`).
+- The integration harness gains `kea-switch`: install a candidate, switch to
+  Kea and back through the API.
 
 ---
 

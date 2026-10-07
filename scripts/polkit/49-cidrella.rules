@@ -41,6 +41,14 @@ polkit.addRule(function(action, subject) {
         }
     }
 
+    // Kea, while it is the DHCP server: started and restarted on a switch
+    // or a config change, stopped when dnsmasq takes DHCP back.
+    if (unit === "cidrella-kea@dhcp4.service" || unit === "cidrella-kea@dhcp6.service") {
+        if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reload") {
+            return polkit.Result.YES;
+        }
+    }
+
     return polkit.Result.NOT_HANDLED;
 });
 

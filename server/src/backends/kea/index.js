@@ -19,6 +19,7 @@ import { normalizeDuid } from '../../utils/duid.js';
 import { declareSupport } from '../features.js';
 import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
 import { createUnitControl } from '../shared/unit-control.js';
+import { findExecutable } from '../../utils/executable.js';
 import { loadDhcpReservations, loadDhcpScopes } from '../shared/dhcp-scope-model.js';
 import {
   FAMILIES,
@@ -32,7 +33,9 @@ import {
   controlPort,
   keaEnv,
   newestLegalLog,
+  pruneLegalLogs,
   unitName,
+  enableFlagPath,
 } from './paths.js';
 import { ensureKeaSecret, readKeaSecret } from './secret.js';
 import { createKeaClient } from './client.js';
@@ -88,7 +91,11 @@ export function createKeaBackend(deps = {}) {
   const families = deps.families || (() => (ipv6Enabled() ? [4, 6] : [4]));
   const interfaces = deps.interfaces || (() => selectInterfaceNames('dhcp').names);
   const sysIfaces = deps.sysIfaces || (() => os.networkInterfaces());
-  const access = deps.access || ((file) => fs.accessSync(file, fs.constants.X_OK));
+  const access =
+    deps.access ||
+    ((file) => {
+      if (!findExecutable(file)) throw Object.assign(new Error(`${file} not found`), { code: 'ENOENT' });
+    });
   const wait = deps.wait || pause;
 
   const commands = Object.fromEntries(
@@ -109,6 +116,7 @@ export function createKeaBackend(deps = {}) {
         unit: unitName(family),
         processName: `kea-dhcp${family}`,
         restartPendingFile: RESTART_PENDING,
+        enableFile: enableFlagPath(family),
       }),
     ]),
   );
@@ -211,17 +219,26 @@ export function createKeaBackend(deps = {}) {
       // reclaimed.
       watchLeases(onChange) {
         const last = new Map();
+        // Families Kea did not answer for: a sync then (at boot, before Kea
+        // is up) failed too, so answering again counts as a change.
+        const unreachable = new Set();
         let busy = false;
         const poll = async () => {
           if (busy) return;
           busy = true;
           try {
+            let changed = false;
             for (const family of families()) {
               const signature = await leaseSignature(commands[family]).catch(() => null);
-              if (signature === null) continue;
-              if (last.has(family) && last.get(family) !== signature) onChange();
+              if (signature === null) {
+                unreachable.add(family);
+                continue;
+              }
+              if (unreachable.delete(family)) changed = true;
+              if (last.has(family) && last.get(family) !== signature) changed = true;
               last.set(family, signature);
             }
+            if (changed) onChange();
           } finally {
             busy = false;
           }
@@ -314,6 +331,8 @@ export function createKeaBackend(deps = {}) {
       fs.mkdirSync(KEA_DIR, { recursive: true });
       ensureKeaSecret();
     },
+    // The legal log keeps as long as the audit log does.
+    pruneLogs: (days) => pruneLegalLogs(days),
     // The DHCPv4 legal log, which the fingerprint watcher reads. Kea starts
     // a new file each day; the path is the newest. Kea answers no DNS, and
     // its DHCP message counts come from dhcpCounters.

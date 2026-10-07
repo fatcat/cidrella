@@ -1462,6 +1462,20 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-update@.service" ]; then
   fi
 fi
 
+# v0.5.2+: Kea, installed on hosts that predate it, and its unit refreshed.
+# Never restarted here: CIDRella restarts it when it serves DHCP, the same
+# rule as dnsmasq. Optional, so a failure warns and the update goes on.
+if [ -f "$TARGET_SLOT/scripts/lib/kea-install.sh" ]; then
+  # shellcheck source=scripts/lib/kea-install.sh
+  source "$TARGET_SLOT/scripts/lib/kea-install.sh"
+  if install_kea "$TARGET_SLOT"; then
+    emit_event switchover pass kea=installed
+  else
+    warn "Kea could not be installed; dnsmasq keeps serving DHCP"
+    emit_event switchover warn kea=install-failed
+  fi
+fi
+
 # Update sudoers if present
 if [ -f "$TARGET_SLOT/scripts/sudoers/cidrella" ]; then
   cp "$TARGET_SLOT/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella

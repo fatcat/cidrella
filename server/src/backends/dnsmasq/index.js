@@ -125,6 +125,9 @@ export function createDnsmasqBackend({ servesDhcp = () => true } = {}) {
     dhcp: {
       applyScopes,
       async readLeases({ leaseFile = LEASE_FILE, ...settle } = {}) {
+        // dnsmasq writes the file on its first lease: none yet is not a
+        // read caught mid-rewrite.
+        if (!fs.existsSync(leaseFile)) return { leases: null, absent: true };
         const content = await readSettledLeaseFile({ leaseFile, ...settle });
         if (content === null) return { leases: null, unsettled: true };
         removeLegacyLeaseHosts();

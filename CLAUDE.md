@@ -53,7 +53,9 @@ imported first in its test file; `setupTestDb` sets `DATA_DIR` too late for it.
 The Kea adapter has a live check against a real Kea 3 install (`kea-dhcp4 -t` on what CIDRella
 renders, every catalog option included). It is skipped unless `KEA_LIVE=1`:
 `cd server && KEA_LIVE=1 npx vitest run tests/integration/backends/kea/live.test.js`. Run it on a
-host or container with ISC's `isc-kea-dhcp4`, `isc-kea-dhcp6` and `isc-kea-hooks` packages.
+host or container with ISC's `isc-kea-dhcp4`, `isc-kea-dhcp6` and `isc-kea-hooks` packages
+(`scripts/lib/kea-install.sh` installs them in a `node:22-trixie` container). It also starts each
+daemon, which needs `CAP_NET_RAW` for the ping check: root, or `setpriv` with ambient caps.
 
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.
@@ -161,7 +163,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   checks: what a DNS or DHCP value may contain before any backend writes it),
   `services/ip-lifecycle-service.js` for every lifecycle
   write, `models/ip-events.js` for address history (`ip_events` and `ip_range_events`; history
-  is keyed by address, never by row, so it outlives the row), `utils/request-actor.js`
+  is keyed by address, never by row, so it outlives the row), `utils/executable.js` (`findExecutable`: where a
+  command would run from, searched on PATH as a shell does), `utils/request-actor.js`
   (`currentActor`, the signed-in user a write deep in a model should name), `models/ip-view.js` for every server-owned display field (status, type, and
   `dhcp_lease_state` from the newest lease; any read that shows an address feeds it
   `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own; a count of rogue
@@ -190,7 +193,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   needs: `loadDhcpScopes` and `loadDhcpReservations` in `dhcp-scope-model.js` for what every
   DHCP adapter serves, options merged and resolved; `poolSegments` for a pool minus its
   reserved addresses; `atomicWrite` and `createValidatedFiles` for a rendered config written as
-  one checked transaction; `createUnitControl` for starting, reloading and checking a daemon),
+  one checked transaction; `createUnitControl` for starting, reloading and checking a daemon,
+  with `enableFile` for one s6 keeps down until wanted),
   `utils/lease-time.js` (`leaseSeconds`, `isValidLeaseTime`: every read of a stored lease
   time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and
   `activeLeaseSql` in `utils/lease-sql.js` (which lease to believe for an address, and is a

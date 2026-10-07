@@ -22,6 +22,11 @@ export const RESTART_PENDING = path.join(DATA_DIR, 'runtime', 'kea-restart-pendi
 
 export const FAMILIES = Object.freeze([4, 6]);
 
+// Docker only: the s6 run script (rootfs/etc/s6-overlay/scripts/kea.sh) waits
+// for this before starting the daemon. systemd needs no flag.
+export const enableFlagPath = (family) =>
+  path.join(DATA_DIR, 'runtime', `kea-dhcp${family}.enabled`);
+
 export const confPath = (family) => path.join(KEA_DIR, `kea-dhcp${family}.conf`);
 export const leaseFilePath = (family) => path.join(KEA_DIR, `kea-leases${family}.csv`);
 export const logFilePath = (family) => path.join(KEA_LOG_DIR, `kea-dhcp${family}.log`);
@@ -46,11 +51,35 @@ export function newestLegalLog(family) {
   return dated.length ? path.join(KEA_LOG_DIR, dated.sort().at(-1)) : null;
 }
 
+/**
+ * Delete legal log files dated more than `days` days before `now`. Kea starts
+ * one a day and never removes them. Returns how many went.
+ */
+export function pruneLegalLogs(days, { now = Date.now() } = {}) {
+  const cutoff = new Date(now - days * 86400_000).toISOString().slice(0, 10).replace(/-/g, '');
+  let names;
+  try {
+    names = fs.readdirSync(KEA_LOG_DIR);
+  } catch {
+    return 0;
+  }
+  let removed = 0;
+  for (const name of names) {
+    const match = /^kea-legal[46]\.(\d{8})\.txt$/.exec(name);
+    if (match && match[1] < cutoff) {
+      fs.rmSync(path.join(KEA_LOG_DIR, name), { force: true });
+      removed++;
+    }
+  }
+  return removed;
+}
+
 // Each daemon's HTTP control socket, on loopback only.
 export const controlPort = (family) =>
   Number(process.env[`KEA_CONTROL_PORT${family}`]) || (family === 6 ? 8006 : 8004);
 
-export const unitName = (family) => `cidrella-kea-dhcp${family}`;
+// scripts/systemd/cidrella-kea@.service, one instance per daemon.
+export const unitName = (family) => `cidrella-kea@dhcp${family}`;
 export const binary = (family) => process.env[`KEA_DHCP${family}_BIN`] || `kea-dhcp${family}`;
 
 export function keaEnv() {

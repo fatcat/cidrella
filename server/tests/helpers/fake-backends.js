@@ -217,6 +217,7 @@ export function fakeBackendsModule(options) {
     setDhcpServing: () => {},
     onBackendChanged: () => () => {},
     uniqueServices: () => [backend],
+    allBackends: () => [backend],
     backendStatuses: () => roleStatuses(() => backend),
     supports: (id) => featureSupported(() => backend, id),
     featureReport: () => featureReportFor(() => backend),

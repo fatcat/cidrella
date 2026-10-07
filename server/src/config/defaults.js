@@ -10,6 +10,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Data directory (single source of truth) ─────────────
 export const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
+// Left by a restore: the next boot restarts every DNS/DHCP backend, so the
+// daemons load the restored leases instead of writing theirs over them.
+export const BACKEND_RESTART_MARKER = path.join(DATA_DIR, 'runtime', 'restart-backends-on-boot');
 
 // ─── DB-seeded settings (user-configurable via UI / API) ─────────
 

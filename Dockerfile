@@ -36,6 +36,22 @@ RUN apk add --no-cache \
     libcap && \
     command -v dhcp_release
 
+# Kea, the other DHCP server. It stays down until CIDRella serves DHCP from
+# it (rootfs/etc/s6-overlay/scripts/kea.sh). It runs as cidrella, so the
+# binaries carry the capabilities to bind ports 67 and 547 and answer on raw
+# sockets; compose already grants both (cap_add), and a file capability the
+# container lacks would make the binary refuse to run. Hooks are loaded by
+# bare name from Kea's hooks dir.
+RUN apk add --no-cache \
+    kea-dhcp4 \
+    kea-dhcp6 \
+    kea-hook-lease-cmds \
+    kea-hook-stat-cmds \
+    kea-hook-legal-log \
+    kea-hook-ping-check && \
+    setcap cap_net_raw,cap_net_bind_service+ep /usr/sbin/kea-dhcp4 && \
+    setcap cap_net_raw,cap_net_bind_service+ep /usr/sbin/kea-dhcp6
+
 # Create non-root user for Node.js
 RUN addgroup -g 65532 cidrella && \
     adduser -D -u 65532 -G cidrella -H -s /sbin/nologin cidrella
@@ -83,6 +99,6 @@ ENV S6_KEEP_ENV=1
 ENV PATH="/command:${PATH}"
 
 # Expose ports
-EXPOSE 8443 8080 53/udp 53/tcp 67/udp
+EXPOSE 8443 8080 53/udp 53/tcp 67/udp 547/udp
 
 ENTRYPOINT ["/init"]

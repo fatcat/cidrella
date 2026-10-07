@@ -19,8 +19,28 @@ const stderrOf = (err) => err?.stderr?.toString?.().trim();
  * `unit` is the systemd unit, `processName` the executable s6 runs, and
  * `pidFile` (optional) where the daemon writes its pid, for a reload signal
  * aimed at one process rather than every process of that name.
+ *
+ * `enableFile` (optional) is for a daemon s6 keeps down until it is wanted
+ * (Kea, which runs only while it serves DHCP): its run script waits for the
+ * file. Without systemctl, restart writes it and stop removes it.
  */
-export function createUnitControl({ unit, processName, pidFile = null, restartPendingFile }) {
+export function createUnitControl({
+  unit,
+  processName,
+  pidFile = null,
+  restartPendingFile,
+  enableFile = null,
+}) {
+  function setEnabled(enabled) {
+    if (!enableFile) return;
+    if (enabled) {
+      fs.mkdirSync(path.dirname(enableFile), { recursive: true });
+      fs.writeFileSync(enableFile, '');
+    } else {
+      fs.rmSync(enableFile, { force: true });
+    }
+  }
+
   function setRestartPending(pending) {
     try {
       if (pending) {
@@ -86,10 +106,22 @@ export function createUnitControl({ unit, processName, pidFile = null, restartPe
     }
     // Terminate and let the supervisor start it again.
     try {
+      setEnabled(true);
+    } catch (err) {
+      console.warn(`Could not enable ${processName}:`, err.message);
+      setRestartPending(true);
+      return;
+    }
+    try {
       execFileSync('pkill', ['-TERM', '-x', processName], { stdio: 'pipe' });
       console.log(`${processName} terminated (supervisor will restart)`);
       setRestartPending(false);
     } catch {
+      if (enableFile) {
+        // Not running yet: its run script starts it on seeing the file.
+        setRestartPending(false);
+        return;
+      }
       console.warn(`Could not restart ${processName}`);
       setRestartPending(true);
     }
@@ -97,8 +129,13 @@ export function createUnitControl({ unit, processName, pidFile = null, restartPe
 
   // Stop the daemon: a backend that no longer fills any role. Without
   // systemctl a TERM stops it until the supervisor starts it again, which
-  // s6 does unless the service is marked down.
+  // s6 does unless the service waits on `enableFile`.
   function stop() {
+    try {
+      setEnabled(false);
+    } catch {
+      /* gone already */
+    }
     try {
       execFileSync('systemctl', ['stop', unit], { stdio: 'pipe' });
       return;

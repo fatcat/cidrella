@@ -122,11 +122,13 @@ function writeSnapshot(snapshot) {
   return file;
 }
 
-// A lease read is retried while the backend reports it unsettled.
+// A lease read is retried while the backend reports it unsettled. A backend
+// that has never stored a lease has none to move.
 async function settledLeases(backend, { attempts = 5 } = {}) {
   for (let i = 0; i < attempts; i++) {
-    const { leases } = await backend.dhcp.readLeases();
+    const { leases, absent } = await backend.dhcp.readLeases();
     if (leases) return leases;
+    if (absent) return [];
   }
   throw new Error(`${backendLabel(backend.name)} leases did not settle`);
 }

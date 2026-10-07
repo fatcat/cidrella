@@ -233,3 +233,28 @@ ISC's Cloudsmith repository, 2026-10-07):
   statistics (`dhcpCounters()`), since a DISCOVER never reaches the log.
 - **Reload.** A SIGHUP or `config-reload` with a bad file keeps the old configuration running.
 
+- **Capabilities.** Run as a non-root account, Kea needs only `CAP_NET_BIND_SERVICE` and
+  `CAP_NET_RAW`, the pair ISC's own units grant (checked on Alpine's 3.0.3: port 67 bound on a
+  raw socket). A file capability the container's bounding set lacks makes the binary refuse
+  to run at all, so the image grants no more than compose's `cap_add` holds.
+
+### Packaging
+
+- **Native.** `scripts/lib/kea-install.sh`, sourced by `install.sh` and `update.sh`, adds ISC's
+  `kea-3-0` Cloudsmith repository (key checked against fingerprint
+  `9DA570BB192211885E4EB280B16C44CD45514C3C`), installs the three packages, masks ISC's
+  units, adds `cidrella` to `_kea`, and installs `scripts/systemd/cidrella-kea@.service`
+  (instances `dhcp4` and `dhcp6`, not enabled). It never starts or restarts Kea; a failure
+  warns and the install or update goes on, with the switch reporting Kea as not installed.
+  polkit lets `cidrella` start, stop, restart and reload the two instances.
+- **Docker.** Alpine's `kea-dhcp4`, `kea-dhcp6` and `kea-hook-*` packages, with file
+  capabilities on the binaries. The s6 longruns `kea-dhcp4` and `kea-dhcp6`
+  (`rootfs/etc/s6-overlay/scripts/kea.sh`) wait for `DATA_DIR/runtime/kea-dhcp<N>.enabled`,
+  which `createUnitControl`'s `enableFile` writes on restart and removes on stop; `init-data`
+  clears the flags at container start, so Kea comes up only when CIDRella asks.
+- **Backups** carry `kea/` (lease files, `server-duid`) without `kea/secret`, `kea/log`,
+  `kea/run` or the rendered config. A restore keeps the host's secret and leaves
+  `runtime/restart-backends-on-boot`, so the next boot renders DHCP and restarts every
+  backend on what was restored.
+- **Retention.** Kea starts a legal log file a day and never removes one; `pruneLogs` deletes
+  them past the audit log retention, from the same daily prune.

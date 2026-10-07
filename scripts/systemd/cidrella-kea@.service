@@ -1,0 +1,57 @@
+# One Kea DHCP daemon: cidrella-kea@dhcp4 or cidrella-kea@dhcp6. Not enabled:
+# Kea runs only while it is CIDRella's DHCP server, and CIDRella starts and
+# stops these units itself (backends/kea, polkit-gated systemctl). The paths
+# below must agree with server/src/backends/kea/paths.js.
+[Unit]
+Description=CIDRella Kea %i
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/fatcat/cidrella
+
+[Service]
+Type=simple
+# ISC's Debian packages install the daemons root:_kea 0750.
+User=cidrella
+Group=cidrella
+SupplementaryGroups=_kea
+# Kea 3 refuses lease, log, socket and pid paths outside these directories.
+Environment=KEA_DHCP_DATA_DIR=/var/lib/cidrella/kea
+Environment=KEA_LOG_FILE_DIR=/var/lib/cidrella/kea/log
+Environment=KEA_LEGAL_LOG_DIR=/var/lib/cidrella/kea/log
+Environment=KEA_CONTROL_SOCKET_DIR=/var/lib/cidrella/kea/run
+Environment=KEA_PIDFILE_DIR=/var/lib/cidrella/kea/run
+Environment=KEA_LOCKFILE_DIR=/var/lib/cidrella/kea/run
+ExecStartPre=/bin/mkdir -p /var/lib/cidrella/kea/log /var/lib/cidrella/kea/run
+ExecStart=/usr/sbin/kea-%i -c /var/lib/cidrella/kea/kea-%i.conf
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3
+UMask=0027
+
+# Capabilities required:
+#   CAP_NET_BIND_SERVICE - bind ports 67 (DHCPv4) and 547 (DHCPv6)
+#   CAP_NET_RAW          - raw sockets to answer DHCPv4 clients that have no
+#                          address yet, and ping_check's ICMP probe
+# The same pair ISC's own units grant. Broadcast replies need no capability.
+AmbientCapabilities=CAP_NET_BIND_SERVICE CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW
+
+# Same sandbox as cidrella-dnsmasq.service. Kea never drops privileges
+# itself, so unlike dnsmasq it runs as cidrella from the start and needs no
+# setuid capabilities.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cidrella/kea
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectClock=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+NoNewPrivileges=true
+RemoveIPC=true

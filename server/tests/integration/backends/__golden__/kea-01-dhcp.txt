@@ -50,7 +50,10 @@
         }
       },
       {
-        "library": "libdhcp_ping_check.so"
+        "library": "libdhcp_ping_check.so",
+        "parameters": {
+          "enable-ping-check": true
+        }
       }
     ],
     "calculate-tee-times": true,

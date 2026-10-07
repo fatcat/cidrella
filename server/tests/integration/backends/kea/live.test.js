@@ -6,13 +6,20 @@
  *
  *   KEA_LIVE=1 npx vitest run tests/integration/backends/kea/live.test.js
  *
- * It checks the backend estate through the adapter, then every catalog
- * option of both families on its own, so a code Kea parses differently from
- * dnsmasq fails by name.
+ * Starting kea-dhcp4 needs CAP_NET_RAW (ping_check opens an ICMP socket and
+ * the daemon will not start without it): run as root, or as a user in group
+ * _kea given it ambiently, e.g. `setpriv --reuid=<user> --init-groups
+ * --inh-caps=+net_raw --ambient-caps=+net_raw ...`.
+ *
+ * It checks the backend estate through the adapter, starts each daemon on
+ * it (`-t` loads no hooks, so only a start shows a hook that will not load),
+ * then every catalog option of both families on its own, so a code Kea
+ * parses differently from dnsmasq fails by name.
  */
 import { DATA_DIR } from '../../../helpers/isolated-data-dir.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { execFileSync } from 'child_process';
+import { execFileSync, spawn } from 'child_process';
+import { once } from 'events';
 import fs from 'fs';
 import path from 'path';
 
@@ -23,7 +30,10 @@ const { seedBackendEstate } = await import('../../../helpers/backend-estate.js')
 const { createKeaBackend } = await import('../../../../src/backends/kea/index.js');
 const { renderKeaConfig, serializeKeaConfig } =
   await import('../../../../src/backends/kea/render.js');
-const { binary, keaEnv } = await import('../../../../src/backends/kea/paths.js');
+const { binary, confPath, controlPort, keaEnv, KEA_API_USER } =
+  await import('../../../../src/backends/kea/paths.js');
+const { readKeaSecret } = await import('../../../../src/backends/kea/secret.js');
+const { createKeaClient } = await import('../../../../src/backends/kea/client.js');
 const { optionCatalogFor } = await import('../../../../src/utils/dhcp-options.js');
 
 // What a user would enter for each kind of option, in dnsmasq's syntax.
@@ -119,6 +129,37 @@ describe.skipIf(!LIVE)('Kea adapter against real Kea', () => {
   });
 
   for (const family of [4, 6]) {
+    it(`starts kea-dhcp${family} on that config, every hook loaded`, async () => {
+      const child = spawn(binary(family), ['-c', confPath(family)], {
+        env: { ...process.env, ...keaEnv() },
+        stdio: ['ignore', 'pipe', 'pipe'],
+      });
+      let output = '';
+      child.stdout.on('data', (chunk) => (output += chunk));
+      child.stderr.on('data', (chunk) => (output += chunk));
+      const command = createKeaClient({
+        port: controlPort(family),
+        user: KEA_API_USER,
+        password: () => readKeaSecret(),
+        timeoutMs: 500,
+      });
+      try {
+        let status = null;
+        const deadline = Date.now() + 10_000;
+        while (!status && child.exitCode === null && Date.now() < deadline) {
+          status = await command('status-get').catch(
+            () => new Promise((resolve) => setTimeout(() => resolve(null), 200)),
+          );
+        }
+        expect(status, output.match(/ERROR[^\n]*/g)?.join('\n') || output).toBeTruthy();
+      } finally {
+        if (child.exitCode === null) {
+          child.kill('SIGTERM');
+          await once(child, 'exit');
+        }
+      }
+    });
+
     it(`writes every DHCPv${family} catalog option in a form kea -t accepts`, () => {
       const catalog = optionCatalogFor(family);
       const dir = path.join(DATA_DIR, `catalog${family}`);

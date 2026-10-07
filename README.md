@@ -14,6 +14,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 - **DNSSEC validation**: UI toggle that turns on dnsmasq DNSSEC validation against the root trust anchor, with a TCP-capable DNS proxy (so large/signed answers and validating-stub resolvers work) while blocklist + GeoIP filtering stay in place. NTP is enabled automatically and dnsmasq starts lenient on signature timestamps until the clock syncs.
 - **Encrypted forwarders (DoT/DoH)**: Optionally encrypt CIDRella→upstream DNS via DNS-over-TLS or DNS-over-HTTPS through a built-in stub (no external daemon), with preset unfiltered resolvers (Cloudflare/Google/Quad9/AdGuard) or custom. Fails closed (no silent plaintext fallback) and stays compatible with DNSSEC validation.
 - **DHCP management**: Scopes, global defaults for new scopes, per-scope options, DHCP Reservations, dynamic lease tracking, and DHCP-derived DNS records.
+- **Choice of DHCP server**: dnsmasq or ISC Kea 3.0, switched in Settings > DHCP > Server with every IPv4 and IPv6 lease moved across, so clients keep their addresses. Kea is installed alongside and stays off until switched to; dnsmasq keeps DNS and the IPv6 Router Advertisements either way.
 - **IPv6, behind one switch**: Off by default. Turn it on under Settings, General, Interfaces to list the host's IPv6 addresses, listen on them, manage IPv6 networks (SLAAC, stateless or stateful DHCPv6 per network, DUID reservations, AAAA and ip6.arpa) and run the DHCPv6 and Router Advertisement checks. Off, CIDRella is an IPv4 product and refuses new IPv6 objects.
 - **Rogue DHCP and router detection**: Scheduled active probes (DHCPv4 DISCOVER broadcast, DHCPv6 SOLICIT multicast) that flag unauthorized DHCP servers answering on CIDRella's segments, plus rogue IPv6 routers read from the Router Advertisements the kernel accepted. CIDRella's own server and configured gateways are auto-trusted, with a user allowlist by IP, MAC or DUID. Surfaces a yellow warning on the Ops chip.
 - **Liveness and rogue detection**: Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
@@ -118,7 +119,7 @@ This clears the stored web port overrides, re-enables the HTTP redirect, and res
 
 | Layer | Technology |
 |-------|-----------|
-| DNS/DHCP | DNSmasq |
+| DNS/DHCP | DNSmasq; ISC Kea 3.0 for DHCP when chosen |
 | Backend | Node.js + Express |
 | Frontend | Vue 3 + PrimeVue |
 | Database | SQLite (better-sqlite3) |

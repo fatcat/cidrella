@@ -115,6 +115,23 @@
       ],
       "expected_duration_sec": 240,
       "requires_fresh_host": true
+    },
+    {
+      "name": "kea-switch",
+      "file": "scripts/test-harness/scenarios/kea-switch.sh",
+      "description": "Install a PUBLISHED candidate (pre-)release carrying Kea (0.5.2+, via --candidate), then switch the DHCP server dnsmasq to Kea and back through POST /api/dhcp/server. Asserts Kea was installed and left off (ISC units masked, cidrella in group _kea), that each switch committed, that both Kea daemons ran while Kea served and stopped after, and that no switch marker is left.",
+      "catches": [
+        "Kea packaging regressions: ISC repository, key fingerprint, packages, the _kea group, the cidrella-kea@ unit",
+        "polkit rule gaps for the Kea units (start, stop, restart)",
+        "a switch that fails to start Kea, or to hand DHCP back to dnsmasq",
+        "Kea refusing the paths or capabilities the unit gives it"
+      ],
+      "does_not_catch": [
+        "a real client's Renew or Rebind across a switch (no client on the served link; hardware check in BACKLOG.md)",
+        "the Docker image's s6 Kea services"
+      ],
+      "expected_duration_sec": 300,
+      "requires_fresh_host": true
     }
   ],
   "result_schema": {

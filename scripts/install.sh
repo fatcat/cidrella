@@ -752,6 +752,21 @@ if [ "$DNSMASQ_MODE" = "own" ]; then
   emit_event systemd pass unit=cidrella-dnsmasq.service
 fi
 
+# v0.5.2+: Kea, the other DHCP server. Installed and left off; dnsmasq
+# serves DHCP until an administrator switches in Settings > DHCP > Server.
+# Optional: without it the switch says Kea is not installed.
+if [ -f "$INSTALL_DIR/scripts/lib/kea-install.sh" ]; then
+  # shellcheck source=scripts/lib/kea-install.sh
+  source "$INSTALL_DIR/scripts/lib/kea-install.sh"
+  if install_kea "$INSTALL_DIR"; then
+    ok "Installed Kea DHCP (off until switched to)"
+    emit_event kea pass
+  else
+    warn "Kea was not installed; dnsmasq serves DHCP and the switch to Kea stays unavailable"
+    emit_event kea warn reason=install-failed
+  fi
+fi
+
 # v0.4.15+: logrotate for dnsmasq.log. Prevents the unbounded growth that
 # inflated every backup to >1 GB before the 2026-04-21 hardening work.
 # Config uses copytruncate, so no restart or SIGUSR2 is needed.

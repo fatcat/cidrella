@@ -174,6 +174,18 @@ describe('switchDhcpBackend', () => {
     expect(dnsmasq.running).toBe(true);
   });
 
+  it('moves no leases from a server that has never stored one', async () => {
+    const read = dnsmasq.dhcp.readLeases;
+    dnsmasq.dhcp.readLeases = async () => ({ leases: null, absent: true });
+    try {
+      const result = await switchDhcpBackend(db, 'kea');
+      expect(result).toMatchObject({ to: 'kea', leases: 0, added: 0 });
+      expect(registry.getService('dhcp')).toBe(kea);
+    } finally {
+      dnsmasq.dhcp.readLeases = read;
+    }
+  });
+
   it('keeps the leases it moved, readable by root only', async () => {
     const { snapshot } = await switchDhcpBackend(db, 'kea');
     const kept = JSON.parse(fs.readFileSync(snapshot, 'utf8'));

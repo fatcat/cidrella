@@ -63,7 +63,9 @@ export const DNS_OPS = Object.freeze([
 /**
  * DHCP role.
  * - applyScopes(db, opts) -> ApplyResult: scopes, pools, options, reservations
- * - readLeases(opts) -> Promise<{ leases: BackendLease[] } | { leases: null, unsettled: true }>
+ * - readLeases(opts) -> Promise<{ leases: BackendLease[] } | { leases: null, unsettled: true }
+ *   | { leases: null, absent: true }>: absent when the backend has never
+ *   stored a lease (the lease sync skips it like an unsettled read)
  * - watchLeases(onChange) -> stop(): calls onChange when leases may have changed
  * - releaseLease(BackendLease) -> { released, skipped?, error? }, or a Promise
  *   of it: never throws or rejects
@@ -119,6 +121,8 @@ export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
  * - awaitRunning?() -> Promise: resolves once it runs its configuration and,
  *   when it serves, answers on its sockets; rejects with the reason
  * - stop?() -> void: stop a daemon that fills no role any more
+ * - pruneLogs?(days) -> number: delete audit logs of its own (Kea's legal
+ *   log) older than the audit retention; how many files went
  */
 export const SERVICE_OPS = Object.freeze([
   'status',

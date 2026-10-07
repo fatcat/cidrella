@@ -19,6 +19,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { cleanupTestDb } from '../helpers/test-db.js';
 import { getDb, initDb } from '../../src/db/init.js';
+import { BACKEND_RESTART_MARKER } from '../../src/config/defaults.js';
 
 import {
   applyRestoreCarryover,
@@ -75,7 +76,10 @@ function dumpTables(db) {
 }
 
 // Every file the backup carries, by path, as a hash.
-const CARRIED = ['certs', 'dnsmasq', 'analytics.duckdb', 'analytics.duckdb.wal', 'anomaly'];
+const CARRIED = ['certs', 'dnsmasq', 'analytics.duckdb', 'analytics.duckdb.wal', 'anomaly', 'kea'];
+// Under a carried directory but not carried: Kea's control secret stays the
+// host's, and its logs, sockets and rendered config belong to the running host.
+const NOT_CARRIED = /^kea\/(secret|log|run)\/|^kea\/kea-dhcp[46]\.conf$/;
 function hashFiles(root) {
   const out = {};
   const walk = (relative) => {
@@ -83,7 +87,7 @@ function hashFiles(root) {
     if (!fs.existsSync(full)) return;
     if (fs.statSync(full).isDirectory()) {
       for (const name of fs.readdirSync(full)) walk(path.join(relative, name));
-    } else if (!/\.(log|pid)$/.test(relative)) {
+    } else if (!/\.(log|pid)$/.test(relative) && !NOT_CARRIED.test(relative)) {
       out[relative] = crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex');
     }
   };
@@ -189,9 +193,17 @@ function seed(db) {
   writeFile('analytics.duckdb', crypto.randomBytes(4096));
   writeFile('analytics.duckdb.wal', crypto.randomBytes(512));
   writeFile('anomaly/models/client-10.40.0.130.json', '{"trained":48}');
+  writeFile('kea/kea-leases4.csv', 'address,hwaddr\n10.40.0.140,02:00:00:00:00:40\n');
+  writeFile('kea/kea-leases6.csv', 'address,duid\nfd00:40::140,00:01:00:01\n');
+  writeFile('kea/server-duid', '00:01:00:01:2e:aa:bb:cc:02:00:00:00:00:01\n');
   // Runtime files a backup must not carry.
   writeFile('dnsmasq/dnsmasq.log', 'query log\n'.repeat(100));
   writeFile('dnsmasq/dnsmasq.pid', '4242\n');
+  writeFile('kea/secret/api-pw', 'secret v1');
+  writeFile('kea/log/kea-dhcp4.log', 'kea log\n');
+  writeFile('kea/log/kea-legal4.20261007.txt', 'legal\n');
+  writeFile('kea/run/kea-dhcp4.pid', '4343\n');
+  writeFile('kea/kea-dhcp4.conf', '{"Dhcp4":{}}');
   return { adminId };
 }
 
@@ -217,6 +229,8 @@ function change(db, adminId) {
   writeFile('dnsmasq/conf.d/cidrella.conf', 'domain=changed.test\n');
   writeFile('analytics.duckdb', crypto.randomBytes(4096));
   fs.rmSync(path.join(dataDir, 'anomaly'), { recursive: true, force: true });
+  writeFile('kea/kea-leases4.csv', 'address,hwaddr\n');
+  writeFile('kea/secret/api-pw', 'secret v2');
 }
 
 // ─── The round trip ───────────────────────────────────────────────────
@@ -307,6 +321,17 @@ describe('backup round trip', () => {
   it('carries no log or pid file', () => {
     expect(fs.existsSync(path.join(dataDir, 'dnsmasq/dnsmasq.log'))).toBe(false);
     expect(fs.existsSync(path.join(dataDir, 'dnsmasq/dnsmasq.pid'))).toBe(false);
+    expect(fs.existsSync(path.join(dataDir, 'kea/log'))).toBe(false);
+    expect(fs.existsSync(path.join(dataDir, 'kea/run'))).toBe(false);
+  });
+
+  it('keeps the host’s Kea secret, and leaves the Kea config for boot to render', () => {
+    expect(fs.readFileSync(path.join(dataDir, 'kea/secret/api-pw'), 'utf8')).toBe('secret v2');
+    expect(fs.existsSync(path.join(dataDir, 'kea/kea-dhcp4.conf'))).toBe(false);
+  });
+
+  it('asks the next boot to restart every backend on what was restored', () => {
+    expect(fs.existsSync(BACKEND_RESTART_MARKER)).toBe(true);
   });
 
   it('keeps a pre-restore snapshot and leaves no staging behind', () => {

@@ -18,6 +18,9 @@ mkdir -p /data/dnsmasq/dhcp-hosts.d
 mkdir -p /data/dnsmasq/conf.d
 mkdir -p /data/blocklists
 mkdir -p /data/anomaly/models
+mkdir -p /data/kea /data/runtime
+# A Kea left enabled by the last run starts only once CIDRella asks again.
+rm -f /data/runtime/kea-dhcp4.enabled /data/runtime/kea-dhcp6.enabled
 
 # Copy default dnsmasq config if not present
 if [ ! -f /data/dnsmasq/dnsmasq.conf ]; then

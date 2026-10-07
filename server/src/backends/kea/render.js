@@ -201,8 +201,13 @@ function hooks(family) {
   };
   // Ping before offering, as dnsmasq does: DHCPv4 only (ICMP echo; the hook
   // has no DHCPv6 counterpart). Kea's defaults: one echo, a 100 ms wait, and
-  // no ping for an address whose lease was active in the last minute.
-  const ping = family === 4 ? [{ library: 'libdhcp_ping_check.so' }] : [];
+  // no ping for an address whose lease was active in the last minute. The
+  // hook refuses to load without a parameters map (`kea-dhcp4 -t` loads no
+  // hooks, so only a real start shows it).
+  const ping =
+    family === 4
+      ? [{ library: 'libdhcp_ping_check.so', parameters: { 'enable-ping-check': true } }]
+      : [];
   return [
     { library: 'libdhcp_lease_cmds.so' },
     { library: 'libdhcp_stat_cmds.so' },

@@ -77,7 +77,7 @@ import {
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
-import { uniqueServices } from './backends/index.js';
+import { allBackends, uniqueServices } from './backends/index.js';
 import { selectDhcpBackendAtBoot } from './services/dhcp-backend-switch.js';
 import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
@@ -291,6 +291,11 @@ async function main() {
       const result = AuditLog.pruneAuditLog(getDb(), days);
       if (result.changes > 0) {
         console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
+      }
+      // A backend's own audit log (Kea's legal log) keeps as long.
+      for (const backend of allBackends()) {
+        const files = backend.pruneLogs?.(Number(days)) || 0;
+        if (files > 0) console.log(`${backend.name} audit log: ${files} file(s) older than ${days} days removed`);
       }
     } catch (err) {
       console.error('Audit log prune error:', err.message);
