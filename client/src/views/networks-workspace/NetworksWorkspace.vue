@@ -472,6 +472,7 @@ import {
   flattenAllocatable,
 } from '../networks-workspace-data.js';
 import { DHCP_V6_MODE_LABELS } from '../../utils/ip.js';
+import { ZONE_WIDE_NETWORK } from '@shared/ip-columns.js';
 
 const networkViews = [
   { key: 'addresses', label: 'Addresses', icon: 'pi pi-list' },
@@ -970,7 +971,11 @@ function mapWorkspaceDnsRows(records) {
       .filter(Boolean);
     const record = {
       ...sourceRecord,
-      subnet_name: sourceRecord.subnet_name || relatedNames.join(', ') || null,
+      subnet_name:
+        (sourceRecord.zone_wide && ZONE_WIDE_NETWORK) ||
+        sourceRecord.subnet_name ||
+        relatedNames.join(', ') ||
+        null,
     };
     const zone = zonesById.get(Number(record.zone_id)) || {
       id: record.zone_id,
