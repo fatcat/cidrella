@@ -3,18 +3,20 @@
  * every 60 seconds and persists them to the metrics tables.
  *
  * Blocklist and GeoIP block counts come from in-memory proxy counters.
- * DNS query and DHCP counts come from the backend's log (logSource()).
+ * DNS query counts come from the DNS backend's log (logSource()). DHCP counts
+ * come from the DHCP backend's own counters when it keeps them
+ * (dhcpCounters(), Kea), otherwise from its log; one file when one daemon
+ * fills both roles (dnsmasq).
  */
 
-import fs from 'fs';
-import { readLogTail } from './log-reader.js';
+import { createLogFollower } from './log-reader.js';
 import {
   getBlockedDelta,
   getAndResetCountryHits,
   getAndResetPerformanceMetrics,
   getAndResetBlocklistHits,
 } from './dns-proxy.js';
-import { getService } from '../backends/index.js';
+import { getDhcpBackend, getService } from '../backends/index.js';
 
 const AGGREGATE_INTERVAL_MS = 60_000;
 const RETENTION_DAYS = 30;
@@ -22,8 +24,11 @@ const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
 let db = null;
 let timer = null;
-let logOffset = 0;
-let logSource = null;
+// One follower per distinct log: { source, log, dns, dhcp }, where dns and
+// dhcp say which counts that log is read for.
+let logTails = [];
+// The DHCP backend's last counter totals, when it keeps counters.
+let lastDhcpCounters = null;
 let cycleCount = 0;
 
 // CPU tracking for delta computation
@@ -45,9 +50,13 @@ let deleteOldProxyPerf = null;
  * Parse new log lines and return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs }.
  * The two DHCP counts are kept apart so the dashboard can show a request the
  * server never answered; dhcp_requests, the column older readers use, stays
- * as the sum.
+ * as the sum. `dns` and `dhcp` say which counts this log is read for.
  */
-export function parseLogLines(lines, source = getService('dns').logSource()) {
+export function parseLogLines(
+  lines,
+  source = getService('dns').logSource(),
+  { dns = true, dhcp = true } = {},
+) {
   if (!source) return { dnsQueries: 0, dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
   let dnsQueries = 0;
   let dhcpClientMsgs = 0;
@@ -55,8 +64,8 @@ export function parseLogLines(lines, source = getService('dns').logSource()) {
 
   for (const line of lines) {
     if (source.querySourceIp(line)) {
-      dnsQueries++;
-    } else {
+      if (dns) dnsQueries++;
+    } else if (dhcp) {
       const direction = source.dhcpDirection(line);
       if (direction === 'client') dhcpClientMsgs++;
       else if (direction === 'server') dhcpServerMsgs++;
@@ -66,21 +75,64 @@ export function parseLogLines(lines, source = getService('dns').logSource()) {
   return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs };
 }
 
+// The logs to read: the DNS backend's for queries, and the DHCP backend's
+// for DHCP messages unless it counts them itself; once when they are the
+// same file.
+function selectLogTails(dhcpFromLog) {
+  const dns = getService('dns').logSource();
+  const dhcp = dhcpFromLog ? getService('dhcp').logSource() : null;
+  if (dns && dhcp && dns.path === dhcp.path) return [{ source: dns, dns: true, dhcp: true }];
+  return [
+    dns && { source: dns, dns: true, dhcp: false },
+    dhcp && { source: dhcp, dns: false, dhcp: true },
+  ].filter(Boolean);
+}
+
+/**
+ * DHCP messages since the last call from the backend's counters, which are
+ * totals since the daemon started: a total that went down means a restart,
+ * and the new total is all new. The first call sets the baseline.
+ */
+export function counterDelta(last, current) {
+  if (!last) return { dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
+  const delta = (key) => (current[key] >= last[key] ? current[key] - last[key] : current[key]);
+  return { dhcpClientMsgs: delta('received'), dhcpServerMsgs: delta('sent') };
+}
+
+async function dhcpCounterCounts() {
+  let current;
+  try {
+    current = await getDhcpBackend().dhcpCounters();
+  } catch (err) {
+    console.warn('[metrics-aggregator] DHCP counters unavailable:', err.message);
+    return { dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
+  }
+  const counts = counterDelta(lastDhcpCounters, current);
+  lastDhcpCounters = current;
+  return counts;
+}
+
+const backendCountsDhcp = () => typeof getDhcpBackend().dhcpCounters === 'function';
+
 /**
  * Single aggregation cycle.
  */
-function aggregate() {
+async function aggregate() {
   try {
     const ts = Math.floor(Date.now() / 60_000) * 60; // minute-aligned epoch seconds
 
-    // Parse dnsmasq log for DNS query and DHCP counts
-    let lines = [];
-    if (logSource) {
-      const tail = readLogTail(logSource.path, logOffset);
-      lines = tail.lines;
-      logOffset = tail.newOffset;
+    let dnsQueries = 0;
+    let dhcpClientMsgs = 0;
+    let dhcpServerMsgs = 0;
+    for (const tail of logTails) {
+      const counts = parseLogLines(tail.log.read(), tail.source, tail);
+      dnsQueries += counts.dnsQueries;
+      dhcpClientMsgs += counts.dhcpClientMsgs;
+      dhcpServerMsgs += counts.dhcpServerMsgs;
     }
-    const { dnsQueries, dhcpClientMsgs, dhcpServerMsgs } = parseLogLines(lines, logSource);
+    if (backendCountsDhcp()) {
+      ({ dhcpClientMsgs, dhcpServerMsgs } = await dhcpCounterCounts());
+    }
 
     // Blocklist blocks from in-memory proxy counters
     const blocklistData = getAndResetBlocklistHits();
@@ -192,13 +244,14 @@ export function startMetricsAggregator(database) {
   deleteOldGeoipHits = db.prepare('DELETE FROM metrics_geoip_hits WHERE ts < ?');
   deleteOldProxyPerf = db.prepare('DELETE FROM metrics_proxy_perf WHERE ts < ?');
 
-  // Start from end of log file (don't process historical lines)
-  logSource = getService('dns').logSource();
-  try {
-    if (logSource) logOffset = fs.statSync(logSource.path).size;
-  } catch {
-    /* file may not exist yet */
-  }
+  // Start each log from its end (don't process historical lines)
+  const countsItself = backendCountsDhcp();
+  logTails = selectLogTails(!countsItself).map((tail) => ({
+    ...tail,
+    log: createLogFollower(tail.source),
+  }));
+  lastDhcpCounters = null;
+  if (countsItself) dhcpCounterCounts();
 
   timer = setInterval(aggregate, AGGREGATE_INTERVAL_MS);
   console.log('[metrics-aggregator] Started (interval: 60s, retention: 30d)');

@@ -68,6 +68,10 @@ export const DNS_OPS = Object.freeze([
  * - releaseLease(BackendLease) -> { released, skipped?, error? }, or a Promise
  *   of it: never throws or rejects
  * - serverIdentity() -> { duid: string|null }: the server's own DHCPv6 DUID
+ * - importLeases?(BackendLease[]) -> Promise<{ added, failed: [{ ip, error }] }>:
+ *   optional; take over leases another backend handed out (a switch)
+ * - dhcpCounters?() -> Promise<{ received, sent }>: optional; DHCP packets
+ *   since the daemon started, for a backend whose log does not show them all
  */
 export const DHCP_OPS = Object.freeze([
   'applyScopes',

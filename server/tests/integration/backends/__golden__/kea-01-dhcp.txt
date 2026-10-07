@@ -1,0 +1,289 @@
+=== kea-dhcp4.conf ===
+{
+  "Dhcp4": {
+    "interfaces-config": {
+      "interfaces": [
+        "eth0"
+      ],
+      "service-sockets-require-all": true,
+      "service-sockets-max-retries": 5,
+      "service-sockets-retry-wait-time": 5000
+    },
+    "lease-database": {
+      "type": "memfile",
+      "persist": true,
+      "name": "$DATA_DIR/kea/kea-leases4.csv",
+      "lfc-interval": 3600
+    },
+    "control-sockets": [
+      {
+        "socket-type": "http",
+        "socket-address": "127.0.0.1",
+        "socket-port": 8004,
+        "authentication": {
+          "type": "basic",
+          "realm": "cidrella",
+          "directory": "$DATA_DIR/kea/secret",
+          "clients": [
+            {
+              "user": "cidrella",
+              "password-file": "api-pw"
+            }
+          ]
+        }
+      }
+    ],
+    "hooks-libraries": [
+      {
+        "library": "libdhcp_lease_cmds.so"
+      },
+      {
+        "library": "libdhcp_stat_cmds.so"
+      },
+      {
+        "library": "libdhcp_legal_log.so",
+        "parameters": {
+          "path": "$DATA_DIR/kea/log",
+          "base-name": "kea-legal4",
+          "request-parser-format": "ifelse(pkt4.msgtype == 3 or pkt4.msgtype == 1, 'type=' + uint32totext(pkt4.msgtype) + ' mac=' + hexstring(pkt4.mac, ':') + ' prl=' + hexstring(option[55].hex, ',') + ' vci=' + option[60].text + ' host=' + option[12].text, '')",
+          "response-parser-format": "ifelse(pkt4.msgtype == 5, ' ack ip=' + addrtotext(pkt4.yiaddr), '')"
+        }
+      },
+      {
+        "library": "libdhcp_ping_check.so"
+      }
+    ],
+    "calculate-tee-times": true,
+    "t1-percent": 0.5,
+    "t2-percent": 0.875,
+    "ddns-send-updates": false,
+    "ddns-replace-client-name": "never",
+    "loggers": [
+      {
+        "name": "kea-dhcp4",
+        "output-options": [
+          {
+            "output": "$DATA_DIR/kea/log/kea-dhcp4.log",
+            "maxsize": 10485760,
+            "maxver": 4
+          }
+        ],
+        "severity": "INFO"
+      }
+    ],
+    "subnet4": [
+      {
+        "id": 1,
+        "subnet": "10.60.0.0/24",
+        "valid-lifetime": 3600,
+        "pools": [
+          {
+            "pool": "10.60.0.100 - 10.60.0.199"
+          }
+        ],
+        "option-data": [
+          {
+            "code": 3,
+            "space": "dhcp4",
+            "data": "10.60.0.1"
+          },
+          {
+            "code": 6,
+            "space": "dhcp4",
+            "data": "10.60.0.2, 9.9.9.9"
+          },
+          {
+            "code": 15,
+            "space": "dhcp4",
+            "data": "golden.test"
+          },
+          {
+            "code": 19,
+            "space": "dhcp4",
+            "data": "0"
+          },
+          {
+            "code": 42,
+            "space": "dhcp4",
+            "data": "69.164.213.136, 172.234.25.10, 172.233.189.68, 198.44.55.245"
+          },
+          {
+            "code": 66,
+            "space": "dhcp4",
+            "data": "tftp.golden.test"
+          },
+          {
+            "code": 119,
+            "space": "dhcp4",
+            "data": "golden.test"
+          },
+          {
+            "code": 224,
+            "space": "dhcp4",
+            "csv-format": false,
+            "data": "012c"
+          },
+          {
+            "code": 225,
+            "space": "dhcp4",
+            "csv-format": false,
+            "data": "0a3c00070a3c0008"
+          },
+          {
+            "code": 28,
+            "space": "dhcp4",
+            "data": "10.60.0.255"
+          }
+        ],
+        "reservations": [
+          {
+            "hw-address": "aa:bb:cc:00:00:01",
+            "ip-address": "10.60.0.50",
+            "hostname": "printer"
+          },
+          {
+            "hw-address": "aa:bb:cc:00:00:02",
+            "ip-address": "10.60.0.51"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+=== kea-dhcp6.conf ===
+{
+  "Dhcp6": {
+    "interfaces-config": {
+      "interfaces": [
+        "eth0"
+      ],
+      "service-sockets-require-all": true,
+      "service-sockets-max-retries": 5,
+      "service-sockets-retry-wait-time": 5000
+    },
+    "lease-database": {
+      "type": "memfile",
+      "persist": true,
+      "name": "$DATA_DIR/kea/kea-leases6.csv",
+      "lfc-interval": 3600
+    },
+    "control-sockets": [
+      {
+        "socket-type": "http",
+        "socket-address": "127.0.0.1",
+        "socket-port": 8006,
+        "authentication": {
+          "type": "basic",
+          "realm": "cidrella",
+          "directory": "$DATA_DIR/kea/secret",
+          "clients": [
+            {
+              "user": "cidrella",
+              "password-file": "api-pw"
+            }
+          ]
+        }
+      }
+    ],
+    "hooks-libraries": [
+      {
+        "library": "libdhcp_lease_cmds.so"
+      },
+      {
+        "library": "libdhcp_stat_cmds.so"
+      },
+      {
+        "library": "libdhcp_legal_log.so",
+        "parameters": {
+          "path": "$DATA_DIR/kea/log",
+          "base-name": "kea-legal6"
+        }
+      }
+    ],
+    "calculate-tee-times": true,
+    "ddns-send-updates": false,
+    "ddns-replace-client-name": "never",
+    "loggers": [
+      {
+        "name": "kea-dhcp6",
+        "output-options": [
+          {
+            "output": "$DATA_DIR/kea/log/kea-dhcp6.log",
+            "maxsize": 10485760,
+            "maxver": 4
+          }
+        ],
+        "severity": "INFO"
+      }
+    ],
+    "subnet6": [
+      {
+        "id": 3,
+        "subnet": "fd00:62::/64",
+        "interface": "eth0",
+        "valid-lifetime": 3600,
+        "preferred-lifetime": 3600,
+        "pools": [],
+        "option-data": [
+          {
+            "code": 23,
+            "space": "dhcp6",
+            "data": "fd00:62::2"
+          },
+          {
+            "code": 56,
+            "space": "dhcp6",
+            "csv-format": false,
+            "data": "000100102602fcac0000007b0000000000000074000100102603c02000008369feedfeedfeedfeed00010010260017024a73e00fc3ee91f271d85243000100102607f710003500000000029c00000006"
+          }
+        ],
+        "reservations": []
+      },
+      {
+        "id": 4,
+        "subnet": "fd00:63::/64",
+        "interface": "eth0",
+        "valid-lifetime": 3600,
+        "preferred-lifetime": 3600,
+        "rapid-commit": true,
+        "pools": [
+          {
+            "pool": "fd00:63::1000 - fd00:63::1fff"
+          }
+        ],
+        "option-data": [
+          {
+            "code": 23,
+            "space": "dhcp6",
+            "data": "fd00:63::2"
+          },
+          {
+            "code": 24,
+            "space": "dhcp6",
+            "data": "golden.test"
+          },
+          {
+            "code": 56,
+            "space": "dhcp6",
+            "csv-format": false,
+            "data": "000100102602fcac0000007b0000000000000074000100102603c02000008369feedfeedfeedfeed00010010260017024a73e00fc3ee91f271d85243000100102607f710003500000000029c00000006"
+          }
+        ],
+        "reservations": [
+          {
+            "duid": "00:01:00:01:2a:2b:2c:2d:aa:bb:cc:00:00:03",
+            "ip-addresses": [
+              "fd00:63::50"
+            ],
+            "hostname": "nas"
+          }
+        ]
+      }
+    ]
+  }
+}
+
+=== commands ===
+kea-dhcp4 -t $DATA_DIR/kea/kea-dhcp4.conf
+kea-dhcp6 -t $DATA_DIR/kea/kea-dhcp6.conf

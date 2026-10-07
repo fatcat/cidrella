@@ -1,15 +1,15 @@
 # dnsmasq coupling and the backend layer
 
 > Status: living design note. As of 0.5.1 every dnsmasq call goes through the backend layer in
-> `server/src/backends/`, with dnsmasq as its only adapter. This page maps where dnsmasq still
+> `server/src/backends/`. 0.5.2 adds the second adapter, Kea, for the DHCP role (`backends/kea/`,
+> see "Kea" below). This page maps where dnsmasq still
 > leaks past that layer, what the layer's API is, and how it maps onto Kea and PowerDNS, so the
 > migration is a swap of adapters rather than a teardown.
 
 ## The target shape
 
 CIDRella's SQLite DB is the **canonical desired state**. Everything a backend holds is a
-projection of it. The backend API's resource model mirrors the subset of the Kea and PowerDNS
-REST APIs we actually use, with selectable adapters:
+projection of it, through selectable adapters:
 
 ```
 routes, services  ──►  services/backend-apply.js  ──►  backends/index.js  ──►  adapter
@@ -17,9 +17,15 @@ routes, services  ──►  services/backend-apply.js  ──►  backends/inde
    boot, lease sync)        applyResolver, boot)         adapter fills a role)   └── kea, powerdns (later: REST calls)
 ```
 
-Mirror only the subset we use; don't reproduce the full vendor APIs. Where an adapter can't do
-an operation (DoT/DoH upstream in dnsmasq, RPZ, DHCP hooks) it says so in `capabilities()`, and
-that gap list is the migration map.
+The contract is a **capability-gated superset**, not the dnsmasq subset (decided 2026-10-07).
+`backends/features.js` lists every backend-dependent feature CIDRella chooses to offer, from a
+survey of dnsmasq, Kea and PowerDNS with the maintainer's verdict on each. Every adapter
+answers `capabilities()` as `{ featureId: boolean }` for the roles it fills, so a feature only
+Kea or PowerDNS can do (zone transfers, a DHCP audit log) is offered when that backend is
+active and refused when it is not. Routes refuse an unsupported feature with
+`refuseUnlessSupported` (409, `BACKEND_FEATURE_UNSUPPORTED`); the client asks
+`useFeatures().supports(id)` and shows `reason(id)`. A feature turns true for an adapter when
+CIDRella renders it through that adapter, not when the daemon merely has the directive.
 
 ### Backend split (target)
 
@@ -77,10 +83,10 @@ What enforces it:
 | #   | Seam                                | Backend op                                                              | dnsmasq adapter today                                                                                                                                                                                 | Kea/PowerDNS equivalent                                          | Adapter gap                                                                                 |
 | --- | ----------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
 | 1   | **DNS records/zones**               | `dns.applyZones`                                                        | `backends/dnsmasq/dnsmasq.js` renders `hosts.d/records.hosts` (A/AAAA, each address's canonical PTR name first) and `conf.d/zone-*.conf` (CNAME/MX/TXT/SRV, PTRs the hosts file can't answer); SIGHUP | PowerDNS Auth `PATCH /zones/:zone` (rrsets)                      | full file regen vs targeted rrset PATCH; one TTL (`local-ttl=60`) for every record but a CNAME, so `servedTtl` reports that, not the stored TTL |
-| 2   | **DHCP scopes and reservations**    | `dhcp.applyScopes`                                                      | `backends/dnsmasq/dhcp.js` renders `dhcp-range=`, `dhcp-host=`, options; restart or SIGHUP                                                                                                            | Kea `subnet4`/`reservation` via `config-set`/`reservation-add`   | per-scope option mapping (`dnsmasqName`, REVIEW DNSMASQ-06); lease time syntax (DNSMASQ-07) |
-| 3   | **Lease ingestion**                 | `dhcp.readLeases`, `dhcp.watchLeases`                                   | `backends/dnsmasq/lease-file.js` reads `dnsmasq.leases` once it settles; `fs.watchFile`                                                                                                               | Kea `lease4-get-all` / `lease6-get-all`, or its lease DB         | file poll vs API; `services/dhcp-lease-sync.js` is already neutral                          |
-| 4   | **Lease release**                   | `dhcp.releaseLease`                                                     | `backends/dnsmasq/lease-release.js` (`dhcp_release`/`dhcp_release6`)                                                                                                                                  | Kea `lease4-del` / `lease6-del`                                  | none expected                                                                               |
-| 5   | **DHCP fingerprint capture**        | `logSource().createDhcpParser`                                          | `backends/dnsmasq/dhcp-log-parser.js` parses `log-dhcp` text (opt55/60/hostname)                                                                                                                      | Kea hooks (packet callouts, lease cmds)                          | log parse vs structured hook data                                                           |
+| 2   | **DHCP scopes and reservations**    | `dhcp.applyScopes`                                                      | `backends/dnsmasq/dhcp.js` renders `dhcp-range=`, `dhcp-host=`, options; restart or SIGHUP                                                                                                            | Kea (0.5.2): `kea-dhcp{4,6}.conf` rendered from the same scope model (`backends/shared/dhcp-scope-model.js`), checked with `kea-dhcp4 -t`, reloaded with SIGHUP | dnsmasq sends DHCPv4 numbers at the wrong width (DNSMASQ-08) |
+| 3   | **Lease ingestion**                 | `dhcp.readLeases`, `dhcp.watchLeases`                                   | `backends/dnsmasq/lease-file.js` reads `dnsmasq.leases` once it settles; `fs.watchFile`                                                                                                               | Kea (0.5.2): `lease4/6-get-page`; `watchLeases` polls the lease statistics | a page scan is not atomic, so a scan during which Kea handed out an address reads as unsettled |
+| 4   | **Lease release**                   | `dhcp.releaseLease`                                                     | `backends/dnsmasq/lease-release.js` (`dhcp_release`/`dhcp_release6`)                                                                                                                                  | Kea (0.5.2): `lease4-del` / `lease6-del`                         | none                                                                                        |
+| 5   | **DHCP fingerprint capture**        | `logSource().createDhcpParser`                                          | `backends/dnsmasq/dhcp-log-parser.js` parses `log-dhcp` text (opt55/60/hostname)                                                                                                                      | Kea (0.5.2): the `legal_log` hook, formatted to one line per committed lease (`backends/kea/legal-log-parser.js`) | Kea logs committed leases only, so DHCP message counts come from `dhcpCounters()` instead |
 | 6   | **Query log readers**               | `logSource()` (`path`, `querySourceIp`, `dhcpDirection`, `isDhcpLine`)  | `backends/dnsmasq/log-format.js` regexes, read by passive liveness, the metrics aggregator and the log viewer                                                                                         | PowerDNS Recursor protobuf / dnstap; Kea logs                    | a null `logSource()` turns those readers off; they need a structured feed instead           |
 | 7   | **Recursion + filtering proxy**     | none (stays in `utils/dns-proxy.js`)                                    | bespoke UDP/TCP proxy in front of dnsmasq (blocklist, GeoIP, DNSSEC TCP relay, EDNS, bypass)                                                                                                          | Recursor **RPZ** (blocklist), **Lua** (GeoIP), native validation | the whole proxy becomes Recursor features                                                   |
 | 8   | **DNSSEC**                          | `dns.applyResolver`, `capabilities().dnssec`, `dns.onClockSynchronized` | `dnssec`/`trust-anchor` directives, `dnssec-no-timecheck` until NTP sync, then SIGHUP                                                                                                                 | Recursor `dnssec=validate` (+ Auth signing)                      | validate only, no online signing                                                            |
@@ -117,12 +123,15 @@ Deliberate, each with a reason:
 ## Guardrails for new features
 
 1. **DB stays canonical.** No backend-flavored strings in the schema; store intent (records,
-   scopes, modes) and render in the adapter.
+   scopes, modes) and render in the adapter. What every DHCP adapter renders from is
+   `backends/shared/dhcp-scope-model.js`; an adapter decides syntax, never which option a scope
+   gets.
 2. **Go through the layer.** A feature that changes what DNS or DHCP serve queues an after-commit
    hook or calls `services/backend-apply.js`; a feature that needs backend facts asks
    `backends/index.js`. The lint guards refuse anything else.
-3. **Ask capabilities, don't assume dnsmasq.** A feature that only some backends can do checks
-   `capabilities()` and says why it is off.
+3. **Ask for the feature, don't assume dnsmasq.** A feature that only some backends can do has a
+   `backends/features.js` id; the server asks `supports(id)` (or `refuseUnlessSupported` in a
+   route) and the client `useFeatures().supports(id)`, which says why it is off.
 4. **Build new features adapter-swappable.** E.g. encrypted forwarders are a self-contained
    in-Node DoT/DoH stub that dnsmasq points `server=` at. When Recursor lands, delete the stub
    and point the forwarders at Recursor's native DoT/DoH.
@@ -133,8 +142,65 @@ Deliberate, each with a reason:
    retire `dns-proxy.js`. Let the real second implementation correct the API boundary rather
    than finalizing it from dnsmasq alone.
 2. ~~Introduce the backend API as a thin facade over today's dnsmasq code.~~ Done in 0.5.1.
-3. **Kea first** (DHCP role): a `backends/kea/` adapter, a `dhcp_backend` setting read by the
-   registry, the fixes for DNSMASQ-06 and DNSMASQ-07, and the DDNS decision above. The contract
-   test runs against it unchanged.
+3. **Kea first** (DHCP role, 0.5.2): the adapter is in `backends/kea/` and passes the contract
+   test. DNSMASQ-06 and -07 are fixed, and DDNS stays with CIDRella (no Kea D2). Still to come:
+   the `dhcp_backend` setting and the switch with its lease handover, and the packaging.
 4. **PowerDNS** (DNS role) after that; deprecate dnsmasq over one release, no permanent dual
    stack.
+
+## Kea (0.5.2)
+
+`backends/kea/` fills the DHCP role with ISC Kea 3.0, one daemon per family. dnsmasq keeps DNS
+and the Router Advertisements. The configuration is file-canonical like dnsmasq's: `applyScopes`
+renders `DATA_DIR/kea/kea-dhcp4.conf` and `kea-dhcp6.conf`, `kea-dhcp4 -t` checks them inside
+the shared validated-file transaction (`backends/shared/validated-files.js`), and a SIGHUP
+(`systemctl reload`) makes Kea reread them. Leases stay in Kea's memfile and move through the
+HTTP control API (`lease_cmds`, `stat_cmds`), with basic auth on 127.0.0.1 and a generated
+password under `DATA_DIR/kea/secret`.
+
+How CIDRella's model maps onto Kea (`backends/kea/render.js`):
+
+- A Kea subnet id is the `subnets.id`. Several scopes on one network are one Kea subnet; the
+  first scope's options and lease time are the subnet's, another scope's options ride on its
+  own pools.
+- Reservations are in the configuration file, not `host_cmds`, so the file is the whole
+  desired state. DDNS is off; Kea still stores the name a client sends.
+- Catalog options are written as text Kea parses by its own definitions. Where the text a user
+  enters for dnsmasq is not what Kea parses, `KEA_FORMS` sends the bytes dnsmasq would: options
+  121 (routes), 43, 63, 77 and 82 (opaque), 150 and 252 (no Kea definition), and DHCPv6 NTP
+  (56) as RFC 5908 suboptions. Custom options are bytes of their declared type, numbers at
+  dnsmasq's widths. Every catalog option of both families passes `kea-dhcp4 -t` and
+  `kea-dhcp6 -t` (checked against Kea 3.0.4).
+- Kea sends option 28 only when told, so it is written from the network's broadcast address.
+  T1 and T2 are half and seven eighths of the lease, as dnsmasq sends them. Stateful DHCPv6
+  scopes have Rapid Commit on, matching dnsmasq.
+- The DHCPv6 server DUID is `DATA_DIR/kea/server-duid` when present (a switch carries dnsmasq's
+  over), so clients renew with Kea instead of waiting to rebind.
+
+What the spike and the verification runs established (Debian trixie container, Kea 3.0.4 from
+ISC's Cloudsmith repository, 2026-10-07):
+
+- **Packages.** `isc-kea-dhcp4`, `isc-kea-dhcp6`, `isc-kea-hooks` (Debian's own `kea-*` is 2.6).
+  The binaries are `_kea:_kea` mode 0750, so the `cidrella` account joins group `_kea`. ISC's
+  units are not enabled on install; CIDRella runs its own. Alpine 3.24 (node:24-alpine) has
+  kea 3.0.3 with hooks as `kea-hook-*` subpackages.
+- **Paths.** Kea 3 refuses lease, log, legal-log and socket paths outside the directories its
+  `KEA_*` variables name (`backends/kea/paths.js` `keaEnv()`); the control-socket directory must
+  be 0750 or stricter. `kea-dhcp4 -t` does not check those paths, so they are fixed in code.
+- **Sockets.** `service-sockets-require-all` stops a daemon that could not open a socket on
+  every interface instead of running deaf, and five retries five seconds apart cover an
+  interface still coming up (a DHCPv6 link-local address arrives a moment after the link).
+- **Router Advertisements.** dnsmasq binds UDP 547 whenever its RA carries M or O. Kea binds
+  the link-local and `ff02::1:2` sockets on the same port beside it, and `dhcp-ignore` makes
+  dnsmasq answer no DHCPv6, so RA stays on dnsmasq with no flag gating. Not yet tested: a
+  Renew or Rebind while both hold 547.
+- **Leases.** Kea reports `cltt` and `valid-lft`, never an expiry; `valid-lft` 4294967295 is
+  infinite. `lease4-add` takes `expire - valid-lft` as the lease start, and an infinite lease
+  goes in with the infinite lifetime and no `expire`. `lease*-get-page` treats `from` as
+  exclusive; result 3 means nothing found.
+- **Legal log.** Written only for committed leases (a REQUEST and its ACK), to
+  `kea-legal4.<YYYYMMDD>.txt`, a new file each day. The fingerprint watcher follows the newest
+  (`createLogFollower`), and DHCP message counts come from the `pkt4/pkt6-received` and `-sent`
+  statistics (`dhcpCounters()`), since a DISCOVER never reaches the log.
+- **Reload.** A SIGHUP or `config-reload` with a bad file keeps the old configuration running.
+

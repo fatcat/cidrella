@@ -50,6 +50,11 @@ restore promises to change. A new table is covered automatically; a new file or 
 loads (`config/defaults.js`, so `utils/backup.js`) needs `tests/helpers/isolated-data-dir.js`
 imported first in its test file; `setupTestDb` sets `DATA_DIR` too late for it.
 
+The Kea adapter has a live check against a real Kea 3 install (`kea-dhcp4 -t` on what CIDRella
+renders, every catalog option included). It is skipped unless `KEA_LIVE=1`:
+`cd server && KEA_LIVE=1 npx vitest run tests/integration/backends/kea/live.test.js`. Run it on a
+host or container with ISC's `isc-kea-dhcp4`, `isc-kea-dhcp6` and `isc-kea-hooks` packages.
+
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.
 Dependabot delivers grouped weekly dependency PRs. Prefer merging those over manual
@@ -169,7 +174,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   writes the database), `services/backend-apply.js` (`applyDns`, `applyDhcp`, `applyResolver`:
   what the after-commit hooks run; `applyAtBoot` and `applyListenNow` for the paths that cannot
   wait for a hook; route and service tests stub them with `stubBackendApply`, or swap the
-  registry with `fakeBackendsModule`, both in `tests/helpers/fake-backends.js`; a new adapter
+  registry with `fakeBackendsModule`, both in `tests/helpers/fake-backends.js`; Kea's control
+  API is `startFakeKea` in `tests/helpers/fake-kea.js`; a new adapter
   passes `tests/contract/backend-contract.js`, and its golden seeds `seedBackendEstate` from
   `tests/helpers/backend-estate.js`; anything reading the backend's log asks
   `getService(role).logSource()` and follows it with `createLogFollower` in

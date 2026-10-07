@@ -56,6 +56,19 @@ backend can do. In progress: this section grows with each phase.
   first by its DHCP Reservation as well as by dnsmasq's `infinite` expiry
   (`reservedLeaseFirstSql`), so a backend that reports real expiries ranks
   the same way.
+- **The Kea adapter** (`server/src/backends/kea/`) renders `kea-dhcp4.conf`
+  and `kea-dhcp6.conf` from the same scope model dnsmasq renders from
+  (`backends/shared/dhcp-scope-model.js`), reads and releases leases through
+  Kea's control API, and feeds fingerprinting from Kea's legal log. It passes
+  the backend contract, and every catalog option of both families passes
+  Kea 3.0's own config check. Nothing selects it yet: the switch in
+  Settings comes in a later phase.
+- The log readers follow a backend's log onto a new file
+  (`createLogFollower` in `utils/log-reader.js`), and the DHCP message counts
+  come from the DHCP backend's own counters where it keeps them
+  (`dhcpCounters`), from its log otherwise.
+- dnsmasq and Kea share their service control
+  (`backends/shared/unit-control.js`).
 
 ---
 

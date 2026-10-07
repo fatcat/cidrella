@@ -796,7 +796,8 @@ export const LEGACY_COLUMN_MAP = {
  *
  * Address values are written bracketed (`[fd00::53]`) by the config writer;
  * the catalog stores plain addresses. An entry with `builtIn` is shown but
- * never set or written (its code is internal): dnsmasq does it on its own.
+ * never set or written (its code is internal): the DHCP server does it on its
+ * own.
  */
 export const DHCP6_OPTIONS = [
   // ── Common ──────────────────────────────────────────────────────────
@@ -898,7 +899,8 @@ export const DHCP6_OPTIONS = [
   {
     // Built in, never written: dnsmasq answers every Solicit that carries
     // Rapid Commit with a committed Reply (rfc3315.c), and has no switch to
-    // turn that off. The entry is here so the code reads as always on, not as
+    // turn that off; under Kea, CIDRella turns it on for every stateful
+    // scope (backends/kea/render.js) so both servers behave the same. The entry is here so the code reads as always on, not as
     // missing; 14 stays in DHCP6_INTERNAL_CODES, so it is refused as a value.
     code: 14,
     name: 'rapid-commit',
@@ -909,7 +911,7 @@ export const DHCP6_OPTIONS = [
     rfc: 'RFC 8415',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc8415#section-21.14',
     description:
-      'Always on for stateful scopes. A client that asks for it in its Solicit gets its address in one Reply, two messages instead of four. dnsmasq always honors it and has no setting to turn it off, so there is nothing to set. With two stateful DHCPv6 servers on a link, each may commit a lease the client never uses until it expires.',
+      'Always on for stateful scopes. A client that asks for it in its Solicit gets its address in one Reply, two messages instead of four. The DHCP server always honors it, so there is nothing to set. With two stateful DHCPv6 servers on a link, each may commit a lease the client never uses until it expires.',
   },
   {
     code: 103,
@@ -994,7 +996,7 @@ export const DHCP6_OPTIONS = [
 export const DHCP6_OPTIONS_BY_CODE = Object.fromEntries(DHCP6_OPTIONS.map((o) => [o.code, o]));
 
 /**
- * DHCPv6 codes dnsmasq builds itself (identifiers, IA containers, status,
+ * DHCPv6 codes the DHCP server builds itself (identifiers, IA containers, status,
  * reconfigure, vendor and user classes, FQDN). Supplying one as a dhcp-option
  * would be misparsed or ignored, so they are refused everywhere a code is
  * accepted from a request.
@@ -1033,12 +1035,12 @@ export function optionCatalogFor(family) {
 /**
  * Why `code` cannot be set for the family, for a code isOptionCodeAllowed
  * refuses: a built-in catalog entry (DHCPv6 Rapid Commit) says it is always
- * on, any other internal code that dnsmasq builds it.
+ * on, any other internal code that the DHCP server builds it.
  */
 export function builtInCodeReason(code, family) {
   const entry = optionCatalogFor(family).byCode[code];
   if (entry?.builtIn) return `${entry.label} (${code}) is always on and has nothing to set`;
-  return `code ${code} is built by dnsmasq itself`;
+  return `code ${code} is built by the DHCP server itself`;
 }
 
 /** Is `code` a valid user-settable option code for the family? */

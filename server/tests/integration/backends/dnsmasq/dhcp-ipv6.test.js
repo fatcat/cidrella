@@ -601,7 +601,7 @@ describe('DHCPv6 option defaults and scope options', () => {
       .put('/api/dhcp/options/defaults')
       .send({ family: 6, options: [{ code: 39, value: 'x' }] });
     expect(internal.status).toBe(400);
-    expect(internal.body.error).toMatch(/built by dnsmasq/);
+    expect(internal.body.error).toMatch(/built by the DHCP server/);
     // Rapid Commit is listed, but always on: not a default either.
     const rapid = await request(app)
       .put('/api/dhcp/options/defaults')
@@ -675,7 +675,7 @@ describe('DHCPv6 option defaults and scope options', () => {
       .put(`/api/dhcp/scopes/${scope.id}`)
       .send({ options: [{ code: 7, value: '1' }] });
     expect(rejected.status).toBe(400);
-    expect(rejected.body.error).toMatch(/built by dnsmasq/);
+    expect(rejected.body.error).toMatch(/built by the DHCP server/);
     const rapid = await request(app)
       .put(`/api/dhcp/scopes/${scope.id}`)
       .send({ options: [{ code: 14, value: '1' }] });

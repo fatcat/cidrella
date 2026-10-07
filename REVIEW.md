@@ -12,6 +12,27 @@ was suggested.
 
 ---
 
+## Found building the Kea adapter (2026-10-07)
+
+#### DNSMASQ-08: dnsmasq sends DHCPv4 number options at the wrong width
+
+**medium**, confirmed in dnsmasq's source (`src/option.c`, the `is_dec` branch) and in
+`server/src/backends/dnsmasq/option-names.js:dnsmasqOptionToken`.
+
+- **What happens:** Set Time Offset (2) to `3600` or ARP Cache Timeout (35) to `600`. RFC 2132
+  makes both four-byte fields; dnsmasq sends two bytes. MTU (26) at `200` goes out as one byte,
+  not two. A client either refuses the option or reads the wrong number. The same rule turns a
+  text option whose value is all digits into a number. Under Kea the same values go out at the
+  right width, because Kea encodes by its own option definitions.
+- **Why:** CIDRella writes every DHCPv4 option by number (`dhcp-option=tag:scopeN,2,3600`).
+  Given a bare number, dnsmasq looks up no type, so it reads the value by its shape and sizes a
+  number by magnitude: one, two or four bytes. dnsmasq's own table would size these correctly,
+  but only applies to an option written by name (`option:time-offset`).
+- **Fix:** Give the catalog's number options a width, and have the dnsmasq adapter add
+  dnsmasq's width suffix (`b`, `s`, `i`) to the value. Or write the DHCPv4 options dnsmasq
+  knows by name, as `option-names.js` already does for DHCPv6. Either changes the dnsmasq
+  goldens, so it belongs in its own commit.
+
 ## Found building DHCP Bulk Change (2026-10-05)
 
 #### DHCP-01: A default option with a value is served to every scope, ticked or not

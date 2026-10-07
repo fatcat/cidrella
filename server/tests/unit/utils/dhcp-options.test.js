@@ -30,7 +30,7 @@ describe('DHCPv6 option catalog', () => {
     expect(DHCP6_INTERNAL_CODES.has(14)).toBe(true);
     expect(isOptionCodeAllowed(14, 6)).toBe(false);
     expect(builtInCodeReason(14, 6)).toBe('Rapid Commit (14) is always on and has nothing to set');
-    expect(builtInCodeReason(39, 6)).toBe('code 39 is built by dnsmasq itself');
+    expect(builtInCodeReason(39, 6)).toBe('code 39 is built by the DHCP server itself');
     // DHCPv4 14 is the merit dump file, an ordinary option.
     expect(isOptionCodeAllowed(14, 4)).toBe(true);
     expect(DHCP_OPTIONS.some((o) => o.builtIn)).toBe(false);
