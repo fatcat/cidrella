@@ -95,5 +95,23 @@ export function createUnitControl({ unit, processName, pidFile = null, restartPe
     }
   }
 
-  return { isRunning, restartPending, reload, restart };
+  // Stop the daemon: a backend that no longer fills any role. Without
+  // systemctl a TERM stops it until the supervisor starts it again, which
+  // s6 does unless the service is marked down.
+  function stop() {
+    try {
+      execFileSync('systemctl', ['stop', unit], { stdio: 'pipe' });
+      return;
+    } catch (err) {
+      const stderr = stderrOf(err);
+      if (stderr) console.warn(`systemctl stop ${unit} failed:`, stderr);
+    }
+    try {
+      execFileSync('pkill', ['-TERM', '-x', processName], { stdio: 'pipe' });
+    } catch {
+      /* not running */
+    }
+  }
+
+  return { isRunning, restartPending, reload, restart, stop };
 }

@@ -146,7 +146,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   checks the keys against the client catalog), and the client control is
   `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
-  `dialog-actions`, `card-header`, `field-error`), `assets/analytics-workspace.css` for the
+  `dialog-actions`, `card-header`, `field-error`, `field-help`), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
   the `split`/`three` modifiers, `.figures` with `--figures`, `.lists` with `--lists`), `assets/panel-chrome.css` for the
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
@@ -169,6 +169,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
   stateless one; anything treating a scope as a dynamic pool asks it), `backends/index.js` (the DNS/DHCP backend registry: `getDnsBackend`,
   `getDhcpBackend`, `getService`, `backendStatuses` for what the health endpoints report,
+  `selectDhcpBackend` and `servesDhcp` for which backend answers DHCP (only
+  `services/dhcp-backend-switch.js` and boot move it), `onBackendChanged` for anything bound to a
+  backend (a watcher, a log tail) to follow the role,
   `getDnsBackend().servedTtl(record)` for the TTL a record is answered with: every record read
   carries it as `served_ttl`, and a TTL display shows that, never the stored `ttl`; only `backends/**` imports an adapter, and an adapter never
   writes the database), `services/backend-apply.js` (`applyDns`, `applyDhcp`, `applyResolver`:
@@ -192,7 +195,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and
   `activeLeaseSql` in `utils/lease-sql.js` (which lease to believe for an address, and is a
   lease active),
-  `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
+  `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync; `holdLeaseSync` to keep it still), `readSetting` in `models/setting.js` (one stored setting, null when absent), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder
   upstream, DoT or DoH: reused connections, retry, address failover, fail closed),

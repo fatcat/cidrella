@@ -72,16 +72,24 @@ const NOTES = {
   'forensic-log': `Kea writes it under ${KEA_LOG_DIR}.`,
 };
 
+const pause = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 /**
- * `deps` are for tests: `exec` replaces execFileSync for `-t`, `families`
- * the families served, `interfaces` and `sysIfaces` the host's, and
- * `fetchImpl` the HTTP client.
+ * `servesDhcp()` says whether Kea answers DHCP (backends/index.js); not
+ * serving, it renders its configuration listening on no interface. The rest
+ * of `deps` are for tests: `exec` replaces execFileSync for `-t`, `families`
+ * the families served, `interfaces` and `sysIfaces` the host's, `fetchImpl`
+ * the HTTP client, `access` the check that a binary can run, and `wait` the
+ * pause between readiness checks.
  */
 export function createKeaBackend(deps = {}) {
   const exec = deps.exec || execFileSync;
+  const servesDhcp = deps.servesDhcp || (() => true);
   const families = deps.families || (() => (ipv6Enabled() ? [4, 6] : [4]));
   const interfaces = deps.interfaces || (() => selectInterfaceNames('dhcp').names);
   const sysIfaces = deps.sysIfaces || (() => os.networkInterfaces());
+  const access = deps.access || ((file) => fs.accessSync(file, fs.constants.X_OK));
+  const wait = deps.wait || pause;
 
   const commands = Object.fromEntries(
     FAMILIES.map((family) => [
@@ -141,7 +149,7 @@ export function createKeaBackend(deps = {}) {
   }
 
   function renderAll(db) {
-    const served = families();
+    const served = servesDhcp() ? families() : [];
     const input = {
       scopes: loadDhcpScopes(db),
       reservations: loadDhcpReservations(db),
@@ -176,10 +184,11 @@ export function createKeaBackend(deps = {}) {
 
   const runningFamilies = () => families().filter((family) => units[family].isRunning());
 
+  // A stopped daemon reads its file when it starts, so it needs no reload.
   function applyActivation(activation) {
     for (const family of families()) {
       if (activation === 'restart') units[family].restart();
-      else if (activation === 'reload') units[family].reload();
+      else if (activation === 'reload' && units[family].isRunning()) units[family].reload();
     }
   }
 
@@ -222,7 +231,16 @@ export function createKeaBackend(deps = {}) {
         return () => clearInterval(timer);
       },
       releaseLease: (lease) => releaseKeaLease(commands, lease),
-      importLeases: (leases, opts) => importKeaLeases(commands, leases, opts),
+      // A handover: the leases go in while Kea listens nowhere, and the
+      // server DUID they were handed out under goes in the file the next
+      // render reads, so DHCPv6 clients renew with Kea rather than rebind.
+      async importLeases(leases, { serverDuid = null, ...opts } = {}) {
+        if (serverDuid) {
+          fs.mkdirSync(path.dirname(SERVER_DUID_FILE), { recursive: true });
+          atomicWrite(SERVER_DUID_FILE, `${serverDuid}\n`);
+        }
+        return importKeaLeases(commands, leases, { ...opts, families: families() });
+      },
       serverIdentity: () => ({ duid: serverDuid() }),
       dhcpCounters: () => keaPacketCounters(commands, families()),
     },
@@ -244,6 +262,50 @@ export function createKeaBackend(deps = {}) {
       return 'unchanged';
     },
     restart: () => applyActivation('restart'),
+    stop() {
+      for (const family of FAMILIES) units[family].stop();
+    },
+    // Whether the daemons can run here at all, for the switch's preflight.
+    installed() {
+      for (const family of families()) {
+        try {
+          access(binary(family));
+        } catch {
+          return { ok: false, reason: `Kea is not installed: ${binary(family)} was not found` };
+        }
+      }
+      return { ok: true };
+    },
+    /**
+     * Resolves once each daemon answers its control API and, when Kea
+     * serves, has opened its sockets on every interface; rejects with the
+     * reason otherwise. Kea retries a socket five times, five seconds apart
+     * (render.js), so the wait covers that.
+     */
+    async awaitRunning({ timeoutMs = 40000, intervalMs = 1000 } = {}) {
+      const deadline = Date.now() + timeoutMs;
+      for (const family of families()) {
+        let last = 'no answer';
+        for (;;) {
+          let sockets = null;
+          try {
+            const reply = await commands[family]('status-get');
+            sockets = reply.arguments?.sockets?.status || 'unknown';
+          } catch (err) {
+            last = err.message;
+          }
+          if (sockets && (!servesDhcp() || sockets === 'ready')) break;
+          if (sockets === 'failed') {
+            throw new Error(`kea-dhcp${family} could not open its sockets`);
+          }
+          if (sockets) last = `sockets ${sockets}`;
+          if (Date.now() >= deadline) {
+            throw new Error(`kea-dhcp${family} is not ready: ${last}`);
+          }
+          await wait(intervalMs);
+        }
+      }
+    },
     // Kea refuses a control-socket directory looser than 0750.
     prepare() {
       fs.mkdirSync(KEA_LOG_DIR, { recursive: true });

@@ -17,6 +17,21 @@ security: false
 Kea as a second DHCP backend, on a backend contract that describes what each
 backend can do. In progress: this section grows with each phase.
 
+### Added
+
+- **Choose the DHCP server.** Settings > DHCP > Server shows which server
+  hands out addresses, what switching to the other would add or lose, and
+  switches with the leases: every IPv4 and IPv6 lease moves, under the same
+  DHCPv6 server identity, so clients keep their addresses and renew as
+  usual. DHCP stops for a few seconds during the move and the DNS server
+  restarts once. If the new server does not start, the old one takes DHCP
+  back; a switch a crash interrupts is undone at the next boot. Admins only,
+  and audited. dnsmasq keeps DNS and the IPv6 Router Advertisements either
+  way. Kea itself ships with the packaging in a later phase, so until then
+  the panel says it is not installed.
+- A setting naming Kea on a host without it (a backup restored from another
+  host) falls back to dnsmasq at boot and says so in the log.
+
 ### Changed
 
 - **Backend features.** `server/src/backends/features.js` lists every
@@ -61,8 +76,20 @@ backend can do. In progress: this section grows with each phase.
   (`backends/shared/dhcp-scope-model.js`), reads and releases leases through
   Kea's control API, and feeds fingerprinting from Kea's legal log. It passes
   the backend contract, and every catalog option of both families passes
-  Kea 3.0's own config check. Nothing selects it yet: the switch in
-  Settings comes in a later phase.
+  Kea 3.0's own config check.
+- **Selecting the DHCP backend.** `backends/index.js` chooses the DHCP
+  backend from the `dhcp_backend` setting (`selectDhcpBackend`, read at boot
+  by `selectDhcpBackendAtBoot`); DNS and RA stay with dnsmasq. The setting is
+  not editable through `/api/settings`: only the switch
+  (`services/dhcp-backend-switch.js`, `GET`/`POST /api/dhcp/server`) writes
+  it. `onBackendChanged` rebinds the lease watcher, the fingerprint watcher
+  and the metrics log tails when the role moves, and `holdLeaseSync` keeps
+  the lease sync still during a switch.
+- While Kea serves DHCP, dnsmasq renders only its DHCPv6 scope files, for the
+  Router Advertisements, plus `dhcp-ignore=tag:!nosuchtag` so it answers no
+  request (it binds UDP 547 beside Kea whenever an RA carries the M or O
+  flag). The RA role gained `applyRouterAdvertisements`, and `importLeases`
+  replaces a backend's leases and takes the server DUID.
 - The log readers follow a backend's log onto a new file
   (`createLogFollower` in `utils/log-reader.js`), and the DHCP message counts
   come from the DHCP backend's own counters where it keeps them

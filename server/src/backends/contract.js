@@ -68,8 +68,10 @@ export const DNS_OPS = Object.freeze([
  * - releaseLease(BackendLease) -> { released, skipped?, error? }, or a Promise
  *   of it: never throws or rejects
  * - serverIdentity() -> { duid: string|null }: the server's own DHCPv6 DUID
- * - importLeases?(BackendLease[]) -> Promise<{ added, failed: [{ ip, error }] }>:
- *   optional; take over leases another backend handed out (a switch)
+ * - importLeases?(BackendLease[], { serverDuid }) -> Promise<{ added, failed: [{ ip, error }] }>:
+ *   optional; replace the backend's leases with those another backend
+ *   handed out (a switch), under the DHCPv6 server DUID they carry. Called while the
+ *   backend answers no DHCP; the leases count once it serves again.
  * - dhcpCounters?() -> Promise<{ received, sent }>: optional; DHCP packets
  *   since the daemon started, for a backend whose log does not show them all
  */
@@ -80,6 +82,14 @@ export const DHCP_OPS = Object.freeze([
   'releaseLease',
   'serverIdentity',
 ]);
+
+/**
+ * Router Advertisement role.
+ * - applyRouterAdvertisements(db, opts) -> ApplyResult: the RAs for the
+ *   DHCPv6 scopes, when another backend fills the DHCP role (while one
+ *   backend fills both, its applyScopes covers them)
+ */
+export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
 
 /**
  * Per process (a backend filling two roles is one service).
@@ -102,6 +112,13 @@ export const DHCP_OPS = Object.freeze([
  *   followed (createLogFollower in utils/log-reader.js). dhcpDirection
  *   answers 'client', 'server' or null. Readers take the DNS role's log for
  *   queries and the DHCP role's for DHCP.
+ *
+ * Optional, for a backend that can be switched to and from
+ * (services/dhcp-backend-switch.js):
+ * - installed?() -> { ok, reason? }: can it run on this host; absent means yes
+ * - awaitRunning?() -> Promise: resolves once it runs its configuration and,
+ *   when it serves, answers on its sockets; rejects with the reason
+ * - stop?() -> void: stop a daemon that fills no role any more
  */
 export const SERVICE_OPS = Object.freeze([
   'status',
@@ -144,7 +161,7 @@ export function assertBackendShape(backend) {
   for (const role of roles) {
     if (!ROLES.includes(role)) problems.push(`role ${role}`);
   }
-  const roleOps = { dns: DNS_OPS, dhcp: DHCP_OPS, ra: [] };
+  const roleOps = { dns: DNS_OPS, dhcp: DHCP_OPS, ra: RA_OPS };
   for (const role of roles) {
     for (const op of roleOps[role] || []) {
       if (typeof backend?.[role]?.[op] !== 'function') problems.push(`${role}.${op}`);

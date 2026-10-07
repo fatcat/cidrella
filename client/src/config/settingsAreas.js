@@ -73,7 +73,7 @@ export const SETTINGS_AREAS = [
     label: 'DHCP',
     icon: 'pi pi-server',
     group: 'Configuration',
-    blurb: 'Scopes, leases, bulk change, rogue detection',
+    blurb: 'Scopes, leases, bulk change, server, rogue detection',
     dataTrack: 'settings-area-dhcp',
     subtabs: [
       {
@@ -99,6 +99,12 @@ export const SETTINGS_AREAS = [
         dataTrack: 'settings-sec-dhcp-bulk',
         fill: true,
         component: defineAsyncComponent(() => import('../views/DhcpBulkChange.vue')),
+      },
+      {
+        id: 'server',
+        label: 'Server',
+        dataTrack: 'settings-sec-dhcp-server',
+        component: defineAsyncComponent(() => import('../views/settings/DhcpServerSettings.vue')),
       },
       {
         id: 'rogue',

@@ -2483,10 +2483,8 @@ onUnmounted(() => {
   color: var(--cid-text-muted-color);
 }
 .field-help {
-  display: block;
   margin-top: 0.2rem;
   font-size: 0.75rem;
-  color: var(--cid-text-muted-color);
 }
 
 /* Scan toggle button group */

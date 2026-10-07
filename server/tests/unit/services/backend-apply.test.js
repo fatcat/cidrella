@@ -7,11 +7,13 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 
 const calls = [];
-const fake = { current: null, dhcpService: null };
+// `current` fills DNS and RA, and DHCP unless `dhcpRole` is set.
+const fake = { current: null, dhcpService: null, dhcpRole: null };
 vi.mock('../../../src/backends/index.js', () => ({
   getDnsBackend: () => fake.current.dns,
-  getDhcpBackend: () => fake.current.dhcp,
-  getService: () => fake.current,
+  getDhcpBackend: () => (fake.dhcpRole || fake.current).dhcp,
+  getService: (role) => (role === 'dhcp' && fake.dhcpRole) || fake.current,
+  getRaBackend: () => fake.current,
   uniqueServices: () => [fake.current, fake.dhcpService].filter(Boolean),
 }));
 vi.mock('../../../src/models/dhcp-lease.js', async (importOriginal) => ({
@@ -41,12 +43,35 @@ beforeEach(() => {
   backend.applyActivation = (activation) => calls.push(`activate ${activation}`);
   fake.current = backend;
   fake.dhcpService = null;
+  fake.dhcpRole = null;
 });
 
 describe('applyDhcp', () => {
   it('writes the scopes, syncs the DHCP names, then activates', () => {
     applyDhcp(db);
     expect(calls).toEqual(['applyScopes activate=false', 'sync', 'activate restart']);
+  });
+
+  it('has the RA backend render the DHCPv6 scopes when another backend serves DHCP', () => {
+    const kea = createFakeBackend({ name: 'kea' });
+    kea.dhcp.applyScopes = () => {
+      calls.push('kea applyScopes');
+      return { changed: true, activation: 'reload', activated: false };
+    };
+    kea.applyActivation = (activation) => calls.push(`kea activate ${activation}`);
+    fake.current.ra.applyRouterAdvertisements = (d, opts) => {
+      calls.push(`ra activate=${opts?.activate}`);
+      return { changed: true, activation: 'restart', activated: false };
+    };
+    fake.dhcpRole = kea;
+    applyDhcp(db);
+    expect(calls).toEqual([
+      'kea applyScopes',
+      'ra activate=false',
+      'sync',
+      'kea activate reload',
+      'activate restart',
+    ]);
   });
 
   it('leaves the names and the running backend alone when the write fails', () => {

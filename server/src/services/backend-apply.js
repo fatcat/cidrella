@@ -7,7 +7,7 @@
  * applyDhcp here also skips the DHCP name sync, as stubbing the old
  * regenerateDhcpConfigs did.
  */
-import { getDhcpBackend, getDnsBackend, getService, uniqueServices } from '../backends/index.js';
+import { getDnsBackend, getRaBackend, getService, uniqueServices } from '../backends/index.js';
 import { syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 
 export function applyDns(db) {
@@ -21,16 +21,22 @@ export function applyResolver(db) {
 // The DHCP hostnames (leases and reservations) go into dns_records after the
 // scope files are written and before the backend takes them, so a failed
 // write or validation leaves the records alone. Stored leases already carry
-// their effective names (ADR 005), the vendor fallback included.
+// their effective names (ADR 005), the vendor fallback included. When another
+// backend sends the Router Advertisements (Kea serving DHCP, dnsmasq the RA),
+// the DHCPv6 scopes go to it too.
 export function applyDhcp(db) {
-  const result = getDhcpBackend().applyScopes(db, { activate: false });
+  const dhcp = getService('dhcp');
+  const ra = getRaBackend();
+  const result = dhcp.dhcp.applyScopes(db, { activate: false });
+  const raResult = ra === dhcp ? null : ra.ra.applyRouterAdvertisements(db, { activate: false });
   const leases = db
     .prepare(
       'SELECT ip_address as ip, hostname, mac_address as mac, subnet_id as subnetId FROM dhcp_leases',
     )
     .all();
   syncDhcpDnsRecords(db, leases);
-  getService('dhcp').applyActivation(result.activation);
+  dhcp.applyActivation(result.activation);
+  if (raResult) ra.applyActivation(raResult.activation);
 }
 
 /**

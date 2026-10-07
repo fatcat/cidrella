@@ -96,29 +96,61 @@ function generateScopeConfigV6(model) {
   return lines.join('\n') + '\n';
 }
 
+// Written while another backend (Kea) answers DHCP. dnsmasq still sends the
+// Router Advertisements, and an RA carrying the M or O flag makes it bind UDP
+// 547 beside Kea, which no setting avoids. This makes it answer no DHCP
+// request at all: no tag is called nosuchtag, so every packet matches.
+// Verified against dnsmasq 2.91 with Kea 3.0 (docs/DNSMASQ-COUPLING.md).
+const NOT_SERVING_FILE = 'dhcp-not-serving.conf';
+const NOT_SERVING_CONTENT = [
+  '# Another DHCP server answers DHCP; dnsmasq sends Router Advertisements only.',
+  'dhcp-ignore=tag:!nosuchtag',
+  '',
+].join('\n');
+
+function writeIfChanged(filePath, content) {
+  let old = null;
+  try {
+    old = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    /* file doesn't exist */
+  }
+  if (content === old) return false;
+  atomicWrite(filePath, content);
+  return true;
+}
+
 /**
  * Regenerate all DHCP scope config files in conf.d/. A scope left out of the
  * model (disabled, or IPv6 with support off) loses its file with the other
  * inactive ones. Returns true if any file changed (needs dnsmasq restart).
+ *
+ * With `serving` false another backend answers DHCP: DHCPv4 scopes get no
+ * file (no range, so dnsmasq opens no DHCPv4 socket), DHCPv6 scopes keep
+ * theirs so the Router Advertisements carry the right M and O flags, and
+ * dhcp-not-serving.conf makes dnsmasq ignore every request. A range is never
+ * rewritten as ra-only: dnsmasq serves stateful DHCPv6 from a range with
+ * ra-only all the same.
  */
-export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
+export function regenerateScopeConfigs(db, { confDir = CONF_DIR, serving = true } = {}) {
   const activeIds = new Set();
   let changed = false;
+  const notServingPath = path.join(confDir, NOT_SERVING_FILE);
+  if (serving) {
+    if (fs.existsSync(notServingPath)) {
+      fs.rmSync(notServingPath, { force: true });
+      changed = true;
+    }
+  } else if (writeIfChanged(notServingPath, NOT_SERVING_CONTENT)) {
+    changed = true;
+  }
   for (const model of loadDhcpScopes(db)) {
+    if (!serving && model.family === 4) continue;
     activeIds.add(model.scope.id);
     const filePath = path.join(confDir, `dhcp-scope-${model.scope.id}.conf`);
     const newContent =
       model.family === 6 ? generateScopeConfigV6(model) : generateScopeConfig(model);
-    let oldContent = '';
-    try {
-      oldContent = fs.readFileSync(filePath, 'utf-8');
-    } catch {
-      /* file doesn't exist */
-    }
-    if (newContent !== oldContent) {
-      atomicWrite(filePath, newContent);
-      changed = true;
-    }
+    if (writeIfChanged(filePath, newContent)) changed = true;
   }
 
   // Clean stale scope config files
@@ -131,9 +163,11 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
  * Regenerate the reservations hosts file for dhcp-hostsdir (hot-reload).
  * DHCPv4: <mac>,<ip>[,<hostname>],infinite
  * DHCPv6: id:<duid>,[<ip>][,<hostname>],infinite
+ * Empty while another backend answers DHCP (`serving` false).
  */
-export function regenerateReservations(db, { hostsDir = DHCP_HOSTS_DIR } = {}) {
-  const lines = loadDhcpReservations(db).map((r) => {
+export function regenerateReservations(db, { hostsDir = DHCP_HOSTS_DIR, serving = true } = {}) {
+  const reservations = serving ? loadDhcpReservations(db) : [];
+  const lines = reservations.map((r) => {
     const parts = r.family === 6 ? [`id:${r.duid}`, `[${r.ip}]`] : [r.mac, r.ip];
     if (r.hostname) parts.push(r.hostname);
     parts.push('infinite');
@@ -142,18 +176,9 @@ export function regenerateReservations(db, { hostsDir = DHCP_HOSTS_DIR } = {}) {
 
   const filePath = path.join(hostsDir, 'reservations.hosts');
   const content = lines.length > 0 ? lines.join('\n') + '\n' : '';
-
-  let oldContent = '';
-  try {
-    oldContent = fs.readFileSync(filePath, 'utf-8');
-  } catch {
-    /* doesn't exist */
-  }
-  const changed = content !== oldContent;
-  if (changed) {
-    atomicWrite(filePath, content);
-  }
-  return changed;
+  // A missing file and an empty one are the same to dnsmasq.
+  if (!content && !fs.existsSync(filePath)) return false;
+  return writeIfChanged(filePath, content);
 }
 
 /**

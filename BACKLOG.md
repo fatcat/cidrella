@@ -238,6 +238,23 @@ the DHCP leases table columns for DUID/IAID default to hidden. No IPv6 NTP defau
 
 ## Deferred design work
 
+### Kea DHCP backend (0.5.2), in flight
+
+Plan: `~/.claude/plans/tender-moseying-pascal.md`; design in `docs/DNSMASQ-COUPLING.md` (Kea).
+Phases 0 to 2 are in (adapter, selection, the switch in Settings > DHCP > Server). Left:
+
+- **Packaging (phase 3).** Units, the `_kea` group, polkit, Cloudsmith repository, Alpine
+  packages and s6, backups carrying `kea/`, a harness scenario. Until it lands the switch
+  refuses with "Kea is not installed".
+- **Log viewer per role.** `routes/logs.js` reads the DNS backend's log and filters DHCP lines out
+  of it. Under Kea that file holds only dnsmasq's "ignored" DHCP lines; the DHCP filter should
+  read the DHCP role's `logSource()` (Kea's legal log) instead, with its own offset in the SSE
+  stream. Deferred from phase 2 because the stream keeps one offset for one file.
+- **Verify on hardware** (testerella, both directions, v4 and v6 clients): Renew and Rebind while
+  dnsmasq and Kea both hold UDP 547; that dnsmasq loads a handed-over lease file on the restart
+  that makes it serve (and does not rewrite it on the stop before); how long a lease handed out
+  in the moment between Kea's SIGHUP and the final lease read could be missed.
+
 ### Workspace UI implementation (0.5.0), in flight
 
 Spec: [docs/WORKSPACE-UI-IMPLEMENTATION-PLAN.md](docs/WORKSPACE-UI-IMPLEMENTATION-PLAN.md).

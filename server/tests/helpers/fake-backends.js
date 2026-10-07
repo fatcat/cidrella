@@ -16,7 +16,7 @@
  */
 import { vi } from 'vitest';
 import { featureReportFor, featureSupported, roleStatuses } from '../../src/backends/contract.js';
-import { declareSupport } from '../../src/backends/features.js';
+import { declareSupport, featureById } from '../../src/backends/features.js';
 
 export const APPLY_OPS = Object.freeze(['applyDns', 'applyDhcp', 'applyResolver']);
 
@@ -150,11 +150,27 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
         lease?.ip ? { released: true } : { released: false, skipped: 'invalid-identity' },
       serverIdentity: () => ({ duid: null }),
     },
-    ra: {},
+    ra: {
+      applyRouterAdvertisements: applyOp(
+        'ra',
+        (db) =>
+          db
+            .prepare(
+              'SELECT id, v6_mode FROM dhcp_scopes WHERE enabled = 1 AND v6_mode IS NOT NULL ORDER BY id',
+            )
+            .all(),
+        'restart',
+      ),
+    },
     status: () => ({ name, running: true, restartPending: false }),
+    // Only the features of the roles it fills, so a test may narrow `roles`.
     capabilities: () =>
       declareSupport(backend.roles, {
-        ...Object.fromEntries(FAKE_SUPPORTED.map((id) => [id, true])),
+        ...Object.fromEntries(
+          FAKE_SUPPORTED.filter((id) => backend.roles.includes(featureById(id).role)).map(
+            (id) => [id, true],
+          ),
+        ),
         ...capabilities,
       }),
     transaction: (fn) => fn(),
@@ -192,6 +208,14 @@ export function fakeBackendsModule(options) {
     getDnsBackend: () => backend.dns,
     getDhcpBackend: () => backend.dhcp,
     getRaBackend: () => backend,
+    getBackend: () => backend,
+    DHCP_BACKENDS: ['dnsmasq', 'kea'],
+    DEFAULT_DHCP_BACKEND: 'dnsmasq',
+    dhcpBackendName: () => 'dnsmasq',
+    servesDhcp: () => true,
+    selectDhcpBackend: () => {},
+    setDhcpServing: () => {},
+    onBackendChanged: () => () => {},
     uniqueServices: () => [backend],
     backendStatuses: () => roleStatuses(() => backend),
     supports: (id) => featureSupported(() => backend, id),

@@ -41,6 +41,7 @@ import {
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import featuresRoutes from './routes/features.js';
+import dhcpBackendRoutes from './routes/dhcp-backend.js';
 import { BackendFeatureError } from './utils/backend-features.js';
 import subnetRoutes from './routes/subnets.js';
 import rangeTypeRoutes from './routes/range-types.js';
@@ -77,6 +78,7 @@ import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { uniqueServices } from './backends/index.js';
+import { selectDhcpBackendAtBoot } from './services/dhcp-backend-switch.js';
 import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
@@ -108,7 +110,6 @@ async function main() {
   for (const dir of dataDirs) {
     fs.mkdirSync(path.join(DATA_DIR, dir), { recursive: true });
   }
-  for (const service of uniqueServices()) service.prepare();
   // What each after-commit hook runs. Registered before anything can queue
   // one (the pending-work resume below, request handlers, the lease watcher).
   registerHookHandlers(HOOK_HANDLERS);
@@ -125,6 +126,15 @@ async function main() {
     console.error('Restore carry-over failed:', err.message);
   }
   console.log('Database initialized');
+
+  // Which backend serves DHCP comes from the database, so the services are
+  // prepared once it is open and before any hook renders their config. A
+  // switch a crash interrupted is undone: the DHCP files go back to the
+  // backend the setting names.
+  const { recovered } = selectDhcpBackendAtBoot(getDb());
+  for (const service of uniqueServices()) service.prepare();
+  if (recovered && !recovered.finished) queueRegen('regenerate_dhcp');
+
   resumePendingRegeneration();
   // Render the zones once per boot, so a release that changes what the
   // generator writes (0.5.1 qualifying SRV names) reaches existing installs
@@ -420,6 +430,7 @@ async function main() {
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dns', dnsRoutes);
   app.use('/api/dhcp/rogue', rogueDhcpRoutes);
+  app.use('/api/dhcp/server', dhcpBackendRoutes);
   app.use('/api/devices', deviceRoutes);
   app.use('/api/dhcp', dhcpRoutes);
   app.use('/api/workspace', workspaceRoutes);

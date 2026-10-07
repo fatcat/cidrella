@@ -19,13 +19,19 @@ import {
   signalDnsmasq,
   withValidatedDnsmasqUpdate,
 } from './dnsmasq.js';
-import { parseLeaseFile, regenerateReservations, regenerateScopeConfigs } from './dhcp.js';
+import {
+  formatLeaseFile,
+  parseLeaseFile,
+  regenerateReservations,
+  regenerateScopeConfigs,
+} from './dhcp.js';
 import { removeLegacyLeaseHosts, retireLegacyBlocklistConf } from './legacy.js';
 import { LEASE_FILE, readServerDuid, readSettledLeaseFile } from './lease-file.js';
 import { releaseDnsmasqLease } from './lease-release.js';
 import { LOG_FILE, dhcpDirection, isDhcpLine, querySourceIp } from './log-format.js';
 import { createDhcpLogParser } from './dhcp-log-parser.js';
 import { declareSupport } from '../features.js';
+import { atomicWrite } from '../shared/validated-files.js';
 
 const ROLES = ['dns', 'dhcp', 'ra'];
 
@@ -76,7 +82,21 @@ function apply(write, { activate = true } = {}) {
   };
 }
 
-export function createDnsmasqBackend() {
+/**
+ * `servesDhcp()` says whether dnsmasq answers DHCP or only sends the Router
+ * Advertisements while another backend serves (backends/index.js).
+ */
+export function createDnsmasqBackend({ servesDhcp = () => true } = {}) {
+  // Scopes are in conf-dir (restart); reservations in dhcp-hostsdir (reread
+  // on SIGHUP). Not serving, the same files carry the RA only.
+  const applyScopes = (db, opts) =>
+    apply(() => {
+      const serving = servesDhcp();
+      const confChanged = regenerateScopeConfigs(db, { serving });
+      const resChanged = regenerateReservations(db, { serving });
+      return confChanged ? 'restart' : resChanged ? 'reload' : 'none';
+    }, opts);
+
   return {
     name: 'dnsmasq',
     roles: ROLES,
@@ -103,14 +123,7 @@ export function createDnsmasqBackend() {
     },
 
     dhcp: {
-      // Reservations are in dhcp-hostsdir (reread on SIGHUP); scopes are in
-      // conf-dir (restart).
-      applyScopes: (db, opts) =>
-        apply(() => {
-          const confChanged = regenerateScopeConfigs(db);
-          const resChanged = regenerateReservations(db);
-          return confChanged ? 'restart' : resChanged ? 'reload' : 'none';
-        }, opts),
+      applyScopes,
       async readLeases({ leaseFile = LEASE_FILE, ...settle } = {}) {
         const content = await readSettledLeaseFile({ leaseFile, ...settle });
         if (content === null) return { leases: null, unsettled: true };
@@ -129,11 +142,22 @@ export function createDnsmasqBackend() {
       },
       releaseLease: (lease) => releaseDnsmasqLease(lease),
       serverIdentity: () => ({ duid: readServerDuid() }),
+      // A handover: dnsmasq reads its lease file only when it starts, so the
+      // file is written while it answers no DHCP and the restart that makes
+      // it serve again loads it. The server DUID line keeps the DUID clients
+      // know, so they renew rather than rebind.
+      async importLeases(leases, { serverDuid = null, leaseFile = LEASE_FILE } = {}) {
+        atomicWrite(leaseFile, formatLeaseFile(leases, { serverDuid }));
+        return { added: leases.length, failed: [] };
+      },
     },
 
-    // Router Advertisements come from the DHCPv6 scope files, so applyScopes
-    // covers them; the role is here so RA can move to another daemon later.
-    ra: {},
+    // The Router Advertisements come from the DHCPv6 scope files. While
+    // dnsmasq serves DHCP, applyScopes writes them; while another backend
+    // does, this does (the same files, answering no request).
+    ra: {
+      applyRouterAdvertisements: applyScopes,
+    },
 
     status: () => ({
       name: 'dnsmasq',
@@ -161,6 +185,10 @@ export function createDnsmasqBackend() {
       return 'unchanged';
     },
     restart: () => restartDnsmasq(),
+    // Started by restart(), which returns once systemd has it running.
+    async awaitRunning() {
+      if (!isCidrellaDnsmasqRunning()) throw new Error('dnsmasq is not running');
+    },
     // The directories dnsmasq.conf points hostsdir, dhcp-hostsdir and
     // conf-dir at; dnsmasq refuses to start without them.
     prepare() {

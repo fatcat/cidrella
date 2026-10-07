@@ -50,22 +50,27 @@ export function backendLeaseFromKea(lease, family) {
   };
 }
 
-/** Every lease of one family, a page at a time ("from" is exclusive). */
-export async function pageLeases(command, family) {
-  const leases = [];
+// Every lease Kea holds of one family, in Kea's own shape, a page at a time
+// ("from" is exclusive).
+async function pageRawLeases(command, family) {
+  const raw = [];
   let from = 'start';
   for (;;) {
     const reply = await command(`lease${family}-get-page`, { from, limit: PAGE_LIMIT });
     if (reply.empty) break;
     const page = reply.arguments?.leases || [];
-    for (const raw of page) {
-      const lease = backendLeaseFromKea(raw, family);
-      if (lease) leases.push(lease);
-    }
+    raw.push(...page);
     if (page.length < PAGE_LIMIT) break;
     from = page[page.length - 1]['ip-address'];
   }
-  return leases;
+  return raw;
+}
+
+/** Every lease of one family in use, as BackendLeases. */
+export async function pageLeases(command, family) {
+  return (await pageRawLeases(command, family))
+    .map((raw) => backendLeaseFromKea(raw, family))
+    .filter(Boolean);
 }
 
 // stat_cmds names an address handed out in "cumulative-assigned-addresses"
@@ -186,11 +191,19 @@ export function keaLeaseArguments(lease, { now = Date.now() } = {}) {
 }
 
 /**
- * Add BackendLeases to Kea. Returns { added, failed: [{ ip, error }] }; a
- * lease Kea refuses (outside every subnet, a clashing address) is reported,
- * not thrown, so one bad lease does not stop the rest.
+ * Replace Kea's leases with BackendLeases (a handover). What Kea held before
+ * goes first, in every state: leases from an earlier time Kea served would
+ * hold addresses another server has handed out since. Returns
+ * { added, failed: [{ ip, error }] }; a lease Kea refuses (outside every
+ * subnet, a clashing address) is reported, not thrown, so one bad lease does
+ * not stop the rest.
  */
-export async function importKeaLeases(commands, leases, opts) {
+export async function importKeaLeases(commands, leases, { families = [4, 6], ...opts } = {}) {
+  for (const family of families) {
+    for (const raw of await pageRawLeases(commands[family], family)) {
+      await commands[family](`lease${family}-del`, { 'ip-address': raw['ip-address'] });
+    }
+  }
   let added = 0;
   const failed = [];
   for (const lease of leases) {

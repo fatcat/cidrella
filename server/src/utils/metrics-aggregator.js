@@ -16,7 +16,7 @@ import {
   getAndResetPerformanceMetrics,
   getAndResetBlocklistHits,
 } from './dns-proxy.js';
-import { getDhcpBackend, getService } from '../backends/index.js';
+import { getDhcpBackend, getService, onBackendChanged } from '../backends/index.js';
 
 const AGGREGATE_INTERVAL_MS = 60_000;
 const RETENTION_DAYS = 30;
@@ -29,6 +29,7 @@ let timer = null;
 let logTails = [];
 // The DHCP backend's last counter totals, when it keeps counters.
 let lastDhcpCounters = null;
+let unsubscribeBackend = null;
 let cycleCount = 0;
 
 // CPU tracking for delta computation
@@ -216,6 +217,19 @@ async function aggregate() {
   }
 }
 
+// Start each log from its end (don't process historical lines), and take a
+// baseline of the DHCP backend's counters when it keeps them. Run again when
+// a role moves to another backend.
+function bindSources() {
+  const countsItself = backendCountsDhcp();
+  logTails = selectLogTails(!countsItself).map((tail) => ({
+    ...tail,
+    log: createLogFollower(tail.source),
+  }));
+  lastDhcpCounters = null;
+  if (countsItself) dhcpCounterCounts();
+}
+
 /**
  * Start the metrics aggregator.
  */
@@ -244,14 +258,9 @@ export function startMetricsAggregator(database) {
   deleteOldGeoipHits = db.prepare('DELETE FROM metrics_geoip_hits WHERE ts < ?');
   deleteOldProxyPerf = db.prepare('DELETE FROM metrics_proxy_perf WHERE ts < ?');
 
-  // Start each log from its end (don't process historical lines)
-  const countsItself = backendCountsDhcp();
-  logTails = selectLogTails(!countsItself).map((tail) => ({
-    ...tail,
-    log: createLogFollower(tail.source),
-  }));
-  lastDhcpCounters = null;
-  if (countsItself) dhcpCounterCounts();
+  bindSources();
+  unsubscribeBackend?.();
+  unsubscribeBackend = onBackendChanged(bindSources);
 
   timer = setInterval(aggregate, AGGREGATE_INTERVAL_MS);
   console.log('[metrics-aggregator] Started (interval: 60s, retention: 30d)');
@@ -267,4 +276,6 @@ export function stopMetricsAggregator() {
     clearInterval(timer);
     timer = null;
   }
+  unsubscribeBackend?.();
+  unsubscribeBackend = null;
 }

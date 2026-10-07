@@ -143,8 +143,9 @@ Deliberate, each with a reason:
    than finalizing it from dnsmasq alone.
 2. ~~Introduce the backend API as a thin facade over today's dnsmasq code.~~ Done in 0.5.1.
 3. **Kea first** (DHCP role, 0.5.2): the adapter is in `backends/kea/` and passes the contract
-   test. DNSMASQ-06 and -07 are fixed, and DDNS stays with CIDRella (no Kea D2). Still to come:
-   the `dhcp_backend` setting and the switch with its lease handover, and the packaging.
+   test. DNSMASQ-06 and -07 are fixed, and DDNS stays with CIDRella (no Kea D2). The
+   `dhcp_backend` setting and the switch with its lease handover are in. Still to come: the
+   packaging.
 4. **PowerDNS** (DNS role) after that; deprecate dnsmasq over one release, no permanent dual
    stack.
 
@@ -176,6 +177,34 @@ How CIDRella's model maps onto Kea (`backends/kea/render.js`):
   scopes have Rapid Commit on, matching dnsmasq.
 - The DHCPv6 server DUID is `DATA_DIR/kea/server-duid` when present (a switch carries dnsmasq's
   over), so clients renew with Kea instead of waiting to rebind.
+
+### Switching (Settings > DHCP > Server)
+
+`services/dhcp-backend-switch.js` moves the DHCP role and its leases, so exactly one server
+answers at any time (none for the seconds between):
+
+1. Preflight, read-only: the target is installed (`installed()`), and what the switch gains and
+   loses, from the feature report.
+2. A marker, `DATA_DIR/dhcp-switch.json`.
+3. The source stops answering (`setDhcpServing(name, false)` and a render). dnsmasq renders its
+   DHCPv6 scope files for the Router Advertisements plus `dhcp-ignore=tag:!nosuchtag`; Kea
+   renders `interfaces: []`.
+4. The source's final lease set, kept in `DATA_DIR/handover/<time>.json` (0600).
+5. The target is selected, still not answering, starts, and takes the leases with
+   `importLeases(leases, { serverDuid })`: Kea deletes what it held and adds them through
+   `lease_cmds`; dnsmasq gets a lease file whose `duid` line carries the server DUID, which it
+   loads when it restarts.
+6. The target answers (`awaitRunning()`: for Kea, `status-get` reports `sockets.status` ready).
+7. The setting is written, the marker cleared, and a source that fills no role is stopped.
+
+A failure in steps 3 to 6 selects the source again and renders it serving. At boot,
+`selectDhcpBackendAtBoot` reads the setting, falls back to dnsmasq when the named backend is not
+installed, and, if a marker is left, stops the other backend and re-renders DHCP. The lease sync
+is held for the whole switch (`holdLeaseSync`): a read of the target before it has the leases
+would release every lease in the database.
+
+Not yet verified on real hardware: a client's Renew and Rebind across a switch in both
+directions, and that dnsmasq loads a handed-over lease file on the restart that makes it serve.
 
 What the spike and the verification runs established (Debian trixie container, Kea 3.0.4 from
 ISC's Cloudsmith repository, 2026-10-07):

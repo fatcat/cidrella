@@ -103,10 +103,7 @@ onMounted(async () => {
   margin-bottom: 0.4rem;
 }
 .field-help {
-  display: block;
   margin-top: 0.4rem;
-  color: var(--cid-text-muted-color);
-  font-size: var(--app-fs-xs);
   line-height: 1.4;
 }
 .settings-actions {

@@ -20,7 +20,7 @@ import { lookupVendor } from './mac-vendor.js';
 import { classify } from './device-classifier.js';
 import { getByMac, upsertFingerprint } from '../models/device-fingerprint.js';
 import { DHCP_FINGERPRINT_POLL_MS } from '../config/defaults.js';
-import { getService } from '../backends/index.js';
+import { getService, onBackendChanged } from '../backends/index.js';
 
 // Classify + persist a finalized transaction.
 function persist(db, tx) {
@@ -50,7 +50,24 @@ function persist(db, tx) {
   });
 }
 
+/**
+ * Follow the DHCP backend's log, and the next backend's when the role moves.
+ * Returns the stop.
+ */
 export function startDhcpFingerprintWatcher(db) {
+  let timer = watchDhcpLog(db);
+  const unsubscribe = onBackendChanged((role) => {
+    if (role !== 'dhcp') return;
+    clearInterval(timer);
+    timer = watchDhcpLog(db);
+  });
+  return () => {
+    unsubscribe();
+    clearInterval(timer);
+  };
+}
+
+function watchDhcpLog(db) {
   const source = getService('dhcp').logSource();
   if (!source?.createDhcpParser) return null;
   const parser = source.createDhcpParser();

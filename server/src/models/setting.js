@@ -1,3 +1,8 @@
+/** A setting's stored text, or null when it has none. */
+export function readSetting(db, key) {
+  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
+}
+
 export function upsertSetting(db, key, value) {
   return upsertSettingWithConflict(db, key, value);
 }

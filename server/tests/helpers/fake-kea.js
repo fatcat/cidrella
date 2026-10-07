@@ -11,6 +11,7 @@
  *   kea.calls           every command received, in order
  *   kea.churn = true    every statistics read sees one more address handed
  *                       out, as if leases changed during each scan
+ *   kea.sockets         what status-get reports of the sockets ('ready')
  *   await kea.close()
  */
 import http from 'http';
@@ -33,7 +34,7 @@ export async function startFakeKea({ password, user = 'cidrella' } = {}) {
   function handle(command, args = {}, family) {
     switch (command) {
       case 'status-get':
-        return { result: 0, arguments: { pid: 1 } };
+        return { result: 0, arguments: { pid: 1, sockets: { status: fake.sockets } } };
       case 'statistic-get-all':
         if (fake.churn) {
           const name = family === 6 ? 'cumulative-assigned-nas' : 'cumulative-assigned-addresses';
@@ -123,6 +124,7 @@ export async function startFakeKea({ password, user = 'cidrella' } = {}) {
 
   const fake = {
     churn: false,
+    sockets: 'ready',
     port: server.address().port,
     v6Port: server.v6Port,
     leases,
