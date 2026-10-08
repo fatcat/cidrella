@@ -100,9 +100,10 @@ Open threads specific to this snapshot:
 
 - Cut `v0.5.0-pre.16` with the DHCP work and soak it on production.
 - Release 0.5.0, then cut 0.5.1 (its RELEASE-NOTES date is still a placeholder).
-- REVIEW.md: DNSMASQ-02 (duplicate log lines on a reservation change) stays open by
-  decision. On 0.5.1 and later, DNSMASQ-06 and DNSMASQ-07 are open too: dnsmasq traits the
-  backend layer kept on purpose.
+- REVIEW.md: DNSMASQ-08 (dnsmasq sizes a DHCPv4 option it does not know, such as Path MTU
+  Aging Timeout, by the value's shape) is open on every line. DNSMASQ-02 (duplicate log lines
+  on a reservation change) stays open by decision. On 0.5.1, DNSMASQ-06 and DNSMASQ-07 are
+  open too, dnsmasq traits the backend layer kept on purpose; 0.5.2 fixes both.
 
 Known bad metadata, not fixable in place: the `v0.4.18-pre.1` through `pre.3` tags point at
 0.4.17 code (`gh release create` had no `--target`; fixed forward). Read `RELEASE.json`
