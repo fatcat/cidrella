@@ -1,9 +1,6 @@
 import os from 'os';
-import {
-  DHCP_DEFAULT_NTP_SERVERS,
-  DHCP6_DEFAULT_NTP_SERVERS,
-  FALLBACK_SECONDARY_DNS,
-} from '../config/defaults.js';
+import { DHCP_DEFAULT_NTP_SERVERS, DHCP6_DEFAULT_NTP_SERVERS } from '../config/defaults.js';
+import { FALLBACK_SECONDARY_DNS } from '../utils/dhcp-network-options.js';
 
 // DHCPv4 and DHCPv6 option codes are separate namespaces, so every table here
 // is keyed by (address_family, code). Callers that never learned about

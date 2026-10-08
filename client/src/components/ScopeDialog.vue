@@ -318,6 +318,7 @@ import GatewayField from './GatewayField.vue';
 import SelectButton from '../ui/SelectButton.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
+import { networkOptionFills } from '@shared/dhcp-network-options.js';
 import { apiError, EMPTY_CELL } from '../utils/format.js';
 import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
 import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
@@ -617,13 +618,28 @@ async function reloadOptions() {
   await loadOptions();
 }
 
-// The IPv6 counterparts of the network-derived IPv4 fills: the search list
-// (24) from the network's domain and DNS Servers (23) from CIDRella's own
-// address on the network, never overwriting an explicit value. There is no
-// mask, router or broadcast: those come from Router Advertisements.
-function applyV6NetworkDefaults(selected, values, { domain, serverIp } = {}) {
-  setOptionValue(selected, values, 24, domain, { overwrite: false });
-  setOptionValue(selected, values, 23, serverIp, { overwrite: false });
+// The values a scope takes from its network, by the server's own rule
+// (networkOptionFills, through @shared): topology values replace what is set,
+// the rest fill a blank. `overwrite: false` fills blanks only, for an existing
+// scope whose stored values stand. A topology value replaces a linked default
+// too, as it does on the server.
+function networkFills({ family, cidr, gateway, domain, serverIp }) {
+  return networkOptionFills({
+    family,
+    mask: computeMask(cidr),
+    broadcast: computeBroadcast(cidr),
+    gateway,
+    domain,
+    serverIp,
+  });
+}
+
+function applyNetworkFills(selected, values, network, { overwrite = true, linked = null } = {}) {
+  for (const fill of networkFills(network)) {
+    const replace = overwrite && fill.overwrite;
+    if (replace && linked?.includes(fill.code)) linked.splice(linked.indexOf(fill.code), 1);
+    setOptionValue(selected, values, fill.code, fill.value, { overwrite: replace });
+  }
 }
 
 // A new scope takes the add-to-new-scopes options: one with a default value
@@ -699,20 +715,14 @@ function toggleOption(code, checked) {
     if (hasDefault(code)) {
       setUseDefault(code, true);
     } else if (form.value.optionValues[code] == null || form.value.optionValues[code] === '') {
-      const v6 = scopeFamily.value === 6;
-      if (v6 && code === 24 && editing.value?.subnet_domain_name) {
-        form.value.optionValues[code] = editing.value.subnet_domain_name;
-      } else if (v6 && code === 23 && editing.value?.server_ip) {
-        form.value.optionValues[code] = editing.value.server_ip;
-      } else if (v6) {
-        /* no other network-derived IPv6 value */
-      } else if ((code === 15 || code === 119) && editing.value?.subnet_domain_name) {
-        form.value.optionValues[code] = editing.value.subnet_domain_name;
-      } else if (code === 6 && editing.value?.server_ip) {
-        form.value.optionValues[code] = `${editing.value.server_ip}, 9.9.9.9`;
-      } else if (code === 28 && editing.value?.subnet_cidr) {
-        form.value.optionValues[code] = computeBroadcast(editing.value.subnet_cidr);
-      }
+      const fill = networkFills({
+        family: scopeFamily.value,
+        cidr: editing.value?.subnet_cidr,
+        gateway: editing.value?.subnet_gateway,
+        domain: editing.value?.subnet_domain_name,
+        serverIp: editing.value?.server_ip,
+      }).find((candidate) => candidate.code === code);
+      if (fill) form.value.optionValues[code] = fill.value;
     }
   } else {
     form.value.selectedOptions = form.value.selectedOptions.filter((c) => c !== code);
@@ -755,9 +765,12 @@ watch(
       form.value.optionValues = {};
       form.value.useDefault = [];
       selectEnabledDefaults(form.value.selectedOptions, form.value.useDefault);
-      applyV6NetworkDefaults(form.value.selectedOptions, form.value.optionValues, {
-        domain: subnet.domain_name,
-      });
+      applyNetworkFills(
+        form.value.selectedOptions,
+        form.value.optionValues,
+        { family: 6, domain: subnet.domain_name },
+        { linked: form.value.useDefault },
+      );
       if (subnet.name && !form.value.description) {
         form.value.description = `${subnet.name} DHCP Scope`;
       }
@@ -784,26 +797,17 @@ watch(
 
     selectEnabledDefaults(form.value.selectedOptions, form.value.useDefault);
 
-    if (subnet.cidr) {
-      const mask = computeMask(subnet.cidr);
-      setOptionValue(form.value.selectedOptions, form.value.optionValues, 1, mask);
-    }
-    if (subnet.gateway_address) {
-      setOptionValue(
-        form.value.selectedOptions,
-        form.value.optionValues,
-        3,
-        subnet.gateway_address,
-      );
-    }
-    if (subnet.domain_name) {
-      setOptionValue(form.value.selectedOptions, form.value.optionValues, 15, subnet.domain_name, {
-        overwrite: false,
-      });
-      setOptionValue(form.value.selectedOptions, form.value.optionValues, 119, subnet.domain_name, {
-        overwrite: false,
-      });
-    }
+    applyNetworkFills(
+      form.value.selectedOptions,
+      form.value.optionValues,
+      {
+        family: 4,
+        cidr: subnet.cidr,
+        gateway: subnet.gateway_address,
+        domain: subnet.domain_name,
+      },
+      { linked: form.value.useDefault },
+    );
     if (subnet.name && !form.value.description) {
       form.value.description = `${subnet.name} DHCP Scope`;
     }
@@ -838,52 +842,30 @@ watch(
         if (form.value.range_id !== rangeId) return;
         form.value.selectedOptions = [];
         form.value.optionValues = {};
-        selectEnabledDefaults(form.value.selectedOptions, form.value.optionValues);
-        applyV6NetworkDefaults(form.value.selectedOptions, form.value.optionValues, {
-          domain: range.subnet_domain_name,
-          serverIp: range.server_ip,
-        });
+        form.value.useDefault = [];
+        selectEnabledDefaults(form.value.selectedOptions, form.value.useDefault);
+        applyNetworkFills(
+          form.value.selectedOptions,
+          form.value.optionValues,
+          { family: 6, domain: range.subnet_domain_name, serverIp: range.server_ip },
+          { linked: form.value.useDefault },
+        );
       });
       return;
     }
 
-    // Subnet mask + broadcast
-    if (range.subnet_cidr) {
-      const mask = computeMask(range.subnet_cidr);
-      if (mask) {
-        setOptionValue(form.value.selectedOptions, form.value.optionValues, 1, mask);
-      }
-      const bcast = computeBroadcast(range.subnet_cidr);
-      if (bcast) {
-        setOptionValue(form.value.selectedOptions, form.value.optionValues, 28, bcast);
-      }
-    }
-    // Gateway
-    if (range.subnet_gateway) {
-      setOptionValue(form.value.selectedOptions, form.value.optionValues, 3, range.subnet_gateway);
-    }
-    // DNS servers
-    if (range.server_ip) {
-      setOptionValue(
-        form.value.selectedOptions,
-        form.value.optionValues,
-        6,
-        `${range.server_ip}, 9.9.9.9`,
-        { overwrite: false },
-      );
-    }
-    // Domain name + DNS search list
-    if (range.subnet_domain_name) {
-      for (const code of [15, 119]) {
-        setOptionValue(
-          form.value.selectedOptions,
-          form.value.optionValues,
-          code,
-          range.subnet_domain_name,
-          { overwrite: false },
-        );
-      }
-    }
+    applyNetworkFills(
+      form.value.selectedOptions,
+      form.value.optionValues,
+      {
+        family: 4,
+        cidr: range.subnet_cidr,
+        gateway: range.subnet_gateway,
+        domain: range.subnet_domain_name,
+        serverIp: range.server_ip,
+      },
+      { linked: form.value.useDefault },
+    );
   },
 );
 
@@ -1127,23 +1109,18 @@ async function openEdit(scope) {
   // Re-populate inherited values for options not stored in scope_options
   // Gateway (option 3) is stripped on save when it matches the subnet gateway,
   // so re-fill it from the subnet so the UI always shows the effective value.
-  if (scopeFamily.value === 6) {
-    applyV6NetworkDefaults(selOpts, optVals, {
+  applyNetworkFills(
+    selOpts,
+    optVals,
+    {
+      family: scopeFamily.value,
+      cidr: scope.subnet_cidr,
+      gateway: scope.subnet_gateway,
       domain: scope.subnet_domain_name,
       serverIp: scope.server_ip,
-    });
-  } else {
-    setOptionValue(selOpts, optVals, 3, scope.subnet_gateway, { overwrite: false });
-    if (!selOpts.includes(1) && scope.subnet_cidr) {
-      const mask = computeMask(scope.subnet_cidr);
-      setOptionValue(selOpts, optVals, 1, mask, { overwrite: false });
-    }
-    setOptionValue(selOpts, optVals, 15, scope.subnet_domain_name, { overwrite: false });
-    setOptionValue(selOpts, optVals, 119, scope.subnet_domain_name, { overwrite: false });
-    setOptionValue(selOpts, optVals, 6, scope.server_ip ? `${scope.server_ip}, 9.9.9.9` : null, {
-      overwrite: false,
-    });
-  }
+    },
+    { overwrite: false },
+  );
 
   form.value = {
     range_id: scope.range_id,
@@ -1188,19 +1165,17 @@ async function openNewWithPicker(subnetCtx) {
   let autoStartIp = '';
   let autoEndIp = '';
   if (subnetCtx) {
-    if (scopeFamily.value === 6) {
-      applyV6NetworkDefaults(autoSelected, autoValues, { domain: subnetCtx.domain_name });
-    } else {
-      setOptionValue(autoSelected, autoValues, 3, subnetCtx.gateway_address);
-      if (subnetCtx.cidr) {
-        const mask = computeMask(subnetCtx.cidr);
-        setOptionValue(autoSelected, autoValues, 1, mask);
-      }
-      if (subnetCtx.domain_name) {
-        setOptionValue(autoSelected, autoValues, 15, subnetCtx.domain_name);
-        setOptionValue(autoSelected, autoValues, 119, subnetCtx.domain_name);
-      }
-    }
+    applyNetworkFills(
+      autoSelected,
+      autoValues,
+      {
+        family: scopeFamily.value,
+        cidr: subnetCtx.cidr,
+        gateway: subnetCtx.gateway_address,
+        domain: subnetCtx.domain_name,
+      },
+      { linked: autoLinked },
+    );
     if (subnetCtx.start_ip && subnetCtx.end_ip) {
       // The caller chose the pool.
       autoStartIp = subnetCtx.start_ip;
@@ -1263,24 +1238,12 @@ async function openNewForRange(opts) {
   const autoLinked = [];
   selectEnabledDefaults(autoSelected, autoLinked);
 
-  if (scopeFamily.value === 6) {
-    applyV6NetworkDefaults(autoSelected, autoValues, { domain: opts.domainName });
-  } else {
-    // Override gateway from subnet if available
-    setOptionValue(autoSelected, autoValues, 3, opts.gateway);
-
-    // Auto-populate mask from CIDR
-    if (opts.cidr) {
-      const mask = computeMask(opts.cidr);
-      setOptionValue(autoSelected, autoValues, 1, mask);
-    }
-
-    // Domain name + DNS search list
-    if (opts.domainName) {
-      setOptionValue(autoSelected, autoValues, 15, opts.domainName, { overwrite: false });
-      setOptionValue(autoSelected, autoValues, 119, opts.domainName, { overwrite: false });
-    }
-  }
+  applyNetworkFills(
+    autoSelected,
+    autoValues,
+    { family: scopeFamily.value, cidr: opts.cidr, gateway: opts.gateway, domain: opts.domainName },
+    { linked: autoLinked },
+  );
 
   form.value = {
     ...emptyForm(),

@@ -33,21 +33,6 @@ was suggested.
   knows by name, as `option-names.js` already does for DHCPv6. Either changes the dnsmasq
   goldens, so it belongs in its own commit.
 
-## Found building DHCP Bulk Change (2026-10-05)
-
-#### DHCP-02: The scope dialog fills network-derived option values in its own copy of the rule
-
-**low**, confirmed. `client/src/components/ScopeDialog.vue:668`
-
-- **What happens:** The client builds DNS Servers as `${server_ip}, 9.9.9.9` in three places
-  (lines 668, 830, 1092), with the fallback resolver hardcoded. The server's rule is
-  `fillScopeOptions` in `services/subnet-dhcp-topology.js` with `FALLBACK_SECONDARY_DNS`. A
-  change to the fallback, or to which options fill from the network, lands in one and not the
-  other.
-- **Why:** The dialog predates the shared server rule and fills its form before saving.
-- **Fix:** Have the scope dialog ask the server for the filled set (the Bulk Change preview
-  already computes it per scope), or move the rule to `@shared` and use it on both sides.
-
 ## Found reading prod's logs (2026-10-06)
 
 #### DNSMASQ-02: A reservation change reaches dnsmasq twice and logs a duplicate per line
@@ -66,19 +51,5 @@ was suggested.
 - **Fix:** Cosmetic, once per reservation change; leaving it is reasonable. To silence it, write
   reservations to a file dnsmasq reads only on reload (`dhcp-hostsfile` instead of
   `dhcp-hostsdir`), which also drops the inotify path.
-
-## Found checking prod's DNS table (2026-10-07)
-
-#### A11Y-01: Rows with no address get a "Select null" checkbox label
-
-**low**, confirmed on prod. `client/src/views/networks-workspace/WorkspaceTable.vue:49`
-
-- **What happens:** In a DNS table, the row checkbox of an MX, CNAME, TXT or SRV record is
-  labeled "Select null" for screen readers; every such row has the same label. Seen on prod's
-  the-mcnultys.org zone (the MX and CNAME rows).
-- **Why:** The label is `` `Select ${row.address}` ``, and a record with no address has
-  `address` null. Address and DHCP rows always have one, so it only shows in the DNS tables.
-- **Fix:** Label the row by what names it in its table: the address when there is one, else the
-  record's name and type (for example "Select the-mcnultys.org MX aspmx.l.google.com"). One
-  helper in `WorkspaceTable.vue`, with a test that no row's label contains "null" or
-  "undefined".
+- **Decided 2026-10-08: leave it.** The fix rewrites every managed install's live dnsmasq.conf
+  and cannot reach include-mode installs, for log noise only.

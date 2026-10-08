@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import WorkspaceTable from '../../../../src/views/networks-workspace/WorkspaceTable.vue';
+import { mapDnsRows } from '../../../../src/views/networks-workspace-data.js';
 
 describe('WorkspaceTable', () => {
   it('marks a disabled row so it recedes, and leaves rows without the flag alone', () => {
@@ -68,4 +69,43 @@ describe('WorkspaceTable', () => {
     await flushPromises();
     expect(state()).toEqual([false, false]);
   });
+
+  // A11Y-01: a record with no address was labeled "Select null".
+  it('labels every row checkbox by what names the row, never null', () => {
+    const zone = { id: 1, name: 'lab.test', type: 'forward' };
+    const record = (id, type, name, value, ip = null) => ({
+      id,
+      record_type: type,
+      name,
+      record_fqdn: name === '@' ? 'lab.test' : `${name}.lab.test`,
+      value,
+      ip_address: ip,
+      enabled: 1,
+    });
+    const rows = mapDnsRows([
+      {
+        zone,
+        records: [
+          record(1, 'A', 'nas', '10.0.0.4', '10.0.0.4'),
+          record(2, 'AAAA', 'nas', 'fd00::4', 'fd00::4'),
+          record(3, 'MX', '@', '10 mail.lab.test'),
+          record(4, 'CNAME', 'www', 'nas.lab.test'),
+        ],
+      },
+    ]);
+    const wrapper = mount(WorkspaceTable, {
+      props: { columns: [{ key: 'dnsName', label: 'Name' }], rows, showCheckboxes: true },
+    });
+    const labels = wrapper
+      .findAll('tbody input[type="checkbox"]')
+      .map((box) => box.attributes('aria-label'));
+    expect(labels).toEqual([
+      'Select 10.0.0.4',
+      'Select fd00::4',
+      'Select lab.test MX 10 mail.lab.test',
+      'Select www.lab.test CNAME nas.lab.test',
+    ]);
+    for (const label of labels) expect(label).not.toMatch(/null|undefined/);
+  });
 });
+
