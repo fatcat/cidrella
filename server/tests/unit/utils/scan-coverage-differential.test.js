@@ -24,10 +24,29 @@ let db, tmpDir;
 
 // Every shape worth asking about, including the ones that told the arms apart.
 const CANDIDATES = [
-  '', 'off', '0', '00', '000',
-  '5m', '15m', '30m', '1h', '4h',
-  '2h', '10m', '1h30m', 'never', 'abc', 'OFF', ' 5m ',
-  '1', '5', '60', '-5', '3.5', null,
+  '',
+  'off',
+  '0',
+  '00',
+  '000',
+  '5m',
+  '15m',
+  '30m',
+  '1h',
+  '4h',
+  '2h',
+  '10m',
+  '1h30m',
+  'never',
+  'abc',
+  'OFF',
+  ' 5m ',
+  '1',
+  '5',
+  '60',
+  '-5',
+  '3.5',
+  null,
 ];
 
 beforeAll(async () => {
@@ -35,7 +54,9 @@ beforeAll(async () => {
   db = setup.db;
   tmpDir = setup.tmpDir;
   db.prepare("DELETE FROM settings WHERE key = 'default_scan_interval'").run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('default_scan_enabled', '1')").run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('default_scan_enabled', '1')",
+  ).run();
 });
 afterAll(() => cleanupTestDb(tmpDir));
 
@@ -43,19 +64,29 @@ afterAll(() => cleanupTestDb(tmpDir));
 function sqlSaysCovered(intervalValue) {
   db.prepare('DELETE FROM ip_addresses').run();
   db.prepare('DELETE FROM subnets').run();
-  const subnetId = db.prepare(`
+  const subnetId = db
+    .prepare(
+      `
     INSERT INTO subnets (
       cidr, name, network_address, broadcast_address, prefix_length,
       total_addresses, gateway_address, status, scan_interval
     )
     VALUES ('10.9.0.0/24', 'scan-diff', '10.9.0.0', '10.9.0.255', 24, 256, '10.9.0.1', 'allocated', ?)
-  `).run(intervalValue).lastInsertRowid;
-  db.prepare("INSERT INTO ip_addresses (subnet_id, ip_address) VALUES (?, '10.9.0.10')").run(subnetId);
+  `,
+    )
+    .run(intervalValue).lastInsertRowid;
+  db.prepare("INSERT INTO ip_addresses (subnet_id, ip_address) VALUES (?, '10.9.0.10')").run(
+    subnetId,
+  );
 
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT ${scannerCoveredSql('s', 'ip')} AS covered
     FROM ip_addresses ip JOIN subnets s ON s.id = ip.subnet_id
-  `).get();
+  `,
+    )
+    .get();
   return row.covered === 1;
 }
 
@@ -63,8 +94,9 @@ describe('scan coverage: JS scheduler vs SQL staleness sweep', () => {
   for (const value of CANDIDATES) {
     it(`agrees on ${JSON.stringify(value)}`, () => {
       const jsWillScan = intervalToMs(value) !== null;
-      expect(sqlSaysCovered(value), `intervalToMs says ${jsWillScan ? 'scan' : 'never'}`)
-        .toBe(jsWillScan);
+      expect(sqlSaysCovered(value), `intervalToMs says ${jsWillScan ? 'scan' : 'never'}`).toBe(
+        jsWillScan,
+      );
     });
   }
 

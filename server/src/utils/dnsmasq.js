@@ -2,18 +2,36 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync, execSync } from 'child_process';
-import { parseCidr } from './ip.js';
+import { parseNetwork, isValidAddress, isGloballyRoutableCidr } from './ip.js';
+import { sortKey, addressFamily } from './address.js';
+import { ipForPtrRecord } from '../models/dns-record.js';
 import { getSetting } from '../db/init.js';
+import { ipv6Enabled } from './ipv6-support.js';
 import { selectInterfaceNames } from './interface-config.js';
-import { DATA_DIR, resolveDnsmasqInternalPort, resolveDnsListenPort, DEFAULT_DNS_LISTEN_PORT, ENCRYPTED_FORWARDER_PORT } from '../config/defaults.js';
+import {
+  DATA_DIR,
+  resolveDnsmasqInternalPort,
+  resolveDnsListenPort,
+  DEFAULT_DNS_LISTEN_PORT,
+  ENCRYPTED_FORWARDER_PORT,
+} from '../config/defaults.js';
 import { validateDnsmasqConfigValue, validateTxtValue, isValidPtrName } from './dnsmasq-escape.js';
+import { plainUpstreams } from './forwarding-settings.js';
 const HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'hosts.d');
 const CONF_DIR = path.join(DATA_DIR, 'dnsmasq', 'conf.d');
 const DHCP_HOSTS_DIR = path.join(DATA_DIR, 'dnsmasq', 'dhcp-hosts.d');
 const DNSMASQ_CONF = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.conf');
 
+// The temp file sits beside its target, often in a directory dnsmasq watches
+// (hostsdir, dhcp-hostsdir). dnsmasq loads every file there but names that
+// start with '.' or end in '~', so a plain `<file>.tmp.<pid>` was read while
+// half written (DNSMASQ-01). The leading dot keeps dnsmasq off it.
+function atomicWriteTempPath(filePath) {
+  return path.join(path.dirname(filePath), `.${path.basename(filePath)}.tmp.${process.pid}`);
+}
+
 export function atomicWrite(filePath, content) {
-  const tmpPath = filePath + '.tmp.' + process.pid;
+  const tmpPath = atomicWriteTempPath(filePath);
   fs.writeFileSync(tmpPath, content, 'utf-8');
   fs.renameSync(tmpPath, filePath);
 }
@@ -61,7 +79,7 @@ export function validateDnsmasqConfig() {
   try {
     execFileSync('dnsmasq', ['--test', `--conf-file=${DNSMASQ_CONF}`], {
       encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe']
+      stdio: ['ignore', 'pipe', 'pipe'],
     });
     return { ok: true, skipped: null };
   } catch (err) {
@@ -123,7 +141,11 @@ function directivesOf(content) {
  */
 function writeIfChanged(filePath, newContent) {
   let oldContent = '';
-  try { oldContent = fs.readFileSync(filePath, 'utf-8'); } catch { /* doesn't exist yet */ }
+  try {
+    oldContent = fs.readFileSync(filePath, 'utf-8');
+  } catch {
+    /* doesn't exist yet */
+  }
   if (newContent === oldContent) return false;
   const directivesChanged = directivesOf(newContent) !== directivesOf(oldContent);
   atomicWrite(filePath, newContent);
@@ -148,8 +170,10 @@ function toFqdn(recordName, zoneName) {
   const raw = String(recordName || '').trim();
   const normalized = raw.replace(/\.$/, '');
   const zone = String(zoneName || '').replace(/\.$/, '');
-  if (normalized.toLowerCase() === zone.toLowerCase() ||
-      normalized.toLowerCase().endsWith(`.${zone.toLowerCase()}`)) {
+  if (
+    normalized.toLowerCase() === zone.toLowerCase() ||
+    normalized.toLowerCase().endsWith(`.${zone.toLowerCase()}`)
+  ) {
     return normalized;
   }
   if (normalized.includes('.')) {
@@ -163,11 +187,20 @@ export function generateReverseName(cidr) {
 }
 
 /**
- * Generate all /24 reverse zone names for a CIDR.
- * Networks /24+ → 1 zone, /17-/23 → multiple /24 zones, /16 → /16 zone, etc.
+ * Generate the reverse zone names for a CIDR.
+ * IPv4: /24+ → 1 zone, /17-/23 → multiple /24 zones, /16 → /16 zone, etc.
+ * IPv6: one ip6.arpa zone at the nibble boundary of the prefix (the prefix
+ * length rounded down to a multiple of four), never a walk of the space.
  */
 export function generateReverseNames(cidr) {
-  const parsed = parseCidr(cidr);
+  const parsed = parseNetwork(cidr);
+  if (parsed.family === 6) {
+    // A zone has at most 31 nibbles: with all 32 the zone name would be the
+    // PTR owner itself, which no PTR lookup tries, so a /128 uses its /124.
+    const zoneNibbles = Math.min(31, Math.max(1, Math.floor(parsed.prefix / 4)));
+    const nibbles = parsed.networkBig.toString(16).padStart(32, '0').split('');
+    return [`${nibbles.slice(0, zoneNibbles).reverse().join('.')}.ip6.arpa`];
+  }
   const octets = parsed.network.split('.').map(Number);
 
   if (parsed.prefix >= 24) {
@@ -188,39 +221,128 @@ export function generateReverseNames(cidr) {
   return [`${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`];
 }
 
-export function regenerateHostsDir(db) {
-  const zones = db.prepare(`
-    SELECT z.id, z.name FROM dns_zones z WHERE z.enabled = 1
-  `).all();
+/**
+ * The network a reverse zone name covers, as a CIDR string, or null when the
+ * name is not a whole-octet in-addr.arpa or nibble-aligned ip6.arpa zone.
+ * This is the inverse of generateReverseNames for the shapes it produces:
+ * "1.0.10.in-addr.arpa" is 10.0.1.0/24, "8.b.d.0.1.0.0.2.ip6.arpa" is
+ * 2001:db8::/32.
+ */
+export function reverseZoneNetwork(zoneName) {
+  const name = String(zoneName || '')
+    .toLowerCase()
+    .replace(/\.$/, '');
+  const v4 = name.match(/^((?:\d{1,3}\.){1,3})in-addr\.arpa$/);
+  if (v4) {
+    const octets = v4[1].split('.').filter(Boolean).reverse();
+    if (octets.some((o) => Number(o) > 255)) return null;
+    const padded = [...octets, ...Array(4 - octets.length).fill('0')];
+    return `${padded.join('.')}/${octets.length * 8}`;
+  }
+  const v6 = name.match(/^((?:[0-9a-f]\.){1,32})ip6\.arpa$/);
+  if (v6) {
+    const nibbles = v6[1].split('.').filter(Boolean).reverse();
+    const hex = [...nibbles, ...Array(32 - nibbles.length).fill('0')].join('');
+    const hextets = hex.match(/.{4}/g).join(':');
+    return `${parseNetwork(`${hextets}/${nibbles.length * 4}`).network}/${nibbles.length * 4}`;
+  }
+  return null;
+}
 
-  const activeIds = new Set();
-  let changed = false;
-
-  for (const zone of zones) {
-    const records = db.prepare(`
-      SELECT name, value FROM dns_records
-      WHERE zone_id = ? AND type = 'A' AND enabled = 1
-    `).all(zone.id);
-
-    if (records.length === 0) continue;
-
-    activeIds.add(zone.id);
-    const filePath = path.join(HOSTS_DIR, `zone-${zone.id}.hosts`);
-    const newContent = records.map(r => `${r.value} ${toFqdn(r.name, zone.name)}`).join('\n') + '\n';
-    if (writeIfChanged(filePath, newContent)) changed = true;
+// Every served A and AAAA name, grouped by address, with each address's
+// canonical PTR name first. dnsmasq answers a reverse lookup from the first
+// hosts line naming the address, so this order makes the hosts file serve the
+// PTR that reverse-DNS projection chose, and dnsmasq picks hosts changes up
+// without a restart.
+function servedHostsByAddress(db) {
+  const records = db
+    .prepare(
+      `
+    SELECT r.id, r.name, r.value, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE z.enabled = 1 AND z.type = 'forward' AND r.type IN ('A', 'AAAA') AND r.enabled = 1
+    ORDER BY r.id
+  `,
+    )
+    .all();
+  const ptrNames = new Map();
+  for (const ptr of db
+    .prepare(
+      `
+    SELECT r.name, r.value, z.name AS zone_name
+    FROM dns_records r
+    JOIN dns_zones z ON z.id = r.zone_id
+    WHERE z.enabled = 1 AND r.type = 'PTR' AND r.enabled = 1
+    ORDER BY r.id
+  `,
+    )
+    .all()) {
+    const ip = ipForPtrRecord(ptr.name, ptr.zone_name);
+    if (ip && !ptrNames.has(ip)) ptrNames.set(ip, lowerFqdn(ptr.value));
   }
 
-  if (cleanStaleFiles(HOSTS_DIR, 'zone-', '.hosts', activeIds)) changed = true;
+  // Each name keeps the spelling it is written with (an absolute external
+  // name keeps its trailing dot); `key` is the form PTR values compare by.
+  const byAddress = new Map();
+  for (const record of records) {
+    const fqdn = toFqdn(record.name, record.zone_name);
+    const names = byAddress.get(record.value) || [];
+    if (!names.some((name) => name.key === lowerFqdn(fqdn))) {
+      names.push({ fqdn, key: lowerFqdn(fqdn) });
+    }
+    byAddress.set(record.value, names);
+  }
+  for (const [ip, names] of byAddress) {
+    const canonical = ptrNames.get(ip);
+    const at = canonical ? names.findIndex((name) => name.key === canonical) : -1;
+    if (at > 0) names.unshift(...names.splice(at, 1));
+  }
+  return byAddress;
+}
+
+function lowerFqdn(name) {
+  return String(name || '')
+    .trim()
+    .replace(/\.$/, '')
+    .toLowerCase();
+}
+
+// One file for every zone, so the order across zones is defined: dnsmasq
+// takes the PTR from the first hosts line for an address.
+const HOSTS_FILE = 'records.hosts';
+
+export function regenerateHostsDir(db) {
+  const byAddress = servedHostsByAddress(db);
+  const lines = [...byAddress.keys()]
+    .sort((a, b) => sortKey(a).localeCompare(sortKey(b)))
+    .flatMap((ip) => byAddress.get(ip).map(({ fqdn }) => `${ip} ${fqdn}`));
+  const filePath = path.join(HOSTS_DIR, HOSTS_FILE);
+  let changed;
+  if (lines.length) {
+    changed = writeIfChanged(filePath, lines.join('\n') + '\n');
+  } else {
+    changed = fs.existsSync(filePath);
+    if (changed) fs.unlinkSync(filePath);
+  }
+  // The per-zone files this replaced.
+  if (cleanStaleFiles(HOSTS_DIR, 'zone-', '.hosts', new Set())) changed = true;
   return changed;
 }
 
 export function regenerateConfDir(db) {
-  const zones = db.prepare(`
+  const zones = db
+    .prepare(
+      `
     SELECT z.* FROM dns_zones z WHERE z.enabled = 1
-  `).all();
+  `,
+    )
+    .all();
 
   const activeIds = new Set();
   let changed = false;
+  let hostsCache = null;
+  const hostsByAddress = () => (hostsCache ||= servedHostsByAddress(db));
 
   for (const zone of zones) {
     // Defense in depth: the zone name is interpolated raw into ptr-record= and
@@ -231,25 +353,45 @@ export function regenerateConfDir(db) {
     // in-addr.arpa, so no whitespace, commas, or control chars).
     if (validateDnsmasqConfigValue(zone.name) != null) continue;
 
-    const records = db.prepare(`
+    const records = db
+      .prepare(
+        `
       SELECT name, type, value, priority, weight, port, ttl FROM dns_records
-      WHERE zone_id = ? AND type NOT IN ('A', 'PTR') AND enabled = 1
-    `).all(zone.id);
+      WHERE zone_id = ? AND type NOT IN ('A', 'AAAA', 'PTR') AND enabled = 1
+    `,
+      )
+      .all(zone.id);
 
-    // PTR records with hostname values (not bare IPs) generate ptr-record= lines
-    const ptrRecords = db.prepare(`
+    // PTR records with hostname values (not bare-IP placeholders of either
+    // family) generate ptr-record= lines.
+    const ptrRecords = db
+      .prepare(
+        `
       SELECT name, value FROM dns_records
       WHERE zone_id = ? AND type = 'PTR' AND enabled = 1 AND value LIKE '%.%' AND value NOT GLOB '[0-9]*.[0-9]*.[0-9]*.[0-9]*'
-    `).all(zone.id);
+    `,
+      )
+      .all(zone.id)
+      .filter((ptr) => !isValidAddress(ptr.value));
 
     if (records.length === 0 && ptrRecords.length === 0) continue;
+    // A PTR the hosts file already answers (its value is the first name for
+    // the address there) needs no ptr-record line. Leaving those out keeps
+    // generated PTRs out of conf.d, whose changes cost a dnsmasq restart.
+    const servedPtrs = ptrRecords.filter((ptr) => {
+      const ip = ipForPtrRecord(ptr.name, zone.name);
+      return !(ip && hostsByAddress().get(ip)?.[0]?.key === lowerFqdn(ptr.value));
+    });
+    if (records.length === 0 && servedPtrs.length === 0) continue;
 
     activeIds.add(zone.id);
     const lines = [];
 
     // SOA comment for documentation
     if (zone.soa_primary_ns) {
-      lines.push(`# SOA: ${zone.soa_primary_ns} ${zone.soa_admin_email} ${zone.soa_serial || 1} ${zone.soa_refresh} ${zone.soa_retry} ${zone.soa_expire} ${zone.soa_minimum_ttl}`);
+      lines.push(
+        `# SOA: ${zone.soa_primary_ns} ${zone.soa_admin_email} ${zone.soa_serial || 1} ${zone.soa_refresh} ${zone.soa_retry} ${zone.soa_expire} ${zone.soa_minimum_ttl}`,
+      );
     }
 
     for (const r of records) {
@@ -257,6 +399,7 @@ export function regenerateConfDir(db) {
       switch (r.type) {
         case 'CNAME':
           if (validateDnsmasqConfigValue(r.value) != null) break;
+          // The one local record dnsmasq takes a TTL for (servedRecordTtl).
           lines.push(`cname=${fqdn},${r.value}${r.ttl ? ',' + r.ttl : ''}`);
           break;
         case 'MX':
@@ -281,7 +424,7 @@ export function regenerateConfDir(db) {
     // PTR records: ptr-record=<octet>.<zone>,<hostname>. Skip any row whose
     // name or value doesn't pass the sanitizer, they would only emit if
     // someone bypassed the route validator or edited the DB directly.
-    for (const ptr of ptrRecords) {
+    for (const ptr of servedPtrs) {
       if (!isValidPtrName(ptr.name)) continue;
       if (validateDnsmasqConfigValue(ptr.value) != null) continue;
       lines.push(`ptr-record=${ptr.name}.${zone.name},${ptr.value}`);
@@ -296,8 +439,28 @@ export function regenerateConfDir(db) {
   }
 
   if (cleanStaleFiles(CONF_DIR, 'zone-', '.conf', activeIds)) changed = true;
+  if (writeLocalZones(zones)) changed = true;
 
   return changed;
+}
+
+// Every enabled zone answers the names under it itself (local=/zone/), so a
+// name or type CIDRella has no record for gets NXDOMAIN or NODATA here rather
+// than a trip upstream: the AAAA and HTTPS lookups browsers send for a host with
+// only an A record would otherwise end at the domain's public nameservers. A
+// zone with forward_unknown set still forwards them (split horizon). local=
+// only stops forwarding; hostsdir and the zone lines answer as before.
+const LOCAL_ZONES_FILE = path.join(CONF_DIR, 'local-zones.conf');
+
+function writeLocalZones(zones) {
+  const lines = zones
+    .filter((zone) => !zone.forward_unknown && validateDnsmasqConfigValue(zone.name) == null)
+    .map((zone) => `local=/${zone.name}/`)
+    .sort();
+  if (lines.length) return writeIfChanged(LOCAL_ZONES_FILE, lines.join('\n') + '\n');
+  if (!fs.existsSync(LOCAL_ZONES_FILE)) return false;
+  fs.rmSync(LOCAL_ZONES_FILE, { force: true });
+  return true;
 }
 
 // ─── DNSSEC ──────────────────────────────────────────────
@@ -356,11 +519,97 @@ function buildDnssecLines() {
   return lines;
 }
 
+// The TTL dnsmasq answers local records with. Hosts files carry no TTL and
+// mx-host, txt-record, srv-host and ptr-record take none, so everything but a
+// CNAME with its own TTL is served with this. Short, so an edit or a new
+// lease name reaches clients within a minute; dnsmasq's default of 0 made
+// clients look the name up again on every request.
+export const LOCAL_TTL = 60;
+
+/** The TTL dnsmasq serves `record` ({type, ttl}) with. */
+export function servedRecordTtl(record) {
+  return record.type === 'CNAME' && record.ttl ? record.ttl : LOCAL_TTL;
+}
+
+// What CIDRella's own dnsmasq answers beyond its records. no-hosts keeps the
+// appliance's /etc/hosts off the network: Proxmox and Debian map the host's own
+// name to 127.0.1.1 there, which dnsmasq would otherwise hand to every client
+// next to the real addresses. These live in dnsmasq.conf, not conf.d, because
+// the installer's include mode points a host's own dnsmasq at conf.d.
+const LOCAL_ANSWER_LINES = ['no-hosts', `local-ttl=${LOCAL_TTL}`];
+
+// Names reserved for local use, which CIDRella answers itself (NXDOMAIN, or
+// its own record) rather than forwards: RFC 6761 (localhost, invalid, test),
+// 7686 (onion), 9462 (resolver.arpa, the DDR probe) and the RFC 6303 reverse
+// zones for loopback, link-local, "this network", broadcast and documentation
+// addresses in both families, plus the IPv4 private ranges bogus-priv already
+// keeps from upstreams. Public resolvers make up answers for these with no
+// DNSSEC proof (Quad9 sends EDE 29 and an empty authority section), so with
+// DNSSEC on dnsmasq calls them BOGUS and the client gets SERVFAIL.
+const RESERVED_LOCAL_DOMAINS = [
+  'localhost',
+  'invalid',
+  'test',
+  'onion',
+  'resolver.arpa',
+  '0.in-addr.arpa',
+  '127.in-addr.arpa',
+  '254.169.in-addr.arpa',
+  '255.255.255.255.in-addr.arpa',
+  '2.0.192.in-addr.arpa',
+  '100.51.198.in-addr.arpa',
+  '113.0.203.in-addr.arpa',
+  '10.in-addr.arpa',
+  ...Array.from({ length: 16 }, (_, i) => `${16 + i}.172.in-addr.arpa`),
+  '168.192.in-addr.arpa',
+  `${'0.'.repeat(32)}ip6.arpa`, // ::
+  `1.${'0.'.repeat(31)}ip6.arpa`, // ::1
+  '8.e.f.ip6.arpa', // fe80::/10
+  '9.e.f.ip6.arpa',
+  'a.e.f.ip6.arpa',
+  'b.e.f.ip6.arpa',
+  '8.b.d.0.1.0.0.2.ip6.arpa', // 2001:db8::/32
+];
+
+// Reserved for sites rather than for nobody: an office resolver may serve
+// corp.internal or an AD domain under .local, a homenet router home.arpa, and
+// either the PTRs of a ULA prefix. These stay local only while every upstream
+// is a public address, so CIDRella never hides a private resolver's zone.
+const SITE_LOCAL_DOMAINS = ['home.arpa', 'internal', 'local', 'd.f.ip6.arpa'];
+
+const MANAGED_LOCAL_DOMAINS = new Set([...RESERVED_LOCAL_DOMAINS, ...SITE_LOCAL_DOMAINS]);
+
+// The addresses dnsmasq's forwarded queries end up at: the encrypted
+// forwarder's upstreams when it is on, the plain servers otherwise.
+function forwardedAddresses(encrypted) {
+  if (!encrypted) return plainUpstreams();
+  return (getSetting('forwarder_encrypted_upstreams') || []).flatMap((u) => u?.addresses || []);
+}
+
+function isPublicAddress(address) {
+  if (!isValidAddress(address)) return false;
+  return isGloballyRoutableCidr(`${address}/${addressFamily(address) === 6 ? 128 : 32}`);
+}
+
+/** The local=/domain/ lines for the reserved names, given where queries go. */
+export function reservedLocalLines({ addresses = [] } = {}) {
+  const domains = addresses.every(isPublicAddress)
+    ? [...RESERVED_LOCAL_DOMAINS, ...SITE_LOCAL_DOMAINS]
+    : RESERVED_LOCAL_DOMAINS;
+  return domains.map((domain) => `local=/${domain}/`);
+}
+
+function isManagedLocalAnswerLine(line) {
+  const t = line.trim();
+  const local = /^local=\/([^/]+)\/$/.exec(t);
+  return (
+    t === 'no-hosts' || /^local-ttl=/.test(t) || (!!local && MANAGED_LOCAL_DOMAINS.has(local[1]))
+  );
+}
+
 export function regenerateDnsmasqConf(_db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return false;
 
-  // dnsmasq always uses real upstream servers, proxy sits in front, not behind
-  const servers = getSetting('dns_upstream_servers');
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
   const encryption = getSetting('forwarder_encryption') || 'off';
   const noRecursion = getSetting('dns_no_recursion') === 'true';
@@ -369,27 +618,32 @@ export function regenerateDnsmasqConf(_db) {
   const lines = content.split('\n');
   // Strip existing server= lines and any DNSSEC-managed lines so regen is
   // idempotent regardless of which setting changed.
-  const filtered = lines.filter(line => !/^server=/.test(line) && !isManagedDnssecLine(line));
+  const filtered = lines.filter(
+    (line) =>
+      !/^server=/.test(line) && !isManagedDnssecLine(line) && !isManagedLocalAnswerLine(line),
+  );
 
   // Insert server lines after no-resolv or at the start. When recursion is
-  // disabled, emit NO upstreams (authoritative-only). Otherwise, when encrypted
-  // forwarding is on, send everything to the in-Node DoT/DoH stub on loopback
-  // instead of the plain upstream IPs (the stub encrypts to the real upstreams).
-  const noResolvIdx = filtered.findIndex(l => l.trim() === 'no-resolv');
+  // disabled, emit NO upstreams (authoritative-only). Otherwise send everything
+  // to the in-Node forwarder stub on loopback, in every mode: it picks the
+  // resolver (primary, backup, turns) and speaks plain DNS, DoT or DoH to it.
+  const noResolvIdx = filtered.findIndex((l) => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
-  const serverLines = noRecursion
-    ? []
-    : (encryption === 'tls' || encryption === 'https')
-      ? [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`]
-      : servers.map(s => `server=${s}`);
-  filtered.splice(insertIdx, 0, ...serverLines);
+  const encrypted = encryption === 'tls' || encryption === 'https';
+  const serverLines = noRecursion ? [] : [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`];
+  const localLines = reservedLocalLines({
+    addresses: noRecursion ? [] : forwardedAddresses(encrypted),
+  });
+  filtered.splice(insertIdx, 0, ...LOCAL_ANSWER_LINES, ...localLines, ...serverLines);
 
   // Append the DNSSEC block when enabled and the local dnsmasq supports it.
   if (dnssecEnabled) {
     if (dnsmasqSupportsDnssec()) {
       filtered.push(...buildDnssecLines());
     } else {
-      console.warn('[dnsmasq] dnssec_enabled is true but dnsmasq was not built with DNSSEC support, skipping DNSSEC directives');
+      console.warn(
+        '[dnsmasq] dnssec_enabled is true but dnsmasq was not built with DNSSEC support, skipping DNSSEC directives',
+      );
     }
   }
 
@@ -442,7 +696,9 @@ function setRestartPending(pending) {
     } else {
       fs.rmSync(RESTART_PENDING, { force: true });
     }
-  } catch { /* marker is best-effort */ }
+  } catch {
+    /* marker is best-effort */
+  }
 }
 
 export function signalDnsmasq() {
@@ -501,6 +757,18 @@ export function restartDnsmasq() {
   }
 }
 
+// The addresses of one interface a resolver should bind: every IPv4 address
+// and, while IPv6 support is on, every IPv6 address that is not link-local.
+// Link-local needs a zone id on the wire and clients never send queries to
+// it. `ipv6` defaults to the global switch; tests pass it explicitly.
+export function listenableAddresses(addrs, { ipv6 = ipv6Enabled() } = {}) {
+  return (addrs || [])
+    .filter(
+      (a) => a.family === 'IPv4' || (ipv6 && a.family === 'IPv6' && !/^fe[89ab]/i.test(a.address)),
+    )
+    .map((a) => a.address);
+}
+
 export function applyInterfaceConfig(_db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return false;
 
@@ -508,7 +776,7 @@ export function applyInterfaceConfig(_db) {
   const lines = content.split('\n');
 
   // Strip existing interface-related directives (not comments)
-  const filtered = lines.filter(line => {
+  const filtered = lines.filter((line) => {
     if (line.startsWith('#')) return true;
     if (/^listen-address=/.test(line)) return false;
     if (/^interface=/.test(line)) return false;
@@ -526,24 +794,32 @@ export function applyInterfaceConfig(_db) {
   try {
     const raw = getSetting('interface_config');
     if (raw) ifaceConfig = JSON.parse(raw);
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   try {
     const val = getSetting('dns_enabled');
     if (val === 'false') dnsEnabled = false;
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   try {
     const val = getSetting('dhcp_enabled');
     if (val === 'false') dhcpEnabled = false;
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   // Check for proxy bypass mode, dnsmasq takes over port 53 on LAN IPs
   let proxyBypass = false;
   try {
     const val = getSetting('dns_proxy_bypass');
     if (val === 'true') proxyBypass = true;
-  } catch { /* use default */ }
+  } catch {
+    /* use default */
+  }
 
   const sysIfaces = os.networkInterfaces();
 
@@ -556,23 +832,23 @@ export function applyInterfaceConfig(_db) {
   let configuredListenPort = DEFAULT_DNS_LISTEN_PORT;
   try {
     configuredListenPort = resolveDnsListenPort(getSetting('dns_listen_port'));
-  } catch { /* default 53 */ }
+  } catch {
+    /* default 53 */
+  }
   const internalPort = resolveDnsmasqInternalPort(configuredListenPort);
   const dnsPort = !dnsEnabled ? 0 : proxyBypass ? configuredListenPort : internalPort;
-  const newDirectives = [
-    'bind-dynamic',
-    'listen-address=127.0.0.1',
-    `port=${dnsPort}`,
-  ];
-  if (sysIfaces.lo?.some(a => a.family === 'IPv6')) {
+  const newDirectives = ['bind-dynamic', 'listen-address=127.0.0.1', `port=${dnsPort}`];
+  if (ipv6Enabled() && sysIfaces.lo?.some((a) => a.family === 'IPv6')) {
     newDirectives.push('listen-address=::1');
   }
   // Interface SELECTION is shared with dns-proxy.js and dhcp-probe.js so the
   // three cannot disagree about which interfaces are in play (audit #9). The
   // directive emission below is dnsmasq's alone and stays here. 'any' because
   // dnsmasq needs an interface= line for a DNS-only interface too.
-  const { explicit: hasExplicitConfig, names: selectedIfNames } =
-    selectInterfaceNames('any', { config: ifaceConfig, sysIfaces });
+  const { explicit: hasExplicitConfig, names: selectedIfNames } = selectInterfaceNames('any', {
+    config: ifaceConfig,
+    sysIfaces,
+  });
 
   if (hasExplicitConfig) {
     for (const ifName of selectedIfNames) {
@@ -581,11 +857,8 @@ export function applyInterfaceConfig(_db) {
       newDirectives.push(`interface=${ifName}`);
       // In bypass mode, dnsmasq also needs listen-address for DNS on LAN IPs
       if (proxyBypass && cfg.dns && dnsEnabled) {
-        const addrs = sysIfaces[ifName];
-        if (addrs) {
-          for (const a of addrs) {
-            if (a.family === 'IPv4') newDirectives.push(`listen-address=${a.address}`);
-          }
+        for (const address of listenableAddresses(sysIfaces[ifName])) {
+          newDirectives.push(`listen-address=${address}`);
         }
       }
       if (!cfg.dhcp || !dhcpEnabled) {
@@ -603,8 +876,8 @@ export function applyInterfaceConfig(_db) {
       }
       // In bypass mode, add listen-address for DNS on LAN IPs
       if (proxyBypass && dnsEnabled) {
-        for (const a of addrs) {
-          if (a.family === 'IPv4') newDirectives.push(`listen-address=${a.address}`);
+        for (const address of listenableAddresses(addrs)) {
+          newDirectives.push(`listen-address=${address}`);
         }
       }
     }

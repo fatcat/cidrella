@@ -2,26 +2,68 @@
   <div class="log-viewer">
     <div class="log-toolbar">
       <div class="log-tabs">
-        <button :class="['log-tab', { active: activeFilter === 'all' }]" @click="switchFilter('all')">All</button>
-        <button :class="['log-tab', { active: activeFilter === 'dns' }]" @click="switchFilter('dns')">DNS</button>
-        <button :class="['log-tab', { active: activeFilter === 'dhcp' }]" @click="switchFilter('dhcp')">DHCP</button>
+        <button
+          :class="['log-tab', { active: activeFilter === 'all' }]"
+          @click="switchFilter('all')"
+        >
+          All
+        </button>
+        <button
+          :class="['log-tab', { active: activeFilter === 'dns' }]"
+          @click="switchFilter('dns')"
+        >
+          DNS
+        </button>
+        <button
+          :class="['log-tab', { active: activeFilter === 'dhcp' }]"
+          @click="switchFilter('dhcp')"
+        >
+          DHCP
+        </button>
       </div>
       <div class="log-actions">
         <InputText v-model="searchText" placeholder="Filter..." size="small" class="log-search" />
-        <Button icon="pi pi-pause" v-if="!paused" size="small" severity="secondary" text
-                title="Pause auto-scroll" @click="paused = true" />
-        <Button icon="pi pi-play" v-else size="small" severity="success" text
-                title="Resume auto-scroll" @click="resumeScroll" />
-        <Button icon="pi pi-trash" size="small" severity="danger" text
-                title="Clear logs" @click="clearLogs" />
+        <Button
+          icon="pi pi-pause"
+          v-if="!paused"
+          size="small"
+          severity="secondary"
+          text
+          title="Pause auto-scroll"
+          @click="paused = true"
+        />
+        <Button
+          icon="pi pi-play"
+          v-else
+          size="small"
+          severity="success"
+          text
+          title="Resume auto-scroll"
+          @click="resumeScroll"
+        />
+        <Button
+          icon="pi pi-trash"
+          size="small"
+          severity="danger"
+          text
+          title="Clear logs"
+          @click="clearLogs"
+        />
       </div>
     </div>
     <div class="log-status">
-      <span :class="['status-dot', connected ? 'connected' : 'disconnected']"></span>
-      {{ connected ? 'Live' : 'Disconnected' }}
+      <StatusDot
+        :kind="connected ? 'ok' : 'err'"
+        :label="connected ? 'Live' : 'Disconnected'"
+        show-label
+      />
       <span class="log-count">{{ filteredLines.length }} lines</span>
     </div>
-    <pre ref="logPre" class="log-output" @scroll="onScroll"><template v-for="(line, i) in filteredLines" :key="i"><span :class="lineClass(line)">{{ line }}</span>
+    <pre
+      ref="logPre"
+      class="log-output"
+      @scroll="onScroll"
+    ><template v-for="(line, i) in filteredLines" :key="i"><span :class="lineClass(line)">{{ line }}</span>
 </template></pre>
   </div>
 </template>
@@ -30,6 +72,7 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue';
 import api from '../api/client.js';
 import Button from '../ui/Button.js';
+import StatusDot from './StatusDot.vue';
 import InputText from '../ui/InputText.js';
 const logPre = ref(null);
 const lines = ref([]);
@@ -45,11 +88,16 @@ let pauseBuffer = [];
 const filteredLines = computed(() => {
   if (!searchText.value) return lines.value;
   const term = searchText.value.toLowerCase();
-  return lines.value.filter(l => l.toLowerCase().includes(term));
+  return lines.value.filter((l) => l.toLowerCase().includes(term));
 });
 
 function lineClass(line) {
-  if (/\bDHCP(DISCOVER|OFFER|REQUEST|ACK|NAK|RELEASE|INFORM|DECLINE)\b|available DHCP|dnsmasq-dhcp\[\d+\]:|\bsent size:\s+\d+\s+option:|\brequested options:|\bnext server:|\bclient provides name:|\bvendor class:|\btags:\s+scope/i.test(line)) return 'log-dhcp';
+  if (
+    /\bDHCP(DISCOVER|OFFER|REQUEST|ACK|NAK|RELEASE|INFORM|DECLINE)\b|available DHCP|dnsmasq-dhcp\[\d+\]:|\bsent size:\s+\d+\s+option:|\brequested options:|\bnext server:|\bclient provides name:|\bvendor class:|\btags:\s+scope/i.test(
+      line,
+    )
+  )
+    return 'log-dhcp';
   if (/query\[/i.test(line)) return 'log-query';
   if (/reply|cached/i.test(line)) return 'log-reply';
   if (/forwarded/i.test(line)) return 'log-forward';
@@ -143,7 +191,9 @@ async function clearLogs() {
     lines.value = [];
     pauseBuffer = [];
     paused.value = false;
-  } catch { /* ignore */ }
+  } catch {
+    /* ignore */
+  }
 }
 
 onMounted(() => {
@@ -170,8 +220,8 @@ onUnmounted(() => {
   align-items: center;
   justify-content: space-between;
   padding: 0.4rem 0.6rem;
-  background: var(--p-surface-ground);
-  border-bottom: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-ground);
+  border-bottom: 1px solid var(--cid-surface-border);
   border-radius: 6px 6px 0 0;
   gap: 0.5rem;
 }
@@ -185,17 +235,19 @@ onUnmounted(() => {
   padding: 0.3rem 0.75rem;
   border: none;
   background: transparent;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 0.8rem;
   font-weight: 600;
   border-radius: 4px;
   cursor: pointer;
   transition: all 0.15s;
 }
-.log-tab:hover { background: var(--p-surface-hover); }
+.log-tab:hover {
+  background: var(--cid-surface-hover);
+}
 .log-tab.active {
-  background: var(--p-primary-color);
-  color: var(--p-primary-contrast-color);
+  background: var(--cid-primary-color);
+  color: var(--cid-primary-contrast-color);
 }
 
 .log-actions {
@@ -215,18 +267,10 @@ onUnmounted(() => {
   gap: 0.4rem;
   padding: 0.2rem 0.6rem;
   font-size: 0.7rem;
-  color: var(--p-text-muted-color);
-  background: var(--p-surface-ground);
-  border-bottom: 1px solid var(--p-surface-border);
+  color: var(--cid-text-muted-color);
+  background: var(--cid-surface-ground);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
-
-.status-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
-}
-.status-dot.connected { background: var(--p-green-500); }
-.status-dot.disconnected { background: var(--p-red-500); }
 
 .log-count {
   margin-left: auto;
@@ -248,8 +292,16 @@ onUnmounted(() => {
   min-height: 300px;
 }
 
-.log-output .log-dhcp { color: #f0883e; }
-.log-output .log-query { color: #58a6ff; }
-.log-output .log-reply { color: #3fb950; }
-.log-output .log-forward { color: #d2a8ff; }
+.log-output .log-dhcp {
+  color: #f0883e;
+}
+.log-output .log-query {
+  color: #58a6ff;
+}
+.log-output .log-reply {
+  color: #3fb950;
+}
+.log-output .log-forward {
+  color: #d2a8ff;
+}
 </style>

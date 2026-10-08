@@ -51,10 +51,23 @@ export function leaseExpiryMs(expiresAt) {
   if (expiresAt === 'infinite') return Infinity;
   const raw = String(expiresAt || '').trim();
   if (!raw) return NaN;
-  const zoned = raw.includes('T') || /(?:Z|[+-]\d\d:\d\d)$/.test(raw)
-    ? raw
-    : `${raw.replace(' ', 'T')}Z`;
+  const zoned =
+    raw.includes('T') || /(?:Z|[+-]\d\d:\d\d)$/.test(raw) ? raw : `${raw.replace(' ', 'T')}Z`;
   return Date.parse(zoned);
+}
+
+/**
+ * A dnsmasq lease-time value ("24h", "3600", "1d", "infinite") as milliseconds.
+ * Infinity for infinite, NaN for anything unparseable. Bare numbers are
+ * seconds, as dnsmasq reads them.
+ */
+export function leaseDurationMs(text) {
+  const raw = String(text || '').trim().toLowerCase();
+  if (raw === 'infinite') return Infinity;
+  const match = /^(\d+)([smhdw]?)$/.exec(raw);
+  if (!match) return NaN;
+  const unit = { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[match[2]];
+  return Number(match[1]) * unit * 1000;
 }
 
 export function isLeaseActive(expiresAt, now = Date.now()) {

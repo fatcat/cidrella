@@ -22,7 +22,11 @@ export const NULL_MAC = '00:00:00:00:00:00';
 
 /** True when this is the all-zero MAC, in any case or spacing. */
 export function isNullMac(mac) {
-  return String(mac || '').trim().toLowerCase() === NULL_MAC;
+  return (
+    String(mac || '')
+      .trim()
+      .toLowerCase() === NULL_MAC
+  );
 }
 
 /**

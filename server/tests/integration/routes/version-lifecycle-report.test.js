@@ -21,7 +21,7 @@ beforeAll(async () => {
     req.user = {
       id: 1,
       username: 'testadmin',
-      role: req.get('x-test-role') || 'admin'
+      role: req.get('x-test-role') || 'admin',
     };
     next();
   });
@@ -44,29 +44,33 @@ describe('IP lifecycle migration report download', () => {
 
     const report = {
       outcome: 'blocked',
-      conflicts: [{
-        reason: 'Hosts printer.example.com and cups.example.com are A records for the same IP 192.0.2.20.',
-        remediation: 'Keep one A record and convert the other host to a CNAME.'
-      }]
+      conflicts: [
+        {
+          reason:
+            'Hosts printer.example.com and cups.example.com are A records for the same IP 192.0.2.20.',
+          remediation: 'Keep one A record and convert the other host to a CNAME.',
+        },
+      ],
     };
     fs.writeFileSync(
       path.join(tmpDir, 'ip-lifecycle-migration-report.json'),
       `${JSON.stringify(report, null, 2)}\n`,
-      { mode: 0o600 }
+      { mode: 0o600 },
     );
 
     const status = await request(app).get('/api/version/update-status');
     expect(status.status).toBe(200);
     expect(status.body).toMatchObject({
       lifecycle_migration_report_available: true,
-      lifecycle_migration_report_download: '/api/version/ip-lifecycle-migration-report'
+      lifecycle_migration_report_download: '/api/version/ip-lifecycle-migration-report',
     });
 
     const download = await request(app).get('/api/version/ip-lifecycle-migration-report');
     expect(download.status).toBe(200);
     expect(download.headers['content-type']).toMatch(/^application\/json/);
-    expect(download.headers['content-disposition'])
-      .toBe('attachment; filename="ip-lifecycle-migration-report.json"');
+    expect(download.headers['content-disposition']).toBe(
+      'attachment; filename="ip-lifecycle-migration-report.json"',
+    );
     expect(download.headers['cache-control']).toBe('no-store');
     expect(download.body).toEqual(report);
   });

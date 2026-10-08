@@ -4,15 +4,28 @@ import { createTestApp } from '../../helpers/test-app.js';
 
 vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
   const original = await importOriginal();
-  return { ...original, regenerateConfigs: vi.fn(), regenerateDnsmasqConf: vi.fn(), restartDnsmasq: vi.fn(), dnsmasqSupportsDnssec: vi.fn(() => true) };
+  return {
+    ...original,
+    regenerateConfigs: vi.fn(),
+    regenerateDnsmasqConf: vi.fn(),
+    restartDnsmasq: vi.fn(),
+    dnsmasqSupportsDnssec: vi.fn(() => true),
+  };
 });
 vi.mock('../../../src/utils/timesync.js', () => ({
   getNtpStatus: vi.fn(() => ({ available: true, ntpEnabled: true, synchronized: true })),
-  ensureNtpEnabled: vi.fn(), armDnssecTimecheckWhenSynced: vi.fn(),
+  ensureNtpEnabled: vi.fn(),
+  armDnssecTimecheckWhenSynced: vi.fn(),
 }));
 vi.mock('../../../src/utils/encrypted-forwarder.js', () => ({
   applyEncryptedForwarder: vi.fn(),
-  getEncryptedForwarderStatus: vi.fn(() => ({ mode: 'off', running: false, upstreams: [], recentErrors: 0, lastError: null })),
+  getEncryptedForwarderStatus: vi.fn(() => ({
+    mode: 'off',
+    running: false,
+    upstreams: [],
+    recentErrors: 0,
+    lastError: null,
+  })),
 }));
 
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
@@ -20,9 +33,18 @@ const { applyEncryptedForwarder } = await import('../../../src/utils/encrypted-f
 const { default: request } = await import('supertest');
 
 let tmpDir, app;
-const CF = { label: 'Cloudflare', addresses: ['1.1.1.1', '1.0.0.1'], hostname: 'cloudflare-dns.com', doh_url: 'https://cloudflare-dns.com/dns-query' };
+const CF = {
+  label: 'Cloudflare',
+  addresses: ['1.1.1.1', '1.0.0.1'],
+  hostname: 'cloudflare-dns.com',
+  doh_url: 'https://cloudflare-dns.com/dns-query',
+};
 
-beforeAll(async () => { const s = await setupTestDb(); tmpDir = s.tmpDir; app = createTestApp(dnsRouter, '/api/dns'); });
+beforeAll(async () => {
+  const s = await setupTestDb();
+  tmpDir = s.tmpDir;
+  app = createTestApp(dnsRouter, '/api/dns');
+});
 afterAll(() => cleanupTestDb(tmpDir));
 beforeEach(() => vi.mocked(applyEncryptedForwarder).mockClear());
 
@@ -32,9 +54,9 @@ describe('GET /api/dns/encryption', () => {
     expect(res.status).toBe(200);
     expect(res.body).toHaveProperty('mode');
     expect(Array.isArray(res.body.providers)).toBe(true);
-    expect(res.body.providers.some(p => p.id === 'cloudflare')).toBe(true);
+    expect(res.body.providers.some((p) => p.id === 'cloudflare')).toBe(true);
     // Quad9 preset must be the UNFILTERED tier, not 9.9.9.9
-    const q9 = res.body.providers.find(p => p.id === 'quad9');
+    const q9 = res.body.providers.find((p) => p.id === 'quad9');
     expect(q9.addresses).toContain('9.9.9.10');
     expect(q9.addresses).not.toContain('9.9.9.9');
   });
@@ -46,36 +68,56 @@ describe('PUT /api/dns/encryption', () => {
   });
 
   it('rejects tls/https with no upstreams', async () => {
-    expect((await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [] })).status).toBe(400);
+    expect(
+      (await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [] })).status,
+    ).toBe(400);
   });
 
   it('rejects an upstream with a non-https DoH URL', async () => {
     const bad = { ...CF, doh_url: 'http://insecure/dns-query' };
-    expect((await request(app).put('/api/dns/encryption').send({ mode: 'https', upstreams: [bad] })).status).toBe(400);
+    expect(
+      (
+        await request(app)
+          .put('/api/dns/encryption')
+          .send({ mode: 'https', upstreams: [bad] })
+      ).status,
+    ).toBe(400);
   });
 
   it('accepts a TLS (DoT) upstream without a doh_url (DoH-only field)', async () => {
     const dotOnly = { label: 'Custom', addresses: ['9.9.9.10'], hostname: 'dns10.quad9.net' };
-    const res = await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [dotOnly] });
+    const res = await request(app)
+      .put('/api/dns/encryption')
+      .send({ mode: 'tls', upstreams: [dotOnly] });
     expect(res.status).toBe(200);
     expect(res.body.mode).toBe('tls');
   });
 
   it('still requires a doh_url for HTTPS (DoH) mode', async () => {
     const noDoh = { label: 'Custom', addresses: ['9.9.9.10'], hostname: 'dns10.quad9.net' };
-    expect((await request(app).put('/api/dns/encryption').send({ mode: 'https', upstreams: [noDoh] })).status).toBe(400);
+    expect(
+      (
+        await request(app)
+          .put('/api/dns/encryption')
+          .send({ mode: 'https', upstreams: [noDoh] })
+      ).status,
+    ).toBe(400);
   });
 
   it('rejects an upstream address in a private/reserved range (SSRF guard)', async () => {
     for (const ip of ['127.0.0.1', '10.0.0.5', '192.168.1.1', '169.254.169.254']) {
       const bad = { label: 'Evil', addresses: [ip], hostname: 'dns10.quad9.net' };
-      const res = await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [bad] });
+      const res = await request(app)
+        .put('/api/dns/encryption')
+        .send({ mode: 'tls', upstreams: [bad] });
       expect(res.status, `expected 400 for ${ip}`).toBe(400);
     }
   });
 
   it('enables TLS, persists, and (re)starts the stub', async () => {
-    const res = await request(app).put('/api/dns/encryption').send({ mode: 'tls', upstreams: [CF] });
+    const res = await request(app)
+      .put('/api/dns/encryption')
+      .send({ mode: 'tls', upstreams: [CF] });
     expect(res.status).toBe(200);
     expect(res.body.mode).toBe('tls');
     expect(applyEncryptedForwarder).toHaveBeenCalled();
@@ -91,7 +133,10 @@ describe('PUT /api/dns/encryption', () => {
 
 describe('PUT /api/dns/forwarders: no_recursion', () => {
   it('requires upstreams when recursion is enabled', async () => {
-    expect((await request(app).put('/api/dns/forwarders').send({ servers: [], no_recursion: false })).status).toBe(400);
+    expect(
+      (await request(app).put('/api/dns/forwarders').send({ servers: [], no_recursion: false }))
+        .status,
+    ).toBe(400);
   });
 
   it('allows empty upstreams when recursion is disabled, and persists the flag', async () => {
@@ -102,11 +147,19 @@ describe('PUT /api/dns/forwarders: no_recursion', () => {
   });
 
   it('rejects an invalid forwarder IP even with recursion off', async () => {
-    expect((await request(app).put('/api/dns/forwarders').send({ servers: ['not-an-ip'], no_recursion: true })).status).toBe(400);
+    expect(
+      (
+        await request(app)
+          .put('/api/dns/forwarders')
+          .send({ servers: ['not-an-ip'], no_recursion: true })
+      ).status,
+    ).toBe(400);
   });
 
   it('re-enabling recursion clears the flag', async () => {
-    const res = await request(app).put('/api/dns/forwarders').send({ servers: ['8.8.8.8'], no_recursion: false });
+    const res = await request(app)
+      .put('/api/dns/forwarders')
+      .send({ servers: ['8.8.8.8'], no_recursion: false });
     expect(res.status).toBe(200);
     expect(res.body.no_recursion).toBe(false);
   });

@@ -131,12 +131,14 @@ async function verifySignature(manifestBuf, sigBuf) {
     } catch (err) {
       console.warn(
         'releases-manifest: signature verification failed:',
-        err.stderr?.toString?.().trim() || err.message
+        err.stderr?.toString?.().trim() || err.message,
       );
       return false;
     }
   } finally {
-    try { fs.rmSync(tmpDir, { recursive: true, force: true }); } catch {}
+    try {
+      fs.rmSync(tmpDir, { recursive: true, force: true });
+    } catch {}
   }
 }
 
@@ -216,12 +218,10 @@ export function computeBestTarget(currentVersion, manifest) {
 
   // Work with ascending order, the chain algorithm is cleaner.
   const ascending = [...manifest.releases]
-    .filter(r => r && r.version)
+    .filter((r) => r && r.version)
     .sort((a, b) => compareSemver(a.version, b.version));
 
-  const newerThanCurrent = ascending.filter(
-    r => compareSemver(r.version, currentVersion) > 0
-  );
+  const newerThanCurrent = ascending.filter((r) => compareSemver(r.version, currentVersion) > 0);
   if (newerThanCurrent.length === 0) return null;
 
   // Greedy walk: start at current, keep jumping to the highest reachable.
@@ -231,7 +231,7 @@ export function computeBestTarget(currentVersion, manifest) {
   const seen = new Set();
   // Bound the walk so a pathological manifest can't loop forever.
   for (let i = 0; i < ascending.length + 1; i++) {
-    const reachable = ascending.filter(r => {
+    const reachable = ascending.filter((r) => {
       if (compareSemver(r.version, at) <= 0) return false;
       if (r.min_from && compareSemver(r.min_from, at) > 0) return false;
       return true;
@@ -262,6 +262,6 @@ export function computeBestTarget(currentVersion, manifest) {
 }
 
 function findAnchor(manifest, version) {
-  const r = manifest.releases.find(x => x.version === version);
+  const r = manifest.releases.find((x) => x.version === version);
   return r?.anchor || null;
 }

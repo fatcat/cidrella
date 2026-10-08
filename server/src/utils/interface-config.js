@@ -26,7 +26,9 @@ export function readInterfaceConfig() {
       const parsed = JSON.parse(raw);
       if (parsed && typeof parsed === 'object' && !Array.isArray(parsed)) return parsed;
     }
-  } catch { /* fall through to the empty default */ }
+  } catch {
+    /* fall through to the empty default */
+  }
   return {};
 }
 

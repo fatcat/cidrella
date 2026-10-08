@@ -20,8 +20,8 @@
 // restore/update flow agree.
 export function compareSemver(a, b) {
   const parse = (s) => {
-    s = String(s).replace(/^v/, '').split('+')[0];          // drop build metadata
-    const [core, pre] = s.split(/-(.*)/, 2);                 // split core from prerelease
+    s = String(s).replace(/^v/, '').split('+')[0]; // drop build metadata
+    const [core, pre] = s.split(/-(.*)/, 2); // split core from prerelease
     const [mj = '0', mn = '0', pt = '0'] = core.split('.');
     return {
       core: [parseInt(mj, 10) || 0, parseInt(mn, 10) || 0, parseInt(pt, 10) || 0],
@@ -29,17 +29,19 @@ export function compareSemver(a, b) {
     };
   };
   const cmpId = (x, y) => {
-    const xN = /^\d+$/.test(x), yN = /^\d+$/.test(y);
+    const xN = /^\d+$/.test(x),
+      yN = /^\d+$/.test(y);
     if (xN && yN) {
       const n = parseInt(x, 10) - parseInt(y, 10);
-      return n === 0 ? 0 : (n < 0 ? -1 : 1);
+      return n === 0 ? 0 : n < 0 ? -1 : 1;
     }
-    if (xN) return -1;  // numeric identifier has lower precedence than alphanumeric
+    if (xN) return -1; // numeric identifier has lower precedence than alphanumeric
     if (yN) return 1;
-    return x === y ? 0 : (x < y ? -1 : 1);
+    return x === y ? 0 : x < y ? -1 : 1;
   };
 
-  const pa = parse(a), pb = parse(b);
+  const pa = parse(a),
+    pb = parse(b);
   for (let i = 0; i < 3; i++) {
     if (pa.core[i] < pb.core[i]) return -1;
     if (pa.core[i] > pb.core[i]) return 1;
@@ -54,5 +56,5 @@ export function compareSemver(a, b) {
     if (c !== 0) return c;
   }
   // All compared identifiers equal, the longer prerelease outranks (semver 2.0 §11.4.4).
-  return pa.pre.length < pb.pre.length ? -1 : (pa.pre.length > pb.pre.length ? 1 : 0);
+  return pa.pre.length < pb.pre.length ? -1 : pa.pre.length > pb.pre.length ? 1 : 0;
 }

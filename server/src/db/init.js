@@ -14,7 +14,7 @@ import {
   LIFECYCLE_MIGRATION_REPORT,
   readLifecycleMigrationReport,
   reconcileMigratedIpLifecycle,
-  writeLifecycleMigrationReport
+  writeLifecycleMigrationReport,
 } from './ip-lifecycle-upgrade.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -35,11 +35,16 @@ export function getDb() {
  * the value is automatically parsed.
  */
 export function getSetting(key) {
-  const row = getDb().prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key);
   const raw = row?.value;
 
   // JSON-stored keys
-  if (key === 'dns_upstream_servers' || key === 'dns_soa_defaults') {
+  if (
+    key === 'dns_upstream_servers' ||
+    key === 'dns_upstream_backup_servers' ||
+    key === 'dns_soa_defaults' ||
+    key === 'forwarder_encrypted_upstreams'
+  ) {
     try {
       return raw ? JSON.parse(raw) : DEFAULTS[key];
     } catch {
@@ -66,14 +71,14 @@ export async function initDb(dataDir) {
   // Schema 54 is the 0.4.17 baseline. Inventory its lifecycle claims before
   // any schema or data mutation. Ambiguous claims block with a durable report;
   // safe stale compatibility state is reconciled after migrations complete.
-  const schemaTable = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'"
-  ).get();
+  const schemaTable = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'schema_version'")
+    .get();
   const schemaBefore = schemaTable
     ? (db.prepare('SELECT MAX(version) AS version FROM schema_version').get()?.version ?? 0)
     : 0;
-  const legacyLifecycleUpgrade = schemaBefore > 0 && schemaBefore < 55
-    && hasLegacyIpLifecycleTables(db);
+  const legacyLifecycleUpgrade =
+    schemaBefore > 0 && schemaBefore < 55 && hasLegacyIpLifecycleTables(db);
   let lifecycleReport = null;
   if (legacyLifecycleUpgrade) {
     lifecycleReport = inventoryLegacyIpLifecycle(db);
@@ -81,14 +86,14 @@ export async function initDb(dataDir) {
     lifecycleReport.outcome = lifecycleReport.summary.blocking_conflicts > 0 ? 'blocked' : 'ready';
     const reportPath = writeLifecycleMigrationReport(dataDir, lifecycleReport);
     console.log(
-      `IP lifecycle migration inventory: ${lifecycleReport.summary.blocking_conflicts} blocking conflict(s); report ${reportPath}`
+      `IP lifecycle migration inventory: ${lifecycleReport.summary.blocking_conflicts} blocking conflict(s); report ${reportPath}`,
     );
     if (lifecycleReport.summary.blocking_conflicts > 0) {
       db.close();
       db = undefined;
       throw new Error(
-        `IP lifecycle migration blocked by ${lifecycleReport.summary.blocking_conflicts} ambiguous claim(s). `
-        + `Resolve the entries in ${reportPath} and retry the upgrade.`
+        `IP lifecycle migration blocked by ${lifecycleReport.summary.blocking_conflicts} ambiguous claim(s). ` +
+          `Resolve the entries in ${reportPath} and retry the upgrade.`,
       );
     }
   } else if (schemaBefore >= 55) {
@@ -97,12 +102,12 @@ export async function initDb(dataDir) {
       db.close();
       db = undefined;
       throw new Error(
-        `IP lifecycle migration report ${path.join(dataDir, LIFECYCLE_MIGRATION_REPORT)} `
-        + 'is unreadable. Restore the report or the pre-update database snapshot before retrying.'
+        `IP lifecycle migration report ${path.join(dataDir, LIFECYCLE_MIGRATION_REPORT)} ` +
+          'is unreadable. Restore the report or the pre-update database snapshot before retrying.',
       );
     }
-    const schemaWasLegacy = Number(priorReport?.schema_before) > 0
-      && Number(priorReport?.schema_before) < 55;
+    const schemaWasLegacy =
+      Number(priorReport?.schema_before) > 0 && Number(priorReport?.schema_before) < 55;
     if (schemaWasLegacy && ['ready', 'reconciliation_pending'].includes(priorReport.outcome)) {
       lifecycleReport = priorReport;
       console.warn('Retrying incomplete IP lifecycle migration reconciliation');
@@ -118,26 +123,50 @@ export async function initDb(dataDir) {
   backfillGatewayPolicies(db);
   const identityBackfill = backfillCanonicalIpIdentity(db);
   if (identityBackfill.conflicts > 0) {
-    console.warn(`Found ${identityBackfill.conflicts} canonical IP identity conflict(s) for reconciliation`);
+    console.warn(
+      `Found ${identityBackfill.conflicts} canonical IP identity conflict(s) for reconciliation`,
+    );
   }
   if (lifecycleReport) {
     lifecycleReport.outcome = 'reconciliation_pending';
-    lifecycleReport.schema_after = db.prepare(
-      'SELECT MAX(version) AS version FROM schema_version'
-    ).get()?.version ?? schemaBefore;
+    lifecycleReport.schema_after =
+      db.prepare('SELECT MAX(version) AS version FROM schema_version').get()?.version ??
+      schemaBefore;
     writeLifecycleMigrationReport(dataDir, lifecycleReport);
     const reconciliation = reconcileMigratedIpLifecycle(db);
     lifecycleReport.outcome = 'complete';
     lifecycleReport.reconciliation = reconciliation;
     writeLifecycleMigrationReport(dataDir, lifecycleReport);
     console.log(
-      `IP lifecycle migration reconciliation complete: ${reconciliation.updated} updated, ${reconciliation.inserted} inserted`
+      `IP lifecycle migration reconciliation complete: ${reconciliation.updated} updated, ${reconciliation.inserted} inserted`,
     );
+  }
+  // ADR 004: a manual address record that exists but is not served holds its
+  // address. Idempotent, so installs from before the rule, upgrades and
+  // restored backups all converge here.
+  const { reconcileDnsHolds, reconcileStaticDnsAllocations } =
+    await import('../services/ip-lifecycle-service.js');
+  const holds = reconcileDnsHolds(db);
+  if (holds.changed) console.log(`DNS holds reconciled: ${holds.changed} address(es) changed`);
+  // An enabled manual record allocates its address whichever came first, the
+  // record or its network. Heals rows left blank by a network configured
+  // after its records, before configure adopted them.
+  const staticDns = reconcileStaticDnsAllocations(db);
+  if (staticDns.changed) {
+    console.log(`Static DNS reconciled: ${staticDns.changed} address(es) changed`);
+  }
+  for (const conflict of staticDns.conflicts) {
+    console.warn(`[static-dns] ${conflict.ip}: ${conflict.reason}`);
   }
   await ensureDefaults();
 
   return db;
 }
+
+// Migrations that DROP and recreate a table other tables reference. See the
+// comment on applyRebuildMigration below. Add every future parent-table
+// rebuild here.
+const REBUILD_MIGRATIONS = new Set([70, 71, 72]);
 
 function runMigrations() {
   // Create schema_version table if it doesn't exist
@@ -146,8 +175,9 @@ function runMigrations() {
     applied_at TEXT NOT NULL DEFAULT (datetime('now'))
   )`);
 
-  const migrationFiles = fs.readdirSync(MIGRATIONS_DIR)
-    .filter(f => f.endsWith('.sql'))
+  const migrationFiles = fs
+    .readdirSync(MIGRATIONS_DIR)
+    .filter((f) => f.endsWith('.sql'))
     .sort();
 
   // Max version this code version ships with
@@ -183,10 +213,21 @@ function runMigrations() {
   }
 
   const applied = new Set(
-    db.prepare('SELECT version FROM schema_version').all().map(r => r.version)
+    db
+      .prepare('SELECT version FROM schema_version')
+      .all()
+      .map((r) => r.version),
   );
 
-  // Run each migration in a transaction so partial applies can't corrupt the schema
+  // Run each migration in a transaction so partial applies can't corrupt the schema.
+  //
+  // Rebuild migrations (CREATE new, copy, DROP old, RENAME) run with foreign
+  // keys off. With enforcement on, DROP TABLE on a parent fires ON DELETE
+  // CASCADE into every child: dropping subnets would empty ranges,
+  // ip_addresses, dhcp_scopes, dhcp_reservations and network_scans (migration
+  // 045 did exactly that to dns_records when it rebuilt dns_zones). SQLite
+  // ignores the pragma inside a transaction, so it is toggled around the
+  // transaction and foreign_key_check runs before the version is recorded.
   const applyMigration = db.transaction((sql, version) => {
     // Migration 060 shipped in v0.4.18-pre.4 and assumed anomaly_models was
     // created by migration 042. Older installations can instead have the
@@ -199,33 +240,62 @@ function runMigrations() {
     db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
   });
 
+  const applyRebuildMigration = db.transaction((sql, version) => {
+    db.exec(sql);
+    const violations = db.pragma('foreign_key_check');
+    if (violations.length > 0) {
+      const sample = violations
+        .slice(0, 5)
+        .map((row) => `${row.table} row ${row.rowid} -> ${row.parent}`)
+        .join(', ');
+      throw new Error(
+        `Migration ${version} left ${violations.length} foreign key violation(s): ${sample}`,
+      );
+    }
+    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
+  });
+
   let newCount = 0;
   for (const file of migrationFiles) {
     const version = parseInt(file.split('_')[0], 10);
     if (applied.has(version)) continue;
 
     const sql = fs.readFileSync(path.join(MIGRATIONS_DIR, file), 'utf-8');
-    applyMigration(sql, version);
+    if (REBUILD_MIGRATIONS.has(version)) {
+      db.pragma('foreign_keys = OFF');
+      try {
+        applyRebuildMigration(sql, version);
+      } finally {
+        db.pragma('foreign_keys = ON');
+      }
+    } else {
+      applyMigration(sql, version);
+    }
     console.log(`Applied migration: ${file}`);
     newCount++;
   }
 
   const currentVersion = db.prepare('SELECT MAX(version) as v FROM schema_version').get()?.v ?? 0;
   if (newCount > 0) {
-    console.log(`Schema version: ${currentVersion} (applied ${newCount} new migration${newCount !== 1 ? 's' : ''})`);
+    console.log(
+      `Schema version: ${currentVersion} (applied ${newCount} new migration${newCount !== 1 ? 's' : ''})`,
+    );
   } else {
     console.log(`Schema version: ${currentVersion} (up to date)`);
   }
 }
 
 function prepareAnomalyIdentityMigration() {
-  const tableExists = db.prepare(
-    "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'anomaly_models'"
-  ).get();
+  const tableExists = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'anomaly_models'")
+    .get();
   if (!tableExists) return;
 
   const columns = new Set(
-    db.prepare('PRAGMA table_info(anomaly_models)').all().map(column => column.name)
+    db
+      .prepare('PRAGMA table_info(anomaly_models)')
+      .all()
+      .map((column) => column.name),
   );
   if (!columns.has('client_ip')) {
     throw new Error('Migration 060 cannot upgrade anomaly_models without client_ip');
@@ -260,7 +330,7 @@ export async function ensureDefaults() {
   }
 
   // Seed every key in DEFAULTS that doesn't already have a DB row
-  const insert = db.prepare("INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)");
+  const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(DEFAULTS)) {
     const serialized = typeof value === 'object' ? JSON.stringify(value) : String(value);
     insert.run(key, serialized);
@@ -274,7 +344,7 @@ export async function ensureDefaults() {
     const password = crypto.randomBytes(12).toString('base64url');
     const hash = await bcrypt.hash(password, 10);
     db.prepare(
-      'INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, ?, 1)'
+      'INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, ?, 1)',
     ).run('admin', hash, 'admin');
 
     console.log('');
@@ -294,7 +364,7 @@ export async function ensureDefaults() {
   const anyUser = db.prepare('SELECT 1 FROM users LIMIT 1').get();
   if (anyUser) {
     db.prepare(
-      "INSERT OR REPLACE INTO settings (key, value) VALUES ('installation_complete', 'true')"
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('installation_complete', 'true')",
     ).run();
   }
 }
@@ -324,6 +394,6 @@ export function setSetting(key, value) {
 export function audit(userId, action, entityType, entityId, details) {
   const detailsJson = details ? JSON.stringify(details) : null;
   db.prepare(
-    'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)',
   ).run(userId, action, entityType, entityId, detailsJson);
 }

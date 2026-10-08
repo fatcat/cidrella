@@ -39,7 +39,11 @@ describe('netmaskFor', () => {
     // The exact failure: '10.0.3.0' with no prefix produced 255.255.255.255.
     for (const bad of ['10.0.3.0', 'bogus/24', '10.0.3.0/', '']) {
       let out;
-      try { out = netmaskFor(parseCidr(bad).prefix); } catch { out = null; }
+      try {
+        out = netmaskFor(parseCidr(bad).prefix);
+      } catch {
+        out = null;
+      }
       expect(out, `cidr ${JSON.stringify(bad)}`).not.toBe('255.255.255.255');
     }
   });

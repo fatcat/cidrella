@@ -1,15 +1,19 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import http from 'node:http';
 import { gzipSync } from 'node:zlib';
-import { openPinnedOutboundStream, TOO_LARGE_CODE, validateOutboundUrl } from '../../../src/utils/url-guard.js';
+import {
+  openPinnedOutboundStream,
+  TOO_LARGE_CODE,
+  validateOutboundUrl,
+} from '../../../src/utils/url-guard.js';
 
 // The SSRF guard blocks loopback by design, so these tests hand the function a
 // pre-validated { ok, url, ip } object, which is the same shape routes/pihole.js
 // passes to avoid re-resolving. That is the documented second input form.
 let server, port;
 
-const BIG = Buffer.alloc(4 * 1024 * 1024, 0x61);          // 4MB of 'a'
-const BOMB = gzipSync(Buffer.alloc(8 * 1024 * 1024, 0));  // ~8KB on the wire, 8MB expanded
+const BIG = Buffer.alloc(4 * 1024 * 1024, 0x61); // 4MB of 'a'
+const BOMB = gzipSync(Buffer.alloc(8 * 1024 * 1024, 0)); // ~8KB on the wire, 8MB expanded
 
 beforeAll(async () => {
   server = http.createServer((req, res) => {
@@ -44,11 +48,11 @@ beforeAll(async () => {
         return res.writeHead(404).end();
     }
   });
-  await new Promise(resolve => server.listen(0, '127.0.0.1', resolve));
+  await new Promise((resolve) => server.listen(0, '127.0.0.1', resolve));
   port = server.address().port;
 });
 
-afterAll(() => new Promise(resolve => server.close(resolve)));
+afterAll(() => new Promise((resolve) => server.close(resolve)));
 
 const target = (path) => ({ ok: true, url: `http://127.0.0.1:${port}${path}`, ip: '127.0.0.1' });
 
@@ -67,7 +71,9 @@ describe('openPinnedOutboundStream', () => {
   });
 
   it('requests gzip by default and decodes it', async () => {
-    const probe = await openPinnedOutboundStream(target('/echo-accept-encoding'), { maxBytes: 1024 });
+    const probe = await openPinnedOutboundStream(target('/echo-accept-encoding'), {
+      maxBytes: 1024,
+    });
     expect(await collect(probe.stream)).toBe('gzip-requested');
 
     const res = await openPinnedOutboundStream(target('/gzip'), { maxBytes: 1024 * 1024 });
@@ -76,7 +82,10 @@ describe('openPinnedOutboundStream', () => {
   });
 
   it('can be told not to request gzip', async () => {
-    const res = await openPinnedOutboundStream(target('/echo-accept-encoding'), { maxBytes: 1024, acceptGzip: false });
+    const res = await openPinnedOutboundStream(target('/echo-accept-encoding'), {
+      maxBytes: 1024,
+      acceptGzip: false,
+    });
     expect(await collect(res.stream)).toBe('identity-requested');
   });
 
@@ -92,7 +101,10 @@ describe('openPinnedOutboundStream', () => {
   it('trips the wire cap on a chunked body with no Content-Length', async () => {
     const res = await openPinnedOutboundStream(target('/big-chunked'), { maxBytes: 64 * 1024 });
     expect(res.ok).toBe(true); // headers looked fine, the body is what fails
-    const err = await collect(res.stream).then(() => null, e => e);
+    const err = await collect(res.stream).then(
+      () => null,
+      (e) => e,
+    );
     expect(err).toBeTruthy();
     expect(err.code).toBe(TOO_LARGE_CODE);
     expect(err.stage).toBe('wire');
@@ -105,7 +117,10 @@ describe('openPinnedOutboundStream', () => {
     expect(BOMB.length).toBeLessThan(1024 * 1024);
     const res = await openPinnedOutboundStream(target('/bomb'), { maxBytes: 1024 * 1024 });
     expect(res.ok).toBe(true);
-    const err = await collect(res.stream).then(() => null, e => e);
+    const err = await collect(res.stream).then(
+      () => null,
+      (e) => e,
+    );
     expect(err).toBeTruthy();
     expect(err.code).toBe(TOO_LARGE_CODE);
     expect(err.stage).toBe('decompressed');
@@ -137,7 +152,9 @@ describe('openPinnedOutboundStream', () => {
 
   it('still applies the SSRF guard when given a raw URL', async () => {
     // Same policy as requestPinnedOutboundUrl: loopback is refused.
-    const res = await openPinnedOutboundStream(`http://127.0.0.1:${port}/plain`, { maxBytes: 1024 });
+    const res = await openPinnedOutboundStream(`http://127.0.0.1:${port}/plain`, {
+      maxBytes: 1024,
+    });
     expect(res.ok).toBe(false);
     expect(res.error).toMatch(/blocked range/);
 

@@ -9,11 +9,15 @@ import { canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
  * relying on text equality.
  */
 export function backfillCanonicalIpIdentity(db) {
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT id, subnet_id, ip_address
     FROM ip_addresses
     WHERE address_family IS NULL OR address_sort_key IS NULL
-  `).all();
+  `,
+    )
+    .all();
   const findCanonical = db.prepare(`
     SELECT id FROM ip_addresses
     WHERE subnet_id = ? AND ip_address = ? AND id != ?
@@ -96,15 +100,29 @@ export function writeMigratedIpLifecycleRows(db, rows) {
       const existing = find.get(row.subnetId, row.ip);
       if (existing) {
         update.run(
-          row.state, row.sourceType, row.sourceId,
-          family, key, row.dhcpVersion,
-          row.state, row.state, row.state, existing.id
+          row.state,
+          row.sourceType,
+          row.sourceId,
+          family,
+          key,
+          row.dhcpVersion,
+          row.state,
+          row.state,
+          row.state,
+          existing.id,
         );
         updated++;
       } else {
         insert.run(
-          row.subnetId, row.ip, row.state, row.sourceType,
-          row.sourceId, family, key, row.dhcpVersion, row.note
+          row.subnetId,
+          row.ip,
+          row.state,
+          row.sourceType,
+          row.sourceId,
+          family,
+          key,
+          row.dhcpVersion,
+          row.note,
         );
         inserted++;
       }

@@ -5,6 +5,11 @@ Node.js 24 + Express 5 + better-sqlite3 on the backend, Vue 3 + PrimeVue v4 + Pi
 the frontend, dnsmasq managed alongside. Ships as a signed release tarball installed natively
 (systemd, A/B slots) or via Docker.
 
+The agent instructions every coding agent shares (the canonical IP model gate, IPv4 and IPv6,
+repository workflow) live in AGENTS.md, imported here so Claude Code loads them every session:
+
+@AGENTS.md
+
 ## Layout
 
 - `server/`: Express API, SQLite models, dnsmasq config generation, DNS proxy. Entry:
@@ -23,9 +28,26 @@ Run from the repo root (the scripts handle the `cd` into each package):
 npm test               # full suite: server then client
 npm run test:server    # server unit + integration (vitest)
 npm run test:client    # client unit (vitest)
+npm run test:sidecar   # anomaly sidecar rules (python3 unittest, stdlib only, no venv needed)
 npm run lint           # ESLint (flat config, correctness-focused), must exit 0
 npm run build:client   # production client build, a build failure is a test failure
+npm run check:reuse    # duplicate helpers, duplicate scoped CSS, hand-built confirm dialogs (baselined)
+npm run hunt:workspace # 300 seeded random walks through the Networks workspace (model test)
 ```
+
+The Networks workspace has a model-based test (`client/tests/unit/views/networks-workspace/model/`,
+read its `README.md`). Seeded random walks click through a fake estate and check the screen against
+invariants after every step; a failure shrinks to a `walk([...])` for `regressions.test.js`. When
+the workspace gains a control or a display rule, add it to `driver.js` or `violations` there.
+Components carry `data-row-id`, `data-zone-id`, `data-scope-id`, `data-network-id` and
+`data-folder-id` for it; keep them when refactoring, like `data-track`.
+
+Backups have a round-trip test (`server/tests/integration/backup-round-trip.test.js`): export,
+change everything, restore, restart, and every table and carried file must match, but for what a
+restore promises to change. A new table is covered automatically; a new file or directory under
+`DATA_DIR` that backups carry goes in its `CARRIED` list. Server code that reads `DATA_DIR` when it
+loads (`config/defaults.js`, so `utils/backup.js`) needs `tests/helpers/isolated-data-dir.js`
+imported first in its test file; `setupTestDb` sets `DATA_DIR` too late for it.
 
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.
@@ -72,8 +94,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   completeness) and `scripts/check-release-version.js` (version == release-notes heading) run
   during the build and fail it on violation. Releases are built and signed by the maintainer
   (`scripts/build-release.sh`); signing requires an interactive TTY.
-- **Review findings** accumulate in `REVIEW.md`. When an item is fixed, mark it with
-  ~~strikethrough~~ and a `[FIXED]` tag rather than deleting it.
+- **Review findings** live in `REVIEW.md` (tracked) until they are fixed; the rules are in
+  `AGENTS.md` (Review findings). A fixed finding is deleted in the commit that fixes it, which
+  names its ID.
 - **Work tracking is split by how far along the work is, and the split is deliberate.**
   `TODO.md` is for things that have NOT begun: an idea, no context yet. `BACKLOG.md` is for
   work IN FLIGHT: started, deferred, or blocked, where thought or code has already been spent
@@ -81,14 +104,121 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   graduates from TODO to BACKLOG when it acquires that context. `BACKLOG.md` is the ONLY
   backlog: it was consolidated from four scattered locations on 2026-08-19, and `REVIEW.md`,
   `PLAN.md` and `docs/SESSION-STATUS.md` now point at it rather than carrying their own lists.
-  Do not start a fifth. A `REVIEW.md` finding that will not be fixed in the current pass
-  graduates to `BACKLOG.md`; findings marked FIXED stay in `REVIEW.md` as history.
+  Do not start a fifth. `REVIEW.md` lists known issues, not work: a finding moves to
+  `BACKLOG.md` only once work on it has started and stalled.
 - **Screenshots and throwaway prototypes** go in `screenshots/` (gitignored), never the repo
   root.
-- **Git**: the maintainer runs all commits, tags, and pushes. Claude prepares changes and
-  commit messages but never commits.
+- **Shared things exist, use them.** Before writing a component, style rule or helper, check
+  this list and grep for the name. Client: every vendor component is imported through
+  `client/src/ui/*.js`, never from the package; `EmptyState`, `StatusDot`, `StatusBadge`,
+  `AddressTypePill`, `ConfirmDialog` (every danger or warn confirmation, with
+  `type-to-confirm` for the typed gates), `ScanToggle` (`inherits-from` names the parent),
+  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`, `dns/ResolverPicker` (a resolver choice: preset, custom or none; `utils/resolvers.js`
+  describes selections) and `dns/ResolverTestDialog`, `dhcp/DhcpOptionTable` (the DHCP option editor
+  table: Settings defaults and Bulk Change; `composables/useDhcpOptionCatalog.js` loads its
+  catalog and builds the request body), `networks-workspace/dialogs/RangeTypeDialog`
+  + `RangeTypeFields` (the one Network Range Type editor: Settings uses the dialog, RangeEditor
+  the fields inline; type writes go through the subnet store so its type cache drops), `WorkspaceHead` (title, lede, Refresh and the range select of a
+  reworked Analytics section), `SeriesChart` (every area chart of minute rows, with per-series
+  `aggregate` and `summary`; legend chips toggle series), `StackedBar` (a split as one bar with
+  a toggling legend; `dashboard/AllocationBar` wraps it), `TopList` (a ranked list with bars,
+  every top-10), `dashboard/FigureCard`; `utils/format.js` (`apiError`,
+  `formatNumber`, `displayOnlineStatus`, `EMPTY_CELL`), `utils/chart-config.js` (colors,
+  `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`, `utils/keyboard.js` (`MOD_LABEL`, `isModShortcut`: Ctrl, or Command on a Mac, for every shortcut and its hint),
+  `utils/proxy-perf.js` (the resolution and process figures from the proxy-perf rows),
+  `utils/service-chips.js` (the dnsmasq, proxy and forwarder chips), `utils/ipTableDisplay.js`
+  (`ipSourceLabel`, the one label for a DNS, DHCP or detection source), and in
+  `views/networks-workspace-data.js` the `ipRowFields` adapter that fills every shared IP
+  column for the workspace tables (both the Addresses and DHCP adapters spread it; add a
+  column there, never in one adapter), and `dnsRecordSummary` (the one wording for the DNS
+  records behind an address, disabled ones named). The Addresses, DNS and DHCP tables are ONE
+  table model: `networks-workspace/workspace-columns.js` holds the one catalog every one of
+  them offers, and `LOCKED` the columns each cannot hide (they reorder); the server attaches
+  what the other tables know with `models/ip-row-facts.js` (`dns_record`, `dhcp`). Filtering,
+  counting and sorting any column is `utils/ip-columns.js` (one getter per column key; its test
+  checks the keys against the client catalog), and the client control is
+  `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
+  `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
+  `dialog-actions`, `card-header`, `field-error`), `assets/analytics-workspace.css` for the
+  reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
+  the `split`/`three` modifiers, `.figures` with `--figures`, `.lists` with `--lists`), `assets/panel-chrome.css` for the
+  DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
+  for the range dialogs' form grammar, `assets/analytics-layout.css` for
+  the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
+  `utils/ip.js` and `utils/cidr.js`, `servedRecordTtl` in `utils/dnsmasq.js` (the TTL a record is
+  answered with: every record read carries it as `served_ttl`, and a TTL display shows that,
+  never the stored `ttl`), `services/ip-lifecycle-service.js` for every lifecycle
+  write, `models/ip-events.js` for address history (`ip_events` and `ip_range_events`; history
+  is keyed by address, never by row, so it outlives the row), `utils/request-actor.js`
+  (`currentActor`, the signed-in user a write deep in a model should name), `models/ip-view.js` for every server-owned display field (status, type, and
+  `dhcp_lease_state` from the newest lease; any read that shows an address feeds it
+  `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own; a count of rogue
+  hosts runs rows through it too), `macIsAuthoritative` in `models/ip-lifecycle.js` (whether DHCP sets an address's stored MAC; anything comparing an observed MAC with the stored one asks it), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
+  pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
+  stateless one; anything treating a scope as a dynamic pool asks it), `utils/dnsmasq-lease-file.js`
+  (`LEASE_FILE`, `readServerDuid`), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
+  lookup: a link-local address is keyed with its interface, so look it up with one),
+  `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder
+  upstream, DoT or DoH: reused connections, retry, address failover, fail closed),
+  `plainUpstreams` and `backupMode` in `utils/forwarding-settings.js` (the plaintext primary
+  then backup, and On failure or Load balance; nothing else joins the two lists),
+  `utils/plain-dns.js` (`plainUdpQuery`, `plainTcpQuery`: one plain query, either family),
+  `timeQuery` in `utils/upstream-probe.js` (one timed query over plain, DoT or DoH) and
+  `services/resolver-benchmark.js` (the one-minute resolver performance test),
+  `failureCause` in `utils/dns-ede.js` (the one place a failed DNS answer gets its cause,
+  from the rcode and EDE; the client reads its labels through `@shared`),
+  `probeAddress` in `utils/upstream-probe.js` (one real query to one upstream address; the
+  health chip and `scripts/check-dns-providers.js` both use it), `forwarderHealth` in
+  `utils/forwarder-health.js` (the Forwarders health entries, cached 30 s),
+  `createReservoir` / `quantileOfSorted` in `utils/samples.js` (latency samples and their
+  percentiles),
+  `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
+  enabled set, blanks filled from its network; new scopes and Bulk Change; `USE_DEFAULT` there
+  marks an option linked to its default, written as a NULL row), `networkOptionFills` and
+  `FALLBACK_SECONDARY_DNS` in `utils/dhcp-network-options.js` (what a scope takes from its
+  network, either family; the scope dialog imports it through `@shared`),
+  `resolveEffectiveScopeOptions` and `isLinkedOption` in `models/dhcp-scope.js` (what a scope
+  serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
+  `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default),
+  `isTopologyAddress` in `utils/cidr.js` (is this the network or broadcast address topology
+  reserves; nothing on /31, /32, /127, /128), `macFromDuid` in `utils/duid.js`, client
+  `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family),
+  `divideGatewayDefault`, `GATEWAY_POSITION_OPTIONS` and `inferGatewayPosition` (with
+  `components/GatewayField.vue`, the one gateway picker: network dialogs and the scope dialog), and in `views/networks-workspace-data.js` `addressCount`,
+  `formatAddressCount` (BigInt-safe sizes) and `compareCellValues` (address-aware table sort), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
+  record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
+  change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
+  this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6
+  gates SQL cannot express; the scheduler and the stale sweep both apply both). Add to this list when you
+  make something shared. Four guards enforce what they can detect, each baselined so it fails
+  only on NEW instances (fix one by deleting its baseline entry, never by adding one):
+  `npm run lint` refuses a vendor import outside `src/ui`, a raw `<select>`/`<input>` outside
+  the baselined files, and a `dot`/`pill`/`badge` class outside the status components;
+  `npm run check:reuse` runs `check-duplicate-exports.js` (a local copy of an exported helper),
+  `check-scoped-css-dupes.js` (an identical rule in two scoped style blocks; `--drift` lists
+  same-name-different-body candidates as a report) and `check-confirm-dialogs.js` (a Dialog
+  whose footer carries its own danger or warn Button instead of using ConfirmDialog; its
+  baseline is empty). CI runs all of them.
+- **Selection and status marks**: a selected or open item is shown by a 1px outline in the
+  accent color plus a soft tint (the explorer's All Allocated Networks row is the model); a
+  checked item that is not the open one gets the tint alone. A state (ok, warning, error) is
+  shown by a `StatusDot` or an icon beside the text. Neither uses a colored left bar.
 - **UI instrumentation**: key UI elements carry `data-track` attributes consumed by the dev
   tracking endpoint. Preserve them when refactoring components.
-- **Linting**: ESLint only (`eslint.config.mjs`), correctness-focused. This codebase
-  deliberately has NO Prettier config: it predates the linter, and a mass-reformat would
-  destroy git blame. Don't add one; stylistic Vue rules are intentionally off.
+- **Linting**: ESLint only (`eslint.config.mjs`), correctness-focused. Stylistic Vue rules
+  are intentionally off, formatting is Prettier's job and lint does not duplicate it.
+- **Formatting**: Prettier (`.prettierrc.json`, pinned exact). Adopted 2026-09-12, reversing
+  the earlier no-Prettier rule. The settings were measured off the existing code rather than
+  taken as defaults: single quotes (the repo had 708 to zero), `printWidth: 100` (p95 of real
+  line length was 94), Vue `<script>` left flush with the tag. Scope is CODE ONLY, `.js`
+  `.vue` `.css`. Markdown, JSON, YAML and HTML are in `.prettierignore` so hand-formatted
+  prose and machine-parsed files keep the shape their consumers expect, notably the
+  `## vX.Y.Z — YYYY-MM-DD` headings that `build-releases-manifest.js` parses.
+  - Run `npm run format` to sweep, `npm run format:check` to verify.
+  - The reason for the original rule was blame, and that is handled by
+    `.git-blame-ignore-revs` instead. Git uses it via
+    `git config blame.ignoreRevsFile .git-blame-ignore-revs`, GitHub honors it with no
+    config. Only add purely mechanical commits to that file.
+  - Adopting it is all-or-nothing on purpose. The global format-on-edit hook activates the
+    moment a Prettier config exists, so a partly swept tree would drip formatting noise into
+    every unrelated commit afterward.

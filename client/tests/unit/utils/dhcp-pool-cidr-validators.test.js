@@ -35,8 +35,12 @@ describe('#53: dhcpPoolError', () => {
   });
 
   it('rejects a pool outside the subnet, naming the usable range', () => {
-    expect(dhcpPoolError('10.0.1.5', '10.0.1.9', CIDR)).toMatch(/within usable range 10\.0\.0\.1 - 10\.0\.0\.254/);
-    expect(dhcpPoolError('10.0.0.100', '10.0.1.9', CIDR)).toMatch(/End IP must be within usable range/);
+    expect(dhcpPoolError('10.0.1.5', '10.0.1.9', CIDR)).toMatch(
+      /within usable range 10\.0\.0\.1 - 10\.0\.0\.254/,
+    );
+    expect(dhcpPoolError('10.0.0.100', '10.0.1.9', CIDR)).toMatch(
+      /End IP must be within usable range/,
+    );
   });
 
   it('excludes network and broadcast, which are not usable', () => {

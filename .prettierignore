@@ -1,0 +1,39 @@
+# .prettierignore: what the formatter must not touch.
+#
+# Scope is deliberate: this repo formats CODE only (.js, .vue, .css). Markdown,
+# JSON and HTML are excluded, so prose and machine-parsed files keep whatever
+# shape their consumers expect. See the "Formatting" section of CLAUDE.md.
+
+# Dependencies and build output
+node_modules/
+dist/
+client/dist/
+
+# Dev state, local databases, scratch space
+data/
+server/data/
+tmp/
+screenshots/
+backup/
+*.log
+
+# Test harness run artifacts (can contain install-time secrets)
+scripts/test-harness/results/
+
+# Prose: docs and release notes are hand-formatted. RELEASE-NOTES.md headings
+# are machine-parsed by scripts/build-releases-manifest.js, which requires the
+# literal "## vX.Y.Z — YYYY-MM-DD" form including the em-dash. Reflowing these
+# buys nothing and risks the release pipeline.
+*.md
+
+# Machine-consumed data. Reformatting a lockfile is pure churn, and
+# scripts/test-harness/manifest.json is read by agents against a fixed shape.
+*.json
+
+# Markup: client/index.html is a Vite entry template, left as authored.
+*.html
+
+# CI definitions. Reformatting these is machine-visible risk for no gain, and
+# they sit outside the js/vue/css scope this config commits to.
+*.yml
+*.yaml

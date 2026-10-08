@@ -6,63 +6,96 @@ import {
   LIFECYCLE_SOURCE,
   canTransitionAllocation,
   canonicalHostnameForAllocation,
-  displayStatusFor
+  displayStatusFor,
 } from '../../../src/models/ip-lifecycle.js';
 
 describe('IP lifecycle contract', () => {
   it('defines the approved allocation states and address families', () => {
     expect(Object.values(ALLOCATION_STATE)).toEqual([
-      'unassigned', 'reserved', 'static_dns', 'dynamic_dhcp', 'static_dhcp',
-      'slaac', 'system', 'gateway', 'quarantined'
+      'unassigned',
+      'reserved',
+      'static_dns',
+      'dynamic_dhcp',
+      'static_dhcp',
+      'slaac',
+      'system',
+      'gateway',
+      'quarantined',
     ]);
     expect(Object.values(ADDRESS_FAMILY)).toEqual([4, 6]);
   });
 
   it('keeps administrative allocation mechanisms mutually exclusive', () => {
     expect(canTransitionAllocation('reserved', 'static_dns', LIFECYCLE_SOURCE.DNS)).toBe(true);
-    expect(canTransitionAllocation('reserved', 'static_dhcp', LIFECYCLE_SOURCE.DHCP_RESERVATION)).toBe(true);
-    expect(canTransitionAllocation('static_dns', 'static_dhcp', LIFECYCLE_SOURCE.DHCP_RESERVATION)).toBe(false);
+    expect(
+      canTransitionAllocation('reserved', 'static_dhcp', LIFECYCLE_SOURCE.DHCP_RESERVATION),
+    ).toBe(true);
+    expect(
+      canTransitionAllocation('static_dns', 'static_dhcp', LIFECYCLE_SOURCE.DHCP_RESERVATION),
+    ).toBe(false);
     expect(canTransitionAllocation('static_dhcp', 'static_dns', LIFECYCLE_SOURCE.DNS)).toBe(false);
   });
 
   it('allows renewals and retirement only to the owning source', () => {
-    expect(canTransitionAllocation('dynamic_dhcp', 'dynamic_dhcp', LIFECYCLE_SOURCE.DHCP_LEASE)).toBe(true);
-    expect(canTransitionAllocation('dynamic_dhcp', 'unassigned', LIFECYCLE_SOURCE.DHCP_LEASE)).toBe(true);
+    expect(
+      canTransitionAllocation('dynamic_dhcp', 'dynamic_dhcp', LIFECYCLE_SOURCE.DHCP_LEASE),
+    ).toBe(true);
+    expect(canTransitionAllocation('dynamic_dhcp', 'unassigned', LIFECYCLE_SOURCE.DHCP_LEASE)).toBe(
+      true,
+    );
     expect(canTransitionAllocation('dynamic_dhcp', 'unassigned', LIFECYCLE_SOURCE.DNS)).toBe(false);
     expect(canTransitionAllocation('slaac', 'unassigned', LIFECYCLE_SOURCE.SLAAC)).toBe(true);
   });
 
   it('derives display status from allocation and pool membership', () => {
     expect(displayStatusFor({ allocationState: 'unassigned' })).toBe(DISPLAY_STATUS.AVAILABLE);
-    expect(displayStatusFor({ allocationState: 'unassigned', inDynamicPool: true })).toBe(DISPLAY_STATUS.DHCP_SCOPE);
-    expect(displayStatusFor({ allocationState: 'reserved', inDynamicPool: true })).toBe(DISPLAY_STATUS.IN_USE);
+    expect(displayStatusFor({ allocationState: 'unassigned', inDynamicPool: true })).toBe(
+      DISPLAY_STATUS.DHCP_SCOPE,
+    );
+    expect(displayStatusFor({ allocationState: 'reserved', inDynamicPool: true })).toBe(
+      DISPLAY_STATUS.IN_USE,
+    );
   });
 
   it('selects hostname provenance from the canonical allocation owner', () => {
     const names = {
       dnsHostname: 'dns.example.test',
       reservationHostname: 'reserved.example.test',
-      leaseHostname: 'lease.example.test'
+      leaseHostname: 'lease.example.test',
     };
-    expect(canonicalHostnameForAllocation({ allocationState: 'static_dns', ...names }))
-      .toEqual({ hostname: 'dns.example.test', source: 'dns' });
-    expect(canonicalHostnameForAllocation({ allocationState: 'static_dhcp', ...names }))
-      .toEqual({ hostname: 'reserved.example.test', source: 'dhcp_reservation' });
-    expect(canonicalHostnameForAllocation({ allocationState: 'dynamic_dhcp', ...names }))
-      .toEqual({ hostname: 'lease.example.test', source: 'dhcp_lease' });
-    expect(canonicalHostnameForAllocation({ allocationState: 'gateway', ...names }))
-      .toEqual({ hostname: 'dns.example.test', source: 'dns' });
-    expect(canonicalHostnameForAllocation({ allocationState: 'system', ...names }))
-      .toEqual({ hostname: null, source: null });
+    expect(canonicalHostnameForAllocation({ allocationState: 'static_dns', ...names })).toEqual({
+      hostname: 'dns.example.test',
+      source: 'dns',
+    });
+    expect(canonicalHostnameForAllocation({ allocationState: 'static_dhcp', ...names })).toEqual({
+      hostname: 'reserved.example.test',
+      source: 'dhcp_reservation',
+    });
+    expect(canonicalHostnameForAllocation({ allocationState: 'dynamic_dhcp', ...names })).toEqual({
+      hostname: 'lease.example.test',
+      source: 'dhcp_lease',
+    });
+    expect(canonicalHostnameForAllocation({ allocationState: 'gateway', ...names })).toEqual({
+      hostname: 'dns.example.test',
+      source: 'dns',
+    });
+    expect(canonicalHostnameForAllocation({ allocationState: 'system', ...names })).toEqual({
+      hostname: null,
+      source: null,
+    });
   });
 
   it('uses deterministic learned-name fallback without changing allocation', () => {
-    expect(canonicalHostnameForAllocation({
-      allocationState: 'unassigned',
-      reservationHostname: 'reserved.example.test',
-      leaseHostname: 'lease.example.test'
-    })).toEqual({ hostname: 'reserved.example.test', source: 'dhcp_reservation' });
-    expect(canonicalHostnameForAllocation({ allocationState: 'reserved' }))
-      .toEqual({ hostname: null, source: null });
+    expect(
+      canonicalHostnameForAllocation({
+        allocationState: 'unassigned',
+        reservationHostname: 'reserved.example.test',
+        leaseHostname: 'lease.example.test',
+      }),
+    ).toEqual({ hostname: 'reserved.example.test', source: 'dhcp_reservation' });
+    expect(canonicalHostnameForAllocation({ allocationState: 'reserved' })).toEqual({
+      hostname: null,
+      source: null,
+    });
   });
 });

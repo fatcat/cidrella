@@ -2,7 +2,6 @@
 // batch-lookup shape of mac-vendor.js so the IP-view enrichment can attach
 // device metadata the same way it attaches the OUI vendor.
 
-
 // Fields worth flagging when they drift on an existing, already-classified
 // device. dhcp_fingerprint (option 55) is excluded: its exact parameter
 // list can vary transaction to transaction even for the same device, which
@@ -32,7 +31,9 @@ function logDrift(db, mac, before, after) {
 export function upsertFingerprint(db, fp) {
   const mac = String(fp.mac_address).toLowerCase();
   const before = getByMac(db, mac);
-  const result = db.prepare(`
+  const result = db
+    .prepare(
+      `
     INSERT INTO device_fingerprints
       (mac_address, dhcp_fingerprint, vendor_class, dhcp_hostname,
        device_type, os_family, confidence, source, raw)
@@ -67,17 +68,19 @@ export function upsertFingerprint(db, fp) {
       END,
       source      = device_fingerprints.source,
       raw         = COALESCE(excluded.raw, device_fingerprints.raw)
-  `).run({
-    mac_address: mac,
-    dhcp_fingerprint: fp.dhcp_fingerprint ?? null,
-    vendor_class: fp.vendor_class ?? null,
-    dhcp_hostname: fp.dhcp_hostname ?? null,
-    device_type: fp.device_type ?? null,
-    os_family: fp.os_family ?? null,
-    confidence: Number.isInteger(fp.confidence) ? fp.confidence : 0,
-    source: fp.source || 'dhcp',
-    raw: fp.raw ?? null,
-  });
+  `,
+    )
+    .run({
+      mac_address: mac,
+      dhcp_fingerprint: fp.dhcp_fingerprint ?? null,
+      vendor_class: fp.vendor_class ?? null,
+      dhcp_hostname: fp.dhcp_hostname ?? null,
+      device_type: fp.device_type ?? null,
+      os_family: fp.os_family ?? null,
+      confidence: Number.isInteger(fp.confidence) ? fp.confidence : 0,
+      source: fp.source || 'dhcp',
+      raw: fp.raw ?? null,
+    });
 
   // Compare against the row as actually written, not against the incoming
   // capture. The ON CONFLICT clause keeps manual overrides sticky and keeps
@@ -89,19 +92,27 @@ export function upsertFingerprint(db, fp) {
 
 export function getByMac(db, mac) {
   if (!mac) return null;
-  return db.prepare('SELECT * FROM device_fingerprints WHERE mac_address = ?').get(String(mac).toLowerCase()) || null;
+  return (
+    db
+      .prepare('SELECT * FROM device_fingerprints WHERE mac_address = ?')
+      .get(String(mac).toLowerCase()) || null
+  );
 }
 
 // Recent fingerprint drift for a MAC, newest first. Each row is one changed
 // field (device_type/os_family/vendor_class), not one DHCP transaction.
 export function getFingerprintChanges(db, mac, days = 90) {
   if (!mac) return [];
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     SELECT field, previous_value, new_value, changed_at
     FROM device_fingerprint_changes
     WHERE mac_address = ? AND changed_at >= datetime('now', '-' || ? || ' days')
     ORDER BY changed_at DESC
-  `).all(String(mac).toLowerCase(), Math.max(1, Math.min(365, Number(days) || 90)));
+  `,
+    )
+    .all(String(mac).toLowerCase(), Math.max(1, Math.min(365, Number(days) || 90)));
 }
 
 // Batch lookup → Map<mac, fingerprint projection>. Mirrors
@@ -134,14 +145,16 @@ export function lookupFingerprintBatch(db, macs) {
 // clean path back to auto-classification (upsertFingerprint keeps 'manual'
 // sticky, so an in-place flip would need re-derivation logic here instead).
 export function clearManual(db, mac) {
-  return db.prepare(
-    "DELETE FROM device_fingerprints WHERE mac_address = ? AND source = 'manual'"
-  ).run(String(mac).toLowerCase());
+  return db
+    .prepare("DELETE FROM device_fingerprints WHERE mac_address = ? AND source = 'manual'")
+    .run(String(mac).toLowerCase());
 }
 
 // Operator override from the UI.
 export function setManual(db, mac, { device_type, os_family }) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     INSERT INTO device_fingerprints (mac_address, device_type, os_family, confidence, source)
     VALUES (?, ?, ?, 100, 'manual')
     ON CONFLICT(mac_address) DO UPDATE SET
@@ -150,5 +163,7 @@ export function setManual(db, mac, { device_type, os_family }) {
       confidence  = 100,
       source      = 'manual',
       updated_at  = datetime('now')
-  `).run(String(mac).toLowerCase(), device_type ?? null, os_family ?? null);
+  `,
+    )
+    .run(String(mac).toLowerCase(), device_type ?? null, os_family ?? null);
 }

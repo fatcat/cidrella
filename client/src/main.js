@@ -8,15 +8,22 @@ import { updatePreset, updateSurfacePalette, BasePreset } from './ui/theme.js';
 // through the seam.
 import 'primeicons/primeicons.css';
 
+// The CSS half of the ./ui shim: maps vendor --p-* tokens onto the --cid-*
+// names the app actually reads. Must load before any component styles.
+import './ui/tokens.css';
+import './assets/utilities.css';
+
 import App from './App.vue';
 import router from './router/index.js';
 import api from './api/client.js';
 import { useDebugStore } from './stores/debug.js';
 import { useThemeStore } from './stores/theme.js';
 import { migrateStorageKeys } from './utils/storage.js';
+import { installStaleChunkReload } from './utils/stale-chunk-reload.js';
 
 // One-time migration from ipam_ to cidrella_ localStorage keys
 migrateStorageKeys();
+installStaleChunkReload();
 
 const app = createApp(App);
 const pinia = createPinia();
@@ -34,9 +41,9 @@ app.use(UiPlugin, {
   theme: {
     preset: BasePreset,
     options: {
-      darkModeSelector: '.p-dark'
-    }
-  }
+      darkModeSelector: '.p-dark',
+    },
+  },
 });
 app.use(ToastService);
 app.use(ConfirmationService);
@@ -48,7 +55,7 @@ app.directive('tooltip', Tooltip);
 function buildPalette(colorName, customPalette) {
   if (customPalette) return { ...customPalette };
   const shades = [50, 100, 200, 300, 400, 500, 600, 700, 800, 900, 950];
-  return Object.fromEntries(shades.map(s => [s, `{${colorName}.${s}}`]));
+  return Object.fromEntries(shades.map((s) => [s, `{${colorName}.${s}}`]));
 }
 
 window.addEventListener('ipam:theme-change', (e) => {
@@ -62,8 +69,8 @@ window.addEventListener('ipam:theme-change', (e) => {
       colorScheme: {
         light: { surface },
         dark: { surface },
-      }
-    }
+      },
+    },
   });
 
   updateSurfacePalette(surface);

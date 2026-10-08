@@ -1,6 +1,10 @@
 import path from 'path';
 import { DuckDBInstance } from '@duckdb/node-api';
-import { DATA_DIR, ANALYTICS_FLUSH_INTERVAL_MS, ANALYTICS_RETENTION_CLEANUP_MS } from '../config/defaults.js';
+import {
+  DATA_DIR,
+  ANALYTICS_FLUSH_INTERVAL_MS,
+  ANALYTICS_RETENTION_CLEANUP_MS,
+} from '../config/defaults.js';
 import { getSetting } from './init.js';
 
 let instance = null;
@@ -24,7 +28,7 @@ export function initAnalyticsDb(dataDir) {
     // so a single heavy GROUP BY can't spike RSS on a small box.
     instance = await DuckDBInstance.create(dbPath, {
       memory_limit: '256MB',
-      threads: '2'
+      threads: '2',
     });
     connection = await instance.connect();
 
@@ -39,17 +43,20 @@ export function initAnalyticsDb(dataDir) {
         block_reason VARCHAR,
         latency_us INTEGER,
         resolved_ip VARCHAR,
-        dnssec_supported BOOLEAN
+        dnssec_supported BOOLEAN,
+        ede INTEGER,
+        failure VARCHAR
       )
     `);
 
     // DuckDB analytics schema changes are applied in place because this file
     // is an independent, rebuildable event store rather than the canonical
     // SQLite database managed by numbered migrations.
-    await connection.run(`
-      ALTER TABLE dns_queries
-      ADD COLUMN IF NOT EXISTS dnssec_supported BOOLEAN
-    `);
+    // ede is the answer's Extended DNS Error code and failure its cause
+    // (utils/dns-ede.js failureCause), both null on an answer that worked.
+    for (const column of ['dnssec_supported BOOLEAN', 'ede INTEGER', 'failure VARCHAR']) {
+      await connection.run(`ALTER TABLE dns_queries ADD COLUMN IF NOT EXISTS ${column}`);
+    }
 
     // Start periodic flush
     flushTimer = setInterval(() => flushQueries(), ANALYTICS_FLUSH_INTERVAL_MS);
@@ -62,7 +69,19 @@ export function initAnalyticsDb(dataDir) {
 }
 
 // Buffer a DNS query for batch insert
-export function logDnsQuery({ clientIp, domain, queryType, responseCode, action, blockReason, latencyUs, resolvedIp, dnssecSupported }) {
+export function logDnsQuery({
+  clientIp,
+  domain,
+  queryType,
+  responseCode,
+  action,
+  blockReason,
+  latencyUs,
+  resolvedIp,
+  dnssecSupported,
+  ede,
+  failure,
+}) {
   if (!connection) return;
   buffer.push({
     ts: new Date().toISOString(),
@@ -75,8 +94,27 @@ export function logDnsQuery({ clientIp, domain, queryType, responseCode, action,
     latencyUs: latencyUs != null ? Math.round(latencyUs) : null,
     resolvedIp: resolvedIp || null,
     dnssecSupported: typeof dnssecSupported === 'boolean' ? dnssecSupported : null,
+    ede: Number.isInteger(ede) ? ede : null,
+    failure: failure || null,
   });
 }
+
+// Buffer fields in INSERT column order.
+const QUERY_COLUMNS = [
+  ['ts', 'ts'],
+  ['client_ip', 'clientIp'],
+  ['domain', 'domain'],
+  ['query_type', 'queryType'],
+  ['response_code', 'responseCode'],
+  ['action', 'action'],
+  ['block_reason', 'blockReason'],
+  ['latency_us', 'latencyUs'],
+  ['resolved_ip', 'resolvedIp'],
+  ['dnssec_supported', 'dnssecSupported'],
+  ['ede', 'ede'],
+  ['failure', 'failure'],
+];
+const QUERY_TUPLE = `(${QUERY_COLUMNS.map(() => '?').join(', ')})`;
 
 // Flush buffered queries to DuckDB using batched multi-row INSERT
 export function flushQueries() {
@@ -88,14 +126,16 @@ export function flushQueries() {
   const placeholders = [];
   const params = [];
   for (const row of rows) {
-    placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    params.push(row.ts, row.clientIp, row.domain, row.queryType, row.responseCode, row.action, row.blockReason, row.latencyUs, row.resolvedIp, row.dnssecSupported);
+    placeholders.push(QUERY_TUPLE);
+    for (const [, field] of QUERY_COLUMNS) params.push(row[field]);
   }
 
-  const sql = `INSERT INTO dns_queries (ts, client_ip, domain, query_type, response_code, action, block_reason, latency_us, resolved_ip, dnssec_supported) VALUES ${placeholders.join(', ')}`;
+  const columns = QUERY_COLUMNS.map(([column]) => column).join(', ');
+  const sql = `INSERT INTO dns_queries (${columns}) VALUES ${placeholders.join(', ')}`;
 
-  return connection.run(sql, params)
-    .catch(err => console.error('[analytics] Flush error:', err.message));
+  return connection
+    .run(sql, params)
+    .catch((err) => console.error('[analytics] Flush error:', err.message));
 }
 
 // Validated range-to-interval mapping, only allows known safe values
@@ -113,8 +153,9 @@ function rangeToInterval(range) {
 // Converts BigInt values to Number for JSON serialization
 export function queryRaw(sql, params = []) {
   if (!connection) return Promise.resolve([]);
-  return connection.runAndReadAll(sql, params)
-    .then(reader => reader.getRowObjectsJS().map(safeRowForJson));
+  return connection
+    .runAndReadAll(sql, params)
+    .then((reader) => reader.getRowObjectsJS().map(safeRowForJson));
 }
 
 function safeRowForJson(row) {
@@ -135,7 +176,7 @@ function queryTopBy(column, range, limit = 20) {
      GROUP BY ${column}
      ORDER BY count DESC
      LIMIT ?`,
-    [limit]
+    [limit],
   );
 }
 
@@ -150,15 +191,19 @@ function queryTopByAction(column, range, action, limit = 10) {
      GROUP BY ${column}
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit]
+    [action, limit],
   );
 }
 
 // Top clients by query count
-export function queryTopClients(range, limit = 20) { return queryTopBy('client_ip', range, limit); }
+export function queryTopClients(range, limit = 20) {
+  return queryTopBy('client_ip', range, limit);
+}
 
 // Top queried domains
-export function queryTopDomains(range, limit = 20) { return queryTopBy('domain', range, limit); }
+export function queryTopDomains(range, limit = 20) {
+  return queryTopBy('domain', range, limit);
+}
 
 // Most-requested domains whose successful answers were proven insecure by
 // the validating resolver. NULL means no conclusion was possible (for
@@ -175,15 +220,35 @@ export function queryTopDomainsWithoutDnssec(range, limit = 10) {
      GROUP BY domain
      ORDER BY count DESC, domain ASC
      LIMIT ?`,
-    [limit]
+    [limit],
+  );
+}
+
+// The names whose answers failed most, with the cause and the EDE code seen
+// most for each (utils/dns-ede.js).
+export function queryFailedDomains(range, limit = 10) {
+  const interval = rangeToInterval(range);
+  return queryRaw(
+    `SELECT domain, COUNT(*) as count, mode(failure) as failure, mode(ede) as ede
+     FROM dns_queries
+     WHERE ts >= NOW() - INTERVAL '${interval}'
+       AND failure IS NOT NULL
+     GROUP BY domain
+     ORDER BY count DESC, domain ASC
+     LIMIT ?`,
+    [limit],
   );
 }
 
 // Top clients filtered by action
-export function queryTopClientsByAction(range, action, limit = 10) { return queryTopByAction('client_ip', range, action, limit); }
+export function queryTopClientsByAction(range, action, limit = 10) {
+  return queryTopByAction('client_ip', range, action, limit);
+}
 
 // Top domains filtered by action
-export function queryTopDomainsByAction(range, action, limit = 10) { return queryTopByAction('domain', range, action, limit); }
+export function queryTopDomainsByAction(range, action, limit = 10) {
+  return queryTopByAction('domain', range, action, limit);
+}
 
 // Top block reasons (category slugs or country codes) for a given action
 export function queryTopBlockReasons(range, action, limit = 10) {
@@ -197,7 +262,7 @@ export function queryTopBlockReasons(range, action, limit = 10) {
      GROUP BY block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit]
+    [action, limit],
   );
 }
 
@@ -212,7 +277,7 @@ export function queryTopClientDomainPairsByAction(range, action, limit = 20) {
      GROUP BY client_ip, domain, block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit]
+    [action, limit],
   );
 }
 
@@ -227,7 +292,7 @@ export function queryTopBlocked(range, limit = 20) {
      GROUP BY domain, action, block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [limit]
+    [limit],
   );
 }
 
@@ -243,7 +308,7 @@ export function queryVolume(range, interval = '5m') {
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${rangeInterval}'
      GROUP BY bucket
-     ORDER BY bucket`
+     ORDER BY bucket`,
   );
 }
 
@@ -255,7 +320,7 @@ export function queryActionBreakdown(range) {
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
      GROUP BY action
-     ORDER BY count DESC`
+     ORDER BY count DESC`,
   );
 }
 
@@ -270,8 +335,97 @@ export function queryClientDomains(clientIp, range, limit = 50) {
      GROUP BY domain
      ORDER BY count DESC
      LIMIT ?`,
-    [clientIp, limit]
+    [clientIp, limit],
   );
+}
+
+// The DNS traffic behind one scored anomaly window: what the client actually
+// asked for between window_start and window_end, grouped so a 4,000 query
+// window reads as a handful of rows.
+//
+// Bounds are half-open (>= start, < end) to match the daemon's own feature
+// extraction (internal-analytics.js 'anomaly-client-window-events'), so the
+// rows here are the same rows that produced the score. Both sides compare a
+// SQLite UTC datetime string against DuckDB's timezone-naive TIMESTAMP, which
+// lines up because logDnsQuery writes toISOString().
+export function queryClientWindowEvidence(clientIp, windowStart, windowEnd, limit = 50) {
+  return queryRaw(
+    `SELECT domain, query_type, response_code, action,
+            COUNT(*) as count,
+            MIN(ts) as first_seen,
+            MAX(ts) as last_seen
+     FROM dns_queries
+     WHERE client_ip = ?
+       AND ts >= CAST(? AS TIMESTAMP)
+       AND ts < CAST(? AS TIMESTAMP)
+     GROUP BY domain, query_type, response_code, action
+     ORDER BY count DESC, domain
+     LIMIT ?`,
+    [clientIp, windowStart, windowEnd, limit],
+  );
+}
+
+// Every distinct name a client asked for in the window, with the counts the
+// per-signal evidence ranks on (server/src/utils/anomaly-evidence.js). One row
+// per name, capped high: a DGA hour is thousands of names queried once each,
+// and the top-by-count list above never shows them.
+export function queryClientWindowDomains(clientIp, windowStart, windowEnd, cap = 5000) {
+  return queryRaw(
+    `SELECT domain,
+            COUNT(*) as count,
+            COUNT(*) FILTER (WHERE response_code = 'NXDOMAIN') as nxdomain_count,
+            COUNT(*) FILTER (WHERE action LIKE 'blocked%') as blocked_count,
+            COUNT(*) FILTER (WHERE query_type NOT IN ('A', 'AAAA')) as other_type_count,
+            COUNT(*) FILTER (WHERE resolved_ip IS NULL) as unresolved_count,
+            COUNT(DISTINCT resolved_ip) as resolved_ip_count
+     FROM dns_queries
+     WHERE client_ip = ?
+       AND ts >= CAST(? AS TIMESTAMP)
+       AND ts < CAST(? AS TIMESTAMP)
+     GROUP BY domain
+     ORDER BY count DESC, domain
+     LIMIT ?`,
+    [clientIp, windowStart, windowEnd, cap],
+  );
+}
+
+// Names in the window this client had not asked for in the lookback before
+// it: the sidecar's new_domain_ratio, spelled out (features.py fills that
+// ratio from 'anomaly-client-historical-domains' with the same bounds).
+export function queryClientNewDomains(clientIp, windowStart, windowEnd, lookbackDays, limit) {
+  return queryRaw(
+    `SELECT w.domain, COUNT(*) as count
+     FROM dns_queries w
+     WHERE w.client_ip = ?
+       AND w.ts >= CAST(? AS TIMESTAMP)
+       AND w.ts < CAST(? AS TIMESTAMP)
+       AND NOT EXISTS (
+         SELECT 1 FROM dns_queries h
+          WHERE h.client_ip = w.client_ip AND h.domain = w.domain
+            AND h.ts >= CAST(? AS TIMESTAMP) - INTERVAL (CAST(? AS INTEGER) || ' days')
+            AND h.ts < CAST(? AS TIMESTAMP))
+     GROUP BY w.domain
+     ORDER BY count DESC, w.domain
+     LIMIT ?`,
+    [clientIp, windowStart, windowEnd, windowStart, lookbackDays, windowStart, limit],
+  );
+}
+
+// Totals for the same window. Separate from the grouped rows above because
+// those are truncated by LIMIT, and a summary computed from a truncated list
+// would understate every count.
+export function queryClientWindowSummary(clientIp, windowStart, windowEnd) {
+  return queryRaw(
+    `SELECT COUNT(*) as total_queries,
+            COUNT(DISTINCT domain) as distinct_domains,
+            COUNT(*) FILTER (WHERE response_code = 'NXDOMAIN') as nxdomain_count,
+            COUNT(*) FILTER (WHERE action LIKE 'blocked%') as blocked_count
+     FROM dns_queries
+     WHERE client_ip = ?
+       AND ts >= CAST(? AS TIMESTAMP)
+       AND ts < CAST(? AS TIMESTAMP)`,
+    [clientIp, windowStart, windowEnd],
+  ).then((rows) => rows[0] || null);
 }
 
 // Clients that queried a specific domain
@@ -285,23 +439,33 @@ export function queryDomainClients(domain, range, limit = 50) {
      GROUP BY client_ip
      ORDER BY count DESC
      LIMIT ?`,
-    [domain, limit]
+    [domain, limit],
   );
 }
 
 // Prune old data based on retention setting
 export function pruneOldData() {
   if (!connection) return Promise.resolve();
-  const days = Math.max(1, Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7));
+  const days = Math.max(
+    1,
+    Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7),
+  );
   const interval = rangeToInterval(`${days}d`) || `${days} DAYS`;
-  return connection.run(`DELETE FROM dns_queries WHERE ts < NOW() - INTERVAL '${interval}'`)
-    .catch(err => console.error('[analytics] Prune error:', err.message));
+  return connection
+    .run(`DELETE FROM dns_queries WHERE ts < NOW() - INTERVAL '${interval}'`)
+    .catch((err) => console.error('[analytics] Prune error:', err.message));
 }
 
 // Flush buffer and close DuckDB
 export async function closeAnalyticsDb() {
-  if (flushTimer) { clearInterval(flushTimer); flushTimer = null; }
-  if (pruneTimer) { clearInterval(pruneTimer); pruneTimer = null; }
+  if (flushTimer) {
+    clearInterval(flushTimer);
+    flushTimer = null;
+  }
+  if (pruneTimer) {
+    clearInterval(pruneTimer);
+    pruneTimer = null;
+  }
 
   if (connection) {
     await flushQueries();

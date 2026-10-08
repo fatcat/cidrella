@@ -1,0 +1,906 @@
+<template>
+  <header class="context-header">
+    <div class="context-breadcrumb">
+      <button data-track="workspace-breadcrumb-estate" @click="emit('select-estate')">
+        Infrastructure
+      </button>
+      <template v-if="contextKind === 'folder'">
+        <i class="pi pi-chevron-right" />
+        <span>{{ selectedFolder?.name || contextTitle }}</span>
+      </template>
+      <template v-else-if="contextKind === 'network'">
+        <i class="pi pi-chevron-right" />
+        <button @click="emit('select-folder', selectedNetwork.folderId)">
+          {{ selectedNetwork.folder }}
+        </button>
+        <i class="pi pi-chevron-right" />
+        <span>{{ contextTitle }}</span>
+      </template>
+    </div>
+    <div class="context-overview">
+      <div class="context-title-row">
+        <div class="context-identity">
+          <span class="context-icon" :class="contextKind"><i :class="contextIcon" /></span>
+          <div>
+            <div class="title-line">
+              <h2>{{ contextTitle }}</h2>
+              <span v-if="contextKind === 'network'" class="state-chip">
+                <StatusDot kind="ok" :label="selectedNetwork.status" decorative />
+                {{ selectedNetwork.status }}
+              </span>
+            </div>
+            <p>{{ contextSubtitle }}</p>
+          </div>
+        </div>
+      </div>
+
+      <div class="health-strip">
+        <button
+          v-for="stat in stats"
+          :key="stat.label"
+          class="health-stat"
+          :class="{ interactive: stat.view }"
+          :disabled="!stat.view"
+          :data-track="stat.view ? `workspace-stat-${stat.view}` : null"
+          @click="stat.view && emit('switch-view', stat.view)"
+        >
+          <span>{{ stat.label }}</span>
+          <strong>{{ stat.value }}</strong>
+          <small :class="stat.tone">
+            <StatusDot
+              v-if="stat.dot"
+              :kind="stat.tone === 'warning' ? 'warn' : 'ok'"
+              :label="stat.note"
+              decorative
+            />
+            {{ stat.note }}
+          </small>
+        </button>
+      </div>
+
+      <div class="context-actions">
+        <button v-if="canScan" class="button secondary" @click="emit('action', 'network.scan')">
+          <i class="pi pi-search" /> Scan now
+        </button>
+        <button
+          v-if="hasActions"
+          class="button secondary"
+          @click="emit('open-menu', 'actions', $event.currentTarget)"
+        >
+          Actions <i class="pi pi-chevron-down" />
+        </button>
+        <button
+          v-if="canCreate"
+          class="button primary"
+          @click="emit('open-menu', 'create', $event.currentTarget)"
+        >
+          <i class="pi pi-plus" /> Create
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <div v-if="views.length" class="view-tabs" role="tablist" aria-label="Network workspace views">
+    <button
+      v-for="view in views"
+      :key="view.key"
+      role="tab"
+      :aria-selected="activeView === view.key"
+      :class="{ active: activeView === view.key }"
+      :data-track="`workspace-tab-${view.key}`"
+      @click="emit('switch-view', view.key)"
+    >
+      <i :class="view.icon" />
+      {{ view.label }}
+      <span>{{ view.count }}</span>
+    </button>
+  </div>
+
+  <section v-if="showSummary" class="view-summary">
+    <div>
+      <h3 v-if="viewMeta.title">{{ viewMeta.title }}</h3>
+    </div>
+    <div v-if="activeView === 'dns'" class="linked-resources">
+      <button
+        v-for="zone in zoneCards"
+        :key="zone.id"
+        class="linked-card"
+        :class="{ selected: isSelected(selectedZone, zone) }"
+        :data-zone-id="zone.id"
+        :aria-pressed="isSelected(selectedZone, zone)"
+        @click="emit('filter-zone', zone)"
+        @contextmenu.prevent="emit('zone-menu', zone, $event.currentTarget, $event)"
+      >
+        <i :class="zone.type === 'reverse' ? 'pi pi-replay' : 'pi pi-globe'" /><span
+          ><small>{{ zone.type }}</small
+          ><strong>{{ zone.name }}</strong></span
+        ><em>{{ zone.record_count || 0 }}</em>
+      </button>
+      <!-- A network wider than a /24 has one reverse zone per /24, so several
+           reverse zones fold into one card that opens a searchable list,
+           grouped by the network each zone serves. -->
+      <button
+        v-if="reverseZones.length > 1"
+        type="button"
+        class="linked-card linked-picker"
+        :class="{ selected: reversePicked }"
+        :aria-pressed="reversePicked"
+        aria-haspopup="menu"
+        data-track="workspace-reverse-zones"
+        :data-zone-id="selectedReverseZone?.id"
+        :data-network-id="selectedReverseNetwork?.id"
+        @click="reverseMenuRef.toggle($event)"
+      >
+        <i class="pi pi-replay" /><span
+          ><small>{{ reverseZones.length }} reverse zones</small
+          ><strong>{{ reversePickLabel }}</strong></span
+        ><em>{{ reverseRecordCount }}</em
+        ><i class="pi pi-chevron-down picker-caret" />
+      </button>
+      <Popover ref="reverseMenuRef" @show="onReverseMenuShow">
+        <div class="picker-menu" role="menu" aria-label="Reverse zones">
+          <label class="picker-search">
+            <i class="pi pi-search" aria-hidden="true" />
+            <InputText
+              ref="reverseSearchRef"
+              v-model="reverseQuery"
+              placeholder="Network, CIDR, IP or zone"
+              aria-label="Find a reverse zone"
+              data-track="workspace-reverse-zone-search"
+            />
+          </label>
+          <div class="picker-groups">
+            <section v-for="group in shownReverseGroups" :key="group.key" class="picker-group">
+              <button
+                v-if="group.network"
+                type="button"
+                role="menuitemradio"
+                class="picker-heading"
+                :class="{ selected: isSelected(selectedReverseNetwork, group.network) }"
+                :aria-checked="isSelected(selectedReverseNetwork, group.network)"
+                :title="`Every reverse zone of ${group.network.name || group.network.cidr}`"
+                data-track="workspace-reverse-network"
+                :data-network-id="group.network.id"
+                @click="pickReverseNetwork(group.network)"
+              >
+                <span
+                  ><strong>{{ group.network.name || group.network.cidr }}</strong
+                  ><small
+                    >{{ group.network.cidr }} · {{ countOf(group.zones.length, 'zone') }}</small
+                  ></span
+                ><em>{{ formatNumber(group.records) }}</em>
+              </button>
+              <div v-else class="picker-heading other">
+                <span
+                  ><strong>Other zones</strong><small>Not used by an allocated network</small></span
+                >
+              </div>
+              <button
+                v-for="zone in group.zones"
+                :key="zone.id"
+                type="button"
+                role="menuitemradio"
+                class="picker-item"
+                :aria-checked="isSelected(selectedZone, zone)"
+                :class="{ selected: isSelected(selectedZone, zone) }"
+                data-track="workspace-reverse-zone"
+                :data-zone-id="zone.id"
+                @click="pickReverseZone(zone)"
+                @contextmenu.prevent="emit('zone-menu', zone, $event.currentTarget, $event)"
+              >
+                <span
+                  ><strong>{{ zone.name }}</strong
+                  ><small>{{ reverseZoneCidr(zone.name) }}</small></span
+                ><em>{{ formatNumber(zone.record_count || 0) }}</em>
+              </button>
+            </section>
+            <p v-if="!shownReverseGroups.length" class="picker-empty">
+              No reverse zone matches “{{ reverseQuery.trim() }}”.
+            </p>
+          </div>
+        </div>
+      </Popover>
+      <span v-if="!summaryZones.length" class="linked-empty">No linked zones</span>
+    </div>
+    <div v-else-if="activeView === 'dhcp'" class="linked-resources">
+      <button
+        v-for="scope in summaryScopes"
+        :key="scope.id"
+        class="linked-card"
+        :class="{ selected: isSelected(selectedScope, scope) }"
+        :data-scope-id="scope.id"
+        :aria-pressed="isSelected(selectedScope, scope)"
+        @click="emit('filter-scope', scope)"
+        @contextmenu.prevent="emit('scope-menu', scope, $event.currentTarget, $event)"
+      >
+        <i class="pi pi-server" /><span
+          ><small>{{ scope.enabled ? 'ACTIVE SCOPE' : 'DISABLED SCOPE' }}</small
+          ><strong>{{ scope.start_ip }} – {{ scope.end_ip }}</strong></span
+        ><em>{{ formatDuration(scope.effective?.lease_time || scope.lease_time) }}</em>
+      </button>
+      <span v-if="!summaryScopes.length" class="linked-empty">No DHCP scope</span>
+    </div>
+    <div v-else-if="activeView === 'ranges'" class="range-legend">
+      <span><i class="legend-dot scope" />DHCP Scope</span>
+      <span><i class="legend-dot infra" />Infrastructure</span>
+      <span><i class="legend-dot reserved" />IP Reservation</span>
+      <span><i class="legend-dot system" />System</span>
+    </div>
+    <div
+      v-else-if="activeView === 'addresses' && addressOverview"
+      class="address-overview"
+      aria-label="Address utilization"
+    >
+      <div>
+        <span :style="{ '--value': addressOverview.assignedPercent }" /><small>Assigned</small
+        ><strong>{{ addressOverview.assigned }}</strong>
+      </div>
+      <div>
+        <span :style="{ '--value': addressOverview.poolPercent }" /><small>DHCP pool</small
+        ><strong>{{ addressOverview.pool }}</strong>
+      </div>
+      <div>
+        <span :style="{ '--value': addressOverview.unassignedPercent }" /><small>Unassigned</small
+        ><strong>{{ addressOverview.unassigned }}</strong>
+      </div>
+    </div>
+  </section>
+</template>
+
+<script setup>
+import { computed, ref } from 'vue';
+import Popover from '../../ui/Popover.js';
+import InputText from '../../ui/InputText.js';
+import { countOf, formatNumber } from '../../utils/format.js';
+import { formatDuration } from '../networks-workspace-data.js';
+import StatusDot from '../../components/StatusDot.vue';
+import {
+  reverseZoneCidr,
+  reverseZoneContains,
+  reverseZoneSortKey,
+} from '../../utils/reverseZone.js';
+
+// Breadcrumb, gauges, pinned actions, view tabs and the per-view summary band.
+// Renders as three sibling landmarks so the DOM under .work-surface is
+// unchanged from the single-file layout.
+const props = defineProps({
+  contextKind: { type: String, required: true },
+  contextIcon: { type: String, required: true },
+  contextTitle: { type: String, required: true },
+  contextSubtitle: { type: String, default: '' },
+  selectedFolder: { type: Object, default: null },
+  selectedNetwork: { type: Object, required: true },
+  stats: { type: Array, required: true },
+  canScan: { type: Boolean, default: false },
+  hasActions: { type: Boolean, default: false },
+  canCreate: { type: Boolean, default: false },
+  views: { type: Array, required: true },
+  activeView: { type: String, required: true },
+  showSummary: { type: Boolean, default: false },
+  viewMeta: { type: Object, required: true },
+  summaryZones: { type: Array, default: () => [] },
+  selectedZone: { type: Object, default: null },
+  // Every reverse zone of this network is the filter ({ id, name, cidr }).
+  selectedReverseNetwork: { type: Object, default: null },
+  selectedScope: { type: Object, default: null },
+  summaryScopes: { type: Array, default: () => [] },
+  // Null for an IPv6 network: a share of 2^64 addresses is not a number worth showing.
+  addressOverview: { type: Object, default: null },
+});
+const emit = defineEmits([
+  'select-estate',
+  'select-folder',
+  'switch-view',
+  'open-menu',
+  'filter-zone',
+  'filter-reverse-network',
+  'filter-scope',
+  'zone-menu',
+  'scope-menu',
+  'action',
+]);
+// A linked card lights up only for the zone or scope the table is filtered to.
+function isSelected(selected, item) {
+  return Boolean(selected) && Number(selected.id) === Number(item.id);
+}
+
+// Forward zones are cards of their own. Reverse zones are too while there is
+// only one; from two up they share one picker card so a /22 or /16 does not
+// line the strip with in-addr.arpa names.
+// In address order: 2.0.10.in-addr.arpa (10.0.2.0) before 16.172.in-addr.arpa.
+const reverseZones = computed(() =>
+  props.summaryZones
+    .filter((zone) => zone.type === 'reverse')
+    .sort((a, b) => reverseZoneSortKey(a.name).localeCompare(reverseZoneSortKey(b.name))),
+);
+const zoneCards = computed(() =>
+  reverseZones.value.length > 1
+    ? props.summaryZones.filter((zone) => zone.type !== 'reverse')
+    : props.summaryZones,
+);
+const selectedReverseZone = computed(
+  () => reverseZones.value.find((zone) => isSelected(props.selectedZone, zone)) || null,
+);
+const reverseRecordCount = computed(() =>
+  reverseZones.value.reduce((sum, zone) => sum + (zone.record_count || 0), 0),
+);
+const reverseMenuRef = ref(null);
+const reverseSearchRef = ref(null);
+const reverseQuery = ref('');
+const reversePicked = computed(() =>
+  Boolean(selectedReverseZone.value || props.selectedReverseNetwork),
+);
+const reversePickLabel = computed(
+  () =>
+    selectedReverseZone.value?.name ||
+    (props.selectedReverseNetwork &&
+      `${props.selectedReverseNetwork.name || props.selectedReverseNetwork.cidr} · all zones`) ||
+    'Choose a zone',
+);
+
+// The reverse zones under the network each serves, networks in address
+// order. A /24 zone shared by two /25 networks is listed under both. Zones
+// no allocated network uses (kept for space outside IPAM) close the list.
+const reverseGroups = computed(() => {
+  const byNetwork = new Map();
+  const other = [];
+  for (const zone of reverseZones.value) {
+    const networks = zone.related_networks || [];
+    if (!networks.length) other.push(zone);
+    for (const network of networks) {
+      const group = byNetwork.get(network.id) || {
+        key: `network-${network.id}`,
+        network,
+        zones: [],
+      };
+      group.zones.push(zone);
+      byNetwork.set(network.id, group);
+    }
+  }
+  const networkKey = (group) => reverseZoneSortKey(group.zones[0].name);
+  const groups = [...byNetwork.values()].sort((a, b) => networkKey(a).localeCompare(networkKey(b)));
+  if (other.length) groups.push({ key: 'other', network: null, zones: other });
+  return groups.map((group) => ({
+    ...group,
+    records: group.zones.reduce((sum, zone) => sum + (zone.record_count || 0), 0),
+  }));
+});
+
+// The search matches a network's name or CIDR (keeping all its zones), or a
+// zone's name, its CIDR, or an address it covers.
+const shownReverseGroups = computed(() => {
+  const query = reverseQuery.value.trim().toLowerCase();
+  if (!query) return reverseGroups.value;
+  const zoneMatches = (zone) =>
+    zone.name.toLowerCase().includes(query) ||
+    (reverseZoneCidr(zone.name) || '').includes(query) ||
+    reverseZoneContains(zone.name, query);
+  return reverseGroups.value
+    .map((group) => {
+      const networkMatches =
+        group.network &&
+        [group.network.name, group.network.cidr].some((text) =>
+          String(text || '')
+            .toLowerCase()
+            .includes(query),
+        );
+      return networkMatches ? group : { ...group, zones: group.zones.filter(zoneMatches) };
+    })
+    .filter((group) => group.zones.length);
+});
+
+function onReverseMenuShow() {
+  reverseQuery.value = '';
+  // The Popover renders its content on show; focus once it is there.
+  setTimeout(() => reverseSearchRef.value?.$el?.focus?.(), 0);
+}
+function pickReverseZone(zone) {
+  reverseMenuRef.value?.hide();
+  emit('filter-zone', zone);
+}
+function pickReverseNetwork(network) {
+  reverseMenuRef.value?.hide();
+  emit('filter-reverse-network', network);
+}
+</script>
+
+<style scoped>
+button,
+input {
+  font: inherit;
+}
+button {
+  color: inherit;
+}
+.context-header {
+  container: workspace-context / inline-size;
+  flex-shrink: 0;
+  padding: 0.85rem 1rem 0;
+  border-bottom: 1px solid var(--preview-line);
+}
+.context-breadcrumb {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-bottom: 0.55rem;
+  color: var(--preview-muted);
+  font-size: 0.65rem;
+}
+.context-breadcrumb button {
+  padding: 0;
+  border: 0;
+  color: var(--preview-accent);
+  background: none;
+  cursor: pointer;
+}
+.context-breadcrumb i {
+  font-size: 0.48rem;
+}
+.context-overview {
+  display: grid;
+  grid-template-columns: minmax(280px, 1fr) minmax(540px, max-content) auto;
+  align-items: center;
+  gap: 0.75rem 1.25rem;
+}
+.context-title-row {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 1rem;
+}
+.context-identity {
+  display: flex;
+  align-items: center;
+  gap: 0.7rem;
+  min-width: 0;
+}
+.context-icon {
+  display: inline-flex;
+  width: 2.4rem;
+  height: 2.4rem;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  border-radius: 9px;
+  color: var(--preview-accent);
+  background: var(--preview-accent-soft);
+}
+.title-line {
+  display: flex;
+  align-items: center;
+  gap: 0.55rem;
+}
+.title-line h2 {
+  margin: 0;
+  font-size: 1.24rem;
+  letter-spacing: -0.025em;
+}
+.context-identity p {
+  margin: 0.15rem 0 0;
+  color: var(--preview-muted);
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.69rem;
+}
+.state-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+  padding: 0.18rem 0.42rem;
+  border-radius: 999px;
+  color: var(--cid-green-600);
+  background: color-mix(in srgb, var(--cid-green-500) 11%, transparent);
+  font-size: 0.61rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+.context-actions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.4rem;
+}
+.button {
+  display: inline-flex;
+  min-height: 2rem;
+  align-items: center;
+  justify-content: center;
+  gap: 0.38rem;
+  padding: 0 0.68rem;
+  border: 1px solid var(--preview-line);
+  border-radius: 7px;
+  background: var(--cid-surface-card);
+  font-size: var(--app-fs-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+.button:hover {
+  border-color: color-mix(in srgb, var(--preview-accent) 55%, var(--preview-line));
+}
+.button.primary {
+  border-color: var(--preview-accent);
+  color: var(--cid-primary-contrast-color, white);
+  background: var(--preview-accent);
+}
+.health-strip {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 540px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0;
+}
+.health-stat {
+  display: grid;
+  min-width: 118px;
+  padding: 0.58rem 1rem 0.62rem 0;
+  border: 0;
+  color: inherit;
+  background: none;
+  text-align: left;
+}
+.health-stat:disabled {
+  opacity: 1;
+}
+.health-stat.interactive {
+  cursor: pointer;
+}
+.health-stat.interactive:hover strong {
+  color: var(--preview-accent);
+}
+.health-stat + .health-stat {
+  padding-left: 1rem;
+  border-left: 1px solid var(--preview-line);
+}
+.health-stat > span {
+  color: var(--preview-muted);
+  font-size: 0.56rem;
+  font-weight: 800;
+  letter-spacing: 0.11em;
+}
+.health-stat strong {
+  margin: 0.12rem 0;
+  font-size: 0.8rem;
+}
+.health-stat small {
+  display: flex;
+  align-items: center;
+  gap: 0.28rem;
+  color: var(--preview-muted);
+  font-size: 0.61rem;
+  white-space: nowrap;
+}
+.health-stat small.warning {
+  color: var(--cid-orange-600);
+}
+@container workspace-context (max-width: 1180px) {
+  .context-overview {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .context-title-row {
+    grid-column: 1;
+    grid-row: 1;
+  }
+  .context-actions {
+    grid-column: 2;
+    grid-row: 1;
+  }
+  .health-strip {
+    grid-column: 1 / -1;
+    grid-row: 2;
+    justify-content: flex-start;
+  }
+}
+.view-tabs {
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.18rem;
+  padding: 0.48rem 0.75rem 0;
+  background: color-mix(in srgb, var(--cid-surface-ground) 52%, var(--cid-surface-card));
+  border-bottom: 1px solid var(--preview-line);
+}
+.view-tabs button {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.38rem;
+  padding: 0.5rem 0.68rem 0.56rem;
+  border: 0;
+  border-bottom: 2px solid transparent;
+  background: transparent;
+  color: var(--preview-muted);
+  font-size: var(--app-fs-sm);
+  font-weight: 700;
+  cursor: pointer;
+}
+.view-tabs button.active {
+  border-bottom-color: var(--preview-accent);
+  color: var(--preview-accent);
+}
+.view-tabs button span {
+  padding: 0.08rem 0.3rem;
+  border-radius: 999px;
+  background: var(--cid-surface-200);
+  color: var(--preview-muted);
+  font-size: 0.59rem;
+}
+.view-summary {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 0.7rem 1rem;
+  border-bottom: 1px solid var(--preview-line);
+  background: var(--cid-surface-card);
+}
+.view-summary h3 {
+  margin: 0.1rem 0;
+  font-size: 0.96rem;
+}
+.linked-resources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+.linked-card.linked-picker {
+  grid-template-columns: auto 1fr auto auto;
+}
+.picker-caret {
+  font-size: 0.55rem;
+  color: var(--preview-muted);
+}
+.picker-menu {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  width: 22rem;
+}
+.picker-search {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0 0.25rem;
+  color: var(--preview-muted);
+}
+.picker-search :deep(input) {
+  flex: 1;
+  min-width: 0;
+}
+/* A /16 has 256 reverse zones: the list scrolls under a fixed search box. */
+.picker-groups {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  max-height: min(24rem, 60vh);
+  overflow-y: auto;
+}
+.picker-group {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+}
+.picker-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--cid-text-color);
+  text-align: left;
+  cursor: pointer;
+}
+button.picker-heading:hover {
+  background: var(--cid-surface-ground);
+}
+.picker-heading.selected {
+  background: var(--preview-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--preview-accent) 45%, var(--preview-line));
+}
+.picker-heading.other {
+  cursor: default;
+}
+.picker-heading > span,
+.picker-item > span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.picker-heading strong {
+  font-size: 0.72rem;
+}
+.picker-heading small,
+.picker-item small {
+  color: var(--preview-muted);
+  font-size: 0.6rem;
+}
+.picker-heading em {
+  color: var(--preview-muted);
+  font-size: 0.63rem;
+  font-style: normal;
+}
+.picker-group .picker-item {
+  padding-left: 1.25rem;
+}
+.picker-empty {
+  margin: 0.25rem 0.5rem;
+  color: var(--preview-muted);
+  font-size: 0.68rem;
+}
+.picker-item {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  width: 100%;
+  padding: 0.4rem 0.5rem;
+  background: none;
+  border: none;
+  border-radius: 4px;
+  color: var(--cid-text-color);
+  text-align: left;
+  cursor: pointer;
+}
+.picker-item:hover {
+  background: var(--cid-surface-ground);
+}
+.picker-item.selected {
+  background: var(--preview-accent-soft);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--preview-accent) 45%, var(--preview-line));
+}
+.picker-item strong {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+.picker-item em {
+  color: var(--preview-muted);
+  font-size: 0.63rem;
+  font-style: normal;
+}
+.linked-card {
+  display: grid;
+  grid-template-columns: auto 1fr auto;
+  align-items: center;
+  gap: 0.5rem;
+  max-width: 235px;
+  padding: 0.48rem 0.58rem;
+  border: 1px solid var(--preview-line);
+  border-radius: 8px;
+  background: var(--cid-surface-card);
+  text-align: left;
+  cursor: pointer;
+}
+.linked-card.selected {
+  border-color: color-mix(in srgb, var(--preview-accent) 42%, var(--preview-line));
+  background: var(--preview-accent-soft);
+}
+.linked-card > i {
+  color: var(--preview-accent);
+}
+.linked-card span {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+}
+.linked-card small {
+  color: var(--preview-muted);
+  font-size: 0.52rem;
+  letter-spacing: 0.09em;
+}
+.linked-card strong {
+  overflow: hidden;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  font-size: 0.64rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.linked-card em {
+  color: var(--preview-muted);
+  font-size: 0.63rem;
+  font-style: normal;
+}
+.linked-empty {
+  align-self: center;
+  color: var(--preview-muted);
+  font-size: 0.65rem;
+}
+.address-overview {
+  display: flex;
+  gap: 0.5rem;
+}
+.address-overview > div {
+  display: grid;
+  grid-template-columns: 4px auto;
+  grid-template-rows: auto auto;
+  column-gap: 0.42rem;
+  min-width: 66px;
+}
+.address-overview > div > span {
+  grid-row: 1 / 3;
+  display: block;
+  width: 4px;
+  height: 2rem;
+  align-self: center;
+  overflow: hidden;
+  border-radius: 99px;
+  background: var(--cid-surface-200);
+}
+.address-overview > div > span::after {
+  content: '';
+  display: block;
+  height: var(--value);
+  margin-top: calc(2rem - var(--value));
+  background: var(--preview-accent);
+}
+.address-overview small {
+  align-self: end;
+  color: var(--preview-muted);
+  font-size: 0.58rem;
+}
+.address-overview strong {
+  font-size: 0.8rem;
+}
+.range-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.7rem;
+  color: var(--preview-muted);
+  font-size: 0.61rem;
+}
+.range-legend span {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+.legend-dot {
+  width: 0.48rem;
+  height: 0.48rem;
+  border-radius: 2px;
+}
+.legend-dot.scope {
+  background: var(--preview-accent);
+}
+.legend-dot.infra {
+  background: #22d3ee;
+}
+.legend-dot.reserved {
+  background: var(--preview-dhcp);
+}
+.legend-dot.system {
+  background: var(--cid-surface-500);
+}
+.context-breadcrumb,
+.state-chip,
+.health-stat small,
+.view-tabs button span,
+.view-summary p,
+.linked-card small,
+.linked-card strong,
+.linked-card em,
+.linked-empty,
+.address-overview small,
+.range-legend {
+  font-size: var(--workspace-font-small);
+}
+.context-identity p,
+.button,
+.health-stat strong,
+.view-tabs button {
+  font-size: var(--workspace-font-body);
+}
+@media (max-width: 820px) {
+  .context-title-row {
+    align-items: flex-start;
+  }
+  .context-actions {
+    justify-content: flex-end;
+  }
+  .view-summary {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+</style>

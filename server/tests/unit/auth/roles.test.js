@@ -1,5 +1,11 @@
 import { describe, it, expect, vi } from 'vitest';
-import { ROLES, hasPermission, requireRole } from '../../../src/auth/roles.js';
+import {
+  ROLES,
+  hasPermission,
+  permissionProjection,
+  permissionsForRole,
+  requireRole,
+} from '../../../src/auth/roles.js';
 
 describe('ROLES', () => {
   it('defines admin with wildcard permission', () => {
@@ -7,8 +13,32 @@ describe('ROLES', () => {
   });
 
   it('defines all expected roles', () => {
-    const expected = ['admin', 'dns_admin', 'dhcp_admin', 'readonly_dns', 'readonly_dhcp', 'readonly'];
+    const expected = [
+      'admin',
+      'dns_admin',
+      'dhcp_admin',
+      'readonly_dns',
+      'readonly_dhcp',
+      'readonly',
+    ];
     expect(Object.keys(ROLES).sort()).toEqual(expected.sort());
+  });
+});
+
+describe('client permission projection', () => {
+  it('projects the server-owned role grants and superuser flag', () => {
+    expect(permissionProjection('admin')).toEqual({ permissions: ['*'], is_admin: true });
+    expect(permissionProjection('dns_admin')).toEqual({
+      permissions: ROLES.dns_admin.permissions,
+      is_admin: false,
+    });
+    expect(permissionProjection('unknown')).toEqual({ permissions: [], is_admin: false });
+  });
+
+  it('does not expose the mutable authority array', () => {
+    const projected = permissionsForRole('readonly');
+    projected.push('subnets:write');
+    expect(ROLES.readonly.permissions).not.toContain('subnets:write');
   });
 });
 
@@ -85,8 +115,14 @@ describe('requireRole', () => {
     const res = {
       _status: null,
       _body: null,
-      status(code) { this._status = code; return this; },
-      json(body) { this._body = body; return this; }
+      status(code) {
+        this._status = code;
+        return this;
+      },
+      json(body) {
+        this._body = body;
+        return this;
+      },
     };
     const next = vi.fn();
     return { req, res, next };
@@ -132,13 +168,13 @@ describe('system scope (v0.4.16)', () => {
 
   it('only admin can write system config', () => {
     expect(hasPermission('admin', 'system:write')).toBe(true);
-    for (const role of Object.keys(ROLES).filter(r => r !== 'admin')) {
+    for (const role of Object.keys(ROLES).filter((r) => r !== 'admin')) {
       expect(hasPermission(role, 'system:write'), role).toBe(false);
     }
   });
 
   it('no non-admin role holds subnets:write (the scope system routes used to borrow)', () => {
-    for (const role of Object.keys(ROLES).filter(r => r !== 'admin')) {
+    for (const role of Object.keys(ROLES).filter((r) => r !== 'admin')) {
       expect(hasPermission(role, 'subnets:write'), role).toBe(false);
     }
   });
@@ -157,7 +193,7 @@ describe('#27: the superuser rule is defined once', () => {
     const { ROLES, hasPermission, requireRole, isSuperuser } =
       await import('../../../src/auth/roles.js');
 
-    const wildcards = Object.keys(ROLES).filter(r => ROLES[r].permissions.includes('*'));
+    const wildcards = Object.keys(ROLES).filter((r) => ROLES[r].permissions.includes('*'));
     expect(wildcards.length, 'fixture needs at least one wildcard role').toBeGreaterThan(0);
 
     for (const role of wildcards) {
@@ -166,9 +202,15 @@ describe('#27: the superuser rule is defined once', () => {
       expect(isSuperuser(role), role).toBe(true);
       // role gate, asking for a role this one is NOT in
       let passed = false;
-      requireRole('some_other_role')({ user: { role } }, {
-        status: () => ({ json: () => {} }),
-      }, () => { passed = true; });
+      requireRole('some_other_role')(
+        { user: { role } },
+        {
+          status: () => ({ json: () => {} }),
+        },
+        () => {
+          passed = true;
+        },
+      );
       expect(passed, `${role} should pass requireRole via the wildcard`).toBe(true);
     }
   });

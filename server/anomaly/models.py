@@ -1,7 +1,10 @@
 """Isolation Forest model management: train, score, persist, explain."""
 
+import warnings
+
 import joblib
 from sklearn.ensemble import IsolationForest
+from sklearn.exceptions import InconsistentVersionWarning
 
 from config import (
     MODELS_DIR, SENSITIVITY_MAP, FEATURE_NAMES, FEATURE_LABELS,
@@ -39,12 +42,46 @@ def train_model(device_key, training_data, sensitivity="medium"):
     return model
 
 
+def remove_orphan_models(known_keys):
+    """Delete model files for device keys with no anomaly_models row, and
+    return their names. Migration 060 moved the rows from IP to MAC keys and
+    left the files under the old IP names, and allowlisting a device drops
+    its row but not its file. Nothing tracks such a file, every backup
+    carries it, and a later client resolving to that IP would score with a
+    model trained on another device."""
+    if not MODELS_DIR.exists():
+        return []
+    keep = {_model_path(key).name for key in known_keys}
+    removed = []
+    for path in sorted(MODELS_DIR.glob("*.joblib")):
+        if path.name not in keep:
+            path.unlink(missing_ok=True)
+            removed.append(path.name)
+    return removed
+
+
+class StaleModelError(Exception):
+    """A persisted model was saved by another scikit-learn version."""
+
+
 def load_model(device_key):
-    """Load a persisted model. Returns None if not found."""
+    """Load a persisted model. Returns None if not found.
+
+    A model saved by another scikit-learn version (a backup restored from
+    another machine, or a package upgrade) raises StaleModelError and its
+    file is removed. scikit-learn warns that such a model can score wrongly,
+    and warned again on every scoring cycle, so it is retrained instead.
+    """
     p = _model_path(device_key)
     if not p.exists():
         return None
-    return joblib.load(p)
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", InconsistentVersionWarning)
+        try:
+            return joblib.load(p)
+        except InconsistentVersionWarning as stale:
+            p.unlink(missing_ok=True)
+            raise StaleModelError(str(stale)) from None
 
 
 def score_window(model, feature_vector):
@@ -70,13 +107,20 @@ def score_window(model, feature_vector):
     return float(score), is_anomaly, severity
 
 
-def explain_anomaly(model, feature_vector, client_median):
+def explain_anomaly(model, feature_vector, client_median, peer_median=None):
     """
     Identify top 3 features contributing to the anomaly.
     Uses single-feature perturbation: replace each feature with the client's
     historical median and measure score improvement.
 
-    Returns list of {"feature": name, "label": human_label, "contribution": float}.
+    peer_median, when given, is the fleet's typical value per feature (the
+    median of every trained device's own median). Each factor then carries
+    "peers", so the drawer can say whether the device is odd for itself only
+    or for the whole network: a night of high entropy that every phone shares
+    is a CDN, not a tunnel.
+
+    Returns list of {"feature", "label", "contribution", "observed",
+    "baseline", "peers"}.
     """
     base_score = model.decision_function(feature_vector.reshape(1, -1))[0]
 
@@ -96,12 +140,15 @@ def explain_anomaly(model, feature_vector, client_median):
         if contrib <= 0:
             break  # no more positive contributors
         idx = FEATURE_NAMES.index(name)
-        top3.append({
+        factor = {
             "feature": name,
             "label": FEATURE_LABELS.get(name, name),
             "contribution": round(contrib, 4),
             "observed": round(float(feature_vector[idx]), 4),
             "baseline": round(float(client_median[idx]), 4),
-        })
+        }
+        if peer_median is not None:
+            factor["peers"] = round(float(peer_median[idx]), 4)
+        top3.append(factor)
 
     return top3

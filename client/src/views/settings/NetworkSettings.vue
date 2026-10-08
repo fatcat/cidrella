@@ -11,146 +11,207 @@
           <label>Name Template</label>
           <InputText v-model="settings.subnet_name_template" class="w-full" />
           <small class="field-help">
-            Variables: %1, %2, %3, %4 (octets), %bitmask (prefix length)
+            Variables: %1, %2, %3, %4 (the first four octets or hextets of the network), %network
+            (the whole network address), %bitmask (prefix length)
           </small>
           <div v-if="templatePreview" class="template-preview">
             Preview: <strong>{{ templatePreview }}</strong>
+            <template v-if="templatePreviewV6">
+              · IPv6: <strong>{{ templatePreviewV6 }}</strong>
+            </template>
           </div>
         </div>
       </div>
 
       <div class="content-card settings-form">
         <h3>Network Scanning</h3>
-        <p class="field-help" style="margin-bottom: 0.75rem;">
-          Configure automatic network scanning for allocated networks. Uses ARP probes for local subnets and ICMP ping for remote subnets.
+        <p class="field-help" style="margin-bottom: 0.75rem">
+          Configure automatic network scanning for allocated networks. Uses ARP probes for local
+          subnets and ICMP ping for remote subnets.
         </p>
         <div class="field">
           <label>Enable Scanning by Default</label>
           <ToggleSwitch v-model="settings.default_scan_enabled" />
-          <small class="field-help">Global default for liveness scanning. Individual subnets and hosts can override this.</small>
+          <small class="field-help"
+            >Global default for liveness scanning. Individual subnets and hosts can override
+            this.</small
+          >
         </div>
         <div class="field">
           <label>Default Scan Interval</label>
-          <Select v-model="settings.default_scan_interval" :options="scanIntervalOptions" optionLabel="label" optionValue="value"
-                  class="w-full" style="max-width: 16rem;" />
+          <Select
+            v-model="settings.default_scan_interval"
+            :options="scanIntervalOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+            style="max-width: 16rem"
+          />
           <small class="field-help">Applied to newly configured networks.</small>
         </div>
         <div class="field">
           <label>IP Lifecycle History Retention</label>
-          <Select v-model="settings.ip_history_retention_days" :options="historyRetentionOptions" optionLabel="label" optionValue="value"
-                  class="w-full" style="max-width: 16rem;" />
-          <small class="field-help">How long to keep IP lifecycle events (online/offline, rogue, status changes). Events older than this are automatically purged.</small>
+          <Select
+            v-model="settings.ip_history_retention_days"
+            :options="historyRetentionOptions"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+            style="max-width: 16rem"
+          />
+          <small class="field-help"
+            >How long to keep IP lifecycle events (online/offline, rogue, status changes). Events
+            older than this are automatically purged.</small
+          >
         </div>
         <div class="field">
           <label>Offline Host Detail Retention</label>
-          <small class="field-help">Dynamic and rogue host details are retired after one continuous hour offline. Static DNS and DHCP assignments keep their observations until the assignment is changed or removed.</small>
+          <small class="field-help"
+            >Dynamic and rogue host details are retired after one continuous hour offline. Static
+            DNS and DHCP assignments keep their observations until the assignment is changed or
+            removed.</small
+          >
         </div>
-        <hr style="border: none; border-top: 1px solid var(--p-surface-border); margin: 0.75rem 0;" />
+        <hr
+          style="border: none; border-top: 1px solid var(--cid-surface-border); margin: 0.75rem 0"
+        />
         <div class="field">
           <label>On-Demand Scan</label>
           <div class="scan-row">
-            <Select v-model="scanSubnetId" :options="allocatedSubnets" optionLabel="label" optionValue="value"
-                    placeholder="Select network" class="w-full" style="max-width: 20rem;" />
-            <Button label="Scan Now" icon="pi pi-search" size="small" @click="doStartScan"
-                    :loading="startingScan" :disabled="!scanSubnetId" />
+            <Select
+              v-model="scanSubnetId"
+              :options="allocatedSubnets"
+              optionLabel="label"
+              optionValue="value"
+              placeholder="Select network"
+              class="w-full"
+              style="max-width: 20rem"
+            />
+            <Button
+              label="Scan Now"
+              icon="pi pi-search"
+              size="small"
+              @click="doStartScan"
+              :loading="startingScan"
+              :disabled="!scanSubnetId"
+            />
           </div>
           <small class="field-help">Probe all scannable IPs in the selected network.</small>
         </div>
         <div class="settings-actions">
-          <Button label="Save Settings" icon="pi pi-save" @click="saveSettings" :loading="savingSettings" :disabled="!settingsDirty" />
+          <Button
+            label="Save Settings"
+            icon="pi pi-save"
+            @click="saveSettings"
+            :loading="savingSettings"
+            :disabled="!settingsDirty"
+          />
         </div>
       </div>
 
       <div class="content-card">
         <div class="card-header">
           <h3>Network Range Types</h3>
-          <Button label="Add Range Type" icon="pi pi-plus" size="small" text data-track="sys-add-range-type" @click="showRangeTypeDialog = true" />
+          <Button
+            label="Add Range Type"
+            icon="pi pi-plus"
+            size="small"
+            text
+            data-track="sys-add-range-type"
+            @click="
+              editingRangeType = null;
+              showRangeTypeDialog = true;
+            "
+          />
         </div>
         <p class="field-help range-type-help">
-          Optional organizational labels for ranges in the IP grid. They do not change DNS, DHCP, scanning, allocation, or topology behavior.
+          Optional organizational labels for ranges in the IP grid. They do not change DNS, DHCP,
+          scanning, allocation, or topology behavior.
         </p>
         <div class="range-types-section">
-            <DataTable :value="customRangeTypes" :loading="loadingRangeTypes" stripedRows size="small"
-                       :paginator="customRangeTypes.length > 256" :rows="256"
-                       :rowsPerPageOptions="[64, 128, 256, 512]"
-                       @row-contextmenu="onRangeTypeRightClick" contextMenu
-                       scrollable scrollHeight="flex">
-              <template #empty>
-                <EmptyState icon="pi-tags" title="No Network Range Types" description="Add a type, then assign it to selected addresses from the network grid." />
+          <DataTable
+            :value="customRangeTypes"
+            :loading="loadingRangeTypes"
+            stripedRows
+            size="small"
+            :paginator="customRangeTypes.length > 256"
+            :rows="256"
+            :rowsPerPageOptions="[64, 128, 256, 512]"
+            @row-contextmenu="onRangeTypeRightClick"
+            contextMenu
+            scrollable
+            scrollHeight="flex"
+          >
+            <template #empty>
+              <EmptyState
+                icon="pi-tags"
+                title="No Network Range Types"
+                description="Add a type, then assign it to selected addresses from the network grid."
+              />
+            </template>
+            <Column header="Color" style="width: 4rem">
+              <template #body="{ data }">
+                <span class="color-swatch" :style="{ background: data.color }"></span>
               </template>
-              <Column header="Color" style="width: 4rem">
-                <template #body="{ data }">
-                  <span class="color-swatch" :style="{ background: data.color }"></span>
-                </template>
-              </Column>
-              <Column field="name" header="Name" sortable />
-              <Column field="description" header="Description">
-                <template #body="{ data }">{{ data.description ?? EMPTY_CELL }}</template>
-              </Column>
-            </DataTable>
+            </Column>
+            <Column field="name" header="Name" sortable />
+            <Column field="description" header="Description">
+              <template #body="{ data }">{{ data.description ?? EMPTY_CELL }}</template>
+            </Column>
+          </DataTable>
         </div>
       </div>
     </template>
 
     <ContextMenu ref="rangeTypeContextMenuRef" :model="rangeTypeContextMenuItems" />
 
-    <!-- Network Range Type Dialog -->
-    <Dialog v-model:visible="showRangeTypeDialog" :header="editingRangeType ? 'Edit Network Range Type' : 'Add Network Range Type'"
-            modal :style="{ width: '24rem' }">
-      <div class="form-grid">
-        <div class="field">
-          <label>Name *</label>
-          <InputText v-model="rangeTypeForm.name" class="w-full" />
-        </div>
-        <div class="field">
-          <label>Color</label>
-          <div class="color-picker-row">
-            <input type="color" v-model="rangeTypeForm.color" />
-            <InputText v-model="rangeTypeForm.color" style="width: 8rem; font-family: monospace;" />
-          </div>
-        </div>
-        <div class="field">
-          <label>Description</label>
-          <InputText v-model="rangeTypeForm.description" class="w-full" />
-        </div>
-      </div>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="closeRangeTypeDialog" />
-        <Button :label="editingRangeType ? 'Save' : 'Create'" @click="saveRangeType" :loading="savingRangeType" />
-      </template>
-    </Dialog>
+    <!-- The same type editor the workspace range dialog uses inline. -->
+    <RangeTypeDialog
+      v-model:visible="showRangeTypeDialog"
+      :range-type="editingRangeType"
+      @saved="handleRangeTypeSaved"
+      @deleted="handleRangeTypeDeleted"
+    />
 
     <!-- Delete Network Range Type Dialog -->
-    <Dialog v-model:visible="showDeleteRangeTypeDialog" header="Delete Network Range Type" modal :style="{ width: '24rem' }">
-      <p>Delete Network Range Type <strong>{{ deletingRangeType?.name }}</strong>?</p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteRangeTypeDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteRangeType" :loading="savingRangeType" />
-      </template>
-    </Dialog>
+    <ConfirmDialog
+      v-model:visible="showDeleteRangeTypeDialog"
+      header="Delete Network Range Type"
+      :loading="savingRangeType"
+      data-track="dialog-range-type-delete"
+      @confirm="doDeleteRangeType"
+    >
+      <p>
+        Delete Network Range Type <strong>{{ deletingRangeType?.name }}</strong
+        >?
+      </p>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
+import { useFeatures } from '../../composables/useFeatures.js';
 import Button from '../../ui/Button.js';
 import EmptyState from '../../components/EmptyState.vue';
+import ConfirmDialog from '../../components/ConfirmDialog.vue';
 import DataTable from '../../ui/DataTable.js';
 import Column from '../../ui/Column.js';
-import Dialog from '../../ui/Dialog.js';
 import Select from '../../ui/Select.js';
+import RangeTypeDialog from '../networks-workspace/dialogs/RangeTypeDialog.vue';
 import InputText from '../../ui/InputText.js';
 import ToggleSwitch from '../../ui/ToggleSwitch.js';
 import ContextMenu from '../../ui/ContextMenu.js';
 import { useToast } from '../../ui/useToast.js';
 import { useSubnetStore } from '../../stores/subnets.js';
-import { applyNameTemplate } from '../../utils/ip.js';
+import { applyNameTemplate, networkNameFromTemplate } from '../../utils/ip.js';
 import { apiError, EMPTY_CELL, subnetLabel } from '../../utils/format.js';
 import { collectAllocatedSubnets } from '../../utils/tree.js';
 import api from '../../api/client.js';
 
 const store = useSubnetStore();
 const toast = useToast();
+const { ipv6: ipv6Supported } = useFeatures();
 
 // Settings
 const loadingSettings = ref(true);
@@ -159,7 +220,7 @@ const settings = ref({
   subnet_name_template: '%1.%2.%3.%4/%bitmask',
   default_scan_interval: 'off',
   default_scan_enabled: true,
-  ip_history_retention_days: '7'
+  ip_history_retention_days: '7',
 });
 const savedSettings = ref(null);
 
@@ -167,10 +228,12 @@ const settingsDirty = computed(() => {
   if (!savedSettings.value) return false;
   const s = savedSettings.value;
   const c = settings.value;
-  return c.subnet_name_template !== s.subnet_name_template ||
+  return (
+    c.subnet_name_template !== s.subnet_name_template ||
     c.default_scan_interval !== s.default_scan_interval ||
     c.default_scan_enabled !== s.default_scan_enabled ||
-    c.ip_history_retention_days !== s.ip_history_retention_days;
+    c.ip_history_retention_days !== s.ip_history_retention_days
+  );
 });
 const scanIntervalOptions = [
   { label: 'Off', value: 'off' },
@@ -221,7 +284,18 @@ async function doStartScan() {
 const templatePreview = computed(() => {
   try {
     return applyNameTemplate(settings.value.subnet_name_template, '192.168.1.0/24');
-  } catch { return ''; }
+  } catch {
+    return '';
+  }
+});
+// The same template on an IPv6 network, shown only while IPv6 is on.
+const templatePreviewV6 = computed(() => {
+  if (!ipv6Supported.value) return '';
+  try {
+    return networkNameFromTemplate(settings.value.subnet_name_template, '2001:db8:1::/48');
+  } catch {
+    return '';
+  }
 });
 
 async function saveSettings() {
@@ -230,10 +304,13 @@ async function saveSettings() {
     await api.put('/settings/bulk', {
       settings: {
         subnet_name_template: settings.value.subnet_name_template,
-        default_scan_interval: settings.value.default_scan_interval === 'off' ? '' : settings.value.default_scan_interval,
+        default_scan_interval:
+          settings.value.default_scan_interval === 'off'
+            ? ''
+            : settings.value.default_scan_interval,
         default_scan_enabled: settings.value.default_scan_enabled ? '1' : '0',
         ip_history_retention_days: settings.value.ip_history_retention_days,
-      }
+      },
     });
     savedSettings.value = { ...settings.value };
     toast.add({ severity: 'success', summary: 'Settings saved', life: 3000 });
@@ -246,48 +323,42 @@ async function saveSettings() {
 
 // Network Range Types
 const rangeTypes = ref([]);
-const customRangeTypes = computed(() => rangeTypes.value.filter(type => !type.is_system));
+const customRangeTypes = computed(() => rangeTypes.value.filter((type) => !type.is_system));
 const loadingRangeTypes = ref(false);
 const savingRangeType = ref(false);
 const showRangeTypeDialog = ref(false);
 const showDeleteRangeTypeDialog = ref(false);
 const editingRangeType = ref(null);
 const deletingRangeType = ref(null);
-const rangeTypeForm = ref({ name: '', color: '#6b7280', description: '' });
 
 async function loadRangeTypes() {
   loadingRangeTypes.value = true;
-  try { rangeTypes.value = await store.getRangeTypes(); }
-  finally { loadingRangeTypes.value = false; }
+  try {
+    rangeTypes.value = await store.getRangeTypes();
+  } finally {
+    loadingRangeTypes.value = false;
+  }
 }
 
 function editRangeType(type) {
   editingRangeType.value = type;
-  rangeTypeForm.value = { name: type.name, color: type.color, description: type.description || '' };
   showRangeTypeDialog.value = true;
 }
 
-function closeRangeTypeDialog() {
-  showRangeTypeDialog.value = false;
+async function handleRangeTypeSaved() {
+  toast.add({
+    severity: 'success',
+    summary: editingRangeType.value ? 'Range type updated' : 'Range type created',
+    life: 3000,
+  });
   editingRangeType.value = null;
-  rangeTypeForm.value = { name: '', color: '#6b7280', description: '' };
+  await loadRangeTypes();
 }
 
-async function saveRangeType() {
-  savingRangeType.value = true;
-  try {
-    if (editingRangeType.value) {
-      await store.updateRangeType(editingRangeType.value.id, rangeTypeForm.value);
-      toast.add({ severity: 'success', summary: 'Range type updated', life: 3000 });
-    } else {
-      await store.createRangeType(rangeTypeForm.value);
-      toast.add({ severity: 'success', summary: 'Range type created', life: 3000 });
-    }
-    closeRangeTypeDialog();
-    await loadRangeTypes();
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { savingRangeType.value = false; }
+async function handleRangeTypeDeleted() {
+  toast.add({ severity: 'success', summary: 'Range type deleted', life: 3000 });
+  editingRangeType.value = null;
+  await loadRangeTypes();
 }
 
 function confirmDeleteRangeType(type) {
@@ -304,7 +375,9 @@ async function doDeleteRangeType() {
     await loadRangeTypes();
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { savingRangeType.value = false; }
+  } finally {
+    savingRangeType.value = false;
+  }
 }
 
 // Network Range Types context menu
@@ -315,7 +388,7 @@ const rangeTypeContextMenuItems = computed(() => {
   if (!r || r.is_system) return [];
   return [
     { label: 'Edit Range Type', icon: 'pi pi-pencil', command: () => editRangeType(r) },
-    { label: 'Delete Range Type', icon: 'pi pi-trash', command: () => confirmDeleteRangeType(r) }
+    { label: 'Delete Range Type', icon: 'pi pi-trash', command: () => confirmDeleteRangeType(r) },
   ];
 });
 function onRangeTypeRightClick(event) {
@@ -330,37 +403,34 @@ onMounted(async () => {
     const [data] = await Promise.all([
       store.getSettings(),
       loadRangeTypes(),
-      store.folders.length === 0 ? store.fetchTree() : Promise.resolve()
+      store.folders.length === 0 ? store.fetchTree() : Promise.resolve(),
     ]);
     const vals = {
       subnet_name_template: data.subnet_name_template || '%1.%2.%3.%4/%bitmask',
       default_scan_interval: data.default_scan_interval || 'off',
       default_scan_enabled: data.default_scan_enabled === '1' || data.default_scan_enabled === true,
-      ip_history_retention_days: data.ip_history_retention_days || '7'
+      ip_history_retention_days: data.ip_history_retention_days || '7',
     };
     settings.value = { ...vals };
     savedSettings.value = { ...vals };
-  } catch { /* use defaults */ }
+  } catch {
+    /* use defaults */
+  }
   loadingSettings.value = false;
 });
 </script>
 
 <style scoped>
-.muted {
-  color: var(--p-text-muted-color);
-}
 .content-card {
   margin: 0;
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 .content-card h3 {
   margin: 0 0 0.75rem 0;
 }
-.card-header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 0.75rem; }
-.card-header h3 { margin: 0; }
 .content-card + .content-card {
   margin-top: 0.75rem;
 }
@@ -385,17 +455,17 @@ onMounted(async () => {
   display: block;
   margin-top: 0.25rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .template-preview {
   margin-top: 0.5rem;
   padding: 0.4rem 0.75rem;
-  background: var(--p-surface-content);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-content);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 4px;
   font-family: monospace;
   font-size: var(--app-fs-sm);
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .settings-actions {
   margin-top: 1rem;
@@ -407,24 +477,7 @@ onMounted(async () => {
   width: 14px;
   height: 14px;
   border-radius: 3px;
-  border: 1px solid var(--p-surface-border);
-}
-.form-grid {
-  display: flex;
-  flex-direction: column;
-  gap: 1rem;
-}
-.color-picker-row {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-}
-.color-picker-row input[type="color"] {
-  width: 36px;
-  height: 36px;
-  border: none;
-  padding: 0;
-  cursor: pointer;
+  border: 1px solid var(--cid-surface-border);
 }
 .range-types-section {
   display: flex;
@@ -432,5 +485,4 @@ onMounted(async () => {
   flex: 1;
   min-height: 0;
 }
-.w-full { width: 100%; }
 </style>

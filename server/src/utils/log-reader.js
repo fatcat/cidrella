@@ -45,7 +45,11 @@ export function readLogTail(filePath, offset, maxBytes = DEFAULT_MAX_READ_BYTES)
   } catch {
     return { lines: [], newOffset: offset };
   } finally {
-    try { fs.closeSync(fd); } catch { /* fd may be invalid */ }
+    try {
+      fs.closeSync(fd);
+    } catch {
+      /* fd may be invalid */
+    }
   }
 
   // Advance only through the last complete line. dnsmasq normally writes a
@@ -54,6 +58,10 @@ export function readLogTail(filePath, offset, maxBytes = DEFAULT_MAX_READ_BYTES)
   // damaging to multi-line DHCP fingerprints.
   const lastNewline = buf.lastIndexOf(0x0a);
   if (lastNewline < 0) return { lines: [], newOffset: offset };
-  const lines = buf.subarray(0, lastNewline).toString('utf-8').split('\n').filter(l => l.trim());
+  const lines = buf
+    .subarray(0, lastNewline)
+    .toString('utf-8')
+    .split('\n')
+    .filter((l) => l.trim());
   return { lines, newOffset: offset + lastNewline + 1 };
 }

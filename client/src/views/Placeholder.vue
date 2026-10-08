@@ -15,6 +15,6 @@ const route = useRoute();
   margin: 0 0 0.5rem 0;
 }
 .placeholder p {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>

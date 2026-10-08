@@ -38,7 +38,8 @@ def ensure_tables():
                 severity TEXT,
                 top_features TEXT,
                 resolved INTEGER NOT NULL DEFAULT 0,
-                resolved_at TEXT
+                resolved_at TEXT,
+                threat_score REAL
             );
 
             CREATE TABLE IF NOT EXISTS anomaly_models (
@@ -70,9 +71,14 @@ def resolve_device_key(client_ip):
     inherit whatever baseline the previous holder had trained. The IP
     fallback covers hosts CIDRella has no lease for (static, out-of-pool).
 
+    IPv4 only in effect: a DHCPv6 lease has no MAC and a SLAAC host no
+    lease, so an IPv6 client is keyed by its address, and a rotating
+    temporary address never gathers enough history to train (see the known
+    limitation in docs/ARCHITECTURE.md).
+
     The value is stored in (and read back from) the `identity` column; the
     Python side calls it `device_key` because that is what it is -- the key
-    models, scores and whitelist rows are grouped under.
+    models, scores and allowlist rows are grouped under.
 
     The MAC column is aliased in the query below, and that is load-bearing
     rather than cosmetic. CodeQL's sensitive-data heuristic classifies any
@@ -98,11 +104,11 @@ def resolve_device_key(client_ip):
         con.close()
 
 
-def get_whitelisted_device_keys():
-    """Return set of whitelisted device keys (MAC or IP-fallback)."""
+def get_allowlisted_device_keys():
+    """Return set of allowlisted device keys (MAC or IP-fallback)."""
     con = _connect()
     try:
-        rows = con.execute("SELECT identity FROM anomaly_whitelist").fetchall()
+        rows = con.execute("SELECT identity FROM anomaly_allowlist").fetchall()
         return {row["identity"] for row in rows}
     except sqlite3.OperationalError:
         # Table may not exist yet (pre-migration)
@@ -134,25 +140,28 @@ def get_setting(key, default=None):
 
 
 def save_score(device_key, client_ip, window_start, window_end, anomaly_score,
-               is_anomaly, severity=None, top_features=None):
+               is_anomaly, severity=None, top_features=None, threat_score=None):
     """Insert or update an anomaly score. client_ip is the IP actually
     observed for this window; device_key is the resolved MAC (or client_ip
     itself, when no MAC is known) that scores/models are grouped under,
-    stored in the `identity` column."""
+    stored in the `identity` column. threat_score is the 0..1 rule score
+    from threat.py, written for every window so the triage map can place
+    unflagged devices too."""
     con = _connect()
     try:
         con.execute("""
             INSERT INTO anomaly_scores
                 (client_ip, identity, scored_at, window_start, window_end,
-                 anomaly_score, is_anomaly, severity, top_features)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                 anomaly_score, is_anomaly, severity, top_features, threat_score)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(identity, window_start) DO UPDATE SET
                 client_ip = excluded.client_ip,
                 scored_at = excluded.scored_at,
                 anomaly_score = excluded.anomaly_score,
                 is_anomaly = excluded.is_anomaly,
                 severity = excluded.severity,
-                top_features = excluded.top_features
+                top_features = excluded.top_features,
+                threat_score = excluded.threat_score
         """, (
             client_ip,
             device_key,
@@ -163,6 +172,7 @@ def save_score(device_key, client_ip, window_start, window_end, anomaly_score,
             1 if is_anomaly else 0,
             severity,
             json.dumps(top_features) if top_features else None,
+            threat_score,
         ))
         con.commit()
     finally:
@@ -197,6 +207,19 @@ def set_model_status(device_key, status):
             (status, device_key),
         )
         con.commit()
+    finally:
+        con.close()
+
+
+def get_model_device_keys():
+    """Every device key with an anomaly_models row, or None when the table
+    cannot be read (so a caller deciding what to delete deletes nothing)."""
+    con = _connect()
+    try:
+        rows = con.execute("SELECT identity FROM anomaly_models").fetchall()
+        return {row["identity"] for row in rows}
+    except sqlite3.OperationalError:
+        return None
     finally:
         con.close()
 

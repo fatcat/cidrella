@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { EMPTY_CELL } from '../../../src/utils/format.js';
 import {
   buildExplorerFolders,
   mapAddressRows,
@@ -6,20 +7,30 @@ import {
   mapDhcpRows,
   mapDnsRows,
   mapDnsZoneRows,
-  mapNetworkRows
+  mapNetworkRows,
+  addressCountLabel,
+  dnsRecordSummary,
+  formatDuration,
+  formatAddressCount,
+  sumScopeAddresses,
+  networkUtilization,
+  compareCellValues,
+  mapRangeRows,
 } from '../../../src/views/networks-workspace-data.js';
 
 describe('networks workspace data adapter', () => {
   it('renders server-owned IP status and type without reconstructing allocation precedence', () => {
-    const [row] = mapAddressRows([{
-      ip_address: '10.0.0.20',
-      allocation_state: 'static_dns',
-      ip_display_status: 'DHCP Scope',
-      address_type: 'static DNS',
-      is_online: '0',
-      scanning_enabled: false,
-      scan_enabled: null
-    }]);
+    const [row] = mapAddressRows([
+      {
+        ip_address: '10.0.0.20',
+        allocation_state: 'static_dns',
+        ip_display_status: 'DHCP Scope',
+        address_type: 'static DNS',
+        is_online: '0',
+        scanning_enabled: false,
+        scan_enabled: null,
+      },
+    ]);
 
     expect(row.status).toBe('DHCP Scope');
     expect(row.type).toBe('static DNS');
@@ -28,80 +39,415 @@ describe('networks workspace data adapter', () => {
   });
 
   it('uses explicit DHCP assignment and lease fields', () => {
-    const [row] = mapDhcpRows([{
-      id: 7,
-      ip_address: '10.0.0.33',
-      dhcp_assignment_type: 'reserved',
-      lease_status: 'offline',
-      expires_at: null,
-      is_online: 0
-    }]);
+    const [row] = mapDhcpRows([
+      {
+        id: 7,
+        ip_address: '10.0.0.33',
+        dhcp_assignment_type: 'reserved',
+        lease_status: 'offline',
+        expires_at: null,
+        dhcp_expires_at: null,
+        dhcp_lease_state: null,
+        allocation_source_type: 'dhcp_reservation',
+        enabled: 1,
+        is_online: 0,
+      },
+    ]);
 
     expect(row.assignment).toBe('Reserved');
     expect(row.leaseStatus).toBe('offline');
+    expect(row.lease).toBeNull();
     expect(row.expires).toBe('Never');
     expect(row.source).toBe('DHCP Reservation');
+    expect(row.enabled).toBe(true);
+  });
+
+  it('fills the shared IP columns the same way from either table', () => {
+    // The same server facts about one address, as the addresses read and
+    // the DHCP read each present them.
+    const facts = {
+      ip_address: '10.0.0.22',
+      hostname: 'S24-Ultra',
+      ip_display_status: 'in use',
+      address_type: 'DHCP Reservation',
+      dhcp_expires_at: 'infinite',
+      dhcp_lease_state: 'active',
+      allocation_source_type: 'dhcp_reservation',
+      network_range_type: 'Phones',
+      last_seen_at: new Date().toISOString(),
+      scanning_enabled: true,
+      scan_enabled: null,
+      is_online: 0,
+    };
+    // The reservation behind the address: the row itself on the DHCP table,
+    // the fact the server attaches to the address row.
+    const reservation = { dhcp_assignment_type: 'reserved', enabled: 1, related_scope_ids: [] };
+    const [address] = mapAddressRows([{ ...facts, has_dhcp_reservation: 1, dhcp: reservation }]);
+    const [dhcp] = mapDhcpRows([{ ...facts, ...reservation, id: 9, expires_at: 'infinite' }]);
+    // Every column the one table model has; only the row's identity and the
+    // DHCP table's own bookkeeping differ.
+    const ownFields = new Set(['id', 'raw', 'leaseStatus', 'enabled']);
+    const shared = (row) =>
+      Object.fromEntries(Object.entries(row).filter(([key]) => !ownFields.has(key)));
+    expect(shared(dhcp)).toEqual(shared(address));
+    expect(address.lease).toBe('Active');
+    expect(address.expires).toBe('Never');
+    expect(address.source).toBe('DHCP Reservation');
+    expect(address.assignment).toBe('Reserved');
+    expect(address.reservationEnabled).toBe(true);
+    expect(address.scanning).toBe('On · inherited');
+    expect(address.lastSeen).toBe('Just now');
+
+    // A free pool address has a status, no lease and no source, in both.
+    const [freeAddress] = mapAddressRows([
+      { ip_address: '10.0.0.16', ip_display_status: 'DHCP Scope', is_online: 0 },
+    ]);
+    const [freePool] = mapDhcpRows([
+      {
+        id: 'available:2:10.0.0.16',
+        ip_address: '10.0.0.16',
+        ip_display_status: 'DHCP Scope',
+        dhcp_assignment_type: null,
+        lease_status: 'available',
+        is_online: 0,
+      },
+    ]);
+    expect(shared(freePool)).toEqual(shared(freeAddress));
+    expect(freePool.status).toBe('DHCP Scope');
+    expect(freePool.lease).toBeNull();
+    expect(freePool.source).toBeNull();
+    expect(freePool.expires).toBe(EMPTY_CELL);
+  });
+
+  it('tags held addresses with their pool membership', () => {
+    const base = { id: 1, ip_address: '10.0.0.40', lease_status: 'active', is_online: 1 };
+    const [reservedIn, reservedOut, leaseOut, free] = mapDhcpRows([
+      { ...base, dhcp_assignment_type: 'reserved', related_scope_ids: [3] },
+      { ...base, dhcp_assignment_type: 'reserved', related_scope_ids: [] },
+      { ...base, dhcp_assignment_type: 'dynamic', related_scope_ids: [] },
+      { ...base, dhcp_assignment_type: null, lease_status: 'available', related_scope_ids: [3] },
+    ]);
+    expect(reservedIn.pool).toEqual({ label: 'in pool', tone: 'muted' });
+    // A reservation outside the pool is deliberate; a lease outside it is not.
+    expect(reservedOut.pool).toEqual({ label: 'outside pool', tone: 'muted' });
+    expect(leaseOut.pool).toEqual({ label: 'outside pool', tone: 'warn' });
+    expect(free.pool).toBeNull();
+  });
+
+  it('shows the TTL the server answers with, marked when it is not the record\'s own', () => {
+    const zone = { id: 4, name: 'example.test', type: 'forward', soa_minimum_ttl: 3600 };
+    const record = { id: 1, record_type: 'A', name: 'a', value: '10.0.0.1', enabled: 1 };
+    const [none, ignored, own, unknown] = mapDnsRows([
+      {
+        zone,
+        records: [
+          { ...record, served_ttl: 60 },
+          // A stored TTL the server cannot serve shows what it does serve.
+          { ...record, id: 2, ttl: 900, served_ttl: 60 },
+          { ...record, id: 3, record_type: 'CNAME', ttl: 300, served_ttl: 300 },
+          { ...record, id: 4 },
+        ],
+      },
+    ]);
+    expect(none.ttl).toBe('60 · default');
+    expect(ignored.ttl).toBe('60 · default');
+    expect(own.ttl).toBe('300');
+    expect(unknown.ttl).toBe(EMPTY_CELL);
   });
 
   it('uses DNS read-model names instead of ambiguous bare fields', () => {
-    const [row] = mapDnsRows([{
-      zone: { id: 4, name: 'example.test', type: 'forward' },
-      records: [{
-        id: 9,
-        record_type: 'A',
-        dns_source: 'dhcp',
-        name: 'host',
-        value: '10.0.0.33',
-        ttl: 300,
-        enabled: 1,
-        is_online: 1,
-        ip_address: '10.0.0.33'
-      }]
-    }]);
+    const [row] = mapDnsRows([
+      {
+        zone: { id: 4, name: 'example.test', type: 'forward' },
+        records: [
+          {
+            id: 9,
+            record_type: 'A',
+            dns_source: 'dhcp',
+            name: 'host',
+            value: '10.0.0.33',
+            ttl: 300,
+            enabled: 1,
+            is_online: 1,
+            ip_address: '10.0.0.33',
+          },
+        ],
+      },
+    ]);
 
     expect(row.recordType).toBe('A');
-    expect(row.source).toBe('DHCP');
+    // Record Source is what wrote the record; Source is the address's
+    // allocation, which this fixture does not carry.
+    expect(row.recordSource).toBe('DHCP lease');
+    expect(row.source).toBeNull();
+    expect(row.dnsName).toBeNull();
+    expect(row.recordEnabled).toBe(true);
     expect(row.zone).toBe('example.test');
   });
 
   it('keeps allocated descendants while excluding unallocated containers', () => {
-    const folders = buildExplorerFolders([{
-      id: 1,
-      name: 'Lab',
-      subnets: [{
-        id: 10,
-        cidr: '10.0.0.0/24',
-        status: 'unallocated',
-        children: [{
-          id: 11,
-          cidr: '10.0.0.0/25',
-          name: 'Lower half',
-          status: 'allocated',
-          total_addresses: 128,
-          used_count: 32,
-          children: []
-        }]
-      }]
-    }]);
+    const folders = buildExplorerFolders([
+      {
+        id: 1,
+        name: 'Lab',
+        subnets: [
+          {
+            id: 10,
+            cidr: '10.0.0.0/24',
+            status: 'unallocated',
+            children: [
+              {
+                id: 11,
+                cidr: '10.0.0.0/25',
+                name: 'Lower half',
+                status: 'allocated',
+                total_addresses: 128,
+                used_count: 32,
+                children: [],
+              },
+            ],
+          },
+        ],
+      },
+    ]);
 
     expect(folders).toHaveLength(1);
-    expect(folders[0].networks.map(network => network.cidr)).toEqual(['10.0.0.0/25']);
+    expect(folders[0].networks.map((network) => network.cidr)).toEqual(['10.0.0.0/25']);
     expect(folders[0].networks[0].used).toBe(25);
   });
 
   it('maps aggregate network, zone, and scope inventories without inventing IP state', () => {
-    const [network] = mapNetworkRows([{
-      id: 11, name: 'Lab', cidr: '10.0.0.0/24', folder: 'Sites', vlan: 10,
-      domain: 'lab.example', gateway: '10.0.0.1', used: 25, status: 'allocated'
-    }]);
-    const [zone] = mapDnsZoneRows([{ id: 21, name: 'lab.example', type: 'forward', record_count: 4, enabled: 1 }], new Map([[21, 'Lab']]));
-    const [scope] = mapDhcpScopeRows([{
-      id: 31, subnet_name: 'Lab', start_ip: '10.0.0.33', end_ip: '10.0.0.126',
-      lease_time: 43200, enabled: 1, pools: [{ start_ip: '10.0.0.33', end_ip: '10.0.0.126' }]
-    }]);
+    const [network] = mapNetworkRows([
+      {
+        id: 11,
+        name: 'Lab',
+        cidr: '10.0.0.0/24',
+        folder: 'Sites',
+        vlan: 10,
+        domain: 'lab.example',
+        gateway: '10.0.0.1',
+        used: 25,
+        status: 'allocated',
+      },
+    ]);
+    const [zone] = mapDnsZoneRows(
+      [{ id: 21, name: 'lab.example', type: 'forward', record_count: 4, enabled: 1 }],
+      new Map([[21, 'Lab']]),
+    );
+    const [scope] = mapDhcpScopeRows([
+      {
+        id: 31,
+        subnet_name: 'Lab',
+        start_ip: '10.0.0.33',
+        end_ip: '10.0.0.126',
+        lease_time: 43200,
+        enabled: 1,
+        pools: [{ start_ip: '10.0.0.33', end_ip: '10.0.0.126' }],
+      },
+    ]);
 
     expect(network).toMatchObject({ cidr: '10.0.0.0/24', utilization: '25%', status: 'Allocated' });
-    expect(zone).toMatchObject({ name: 'lab.example', networks: 'Lab', records: '4', enabled: true });
-    expect(scope).toMatchObject({ network: 'Lab', poolSize: '94 addresses', leaseTime: '12 hr', enabled: true });
+    expect(zone).toMatchObject({
+      name: 'lab.example',
+      networks: 'Lab',
+      records: '4',
+      enabled: true,
+    });
+    expect(scope).toMatchObject({
+      network: 'Lab',
+      poolSize: '94 addresses',
+      leaseTime: '12 hr',
+      enabled: true,
+    });
+  });
+});
+
+describe('addressCountLabel', () => {
+  it('names the network total for an enumerable network', () => {
+    expect(addressCountLabel({ shown: 20, matching: 40, total: 256 })).toBe(
+      'Showing 20 on this page · 40 matching · 256 addresses in network',
+    );
+  });
+
+  it('names assigned addresses for a sparse IPv6 network, which has no total', () => {
+    expect(addressCountLabel({ shown: 256, matching: 256, total: 256, paged: false })).toBe(
+      'Showing 256 · 256 matching · 256 addresses in network',
+    );
+    expect(addressCountLabel({ shown: 3, matching: 3, total: 3, sparse: true })).toBe(
+      'Showing 3 on this page · 3 matching · 3 assigned addresses',
+    );
+  });
+});
+
+describe('IPv6 networks in the explorer data', () => {
+  it('carry no utilization percentage', () => {
+    const folders = buildExplorerFolders([
+      {
+        id: 1,
+        name: 'Lab',
+        subnets: [
+          {
+            id: 9,
+            name: 'lab6',
+            cidr: 'fd00:1::/64',
+            status: 'allocated',
+            address_family: 6,
+            total_addresses: null,
+            used_count: 2,
+          },
+        ],
+      },
+    ]);
+    expect(folders[0].networks[0].used).toBeNull();
+    expect(folders[0].networks[0].state).toBe('healthy');
+    expect(mapNetworkRows(folders[0].networks)[0].utilization).toBe('—');
+  });
+});
+
+describe('dnsRecordSummary', () => {
+  const rec = (enabled) => ({ enabled });
+  it('counts records and names the disabled ones', () => {
+    expect(dnsRecordSummary([rec(true)])).toEqual({
+      total: 1,
+      disabled: 0,
+      note: '1 record references this address',
+    });
+    expect(dnsRecordSummary([rec(true), rec(true)]).note).toBe('2 records reference this address');
+    expect(dnsRecordSummary([rec(false)]).note).toBe('1 disabled record references this address');
+    expect(dnsRecordSummary([rec(false), rec(false)]).note).toBe(
+      '2 disabled records reference this address',
+    );
+    expect(dnsRecordSummary([rec(true), rec(false), rec(true)])).toEqual({
+      total: 3,
+      disabled: 1,
+      note: '3 records reference this address, 1 disabled',
+    });
+  });
+});
+
+describe('one IP table model', () => {
+  it("fills a record's columns on an address row from the attached DNS facts", () => {
+    const [row] = mapAddressRows([
+      {
+        ip_address: '10.0.3.228',
+        ip_display_status: 'in use',
+        dns_record: {
+          record_fqdn: 'hass.the-mcnultys.org',
+          record_type: 'A',
+          value: '10.0.3.228',
+          enabled: 0,
+          dns_source: 'manual',
+          served_ttl: 60,
+        },
+      },
+    ]);
+    expect(row).toMatchObject({
+      dnsName: 'hass.the-mcnultys.org',
+      recordType: 'A',
+      value: '10.0.3.228',
+      ttl: '60 · default',
+      recordEnabled: false,
+      recordSource: 'Manual',
+      assignment: null,
+      reservationEnabled: null,
+    });
+  });
+});
+
+describe('formatDuration', () => {
+  it('reads seconds and the lease times dnsmasq writes', () => {
+    expect(formatDuration(900)).toBe('15 min');
+    expect(formatDuration('900s')).toBe('15 min');
+    expect(formatDuration('12h')).toBe('12 hr');
+    expect(formatDuration('1d')).toBe('1 day');
+    expect(formatDuration('2w')).toBe('14 days');
+    expect(formatDuration('infinite')).toBe('Infinite');
+    expect(formatDuration(null)).toBe(EMPTY_CELL);
+    expect(formatDuration('soon')).toBe(EMPTY_CELL);
+  });
+});
+
+describe('IPv6 in the workspace aggregate tables', () => {
+  it('sizes IPv6 ranges and pools instead of blanking or zeroing them (IPV6-43)', () => {
+    const [stateful, slaac] = mapDhcpScopeRows([
+      {
+        id: 1,
+        address_family: 6,
+        v6_mode: 'stateful',
+        start_ip: '2001:db8::1000',
+        end_ip: '2001:db8::1fff',
+        pools: [{ start_ip: '2001:db8::1000', end_ip: '2001:db8::1fff' }],
+      },
+      {
+        id: 2,
+        address_family: 6,
+        v6_mode: 'slaac',
+        start_ip: 'fd00:5::',
+        end_ip: 'fd00:5::ffff:ffff:ffff:ffff',
+      },
+    ]);
+    expect(stateful.poolSize).toBe('4,096 addresses');
+    expect(slaac.poolSize).toMatch(/No pool/);
+
+    // A folder with a v4 pool of 64 and a v6 pool of 4,096 counts both.
+    const scopes = [
+      { address_family: 4, start_ip: '10.0.0.1', end_ip: '10.0.0.64' },
+      {
+        address_family: 6,
+        v6_mode: 'stateful',
+        start_ip: '2001:db8::1000',
+        end_ip: '2001:db8::1fff',
+      },
+      {
+        address_family: 6,
+        v6_mode: 'slaac',
+        start_ip: 'fd00:5::',
+        end_ip: 'fd00:5::ffff:ffff:ffff:ffff',
+      },
+    ];
+    expect(sumScopeAddresses(scopes)).toBe(4160n);
+
+    const [range] = mapRangeRows([
+      {
+        id: 7,
+        start_ip: 'fd00:9::',
+        end_ip: 'fd00:9::ffff:ffff:ffff:ffff',
+        range_type_name: 'Lab',
+      },
+    ]);
+    expect(range.size).toBe('2^64 addresses');
+    expect(formatAddressCount(1n)).toBe('1');
+    expect(formatAddressCount(2n ** 53n + 1n)).toBe((2n ** 53n + 1n).toLocaleString());
+  });
+
+  it('shows utilization whenever the network has a countable total (IPV6-52)', () => {
+    expect(networkUtilization({ address_family: 6, total_addresses: 256, used_count: 250 })).toBe(
+      98,
+    );
+    expect(networkUtilization({ address_family: 6, total_addresses: null, used_count: 5 })).toBe(
+      null,
+    );
+    expect(networkUtilization({ address_family: 4, total_addresses: 256, used_count: 64 })).toBe(
+      25,
+    );
+  });
+
+  it('sorts networks and ranges by address value, hextets as hex (IPV6-49)', () => {
+    const cidrs = ['2001:db8:a::/64', '2001:db8:10::/64', '2001:db8:9::/64', '10.0.0.0/24'];
+    expect([...cidrs].sort(compareCellValues)).toEqual([
+      '10.0.0.0/24',
+      '2001:db8:9::/64',
+      '2001:db8:a::/64',
+      '2001:db8:10::/64',
+    ]);
+    expect(['10.0.0.100 – 10.0.0.120', '10.0.0.9 – 10.0.0.20'].sort(compareCellValues)).toEqual([
+      '10.0.0.9 – 10.0.0.20',
+      '10.0.0.100 – 10.0.0.120',
+    ]);
+    expect(['10.0.0.0/25', '10.0.0.0/24'].sort(compareCellValues)).toEqual([
+      '10.0.0.0/24',
+      '10.0.0.0/25',
+    ]);
+    expect(['Lab 10', 'Lab 9'].sort(compareCellValues)).toEqual(['Lab 9', 'Lab 10']);
   });
 });

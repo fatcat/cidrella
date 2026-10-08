@@ -16,7 +16,9 @@ describe('useIpDetailsDrawer', () => {
   it('does not open for DNS records that do not identify an IP', () => {
     const drawer = useIpDetailsDrawer();
 
-    expect(drawer.openIpDetails({ record_type: 'CNAME', value: 'target.example.test' })).toBe(false);
+    expect(drawer.openIpDetails({ record_type: 'CNAME', value: 'target.example.test' })).toBe(
+      false,
+    );
     expect(drawer.visible.value).toBe(false);
     expect(drawer.host.value).toBeNull();
   });

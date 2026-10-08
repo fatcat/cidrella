@@ -1,4 +1,4 @@
 // Tag: re-export of the vendor component.
 //
 // One module per component, on purpose. See ./README.md.
-export { default } from 'primevue/tag';
+export { default } from 'openvue/tag';

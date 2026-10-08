@@ -5,68 +5,61 @@
  */
 import os from 'os';
 
-export function ipToLong(ip) {
-  // Defense-in-depth: reject non-strings with a clean message rather than
-  // the opaque `ip.split is not a function` crash v0.4.14 exposed through
-  // the global error handler. Route handlers guard their own inputs, but
-  // this helper is called from many code paths (scheduler, lease watcher,
-  // DB-sourced rows) and has to be safe against bad data too.
-  if (typeof ip !== 'string') {
-    throw new Error(`Invalid IP address: expected string, got ${typeof ip}`);
-  }
-  const parts = ip.split('.').map(Number);
-  if (parts.length !== 4 || parts.some(p => isNaN(p) || p < 0 || p > 255)) {
-    throw new Error(`Invalid IP address: ${ip}`);
-  }
-  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-}
+import {
+  ipToLong,
+  longToIp,
+  parseNetwork,
+  parsedNetworkContains,
+  networksOverlap,
+  addressRangesOverlap,
+  addressInRange,
+} from './cidr.js';
 
-export function longToIp(long) {
-  return [
-    (long >>> 24) & 255,
-    (long >>> 16) & 255,
-    (long >>> 8) & 255,
-    long & 255
-  ].join('.');
-}
-
-export function parseCidr(cidr) {
-  const match = cidr.match(/^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/);
-  if (!match) throw new Error(`Invalid CIDR notation: ${cidr}`);
-
-  const ip = match[1];
-  const prefix = parseInt(match[2], 10);
-  if (prefix < 0 || prefix > 32) throw new Error(`Invalid prefix length: ${prefix}`);
-
-  const ipLong = ipToLong(ip);
-  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
-  const network = (ipLong & mask) >>> 0;
-  const broadcast = (network | ~mask) >>> 0;
-  const totalAddresses = broadcast - network + 1;
-
-  return {
-    network: longToIp(network),
-    broadcast: longToIp(broadcast),
-    prefix,
-    mask: longToIp(mask),
-    networkLong: network,
-    broadcastLong: broadcast,
-    totalAddresses,
-    firstUsable: prefix >= 31 ? longToIp(network) : longToIp(network + 1),
-    lastUsable: prefix >= 31 ? longToIp(broadcast) : longToIp(broadcast - 1),
-    usableCount: prefix >= 31 ? totalAddresses : totalAddresses - 2
-  };
-}
-
-export function isIpInSubnet(ip, cidr) {
-  const { networkLong, broadcastLong } = parseCidr(cidr);
-  const ipLong = ipToLong(ip);
-  return ipLong >= networkLong && ipLong <= broadcastLong;
-}
+// The pure CIDR arithmetic lives in cidr.js so the client can share it; every
+// server caller keeps importing it from here.
+export {
+  DHCP_V6_MODES,
+  dhcpV6ModesFor,
+  dhcpV6ModeError,
+  ipToLong,
+  longToIp,
+  parseCidr,
+  isIpInSubnet,
+  normalizeCidr,
+  RESERVED_RANGES,
+  validateSupernet,
+  applyNameTemplate,
+  canMergeCidrs,
+  calculateSubnets,
+  isValidIpv4,
+  isValidCidr,
+  isSubnetOf,
+  cidrsOverlap,
+  subtractCidr,
+  addressToBig,
+  bigToAddress,
+  parseNetwork,
+  isValidNetwork,
+  normalizeNetwork,
+  networkContains,
+  networksOverlap,
+  isNetworkWithin,
+  subtractNetwork,
+  splitNetwork,
+  mergeNetworks,
+  networkNameFromTemplate,
+  validateNetworkBounds,
+  isValidAddress,
+  parsedNetworkContains,
+  topologyAddresses,
+  isTopologyAddress,
+  addressAtOffset,
+  addressRangesOverlap,
+  addressInRange,
+} from './cidr.js';
 
 export function isIpInRange(ip, startIp, endIp) {
-  const ipLong = ipToLong(ip);
-  return ipLong >= ipToLong(startIp) && ipLong <= ipToLong(endIp);
+  return addressInRange(ip, startIp, endIp);
 }
 
 /**
@@ -74,13 +67,18 @@ export function isIpInRange(ip, startIp, endIp) {
  * Uses os.networkInterfaces() to scan all interfaces. Returns the first match or null.
  */
 export function getServerIpForSubnet(cidr) {
+  let parsed;
+  try {
+    parsed = parseNetwork(cidr);
+  } catch {
+    return null;
+  }
+  const wanted = parsed.family === 6 ? 'IPv6' : 'IPv4';
   const ifaces = os.networkInterfaces();
   for (const addrs of Object.values(ifaces)) {
     for (const addr of addrs) {
-      if (addr.family === 'IPv4' && !addr.internal) {
-        try {
-          if (isIpInSubnet(addr.address, cidr)) return addr.address;
-        } catch { /* skip invalid */ }
+      if (addr.family === wanted && !addr.internal) {
+        if (parsedNetworkContains(parsed, addr.address)) return addr.address;
       }
     }
   }
@@ -88,34 +86,11 @@ export function getServerIpForSubnet(cidr) {
 }
 
 /**
- * Normalize a CIDR, ensures the IP portion is the actual network address.
- * e.g., 192.168.1.50/24 -> 192.168.1.0/24
- */
-export function normalizeCidr(cidr) {
-  const parsed = parseCidr(cidr);
-  return `${parsed.network}/${parsed.prefix}`;
-}
-
-/**
  * Check if two ranges overlap.
  */
 export function rangesOverlap(startA, endA, startB, endB) {
-  const a0 = ipToLong(startA), a1 = ipToLong(endA);
-  const b0 = ipToLong(startB), b1 = ipToLong(endB);
-  return a0 <= b1 && b0 <= a1;
+  return addressRangesOverlap(startA, endA, startB, endB);
 }
-
-// Well-known reserved/private IP ranges
-export const RESERVED_RANGES = [
-  { cidr: '10.0.0.0/8',      name: 'RFC1918 Class A' },
-  { cidr: '172.16.0.0/12',   name: 'RFC1918 Class B' },
-  { cidr: '192.168.0.0/16',  name: 'RFC1918 Class C' },
-  { cidr: '100.64.0.0/10',   name: 'CGNAT (RFC6598)' },
-  { cidr: '169.254.0.0/16',  name: 'Link-Local (RFC3927)' },
-  { cidr: '127.0.0.0/8',     name: 'Loopback (RFC1122)' },
-  { cidr: '224.0.0.0/4',     name: 'Multicast (RFC5771)' },
-  { cidr: '240.0.0.0/4',     name: 'Reserved (RFC1112)' },
-];
 
 // IPv4 blocks that are not globally routable. Automatic scans may inherit the
 // global scan setting for these ranges. Globally routable space requires an
@@ -135,82 +110,25 @@ const NON_GLOBAL_IPV4_RANGES = [
   '198.51.100.0/24',
   '203.0.113.0/24',
   '224.0.0.0/4',
-  '240.0.0.0/4'
+  '240.0.0.0/4',
+];
+
+// The IPv6 counterpart: unspecified, loopback, unique local, link-local,
+// multicast, documentation, and the IPv4-mapped block.
+const NON_GLOBAL_IPV6_RANGES = [
+  '::/128',
+  '::1/128',
+  '::ffff:0:0/96',
+  'fc00::/7',
+  'fe80::/10',
+  'ff00::/8',
+  '2001:db8::/32',
 ];
 
 export function isGloballyRoutableCidr(cidr) {
-  return !NON_GLOBAL_IPV4_RANGES.some(special => cidrsOverlap(cidr, special));
-}
-
-/**
- * Validate a supernet CIDR against reserved range boundaries.
- * If the CIDR overlaps a reserved range, it must be fully within it.
- * Public IPs are allowed freely.
- */
-export function validateSupernet(cidr) {
-  const parsed = parseCidr(cidr);
-  for (const reserved of RESERVED_RANGES) {
-    const res = parseCidr(reserved.cidr);
-    if (cidrsOverlap(cidr, reserved.cidr)) {
-      if (parsed.networkLong >= res.networkLong && parsed.broadcastLong <= res.broadcastLong) {
-        return { valid: true };
-      }
-      return {
-        valid: false,
-        error: `${cidr} extends beyond ${reserved.name} (${reserved.cidr}). Supernet must be within ${reserved.cidr}.`
-      };
-    }
-  }
-  return { valid: true };
-}
-
-/**
- * Apply a naming template to a CIDR.
- * Variables: %1-%4 (octets), %bitmask (prefix length)
- */
-export function applyNameTemplate(template, cidr) {
-  const parsed = parseCidr(cidr);
-  const octets = parsed.network.split('.');
-  return template
-    .replace(/%1/g, octets[0])
-    .replace(/%2/g, octets[1])
-    .replace(/%3/g, octets[2])
-    .replace(/%4/g, octets[3])
-    .replace(/%bitmask/g, String(parsed.prefix));
-}
-
-/**
- * Validate whether a set of CIDRs is an exact, gap-free cover of one CIDR.
- * Leaves may have different prefix lengths, which makes carve reversible.
- */
-export function canMergeCidrs(cidrs) {
-  if (cidrs.length < 2) return { valid: false, error: 'Need at least 2 subnets to merge' };
-
-  const parsed = cidrs.map(c => parseCidr(c)).sort((a, b) => a.networkLong - b.networkLong);
-
-  let total = 0;
-  for (let i = 1; i < parsed.length; i++) {
-    if (parsed[i].networkLong <= parsed[i - 1].broadcastLong) {
-      return { valid: false, error: 'Subnets must not overlap' };
-    }
-    const next = parsed[i - 1].broadcastLong + 1;
-    if (parsed[i].networkLong !== next) {
-      return { valid: false, error: 'Subnets must be contiguous' };
-    }
-  }
-  for (const subnet of parsed) total += subnet.totalAddresses;
-  const exponent = Math.log2(total);
-  if (!Number.isInteger(exponent)) {
-    return { valid: false, error: 'Subnet union size must be a power of 2' };
-  }
-  const newPrefix = 32 - exponent;
-  if (parsed[0].networkLong % total !== 0
-      || parsed.at(-1).broadcastLong !== parsed[0].networkLong + total - 1) {
-    return { valid: false, error: 'Subnets do not align to a valid CIDR boundary' };
-  }
-
-  const mergedCidr = `${parsed[0].network}/${newPrefix}`;
-  return { valid: true, merged_cidr: mergedCidr };
+  const family = parseNetwork(cidr).family;
+  const special = family === 6 ? NON_GLOBAL_IPV6_RANGES : NON_GLOBAL_IPV4_RANGES;
+  return !special.some((range) => networksOverlap(cidr, range));
 }
 
 /**
@@ -224,40 +142,7 @@ export function* ipRange(startIp, endIp) {
   }
 }
 
-/**
- * Calculate available subnet splits for a given prefix into a target prefix.
- */
-export function calculateSubnets(cidr, newPrefix, maxCount = 65536) {
-  const parent = parseCidr(cidr);
-  if (newPrefix <= parent.prefix || newPrefix > 32) {
-    throw new Error(`New prefix /${newPrefix} must be larger than /${parent.prefix} and <= 32`);
-  }
-
-  const count = 2 ** (newPrefix - parent.prefix);
-  if (!Number.isSafeInteger(count) || count > maxCount) {
-    throw new Error(`Cannot divide into more than ${maxCount} subnets`);
-  }
-  const subnetSize = 2 ** (32 - newPrefix);
-  const results = [];
-
-  for (let i = 0; i < count; i++) {
-    const netLong = (parent.networkLong + i * subnetSize) >>> 0;
-    results.push(parseCidr(`${longToIp(netLong)}/${newPrefix}`));
-  }
-
-  return results;
-}
-
-const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
 const MAC_RE = /^([0-9a-fA-F]{2}:){5}[0-9a-fA-F]{2}$/;
-
-/**
- * Validate IPv4 address string (regex + octet range check).
- */
-export function isValidIpv4(ip) {
-  if (!IPV4_RE.test(ip)) return false;
-  return ip.split('.').every(o => { const n = parseInt(o, 10); return n >= 0 && n <= 255; });
-}
 
 /**
  * Validate MAC address string (colon-separated hex).
@@ -275,90 +160,14 @@ export function isValidMac(mac) {
  */
 export function isClientMac(mac) {
   if (!isValidMac(mac)) return false;
-  const octets = mac.toLowerCase().split(':').map(o => parseInt(o, 16));
-  if (octets.every(o => o === 0)) return false;
-  if (octets.every(o => o === 0xff)) return false;
+  const octets = mac
+    .toLowerCase()
+    .split(':')
+    .map((o) => parseInt(o, 16));
+  if (octets.every((o) => o === 0)) return false;
+  if (octets.every((o) => o === 0xff)) return false;
   if ((octets[0] & 0x01) !== 0) return false; // I/G bit set → multicast
   return true;
-}
-
-/**
- * Validate that a CIDR string is well-formed.
- */
-export function isValidCidr(cidr) {
-  try {
-    parseCidr(cidr);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-/**
- * Check if childCidr fits entirely within parentCidr.
- */
-export function isSubnetOf(childCidr, parentCidr) {
-  const child = parseCidr(childCidr);
-  const parent = parseCidr(parentCidr);
-  return child.networkLong >= parent.networkLong &&
-         child.broadcastLong <= parent.broadcastLong &&
-         child.prefix > parent.prefix;
-}
-
-/**
- * Check if two CIDRs overlap.
- */
-export function cidrsOverlap(cidrA, cidrB) {
-  const a = parseCidr(cidrA);
-  const b = parseCidr(cidrB);
-  return a.networkLong <= b.broadcastLong && b.networkLong <= a.broadcastLong;
-}
-
-/**
- * Subtract a child CIDR from a parent CIDR, returning the remainder
- * as the fewest possible CIDR blocks (optimal consolidation).
- *
- * Algorithm: Walk the binary tree of address space. At each level,
- * the half NOT containing the child is a remainder block, and the
- * half containing the child is split again recursively.
- * Produces exactly (childPrefix - parentPrefix) remainder blocks.
- *
- * @param {string} parentCidr - e.g. "172.16.0.0/12"
- * @param {string} childCidr  - e.g. "172.16.0.0/24"
- * @returns {string[]} Array of CIDR strings representing the remainder
- */
-export function subtractCidr(parentCidr, childCidr) {
-  const parent = parseCidr(parentCidr);
-  const child = parseCidr(childCidr);
-
-  if (child.networkLong < parent.networkLong || child.broadcastLong > parent.broadcastLong) {
-    throw new Error('Child CIDR is not within parent CIDR');
-  }
-  if (child.prefix <= parent.prefix) {
-    throw new Error('Child prefix must be longer than parent prefix');
-  }
-
-  const remainder = [];
-  let currentNet = parent.networkLong;
-  let currentPrefix = parent.prefix;
-
-  while (currentPrefix < child.prefix) {
-    const nextPrefix = currentPrefix + 1;
-    const halfSize = 1 << (32 - nextPrefix);
-    const midpoint = (currentNet + halfSize) >>> 0;
-
-    if (child.networkLong >= midpoint) {
-      // Child is in the upper half; lower half is remainder
-      remainder.push(`${longToIp(currentNet)}/${nextPrefix}`);
-      currentNet = midpoint;
-    } else {
-      // Child is in the lower half; upper half is remainder
-      remainder.push(`${longToIp(midpoint)}/${nextPrefix}`);
-    }
-    currentPrefix = nextPrefix;
-  }
-
-  return remainder;
 }
 
 // Domain name validation. Shared by dns.js, dhcp.js, subnets.js, blocklists.js,
@@ -384,6 +193,7 @@ export function subtractCidr(parentCidr, childCidr) {
 // storage side normalizes (migration 052_normalize_dns_names), so rejecting
 // 'Evil.COM' would be enforcing the wrong thing at the wrong layer.
 const DOMAIN_LABEL_RE = /^[a-zA-Z0-9]([a-zA-Z0-9-]*[a-zA-Z0-9])?$/;
+
 const IPV4_LITERAL_RE = /^\d{1,3}(\.\d{1,3}){3}$/;
 
 export function isValidDomain(name) {
@@ -391,7 +201,7 @@ export function isValidDomain(name) {
   // A dotted-quad is an address, not a name, whatever field it arrived in.
   if (IPV4_LITERAL_RE.test(name)) return false;
   const labels = name.split('.');
-  return labels.every(l => l.length > 0 && l.length <= 63 && DOMAIN_LABEL_RE.test(l));
+  return labels.every((l) => l.length > 0 && l.length <= 63 && DOMAIN_LABEL_RE.test(l));
 }
 
 /**

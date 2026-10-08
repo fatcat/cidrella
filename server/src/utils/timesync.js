@@ -24,7 +24,7 @@ export function getNtpStatus() {
     const out = execFileSync(
       'timedatectl',
       ['show', '-p', 'NTP', '-p', 'NTPSynchronized', '--value'],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] }
+      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] },
     );
     const [ntp = '', sync = ''] = out.split('\n');
     return {
@@ -43,7 +43,9 @@ export function getNtpStatus() {
 export function ensureNtpEnabled() {
   const status = getNtpStatus();
   if (!status.available) {
-    console.warn('[timesync] timedatectl unavailable, skipping NTP enable (Docker / non-systemd host?)');
+    console.warn(
+      '[timesync] timedatectl unavailable, skipping NTP enable (Docker / non-systemd host?)',
+    );
     return false;
   }
   if (status.ntpEnabled) return true;
@@ -79,7 +81,10 @@ export function armDnssecTimecheckWhenSynced(opts = {}) {
 
   let attempts = 0;
   let resolved = false;
-  const finish = () => { resolved = true; disarm(); };
+  const finish = () => {
+    resolved = true;
+    disarm();
+  };
 
   const check = () => {
     if (resolved) return;
@@ -90,14 +95,18 @@ export function armDnssecTimecheckWhenSynced(opts = {}) {
     if (synchronized) {
       try {
         signalDnsmasq();
-        console.log('[timesync] Clock synchronized, signaled dnsmasq to enforce DNSSEC signature timestamps');
+        console.log(
+          '[timesync] Clock synchronized, signaled dnsmasq to enforce DNSSEC signature timestamps',
+        );
       } catch (err) {
         console.warn('[timesync] Failed to signal dnsmasq after NTP sync:', err?.message || err);
       }
       return finish();
     }
     if (attempts >= maxAttempts) {
-      console.warn('[timesync] Gave up waiting for NTP sync, dnsmasq stays lenient on DNSSEC timestamps');
+      console.warn(
+        '[timesync] Gave up waiting for NTP sync, dnsmasq stays lenient on DNSSEC timestamps',
+      );
       return finish();
     }
   };

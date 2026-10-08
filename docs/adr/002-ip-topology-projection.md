@@ -15,7 +15,9 @@ of topology identity. The canonical IP aggregate projects the IPv4 network and
 broadcast addresses and IPv6 subnet-router anycast as protected `system`
 allocations, and router addresses as protected `gateway` allocations.
 
-IPv4 broadcast protection applies only to IPv4. IPv6 gateway authority comes
+IPv4 broadcast protection applies only to IPv4. The IPv6 subnet-router anycast
+address is the network address of the prefix; no Broadcast range or row exists
+for IPv6. IPv6 gateway authority comes
 from explicit configuration or trusted Router Advertisement data, never from
 DHCPv6. Link-local IPv6 identity includes interface context.
 

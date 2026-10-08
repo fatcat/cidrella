@@ -40,12 +40,12 @@ defineProps({
   min-height: 240px;
   padding: 32px 16px;
   text-align: center;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 auto;
 }
 .empty-state-icon {
   font-size: 48px;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   opacity: 0.65;
   margin-bottom: 8px;
 }
@@ -53,12 +53,12 @@ defineProps({
   margin: 0;
   font-size: var(--app-fs-lg);
   font-weight: 600;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .empty-state-description {
   margin: 0;
   font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   max-width: 360px;
   line-height: 1.5;
 }

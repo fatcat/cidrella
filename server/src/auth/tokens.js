@@ -64,13 +64,17 @@ function isExpired(row, now) {
  * Returns { user } on success, or { error } with a reason safe to return.
  */
 export function resolveApiToken(db, token) {
-  const row = db.prepare(`
+  const row = db
+    .prepare(
+      `
     SELECT t.id, t.user_id, t.expires_at, t.revoked_at, t.last_used_at,
            u.username, u.role, u.kind
     FROM api_tokens t
     JOIN users u ON u.id = t.user_id
     WHERE t.token_hash = ?
-  `).get(hashToken(token));
+  `,
+    )
+    .get(hashToken(token));
 
   if (!row) return { error: 'Invalid token' };
   if (row.revoked_at) return { error: 'Token revoked' };
@@ -78,7 +82,10 @@ export function resolveApiToken(db, token) {
   const now = Date.now();
   if (isExpired(row, now)) return { error: 'Token expired' };
 
-  if (!row.last_used_at || now - new Date(row.last_used_at + 'Z').getTime() > LAST_USED_THROTTLE_MS) {
+  if (
+    !row.last_used_at ||
+    now - new Date(row.last_used_at + 'Z').getTime() > LAST_USED_THROTTLE_MS
+  ) {
     db.prepare("UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?").run(row.id);
   }
 
@@ -90,7 +97,7 @@ export function resolveApiToken(db, token) {
       kind: row.kind,
       token_id: row.id,
       // A service account has no password, so this gate never applies to it.
-      must_change_password: false
-    }
+      must_change_password: false,
+    },
   };
 }

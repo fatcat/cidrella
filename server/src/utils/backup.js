@@ -1,6 +1,11 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
+import Database from 'better-sqlite3';
+import { insertAuditRow } from '../models/audit-log.js';
+import { upsertSettingWithConflict, deleteSetting } from '../models/setting.js';
+import * as User from '../models/user.js';
+import * as BackupCode from '../models/backup-code.js';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { DATA_DIR } from '../config/defaults.js';
 import { APP_VERSION } from './version.js';
@@ -28,10 +33,7 @@ const RUNTIME_ARTIFACT_EXCLUDES = [
 // in case a future tar changes glob semantics. Appended to the base list in
 // archive-producing paths (create + restore); the snapshot path doesn't need
 // these because the globs above fully cover DATA_DIR/dnsmasq/.
-const DEFENSIVE_EXCLUDES = [
-  '--exclude=dnsmasq.log',
-  '--exclude=dnsmasq.pid',
-];
+const DEFENSIVE_EXCLUDES = ['--exclude=dnsmasq.log', '--exclude=dnsmasq.pid'];
 function isRuntimeArtifact(name) {
   return /\.log(\.|-|$)/i.test(name) || /\.pid$/i.test(name);
 }
@@ -46,7 +48,14 @@ export function createBackup(db) {
   db.pragma('wal_checkpoint(TRUNCATE)');
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
-  const filename = `cidrella-backup-${timestamp}.tar.gz`;
+  // Two backups in one second (a scheduled one and a click, a double click)
+  // would share the name: tar overwrote the first archive, then the insert
+  // below failed on the unique filename. The later one takes a suffix.
+  let filename = `cidrella-backup-${timestamp}.tar.gz`;
+  const taken = (name) =>
+    fs.existsSync(path.join(BACKUP_DIR, name)) ||
+    db.prepare('SELECT 1 FROM backups WHERE filename = ?').get(name);
+  for (let n = 2; taken(filename); n += 1) filename = `cidrella-backup-${timestamp}-${n}.tar.gz`;
   const archivePath = path.join(BACKUP_DIR, filename);
 
   // Write a manifest so restore can verify compatibility.
@@ -112,23 +121,30 @@ export function createBackup(db) {
     // backup. The archive bytes captured are still self-consistent (tar
     // archives what it read), so exit 1 is treated as a soft warning.
     // Exit 2+ is still fatal (real tar failure).
-    const result = spawnSync('tar', [
-      // Strip runtime artifacts, see RUNTIME_ARTIFACT_EXCLUDES at the top
-      // of this file.
-      ...RUNTIME_ARTIFACT_EXCLUDES,
-      ...DEFENSIVE_EXCLUDES,
-      '--warning=no-file-changed',
-      // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
-      // POSIX keyletter form doesn't coexist with long --exclude options
-      // in GNU tar 1.35, it errors with "You must specify one of the
-      // '-Acdtrux'..." and produces no archive. This silently crippled
-      // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
-      // anyway because tar never got the action flag).
-      '-czf', archivePath, MANIFEST_NAME, ...includes,
-    ], {
-      cwd: DATA_DIR,
-      timeout: 60000,
-    });
+    const result = spawnSync(
+      'tar',
+      [
+        // Strip runtime artifacts, see RUNTIME_ARTIFACT_EXCLUDES at the top
+        // of this file.
+        ...RUNTIME_ARTIFACT_EXCLUDES,
+        ...DEFENSIVE_EXCLUDES,
+        '--warning=no-file-changed',
+        // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
+        // POSIX keyletter form doesn't coexist with long --exclude options
+        // in GNU tar 1.35, it errors with "You must specify one of the
+        // '-Acdtrux'..." and produces no archive. This silently crippled
+        // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
+        // anyway because tar never got the action flag).
+        '-czf',
+        archivePath,
+        MANIFEST_NAME,
+        ...includes,
+      ],
+      {
+        cwd: DATA_DIR,
+        timeout: 60000,
+      },
+    );
     if (result.error) throw result.error;
     if (result.status === null) {
       throw new Error('tar timed out while creating backup');
@@ -140,16 +156,22 @@ export function createBackup(db) {
     // status 0 = clean. status 1 = at least one file changed mid-read
     // (typically dnsmasq.leases); archive is still valid, log + continue.
     if (result.status === 1) {
-      console.warn('[backup] tar exited 1 (file changed during archive, expected for dnsmasq.leases); archive is valid');
+      console.warn(
+        '[backup] tar exited 1 (file changed during archive, expected for dnsmasq.leases); archive is valid',
+      );
     }
   } finally {
-    try { fs.unlinkSync(manifestPath); } catch { /* ignore */ }
+    try {
+      fs.unlinkSync(manifestPath);
+    } catch {
+      /* ignore */
+    }
   }
 
   const stat = fs.statSync(archivePath);
-  const result = db.prepare(
-    'INSERT INTO backups (filename, size_bytes) VALUES (?, ?)'
-  ).run(filename, stat.size);
+  const result = db
+    .prepare('INSERT INTO backups (filename, size_bytes) VALUES (?, ?)')
+    .run(filename, stat.size);
 
   // Enforce retention
   enforceRetention(db);
@@ -197,11 +219,14 @@ function readBackupManifest(archivePath) {
 // runs after the listing pass. Timeout scales with size so large legitimate
 // backups aren't rejected; entry-count buffer is sized for ~500 k entries
 // of typical verbose-listing length.
-const MAX_ARCHIVE_GZIP_BYTES = 2 * 1024 * 1024 * 1024;  // 2 GiB on-disk cap
-const MAX_LISTING_BUFFER_BYTES = 64 * 1024 * 1024;       // 64 MiB of tar output
+const MAX_ARCHIVE_GZIP_BYTES = 2 * 1024 * 1024 * 1024; // 2 GiB on-disk cap
+const MAX_LISTING_BUFFER_BYTES = 64 * 1024 * 1024; // 64 MiB of tar output
 function tarListingTimeoutMs(archiveBytes) {
   // 10 s floor, +10 s per 200 MiB gzipped. Caps at 10 min to bound worst case.
-  return Math.min(10 * 60 * 1000, Math.max(10_000, Math.ceil(archiveBytes / (200 * 1024 * 1024)) * 10_000));
+  return Math.min(
+    10 * 60 * 1000,
+    Math.max(10_000, Math.ceil(archiveBytes / (200 * 1024 * 1024)) * 10_000),
+  );
 }
 
 function parseTarVerboseLine(line) {
@@ -274,7 +299,9 @@ function validateStagedTree(root) {
     if (stat.isDirectory()) {
       validateStagedTree(fullPath);
     } else if (!stat.isFile()) {
-      throw new Error(`Invalid archive: staged entry is not a regular file: ${path.relative(root, fullPath)}`);
+      throw new Error(
+        `Invalid archive: staged entry is not a regular file: ${path.relative(root, fullPath)}`,
+      );
     }
   }
 }
@@ -296,8 +323,8 @@ export function analyzeArchive(archivePath) {
   if (archiveBytes > MAX_ARCHIVE_GZIP_BYTES) {
     const err = new Error(
       `Archive is ${(archiveBytes / (1024 * 1024 * 1024)).toFixed(1)} GiB on disk, ` +
-      `larger than the ${(MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024))} GiB cap. ` +
-      `Refusing to analyze. A legitimate CIDRella backup is never this large.`
+        `larger than the ${MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024)} GiB cap. ` +
+        `Refusing to analyze. A legitimate CIDRella backup is never this large.`,
     );
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
@@ -349,7 +376,7 @@ export function inspectBackup(archivePath) {
   if (archiveBytes > MAX_ARCHIVE_GZIP_BYTES) {
     const err = new Error(
       `Backup is ${(archiveBytes / (1024 * 1024 * 1024)).toFixed(1)} GiB on disk; ` +
-      `refusing to process (cap ${MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024)} GiB).`
+        `refusing to process (cap ${MAX_ARCHIVE_GZIP_BYTES / (1024 * 1024 * 1024)} GiB).`,
     );
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
@@ -358,7 +385,13 @@ export function inspectBackup(archivePath) {
   const entries = listTarEntries(archivePath, archiveBytes);
   assertSafeTarEntries(entries);
   const analysis = analyzeTarEntries(entries);
-  const hasDatabase = entries.some(e => e.name === 'cidrella.db' || e.name === './cidrella.db' || e.name === 'ipam.db' || e.name === './ipam.db');
+  const hasDatabase = entries.some(
+    (e) =>
+      e.name === 'cidrella.db' ||
+      e.name === './cidrella.db' ||
+      e.name === 'ipam.db' ||
+      e.name === './ipam.db',
+  );
   if (!hasDatabase) {
     throw new Error('Invalid backup: missing database file');
   }
@@ -374,7 +407,8 @@ export function inspectBackup(archivePath) {
       manifest: null,
       compatible: true,
       analysis,
-      warning: 'Legacy backup without manifest, so the version cannot be verified. Proceed with caution.',
+      warning:
+        'Legacy backup without manifest, so the version cannot be verified. Proceed with caution.',
     };
   }
 
@@ -420,19 +454,27 @@ function takePreRestoreSnapshot(db) {
       const parent = path.dirname(PRE_RESTORE_DIR);
       throw new Error(
         `Cannot create pre-restore snapshot at ${PRE_RESTORE_DIR}: ${err.code}. ` +
-        `The snapshots/ directory is not writable by the cidrella service user. ` +
-        `Fix on the host: sudo chown -R cidrella:cidrella ${parent} && sudo systemctl restart cidrella`
+          `The snapshots/ directory is not writable by the cidrella service user. ` +
+          `Fix on the host: sudo chown -R cidrella:cidrella ${parent} && sudo systemctl restart cidrella`,
       );
     }
     throw err;
   }
 
   // Checkpoint WAL so cidrella.db is fully current
-  try { db.pragma('wal_checkpoint(TRUNCATE)'); } catch { /* ignore */ }
+  try {
+    db.pragma('wal_checkpoint(TRUNCATE)');
+  } catch {
+    /* ignore */
+  }
 
   // Clear anything from a previous pre-restore and start fresh
   for (const f of fs.readdirSync(PRE_RESTORE_DIR)) {
-    try { fs.rmSync(path.join(PRE_RESTORE_DIR, f), { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(path.join(PRE_RESTORE_DIR, f), { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
   }
 
   const dbFile = path.join(DATA_DIR, 'cidrella.db');
@@ -467,17 +509,24 @@ function takePreRestoreSnapshot(db) {
     // between the two tars, no shell, no shell-injection surface.
     const reader = spawnSync('tar', [
       ...RUNTIME_ARTIFACT_EXCLUDES,
-      '-cf', '-',
-      '-C', DATA_DIR, sub,
+      '-cf',
+      '-',
+      '-C',
+      DATA_DIR,
+      sub,
     ]);
     if (reader.status !== 0) {
-      throw new Error(`Pre-restore snapshot failed reading ${sub}: ${reader.stderr?.toString() || 'tar exit ' + reader.status}`);
+      throw new Error(
+        `Pre-restore snapshot failed reading ${sub}: ${reader.stderr?.toString() || 'tar exit ' + reader.status}`,
+      );
     }
     const writer = spawnSync('tar', ['-xf', '-', '-C', PRE_RESTORE_DIR], {
       input: reader.stdout,
     });
     if (writer.status !== 0) {
-      throw new Error(`Pre-restore snapshot failed writing ${sub}: ${writer.stderr?.toString() || 'tar exit ' + writer.status}`);
+      throw new Error(
+        `Pre-restore snapshot failed writing ${sub}: ${writer.stderr?.toString() || 'tar exit ' + writer.status}`,
+      );
     }
   }
 
@@ -503,7 +552,98 @@ function takePreRestoreSnapshot(db) {
  * running server's open file descriptors would point at orphaned inodes
  * and any writes it made before restart would be silently lost.
  */
-export function restoreBackup(archivePath, { allowIncompatible = false, inspection: preInspection = null } = {}) {
+/**
+ * Write the operator's restore-time choices, and a record of the restore
+ * itself, into the staged database before it is swapped into DATA_DIR.
+ *
+ * The DHCP choice is honored on the first boot after the restore. Restoring
+ * another appliance's backup onto this box would otherwise bring up a second
+ * DHCP server on the same LAN with the original's pools.
+ *
+ * The audit row goes here because the running database's audit log is about
+ * to be replaced: a row written there survives only in the pre-restore
+ * snapshot. Writing it into the staged file is the one way the restored
+ * appliance can show "restored from backup X by Y, DHCP off" in its own
+ * audit log. The row is attributed by username, looked up in the restored
+ * users table, since the running database's user ids mean nothing there.
+ *
+ * `settings(key PRIMARY KEY, value)` and `audit_log` have existed since
+ * migration 001, so the writes are valid for any backup the compatibility
+ * check admits, whatever schema it is at. Throws with code
+ * RESTORE_DHCP_CHOICE_FAILED; the caller aborts before touching DATA_DIR.
+ *
+ * Returns true when anything was written.
+ */
+export const RESTORE_CARRYOVER_KEY = 'restore_carryover';
+
+export function stampRestoredSettings(
+  stagedDbPath,
+  { dhcpEnabled = null, restoredBy = null, manifest = null, carryover = null } = {},
+) {
+  const hasChoice = dhcpEnabled !== null && dhcpEnabled !== undefined;
+  if (!hasChoice && !restoredBy && !carryover) return false;
+  let staged;
+  try {
+    staged = new Database(stagedDbPath);
+    const stamp = staged.transaction(() => {
+      if (hasChoice) {
+        upsertSettingWithConflict(staged, 'dhcp_enabled', dhcpEnabled ? 'true' : 'false');
+      }
+      // Things the restoring operator just set up that the backup cannot
+      // know about, parked as a setting because the backup's schema may
+      // predate the columns they belong in. The first boot after the restore
+      // applies them once migrations have run (applyRestoreCarryover).
+      if (carryover) {
+        upsertSettingWithConflict(staged, RESTORE_CARRYOVER_KEY, JSON.stringify(carryover));
+      }
+      if (restoredBy) {
+        const user = restoredBy.username
+          ? staged.prepare('SELECT id FROM users WHERE username = ?').get(restoredBy.username)
+          : null;
+        insertAuditRow(staged, {
+          userId: user?.id ?? null,
+          action: 'restore',
+          entityType: 'backup',
+          details: {
+            restored_by: restoredBy.username || null,
+            backup_version: manifest?.cidrella_version ?? null,
+            backup_schema_version: manifest?.schema_version ?? null,
+            backup_created_at: manifest?.created_at ?? null,
+            dhcp_after_restore: hasChoice ? dhcpEnabled : null,
+            totp_carried_over: !!carryover?.totp,
+          },
+        });
+      }
+    });
+    stamp();
+    return true;
+  } catch (cause) {
+    const err = new Error(
+      `Restore refused: could not record the restore in the restored database (${cause.message}). ` +
+        `${DATA_DIR} was NOT modified. Service continues running.`,
+    );
+    err.code = 'RESTORE_DHCP_CHOICE_FAILED';
+    err.cause = cause;
+    throw err;
+  } finally {
+    try {
+      staged?.close();
+    } catch {
+      /* ignore */
+    }
+  }
+}
+
+export function restoreBackup(
+  archivePath,
+  {
+    allowIncompatible = false,
+    inspection: preInspection = null,
+    dhcpAfterRestore = null,
+    restoredBy = null,
+    carryover = null,
+  } = {},
+) {
   // 1. Compatibility check. Reuse the caller's inspection if they already
   //    ran one (e.g., the API route inspects to audit before the restore);
   //    otherwise inspect here. Avoids a second tar parse for large backups.
@@ -537,15 +677,17 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   try {
     const stat = fs.statfsSync(stagingRoot);
     stagingFree = stat.bavail * stat.bsize;
-  } catch { /* statfs unsupported, skip the check */ }
+  } catch {
+    /* statfs unsupported, skip the check */
+  }
   const SAFETY_MARGIN = 512 * 1024 * 1024; // 512 MB headroom
   if (analysis.effectiveBytes + SAFETY_MARGIN > stagingFree) {
     const needMiB = Math.ceil(analysis.effectiveBytes / (1024 * 1024));
     const freeMiB = Math.floor(stagingFree / (1024 * 1024));
     const err = new Error(
       `Restore refused: backup would need ${needMiB} MiB of staging space under ${stagingRoot} ` +
-      `but only ${freeMiB} MiB is free (512 MiB safety margin required). ` +
-      `Free disk space or resize the host before retrying.`
+        `but only ${freeMiB} MiB is free (512 MiB safety margin required). ` +
+        `Free disk space or resize the host before retrying.`,
     );
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
@@ -569,7 +711,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   const stagingDir = fs.mkdtempSync(path.join(DATA_DIR, '.restore-staging-'));
   const tarTimeout = Math.min(
     30 * 60 * 1000,
-    Math.max(60000, Math.ceil(analysis.effectiveBytes / (100 * 1024 * 1024)) * 30000)
+    Math.max(60000, Math.ceil(analysis.effectiveBytes / (100 * 1024 * 1024)) * 30000),
   );
 
   // Extract into staging. A failure here (corrupt archive, timeout, disk
@@ -577,23 +719,34 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   // still healthy. Clean up the staging dir and surface a 500 via the
   // normal error path; do NOT process.exit() for this class of failure.
   try {
-    execFileSync('tar', [
-      ...RUNTIME_ARTIFACT_EXCLUDES,
-      ...DEFENSIVE_EXCLUDES,
-      '--no-same-owner',
-      '--no-same-permissions',
-      // Use '-xzf' (with dash), not bare 'xzf'. See create-side comment
-      // for why, same GNU tar parsing quirk applies here.
-      '-xzf', archivePath, '-C', stagingDir,
-    ], {
-      stdio: 'pipe',
-      timeout: tarTimeout,
-    });
+    execFileSync(
+      'tar',
+      [
+        ...RUNTIME_ARTIFACT_EXCLUDES,
+        ...DEFENSIVE_EXCLUDES,
+        '--no-same-owner',
+        '--no-same-permissions',
+        // Use '-xzf' (with dash), not bare 'xzf'. See create-side comment
+        // for why, same GNU tar parsing quirk applies here.
+        '-xzf',
+        archivePath,
+        '-C',
+        stagingDir,
+      ],
+      {
+        stdio: 'pipe',
+        timeout: tarTimeout,
+      },
+    );
   } catch (extractErr) {
-    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
     const wrapped = new Error(
       `Restore extraction failed: ${extractErr.message}. ` +
-      `No changes were applied to ${DATA_DIR}. Service continues running.`
+        `No changes were applied to ${DATA_DIR}. Service continues running.`,
     );
     wrapped.cause = extractErr;
     throw wrapped;
@@ -602,7 +755,11 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   try {
     validateStagedTree(stagingDir);
   } catch (stagedErr) {
-    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
     throw stagedErr;
   }
 
@@ -630,14 +787,53 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     const magic = Buffer.alloc(16);
     const fd = fs.openSync(stagedDb, 'r');
     let readLen;
-    try { readLen = fs.readSync(fd, magic, 0, 16, 0); } finally { try { fs.closeSync(fd); } catch { /* ignore */ } }
+    try {
+      readLen = fs.readSync(fd, magic, 0, 16, 0);
+    } finally {
+      try {
+        fs.closeSync(fd);
+      } catch {
+        /* ignore */
+      }
+    }
     if (readLen !== 16 || magic.toString('utf-8') !== 'SQLite format 3\x00') {
-      try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+      try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
       const err = new Error(
         `Invalid backup: staged cidrella.db is not a SQLite 3 database (magic bytes mismatch). ` +
-        `${DATA_DIR} was NOT modified. Service continues running.`
+          `${DATA_DIR} was NOT modified. Service continues running.`,
       );
       err.code = 'INVALID_DATABASE_FILE';
+      throw err;
+    }
+
+    // 3b. The operator's DHCP choice and the restore's own audit row go into
+    //     the staged database now, while a failure still leaves DATA_DIR
+    //     untouched.
+    try {
+      stampRestoredSettings(stagedDb, {
+        dhcpEnabled: dhcpAfterRestore,
+        restoredBy,
+        manifest: inspection.manifest,
+        carryover,
+      });
+      if (carryover?.totp) {
+        console.log(`Restore: two-factor enrolment for ${carryover.totp.username} will carry over`);
+      }
+      if (dhcpAfterRestore !== null) {
+        console.log(
+          `Restore: DHCP will be ${dhcpAfterRestore ? 'enabled' : 'disabled'} after the restart`,
+        );
+      }
+    } catch (err) {
+      try {
+        fs.rmSync(stagingDir, { recursive: true, force: true });
+      } catch {
+        /* ignore */
+      }
       throw err;
     }
   }
@@ -658,7 +854,7 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
   //    narrow: only failures during the actual file swap trigger the exit,
   //    not the extract-side failures handled above.
   try {
-    const stagedItems = fs.readdirSync(stagingDir).filter(name => name !== MANIFEST_NAME);
+    const stagedItems = fs.readdirSync(stagingDir).filter((name) => name !== MANIFEST_NAME);
 
     // If we just restored a cidrella.db from a legacy backup, remove any
     // pre-existing ipam.db on disk so there's no confusing leftover state.
@@ -697,20 +893,38 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     // Something went wrong mid-swap. DATA_DIR is partially restored. Force
     // an exit so systemd restarts us cleanly. The admin can recover from
     // /var/lib/cidrella/snapshots/pre-restore/.
-    try { db.close(); } catch { /* ignore */ }
-    try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
+    try {
+      db.close();
+    } catch {
+      /* ignore */
+    }
+    try {
+      fs.rmSync(stagingDir, { recursive: true, force: true });
+    } catch {
+      /* ignore */
+    }
     setTimeout(() => {
       console.error('Restore failed mid-swap, exiting for restart', copyErr?.message);
       process.exit(1);
     }, 500);
-    const wrapped = new Error(`Restore failed during file swap: ${copyErr.message}. Service will restart. Recover from /var/lib/cidrella/snapshots/pre-restore/ if needed.`);
+    const wrapped = new Error(
+      `Restore failed during file swap: ${copyErr.message}. Service will restart. Recover from /var/lib/cidrella/snapshots/pre-restore/ if needed.`,
+    );
     wrapped.cause = copyErr;
     throw wrapped;
   }
 
   // Happy path: clean up staging, close the DB handle, schedule exit.
-  try { fs.rmSync(stagingDir, { recursive: true, force: true }); } catch { /* ignore */ }
-  try { db.close(); } catch { /* ignore */ }
+  try {
+    fs.rmSync(stagingDir, { recursive: true, force: true });
+  } catch {
+    /* ignore */
+  }
+  try {
+    db.close();
+  } catch {
+    /* ignore */
+  }
 
   // 5. Schedule process exit. systemd Restart=always will bring us back.
   //    We exit with code 0 after a short delay so the HTTP response can
@@ -720,19 +934,55 @@ export function restoreBackup(archivePath, { allowIncompatible = false, inspecti
     process.exit(0);
   }, 500);
 
+  const dhcpNote =
+    dhcpAfterRestore === null
+      ? ''
+      : dhcpAfterRestore
+        ? ' DHCP will serve.'
+        : ' DHCP will be off until you enable it under Settings > General > Interfaces.';
   return {
     ok: true,
-    message: 'Backup restored. Service is restarting...',
+    message: `Backup restored. Service is restarting...${dhcpNote}`,
     manifest: inspection.manifest,
     warning: inspection.warning,
     pre_restore_snapshot: PRE_RESTORE_DIR,
+    dhcp_after_restore: dhcpAfterRestore,
   };
 }
 
 /**
  * List all backups, verifying files exist on disk
  */
+// The backups table travels inside every backup, so a restore brings back
+// the list as it was when that backup was taken: the backup just restored,
+// and every one taken after it, are on disk but not in the table. Unlisted,
+// they could be neither downloaded nor deleted, and retention never counted
+// them. Take up any archive the table does not know, dated by its file.
+const ARCHIVE_NAME = /^cidrella-backup-.+\.tar\.gz$/;
+function adoptUnlistedArchives(db) {
+  if (!fs.existsSync(BACKUP_DIR)) return 0;
+  const known = new Set(
+    db
+      .prepare('SELECT filename FROM backups')
+      .all()
+      .map((row) => row.filename),
+  );
+  const insert = db.prepare(
+    'INSERT OR IGNORE INTO backups (filename, size_bytes, created_at) VALUES (?, ?, ?)',
+  );
+  let adopted = 0;
+  for (const name of fs.readdirSync(BACKUP_DIR)) {
+    if (!ARCHIVE_NAME.test(name) || known.has(name)) continue;
+    const stat = fs.statSync(path.join(BACKUP_DIR, name));
+    if (!stat.isFile()) continue;
+    const createdAt = stat.mtime.toISOString().slice(0, 19).replace('T', ' ');
+    adopted += insert.run(name, stat.size, createdAt).changes;
+  }
+  return adopted;
+}
+
 export function listBackups(db) {
+  adoptUnlistedArchives(db);
   const rows = db.prepare('SELECT * FROM backups ORDER BY created_at DESC').all();
   const result = [];
 
@@ -769,7 +1019,12 @@ export function deleteBackup(db, id) {
  * Enforce backup retention limit
  */
 function enforceRetention(db) {
-  const maxCount = parseInt(getSetting('backup_retention_count') || '7', 10);
+  // The database the backup was taken from, not whichever getDb() holds.
+  const setting = db
+    .prepare("SELECT value FROM settings WHERE key = 'backup_retention_count'")
+    .get()?.value;
+  const maxCount = parseInt(setting || '7', 10);
+  adoptUnlistedArchives(db);
 
   const backups = db.prepare('SELECT * FROM backups ORDER BY created_at DESC').all();
   if (backups.length <= maxCount) return;
@@ -816,7 +1071,9 @@ export function sweepStaleRestoreArtifacts() {
         if (now - stat.mtimeMs < MAX_AGE_MS) continue;
         fs.rmSync(fullPath, { recursive: true, force: true });
         swept++;
-      } catch { /* ignore, next boot will retry */ }
+      } catch {
+        /* ignore, next boot will retry */
+      }
     }
   }
   return swept;
@@ -840,33 +1097,106 @@ export function startBackupScheduler() {
   const INTERVAL_MAP = {
     daily: 24 * 60 * 60 * 1000,
     weekly: 7 * 24 * 60 * 60 * 1000,
-    monthly: 30 * 24 * 60 * 60 * 1000
+    monthly: 30 * 24 * 60 * 60 * 1000,
   };
 
   // Check every 15 minutes if a backup is due
-  return setInterval(() => {
-    try {
-      const db = getDb();
-      const scheduleValue = getSetting('backup_schedule');
-      if (!scheduleValue || scheduleValue === 'off') return;
+  return setInterval(
+    () => {
+      try {
+        const db = getDb();
+        const scheduleValue = getSetting('backup_schedule');
+        if (!scheduleValue || scheduleValue === 'off') return;
 
-      const interval = INTERVAL_MAP[scheduleValue];
-      if (!interval) return;
+        const interval = INTERVAL_MAP[scheduleValue];
+        if (!interval) return;
 
-      const lastRunValue = getSetting('backup_last_run');
-      const lastRunTime = lastRunValue ? new Date(lastRunValue).getTime() : 0;
-      const now = Date.now();
+        const lastRunValue = getSetting('backup_last_run');
+        const lastRunTime = lastRunValue ? new Date(lastRunValue).getTime() : 0;
+        const now = Date.now();
 
-      if (now - lastRunTime >= interval) {
-        console.log(`Scheduled backup (${scheduleValue})...`);
-        createBackup(db);
+        if (now - lastRunTime >= interval) {
+          console.log(`Scheduled backup (${scheduleValue})...`);
+          createBackup(db);
 
-        // Update last run time
-        setSetting('backup_last_run', new Date().toISOString());
-        console.log('Scheduled backup completed');
+          // Update last run time
+          setSetting('backup_last_run', new Date().toISOString());
+          console.log('Scheduled backup completed');
+        }
+      } catch (err) {
+        console.error('Scheduled backup failed:', err.message);
       }
-    } catch (err) {
-      console.error('Scheduled backup failed:', err.message);
+    },
+    15 * 60 * 1000,
+  );
+}
+
+/**
+ * What the restoring operator would lose to the backup and should not: today,
+ * their own two-factor enrolment. The backup's users win on everything else
+ * (that is what a restore is), but the person doing the restore is the one
+ * who signs in next, and an enrolment they made minutes ago must not vanish.
+ * Returns null when there is nothing to carry.
+ */
+export function collectRestoreCarryover(db, userId) {
+  const user = db
+    .prepare('SELECT username, totp_secret, totp_enabled, totp_last_step FROM users WHERE id = ?')
+    .get(userId);
+  if (!user?.totp_enabled || !user.totp_secret) return null;
+  const codes = db
+    .prepare('SELECT code_hash FROM user_backup_codes WHERE user_id = ? AND used_at IS NULL')
+    .all(userId)
+    .map((r) => r.code_hash);
+  return {
+    totp: {
+      username: user.username,
+      secret: user.totp_secret,
+      last_step: user.totp_last_step ?? null,
+      backup_code_hashes: codes,
+    },
+  };
+}
+
+/**
+ * First boot after a restore: apply what stampRestoredSettings parked, once
+ * migrations have given the restored database the columns. Keyed by username;
+ * an account that already has two-factor on in the backup keeps its own.
+ * The parked setting is removed either way so this runs once.
+ */
+export function applyRestoreCarryover(db) {
+  const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(RESTORE_CARRYOVER_KEY);
+  if (!row) return null;
+  let parked = null;
+  try {
+    parked = JSON.parse(row.value);
+  } catch {
+    parked = null;
+  }
+  const outcome = { totp: 'none' };
+  const apply = db.transaction(() => {
+    const totp = parked?.totp;
+    if (totp?.username && totp.secret) {
+      const user = db
+        .prepare('SELECT id, totp_enabled FROM users WHERE username = ?')
+        .get(totp.username);
+      if (!user) outcome.totp = 'no_such_user';
+      else if (user.totp_enabled) outcome.totp = 'already_enabled';
+      else {
+        User.restoreTotp(db, user.id, { secret: totp.secret, lastStep: totp.last_step ?? null });
+        BackupCode.replaceBackupCodes(db, user.id, totp.backup_code_hashes || []);
+        insertAuditRow(db, {
+          userId: user.id,
+          action: 'totp_carried_over',
+          entityType: 'user',
+          entityId: user.id,
+          details: { backup_codes: (totp.backup_code_hashes || []).length },
+        });
+        outcome.totp = 'applied';
+      }
     }
-  }, 15 * 60 * 1000);
+    deleteSetting(db, RESTORE_CARRYOVER_KEY);
+  });
+  apply();
+  console.log(`Restore carry-over: two-factor ${outcome.totp}`);
+  return outcome;
 }

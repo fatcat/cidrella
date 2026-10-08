@@ -108,8 +108,10 @@ function parseYamlBlock(yamlText, lineOffset) {
     const key = m[1];
     let value = m[2];
     // Strip optional quotes
-    if ((value.startsWith('"') && value.endsWith('"')) ||
-        (value.startsWith("'") && value.endsWith("'"))) {
+    if (
+      (value.startsWith('"') && value.endsWith('"')) ||
+      (value.startsWith("'") && value.endsWith("'"))
+    ) {
       value = value.slice(1, -1);
     }
     // Coerce booleans
@@ -206,7 +208,7 @@ function parseReleaseNotes(source) {
         // End of YAML block, parse it
         const { result: parsed, errors: yamlErrors } = parseYamlBlock(
           yamlBuffer.join('\n'),
-          yamlStartLine
+          yamlStartLine,
         );
         for (const e of yamlErrors) {
           errors.push({
@@ -257,7 +259,10 @@ function parseReleaseNotes(source) {
 function lint(releases, errors, _warnings) {
   const issues = [...errors];
   if (releases.length === 0) {
-    issues.push({ message: 'No release sections found in RELEASE-NOTES.md. Check header format: `## vX.Y.Z — YYYY-MM-DD` (with em-dash).' });
+    issues.push({
+      message:
+        'No release sections found in RELEASE-NOTES.md. Check header format: `## vX.Y.Z — YYYY-MM-DD` (with em-dash).',
+    });
     return issues;
   }
 
@@ -284,7 +289,7 @@ function lint(releases, errors, _warnings) {
   }
 
   // 3. min_from must point at an existing version in this file
-  const versionSet = new Set(releases.map(r => r.version));
+  const versionSet = new Set(releases.map((r) => r.version));
   for (const r of releases) {
     if (r.min_from && !versionSet.has(r.min_from)) {
       issues.push({
@@ -320,7 +325,7 @@ function lint(releases, errors, _warnings) {
   // 6. Every release needs at least one non-empty New / Fixed / Known issues
   for (const r of releases) {
     const required = ['New', 'Fixed', 'Known issues'];
-    const present = required.filter(s => r.subsections_with_content.has(s));
+    const present = required.filter((s) => r.subsections_with_content.has(s));
     if (present.length === 0) {
       issues.push({
         version: r.version,
@@ -356,13 +361,17 @@ function main() {
       }
       process.exit(1);
     }
-    console.error(`RELEASE-NOTES.md lint: OK (${releases.length} release${releases.length === 1 ? '' : 's'} parsed)`);
+    console.error(
+      `RELEASE-NOTES.md lint: OK (${releases.length} release${releases.length === 1 ? '' : 's'} parsed)`,
+    );
     process.exit(0);
   }
 
   // If there are hard errors, refuse to emit a manifest even without --lint
   if (issues.length > 0) {
-    console.error(`RELEASE-NOTES.md has ${issues.length} lint issue(s); refusing to emit manifest. Run with --lint to see details.`);
+    console.error(
+      `RELEASE-NOTES.md has ${issues.length} lint issue(s); refusing to emit manifest. Run with --lint to see details.`,
+    );
     for (const iss of issues) {
       const loc = iss.line ? `line ${iss.line}: ` : '';
       console.error(`  ${loc}${iss.message}`);
@@ -373,7 +382,7 @@ function main() {
   const manifest = {
     schema_version: SCHEMA_VERSION,
     generated_at: new Date().toISOString(),
-    releases: releases.map(r => ({
+    releases: releases.map((r) => ({
       version: r.version,
       released_at: r.released_at,
       min_from: r.min_from,

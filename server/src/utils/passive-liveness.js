@@ -15,17 +15,18 @@ import { recordDnsQueryLiveness } from './ip-liveness.js';
 import {
   markStalePassiveAddresses,
   pruneLifecycleEvents,
-  retireStaleDynamicAddresses
+  retireStaleDynamicAddresses,
 } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from './after-commit.js';
 import {
   DATA_DIR,
   PASSIVE_LIVENESS_POLL_MS,
-  PASSIVE_LIVENESS_STALE_MS
+  PASSIVE_LIVENESS_STALE_MS,
 } from '../config/defaults.js';
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 // Matches: "query[A] example.com from 192.168.1.100"
-const QUERY_FROM_RE = /\bquery\[.+?\]\s+\S+\s+from\s+(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})/;
+//      and: "query[AAAA] example.com from fd00:a::1600"
+const QUERY_FROM_RE = /\bquery\[.+?\]\s+\S+\s+from\s+([0-9a-fA-F.:]+)/;
 
 /**
  * Start the passive liveness watcher.
@@ -38,7 +39,9 @@ export function startPassiveLivenessWatcher(db) {
   // Start from end of file (don't process historical lines)
   try {
     offset = fs.statSync(LOG_FILE).size;
-  } catch { /* file may not exist yet */ }
+  } catch {
+    /* file may not exist yet */
+  }
 
   function poll() {
     const { lines, newOffset } = readLogTail(LOG_FILE, offset);
@@ -52,7 +55,7 @@ export function startPassiveLivenessWatcher(db) {
       const m = line.match(QUERY_FROM_RE);
       if (!m) continue;
       const ip = m[1];
-      if (ip === '127.0.0.1') continue;
+      if (ip === '127.0.0.1' || ip === '::1') continue;
       ipsThisCycle.add(ip);
     }
 
@@ -71,18 +74,19 @@ export function startPassiveLivenessWatcher(db) {
       if (retirement.dnsRecordsRemoved > 0) queueRegen('regenerate_dns');
       if (retirement.retired > 0 || retirement.deferred > 0) {
         console.log(
-          `[ip-retirement] retired=${retirement.retired} deferred=${retirement.deferred} `
-          + `dns=${retirement.dnsRecordsRemoved} leases=${retirement.leasesRemoved} `
-          + `sticky_skipped=${retirement.stickyRelease.skipped} sticky_failed=${retirement.stickyRelease.failed}`
+          `[ip-retirement] retired=${retirement.retired} deferred=${retirement.deferred} ` +
+            `dns=${retirement.dnsRecordsRemoved} leases=${retirement.leasesRemoved} ` +
+            `sticky_skipped=${retirement.stickyRelease.skipped} sticky_failed=${retirement.stickyRelease.failed}`,
         );
       }
       lastStaleCheck = now;
-
     }
   }
 
   const interval = setInterval(poll, PASSIVE_LIVENESS_POLL_MS);
-  console.log(`[passive-liveness] Watching ${LOG_FILE} (poll ${PASSIVE_LIVENESS_POLL_MS / 1000}s, stale ${PASSIVE_LIVENESS_STALE_MS / 60000}min)`);
+  console.log(
+    `[passive-liveness] Watching ${LOG_FILE} (poll ${PASSIVE_LIVENESS_POLL_MS / 1000}s, stale ${PASSIVE_LIVENESS_STALE_MS / 60000}min)`,
+  );
 
   return interval; // for cleanup in tests
 }

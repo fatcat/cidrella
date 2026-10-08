@@ -1,39 +1,49 @@
 import { getDb } from '../db/init.js';
 import { startScan } from './scanner.js';
-import { MAX_SCAN_SIZE } from '../config/defaults.js';
-import { intervalToMs, scanEnabledSql } from './scan-coverage.js';
+import {
+  intervalToMs,
+  isAutomaticScanAllowed,
+  scanEnabledSql,
+  scanSizeSql,
+} from './scan-coverage.js';
 import * as ScanRun from '../models/scan-run.js';
-import { isGloballyRoutableCidr } from './ip.js';
+import { ipv6Enabled } from './ipv6-support.js';
 
 let timer = null;
 const SCHEDULER_TICK_MS = 60 * 1000;
-
-export function isAutomaticScanAllowed(subnet) {
-  return subnet.scan_enabled === 1 || !isGloballyRoutableCidr(subnet.cidr);
-}
 
 function checkScheduledScans() {
   const db = getDb();
   if (!db) return;
 
-  const subnets = db.prepare(`
+  const subnets = db
+    .prepare(
+      `
     SELECT s.*,
       COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
     FROM subnets s
-    WHERE s.status = 'allocated' AND s.total_addresses <= ${MAX_SCAN_SIZE}
+    WHERE s.status = 'allocated' AND ${scanSizeSql('s')}
       AND ${scanEnabledSql()}
-  `).all();
+  `,
+    )
+    .all();
 
+  // The public-network and IPv6 gates are JS, shared with the stale sweep.
+  const ipv6 = ipv6Enabled();
   for (const subnet of subnets) {
-    if (!isAutomaticScanAllowed(subnet)) continue;
+    if (!isAutomaticScanAllowed(subnet, { ipv6 })) continue;
     const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
 
     // Check if last completed scan is old enough
-    const lastScan = db.prepare(`
+    const lastScan = db
+      .prepare(
+        `
       SELECT completed_at FROM network_scans WHERE subnet_id = ? AND status = 'completed'
       ORDER BY completed_at DESC LIMIT 1
-    `).get(subnet.id);
+    `,
+      )
+      .get(subnet.id);
 
     if (lastScan) {
       const lastTime = new Date(lastScan.completed_at + 'Z').getTime();
@@ -45,7 +55,9 @@ function checkScheduledScans() {
       const pending = ScanRun.createPendingIfIdle(db, subnet.id);
       if (!pending.created) continue;
 
-      console.log(`[scan-scheduler] Starting scheduled scan for ${subnet.cidr} (interval: ${subnet.effective_scan_interval})`);
+      console.log(
+        `[scan-scheduler] Starting scheduled scan for ${subnet.cidr} (interval: ${subnet.effective_scan_interval})`,
+      );
       startScan(db, pending.scanId, subnet.id);
     } catch (err) {
       console.error(`[scan-scheduler] Failed to start scan for ${subnet.cidr}:`, err.message);
@@ -69,27 +81,36 @@ export function getNextScanTime() {
   const db = getDb();
   if (!db) return null;
 
-  const subnets = db.prepare(`
-    SELECT s.id, s.cidr, s.scan_enabled,
+  const subnets = db
+    .prepare(
+      `
+    SELECT s.id, s.cidr, s.scan_enabled, s.address_family,
       COALESCE(s.scan_interval, (SELECT value FROM settings WHERE key = 'default_scan_interval')) AS effective_scan_interval
     FROM subnets s
-    WHERE s.status = 'allocated' AND s.total_addresses <= ${MAX_SCAN_SIZE}
+    WHERE s.status = 'allocated' AND ${scanSizeSql('s')}
       AND ${scanEnabledSql()}
-  `).all();
+  `,
+    )
+    .all();
 
   let earliest = null;
+  const ipv6 = ipv6Enabled();
 
   for (const subnet of subnets) {
-    if (!isAutomaticScanAllowed(subnet)) continue;
+    if (!isAutomaticScanAllowed(subnet, { ipv6 })) continue;
     const intervalMs = intervalToMs(subnet.effective_scan_interval);
     if (!intervalMs) continue;
     let nextTime;
 
-    const activeScan = db.prepare(`
+    const activeScan = db
+      .prepare(
+        `
       SELECT created_at, started_at FROM network_scans
       WHERE subnet_id = ? AND status IN ('pending', 'running')
       ORDER BY created_at DESC LIMIT 1
-    `).get(subnet.id);
+    `,
+      )
+      .get(subnet.id);
 
     if (activeScan) {
       const base = activeScan.started_at || activeScan.created_at;
@@ -103,10 +124,14 @@ export function getNextScanTime() {
       continue;
     }
 
-    const lastScan = db.prepare(`
+    const lastScan = db
+      .prepare(
+        `
       SELECT completed_at FROM network_scans WHERE subnet_id = ? AND status = 'completed'
       ORDER BY completed_at DESC LIMIT 1
-    `).get(subnet.id);
+    `,
+      )
+      .get(subnet.id);
 
     if (lastScan) {
       nextTime = new Date(lastScan.completed_at + 'Z').getTime() + intervalMs;

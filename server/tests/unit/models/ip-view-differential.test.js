@@ -33,7 +33,12 @@ const ROWS = [
   { _: 'offline unassigned', allocation_state: 'unassigned', is_online: 0 },
   { _: 'dynamic pool', allocation_state: 'unassigned', in_dynamic_pool: 1 },
   // Protocol-shaped data cannot override canonical allocation.
-  { _: 'legacy facts ignored', allocation_state: 'unassigned', has_dhcp_reservation: 1, has_static_dns: 1 },
+  {
+    _: 'legacy facts ignored',
+    allocation_state: 'unassigned',
+    has_dhcp_reservation: 1,
+    has_static_dns: 1,
+  },
   // truthiness: SQLite and JSON both reach the UI, so '1' must behave as 1
   { _: 'string flags', allocation_state: 'unassigned', is_online: '1', is_rogue: '1' },
 ];
@@ -48,7 +53,7 @@ function serverType(row) {
 }
 
 describe('#1: the client preserves the server address projection', () => {
-  it.each(ROWS.map(r => [r._, r]))('%s', (_label, row) => {
+  it.each(ROWS.map((r) => [r._, r]))('%s', (_label, row) => {
     expect(clientType(row), `server said ${serverType(row)}`).toBe(serverType(row));
   });
 
@@ -63,9 +68,15 @@ describe('#1: the client preserves the server address projection', () => {
 
   it('the fixture table reaches every address type, so agreement is not vacuous', () => {
     const seen = new Set(ROWS.map(serverType));
-    for (const t of [ADDRESS_TYPE.SYSTEM, ADDRESS_TYPE.GATEWAY, ADDRESS_TYPE.ROGUE,
-      ADDRESS_TYPE.RESERVED_DHCP, ADDRESS_TYPE.DYNAMIC_DHCP, ADDRESS_TYPE.RESERVED,
-      ADDRESS_TYPE.STATIC_DNS]) {
+    for (const t of [
+      ADDRESS_TYPE.SYSTEM,
+      ADDRESS_TYPE.GATEWAY,
+      ADDRESS_TYPE.ROGUE,
+      ADDRESS_TYPE.RESERVED_DHCP,
+      ADDRESS_TYPE.DYNAMIC_DHCP,
+      ADDRESS_TYPE.RESERVED,
+      ADDRESS_TYPE.STATIC_DNS,
+    ]) {
       expect(seen, `no fixture produces ${t}`).toContain(t);
     }
     expect(seen, 'no fixture produces an unclassified row').toContain(null);

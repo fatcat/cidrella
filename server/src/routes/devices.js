@@ -12,7 +12,15 @@ router.get('/:mac/fingerprint', requirePerm('dhcp:read'), (req, res) => {
   const mac = req.params.mac;
   if (!isValidMac(mac)) return res.status(400).json({ error: 'Invalid MAC address' });
   const row = DeviceFingerprint.getByMac(getDb(), mac);
-  res.json(row || { mac_address: mac.toLowerCase(), device_type: null, os_family: null, confidence: 0, source: null });
+  res.json(
+    row || {
+      mac_address: mac.toLowerCase(),
+      device_type: null,
+      os_family: null,
+      confidence: 0,
+      source: null,
+    },
+  );
 });
 
 // GET /api/devices/:mac/fingerprint/history: recent device_type/os_family/
@@ -39,7 +47,11 @@ router.put('/:mac/fingerprint', requirePerm('dhcp:write'), (req, res) => {
   }
   const db = getDb();
   DeviceFingerprint.setManual(db, mac, { device_type, os_family });
-  audit(req.user.id, 'device_fingerprint_override', 'device_fingerprint', null, { mac: mac.toLowerCase(), device_type, os_family });
+  audit(req.user.id, 'device_fingerprint_override', 'device_fingerprint', null, {
+    mac: mac.toLowerCase(),
+    device_type,
+    os_family,
+  });
   res.json(DeviceFingerprint.getByMac(db, mac));
 });
 
@@ -52,7 +64,9 @@ router.delete('/:mac/fingerprint', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const info = DeviceFingerprint.clearManual(db, mac);
   if (info.changes > 0) {
-    audit(req.user.id, 'device_fingerprint_reset', 'device_fingerprint', null, { mac: mac.toLowerCase() });
+    audit(req.user.id, 'device_fingerprint_reset', 'device_fingerprint', null, {
+      mac: mac.toLowerCase(),
+    });
   }
   res.json({ ok: true, cleared: info.changes > 0 });
 });

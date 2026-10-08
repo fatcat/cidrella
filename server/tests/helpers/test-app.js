@@ -1,5 +1,6 @@
 import express from 'express';
 import { afterCommitMiddleware } from '../../src/utils/after-commit.js';
+import { actorMiddleware } from '../../src/utils/request-actor.js';
 
 /**
  * Create a minimal Express app for testing a router with supertest.
@@ -14,6 +15,7 @@ export function createTestApp(router, prefix = '/api') {
     req.user = { id: 1, role: 'admin', username: 'testadmin' };
     next();
   });
+  app.use(actorMiddleware);
 
   // Routes call req.afterCommit(hookName) to queue dnsmasq regens; the
   // middleware attaches that method. In tests the hook bodies are mocked
@@ -39,6 +41,7 @@ export function createMultiRouterApp(mounts) {
     req.user = { id: 1, role: 'admin', username: 'testadmin' };
     next();
   });
+  app.use(actorMiddleware);
   app.use(afterCommitMiddleware);
   for (const { prefix, router } of mounts) {
     app.use(prefix, router);

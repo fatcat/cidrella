@@ -9,6 +9,12 @@
  * store a per-MAC fingerprint. No raw sockets, no dhcp-script, no dnsmasq change.
  *
  * Mirrors the watcher shape of passive-liveness.js (readLogTail + poll loop).
+ *
+ * DHCPv4 only, deliberately: the fingerprint is option 55 and option 60, which
+ * are DHCPv4 option codes, keyed by the client's MAC. A DHCPv6 exchange
+ * (SOLICIT ... REPLY, identified by a DUID, with ORO option 6 and vendor class
+ * option 16 in their own namespace) is ignored here rather than folded into the
+ * option-55 fingerprint, so an IPv6-only device gets no device_type from DHCP.
  */
 
 import fs from 'fs';
@@ -26,6 +32,17 @@ const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 // accumulator key so an xid reused after a dnsmasq restart cannot inherit the
 // previous process's partial transaction.
 const DHCP_LINE_RE = /dnsmasq-dhcp\[(\d+)\]:\s+(\d+)\s+(.*)$/;
+// DHCPv6 message lines. REQUEST, RELEASE and DECLINE share their names with
+// DHCPv4, so those are told apart by the client DUID (seven or more colon
+// separated bytes) where a DHCPv4 line has an address and a MAC.
+const DHCPV6_ONLY_RE = /^DHCP(SOLICIT|ADVERTISE|REPLY|RENEW|REBIND|CONFIRM|INFORMATION-REQUEST)\b/;
+const DUID_TOKEN_RE = /(?:^|\s)(?:[0-9a-f]{2}:){6,}[0-9a-f]{2}(?:\s|$)/i;
+
+function isDhcpv6Line(content) {
+  return (
+    DHCPV6_ONLY_RE.test(content) || (/^DHCP[A-Z]+\(/.test(content) && DUID_TOKEN_RE.test(content))
+  );
+}
 // MAC parsing lives in utils/mac.js so this file and arp-cache.js cannot drift
 // on what counts as a MAC. See REVIEW.md, duplicate-logic audit #13.
 
@@ -44,6 +61,16 @@ export function ingestLine(line, pending, now = Date.now()) {
   if (!m) return null;
   const key = `${m[1]}:${m[2]}`;
   const content = m[3];
+  // A DHCPv6 message marks its transaction as one this fingerprint ignores:
+  // it stays in the map (never ACKed, so never finalized; the stale sweep
+  // drops it) so its trailing option lines are dropped too.
+  if (isDhcpv6Line(content)) {
+    pending.delete(key);
+    if (pending.size >= MAX_PENDING) pending.delete(pending.keys().next().value);
+    pending.set(key, { ignored: true, ackSeen: false, updatedAt: now });
+    return null;
+  }
+  if (pending.get(key)?.ignored) return null;
 
   let tx = pending.get(key);
   const ensure = () => {
@@ -59,7 +86,7 @@ export function ingestLine(line, pending, now = Date.now()) {
         opt60: null,
         hostname: null,
         ackSeen: false,
-        updatedAt: now
+        updatedAt: now,
       };
       pending.set(key, tx);
     }
@@ -107,11 +134,10 @@ export function ingestLine(line, pending, now = Date.now()) {
  * and discard abandoned transactions so the bounded map does not retain stale
  * evidence indefinitely.
  */
-export function drainFinalized(pending, {
-  now = Date.now(),
-  quietMs = FINALIZE_QUIET_MS,
-  staleMs = STALE_PENDING_MS
-} = {}) {
+export function drainFinalized(
+  pending,
+  { now = Date.now(), quietMs = FINALIZE_QUIET_MS, staleMs = STALE_PENDING_MS } = {},
+) {
   const finalized = [];
   for (const [key, tx] of pending) {
     const idleMs = now - tx.updatedAt;
@@ -120,7 +146,7 @@ export function drainFinalized(pending, {
         mac: tx.mac,
         opt55: tx.opt55,
         opt60: tx.opt60,
-        hostname: tx.hostname
+        hostname: tx.hostname,
       });
       pending.delete(key);
     } else if (idleMs >= staleMs) {
@@ -140,14 +166,19 @@ function persist(db, tx) {
   const hostname = tx.hostname || previous?.dhcp_hostname || null;
   const vendor = tx.mac ? lookupVendor(tx.mac) : null;
   const { device_type, os_family, confidence } = classify({
-    opt55, opt60, hostname, vendor,
+    opt55,
+    opt60,
+    hostname,
+    vendor,
   });
   upsertFingerprint(db, {
     mac_address: tx.mac,
     dhcp_fingerprint: opt55,
     vendor_class: opt60,
     dhcp_hostname: hostname,
-    device_type, os_family, confidence,
+    device_type,
+    os_family,
+    confidence,
     source: 'dhcp',
     raw: JSON.stringify({ opt55, opt60, hostname, vendor }),
   });
@@ -158,7 +189,11 @@ export function startDhcpFingerprintWatcher(db) {
   const pending = new Map();
 
   // Start at EOF, don't replay history.
-  try { offset = fs.statSync(LOG_FILE).size; } catch { /* not created yet */ }
+  try {
+    offset = fs.statSync(LOG_FILE).size;
+  } catch {
+    /* not created yet */
+  }
 
   function poll() {
     try {
@@ -167,8 +202,11 @@ export function startDhcpFingerprintWatcher(db) {
       const now = Date.now();
       for (const line of lines) ingestLine(line, pending, now);
       for (const finalized of drainFinalized(pending, { now })) {
-        try { persist(db, finalized); }
-        catch (err) { console.warn('[dhcp-fingerprint] persist failed:', err?.message || err); }
+        try {
+          persist(db, finalized);
+        } catch (err) {
+          console.warn('[dhcp-fingerprint] persist failed:', err?.message || err);
+        }
       }
     } catch (err) {
       console.warn('[dhcp-fingerprint] poll error:', err?.message || err);

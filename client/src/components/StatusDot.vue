@@ -8,12 +8,15 @@
   fall through to the root element.
 -->
 <template>
-  <span class="cid-status-dot" :class="`sd-${kind}`"
-        :title="decorative ? undefined : (title || label)"
-        :role="decorative ? undefined : 'img'"
-        :aria-hidden="decorative ? 'true' : undefined"
-        :aria-label="decorative ? undefined : label">
-    <span v-if="showLabel" class="sd-label">{{ label }}</span>
+  <span
+    class="cid-status-dot"
+    :class="`sd-${kind}`"
+    :title="decorative ? undefined : title || label"
+    :role="decorative ? undefined : 'img'"
+    :aria-hidden="decorative ? 'true' : undefined"
+    :aria-label="decorative ? undefined : label"
+  >
+    <span v-if="showLabel" class="sd-label" :class="{ tinted: tintLabel }">{{ label }}</span>
   </span>
 </template>
 
@@ -27,6 +30,9 @@ defineProps({
   label: { type: String, required: true },
   title: { type: String, default: '' },
   showLabel: { type: Boolean, default: false },
+  // With showLabel: color the word like the dot (Online in green) instead
+  // of the default text color, for cells where the word is the state.
+  tintLabel: { type: Boolean, default: false },
   // For hosts that render their own visible label right next to the dot
   // (StatusBadge): hide the dot from assistive tech so the state isn't
   // announced twice.
@@ -49,11 +55,21 @@ defineProps({
   flex-shrink: 0;
   background: currentColor;
 }
-.sd-ok    { color: var(--cid-status-ok); }
-.sd-warn  { color: var(--cid-status-warn); }
-.sd-err   { color: var(--cid-status-err); }
-.sd-info  { color: var(--cid-status-info); }
-.sd-muted { color: var(--cid-status-muted); }
+.sd-ok {
+  color: var(--cid-status-ok);
+}
+.sd-warn {
+  color: var(--cid-status-warn);
+}
+.sd-err {
+  color: var(--cid-status-err);
+}
+.sd-info {
+  color: var(--cid-status-info);
+}
+.sd-muted {
+  color: var(--cid-status-muted);
+}
 /* Off/idle keeps the hollow-ring shape convention from .status-text */
 .sd-muted::before {
   background: transparent;
@@ -62,7 +78,11 @@ defineProps({
   height: 7px;
 }
 .sd-label {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-size: var(--app-fs-sm);
+}
+.sd-label.tinted {
+  color: inherit;
+  font-size: inherit;
 }
 </style>

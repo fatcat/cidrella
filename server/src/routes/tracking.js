@@ -31,7 +31,9 @@ router.get('/', (req, res) => {
 // POST: append new interactions
 router.post('/', (req, res) => {
   const raw = Array.isArray(req.body) ? req.body : [req.body];
-  const events = raw.filter(e => !(e.type === 'api' && (e.url?.includes('/dev/tracking') || e.url?.includes('/health/'))));
+  const events = raw.filter(
+    (e) => !(e.type === 'api' && (e.url?.includes('/dev/tracking') || e.url?.includes('/health/'))),
+  );
   if (events.length === 0) return res.json({ ok: true, count: 0 });
   const existing = readTracking();
   existing.push(...events);

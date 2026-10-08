@@ -17,6 +17,6 @@
 .not-found h1 {
   font-size: 4rem;
   margin: 0;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>

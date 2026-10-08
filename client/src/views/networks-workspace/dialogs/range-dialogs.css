@@ -1,0 +1,24 @@
+/* The form grammar the range dialogs share (RangeEditor, RangeTypeDialog,
+   BulkRangeTypeDialog): a stacked form with bold labels, a muted help line,
+   and an error line. Each dialog imports this and adds only its own fields. */
+
+.workspace-range-form {
+  display: grid;
+  gap: 0.9rem;
+}
+.workspace-range-form label {
+  display: grid;
+  gap: 0.35rem;
+  font-weight: 600;
+}
+.workspace-range-help,
+.workspace-range-error {
+  margin: 0;
+  font-size: var(--cid-font-small, 0.8rem);
+}
+.workspace-range-help {
+  color: var(--cid-text-muted);
+}
+.workspace-range-error {
+  color: var(--cid-danger, #b42318);
+}

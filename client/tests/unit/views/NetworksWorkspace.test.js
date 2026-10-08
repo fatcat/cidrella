@@ -1,0 +1,2501 @@
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import { enableAutoUnmount, flushPromises, mount } from '@vue/test-utils';
+import { nextTick } from 'vue';
+import { createPinia, setActivePinia } from 'pinia';
+import { useSubnetStore } from '../../../src/stores/subnets.js';
+import NetworkDialogs from '../../../src/components/NetworkDialogs.vue';
+import NetworksWorkspace from '../../../src/views/networks-workspace/NetworksWorkspace.vue';
+import AddressGrid from '../../../src/views/networks-workspace/AddressGrid.vue';
+import AddressDetailsPanel from '../../../src/views/networks-workspace/AddressDetailsPanel.vue';
+import ResourceExplorer from '../../../src/views/networks-workspace/ResourceExplorer.vue';
+import WorkspaceContextHeader from '../../../src/views/networks-workspace/WorkspaceContextHeader.vue';
+import WorkspaceDetailsHost from '../../../src/views/networks-workspace/WorkspaceDetailsHost.vue';
+import WorkspaceTable from '../../../src/views/networks-workspace/WorkspaceTable.vue';
+import WorkspaceToolbar from '../../../src/views/networks-workspace/WorkspaceToolbar.vue';
+import FilterMenu from '../../../src/components/table/FilterMenu.vue';
+import IpReservationEditor from '../../../src/views/networks-workspace/dialogs/IpReservationEditor.vue';
+import api from '../../../src/api/client.js';
+import { useWorkspaceFontBump } from '../../../src/composables/useWorkspaceUi.js';
+
+vi.mock('../../../src/api/client.js', () => ({
+  default: { get: vi.fn(), put: vi.fn(), post: vi.fn() },
+}));
+// The reused NetworkDialogs editors toast on save; the workspace has no toast host.
+vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => ({ add: vi.fn() }) }));
+// NetworksWorkspace calls useRouter() for the settings, zone and scope
+// navigations. No router plugin is installed here, so useWorkspaceContext keeps
+// its URL-less fallback; only the injection that would otherwise warn on every
+// mount is supplied. The router is built inside the factory because vi.mock is
+// hoisted above the imports that first load vue-router.
+vi.mock('vue-router', async (importOriginal) => ({
+  ...(await importOriginal()),
+  useRouter: () => ({ push: vi.fn(), currentRoute: { value: { fullPath: '/networks' } } }),
+}));
+
+// Every test's workspace is unmounted after it: one left mounted keeps its
+// timers, and its reads land in the next test's api mock.
+enableAutoUnmount(afterEach);
+
+let reservedIp33 = false;
+let deletedIps = new Set();
+let dnsRecordsHidden = false;
+let summaryStats;
+
+const subnet = {
+  id: 11,
+  cidr: '1.1.1.0/24',
+  name: 'Public test network',
+  status: 'allocated',
+  total_addresses: 256,
+  used_count: 5,
+  gateway_address: '1.1.1.1',
+  domain_name: 'test.example',
+  vlan_id: 101,
+  children: [],
+};
+const unallocatedSubnet = {
+  id: 12,
+  cidr: '1.1.2.0/24',
+  name: null,
+  status: 'unallocated',
+  total_addresses: 256,
+  used_count: 0,
+  children: [],
+};
+
+const ranges = [
+  {
+    id: 1,
+    start_ip: '1.1.1.0',
+    end_ip: '1.1.1.0',
+    range_type_name: 'Network',
+    range_type_is_system: 1,
+    range_type_color: '#64748b',
+  },
+  {
+    id: 2,
+    start_ip: '1.1.1.1',
+    end_ip: '1.1.1.1',
+    range_type_name: 'Gateway',
+    range_type_is_system: 1,
+    range_type_color: '#f59e0b',
+  },
+  {
+    id: 3,
+    start_ip: '1.1.1.33',
+    end_ip: '1.1.1.126',
+    range_type_name: 'DHCP Scope',
+    range_type_is_system: 1,
+    range_type_color: '#14b8a6',
+  },
+  {
+    id: 4,
+    start_ip: '1.1.1.255',
+    end_ip: '1.1.1.255',
+    range_type_name: 'Broadcast',
+    range_type_is_system: 1,
+    range_type_color: '#64748b',
+  },
+];
+
+function makeIps() {
+  return Array.from({ length: 256 }, (_, index) => {
+    const ip = `1.1.1.${index}`;
+    const inScope = index >= 33 && index <= 126;
+    const type =
+      index === 0 || index === 255
+        ? 'system'
+        : index === 1
+          ? 'gateway'
+          : index === 40
+            ? 'dynamic DHCP'
+            : index === 33 && reservedIp33
+              ? 'IP Reservation'
+              : null;
+    return {
+      ip_address: ip,
+      subnet_id: subnet.id,
+      allocation_state:
+        type === 'system'
+          ? 'system'
+          : type === 'gateway'
+            ? 'gateway'
+            : type === 'dynamic DHCP'
+              ? 'dynamic_dhcp'
+              : type === 'IP Reservation'
+                ? 'reserved'
+                : 'unassigned',
+      allocation_source_type:
+        type === 'dynamic DHCP'
+          ? 'dhcp_lease'
+          : type === 'IP Reservation'
+            ? 'admin_reservation'
+            : type
+              ? 'topology'
+              : null,
+      ip_display_status: type ? 'in use' : inScope ? 'DHCP Scope' : 'available',
+      ip_status_severity: type ? 'danger' : 'secondary',
+      address_type: type,
+      hostname: index === 40 ? 'client.test.example' : null,
+      mac_address: index === 40 ? '02:00:00:00:00:40' : null,
+      is_online: index === 40 ? 1 : 0,
+      last_seen_at: index === 40 ? new Date().toISOString() : null,
+      reservation_note: index === 33 && reservedIp33 ? 'Hold for printer' : null,
+      scanning_enabled: true,
+      scan_enabled: null,
+    };
+  });
+}
+
+const zones = [
+  {
+    id: 21,
+    name: 'test.example',
+    type: 'forward',
+    enabled: 1,
+    record_count: 1,
+    related_subnet_ids: [subnet.id],
+  },
+  {
+    id: 22,
+    name: '1.1.1.in-addr.arpa',
+    type: 'reverse',
+    enabled: 1,
+    record_count: 1,
+    subnet_id: subnet.id,
+    related_subnet_ids: [subnet.id],
+  },
+];
+
+const dnsRecordA = {
+  id: 51,
+  zone_id: 21,
+  zone_name: 'test.example',
+  zone_type: 'forward',
+  name: 'client',
+  record_fqdn: 'client.test.example',
+  record_type: 'A',
+  value: '1.1.1.40',
+  ttl: 3600,
+  dns_source: 'manual',
+  enabled: 1,
+  ip_address: '1.1.1.40',
+  is_online: 1,
+  related_subnet_ids: [subnet.id],
+};
+const dnsRecordPtr = {
+  id: 52,
+  zone_id: 22,
+  zone_name: '1.1.1.in-addr.arpa',
+  zone_type: 'reverse',
+  name: '40',
+  record_type: 'PTR',
+  value: 'client.test.example',
+  ttl: 3600,
+  dns_source: 'dns',
+  enabled: 1,
+  ip_address: '1.1.1.40',
+  is_online: 1,
+  related_subnet_ids: [subnet.id],
+};
+
+// Only the exact-address read returns this one: the loaded DNS page holds a
+// single page of the network's records, so counts cannot come from it.
+const dnsRecordAlias = {
+  id: 54,
+  zone_id: 21,
+  zone_name: 'test.example',
+  zone_type: 'forward',
+  name: 'client-alias',
+  record_fqdn: 'client-alias.test.example',
+  record_type: 'CNAME',
+  value: 'client.test.example',
+  ttl: 3600,
+  dns_source: 'manual',
+  enabled: 1,
+  ip_address: '1.1.1.40',
+  is_online: 1,
+  related_subnet_ids: [subnet.id],
+};
+// Every address in the reverse zone has a generated placeholder; it is not a
+// record worth offering.
+const dnsPlaceholder33 = {
+  id: 53,
+  zone_id: 22,
+  zone_name: '1.1.1.in-addr.arpa',
+  zone_type: 'reverse',
+  name: '33',
+  record_type: 'PTR',
+  value: '1.1.1.33',
+  ttl: null,
+  dns_source: 'placeholder',
+  enabled: 1,
+  ip_address: '1.1.1.33',
+  is_online: 0,
+  related_subnet_ids: [subnet.id],
+};
+
+const scope = {
+  id: 31,
+  subnet_id: subnet.id,
+  range_id: 3,
+  subnet_name: subnet.name,
+  subnet_cidr: subnet.cidr,
+  start_ip: '1.1.1.33',
+  end_ip: '1.1.1.126',
+  lease_time: 43200,
+  enabled: 1,
+  pools: [{ start_ip: '1.1.1.33', end_ip: '1.1.1.126' }],
+};
+
+const lease = {
+  id: 41,
+  subnet_id: subnet.id,
+  subnet_name: subnet.name,
+  subnet_cidr: subnet.cidr,
+  dhcp_assignment_type: 'dynamic',
+  lease_status: 'active',
+  ip_address: '1.1.1.40',
+  hostname: 'client',
+  mac_address: '02:00:00:00:00:40',
+  expires_at: 'infinite',
+  dhcp_expires_at: 'infinite',
+  dhcp_lease_state: 'active',
+  ip_display_status: 'in use',
+  is_online: 1,
+  address_type: 'dynamic DHCP',
+};
+
+function response(data) {
+  return Promise.resolve({ data });
+}
+
+function installApiFixtures() {
+  api.get.mockImplementation((url, config = {}) => {
+    if (url === '/subnets')
+      return response({
+        folders: [{ id: 1, name: 'Testerella', subnets: [subnet, unallocatedSubnet] }],
+      });
+    if (url === '/dns/zones') return response(zones);
+    if (url === '/workspace/networks')
+      return response({
+        items: config.params?.table_q === 'not returned' ? [] : [subnet],
+        total: config.params?.table_q === 'not returned' ? 0 : 1,
+      });
+    if (url === '/workspace/dns-records' && config.params?.ip_address)
+      return response({
+        items: [dnsRecordA, dnsRecordPtr, dnsRecordAlias, dnsPlaceholder33].filter(
+          (record) => record.ip_address === config.params.ip_address,
+        ),
+        total: 0,
+        page: 1,
+        page_size: 50,
+      });
+    if (url === '/workspace/dns-records')
+      return response({
+        items:
+          dnsRecordsHidden && config.params?.table_q !== 'client'
+            ? []
+            : [
+                {
+                  id: 51,
+                  zone_id: 21,
+                  zone_name: 'test.example',
+                  zone_type: 'forward',
+                  name: 'client',
+                  record_fqdn: 'client.test.example',
+                  record_type: 'A',
+                  value: '1.1.1.40',
+                  ttl: 3600,
+                  dns_source: 'manual',
+                  enabled: 1,
+                  ip_address: '1.1.1.40',
+                  is_online: 1,
+                  related_subnet_ids: [subnet.id],
+                },
+                {
+                  id: 52,
+                  zone_id: 22,
+                  zone_name: '1.1.1.in-addr.arpa',
+                  zone_type: 'reverse',
+                  name: '40',
+                  record_type: 'PTR',
+                  value: 'client.test.example',
+                  ttl: 3600,
+                  dns_source: 'dns',
+                  enabled: 1,
+                  ip_address: '1.1.1.40',
+                  is_online: 1,
+                  related_subnet_ids: [subnet.id],
+                },
+              ],
+        total: 2,
+        page: 1,
+        page_size: 256,
+      });
+    if (url === '/dns/zones/21/records')
+      return response([
+        {
+          id: 51,
+          zone_id: 21,
+          name: 'client',
+          record_type: 'A',
+          value: '1.1.1.40',
+          ttl: 3600,
+          dns_source: 'manual',
+          enabled: 1,
+          ip_address: '1.1.1.40',
+          is_online: 1,
+        },
+      ]);
+    if (url === '/dns/zones/22/records')
+      return response([
+        {
+          id: 52,
+          zone_id: 22,
+          name: '40',
+          record_type: 'PTR',
+          value: 'client.test.example',
+          ttl: 3600,
+          dns_source: 'dns',
+          enabled: 1,
+          ip_address: '1.1.1.40',
+          is_online: 1,
+        },
+      ]);
+    if (url === '/dhcp/scopes') return response([scope]);
+    if (url === '/range-types')
+      return response([{ id: 8, name: 'Lab equipment', is_system: 0, color: '#14b8a6' }]);
+    if (url === '/dhcp/leases') return response([lease]);
+    if (url === '/workspace/dhcp-addresses')
+      return response({
+        items: config.params?.ip_address
+          ? [lease].filter((row) => row.ip_address === config.params.ip_address)
+          : [lease],
+        total: 1,
+        page: 1,
+        page_size: 256,
+      });
+    if (url === '/dhcp/scopes/31/addresses')
+      return response([
+        lease,
+        {
+          id: 'available:1.1.1.41',
+          subnet_id: subnet.id,
+          ip_address: '1.1.1.41',
+          dhcp_assignment_type: null,
+          lease_status: 'available',
+          is_online: 0,
+        },
+      ]);
+    if (url === '/subnets/11/ips') {
+      let ips = makeIps();
+      if (config.params?.showAvailable === 'false')
+        ips = ips.filter((row) => row.ip_display_status !== 'available');
+      for (const term of [config.params?.search, config.params?.table_search].filter(Boolean)) {
+        const query = term.toLowerCase();
+        ips = ips.filter((row) =>
+          `${row.ip_address} ${row.hostname || ''} ${row.mac_address || ''}`
+            .toLowerCase()
+            .includes(query),
+        );
+      }
+      const pageSize = Number(config.params?.pageSize) || 256;
+      const page = Number(config.params?.page) || 1;
+      const counted = config.params?.facets
+        ? {
+            facets: { is_online: [{ value: false, count: ips.length }] },
+            filter_kinds: { is_online: 'enum', hostname: 'text', status: 'enum' },
+          }
+        : {};
+      return response({
+        ...counted,
+        subnet,
+        ips: ips.slice((page - 1) * pageSize, page * pageSize),
+        ranges,
+        totalIps: ips.length,
+        filteredTotal: ips.length,
+        page,
+        pageSize,
+        totalPages: Math.max(1, Math.ceil(ips.length / pageSize)),
+      });
+    }
+    if (url === '/subnets/11/summary') return response(summaryStats);
+    const single = url.match(/^\/subnets\/11\/ips\/([0-9.]+)$/);
+    if (single) {
+      if (deletedIps.has(single[1]))
+        return Promise.reject({ response: { status: 404, data: { error: 'IP not found' } } });
+      return response({ ip: makeIps().find((row) => row.ip_address === single[1]) });
+    }
+    if (url === '/subnets/11/ips/1.1.1.1/events' || url === '/subnets/11/ips/1.1.1.33/events') {
+      return response({
+        events: [
+          {
+            id: 1,
+            event_type: 'allocation_changed',
+            old_value: 'unassigned',
+            new_value: 'reserved',
+            source: 'manual',
+            created_at: '2026-09-10 12:00:00',
+          },
+        ],
+      });
+    }
+    throw new Error(`Unexpected GET ${url}`);
+  });
+  api.put.mockImplementation((url, body) => {
+    if (url === '/subnets/11/ips/bulk-allocation') {
+      return response({ updated: 2, skipped: 0, ...body });
+    }
+    if (url === '/subnets/11/ips/1.1.1.33/allocation') {
+      reservedIp33 = body.allocation_state === 'reserved';
+      subnet.used_count = reservedIp33 ? 6 : 5;
+      return response({ ip_address: '1.1.1.33', ...body });
+    }
+    if (url === '/subnets/11/ips/1.1.1.33/scan-enabled')
+      return response({ ip_address: '1.1.1.33', scan_enabled: body.scan_enabled });
+    if (url === '/subnets/11/ips/bulk-scan-enabled')
+      return response({ count: 3, scan_enabled: body.scan_enabled ? 1 : 0 });
+    throw new Error(`Unexpected PUT ${url}`);
+  });
+  api.post.mockImplementation((url, body) => {
+    if (url === '/scans/probe' && body?.ips)
+      return response({ results: body.ips.map((ip, i) => ({ ip, responded: i === 0 })) });
+    if (url === '/scans/probe')
+      return response({ ip: '1.1.1.33', responded: true, method: 'arp', mac: '02:00:00:00:00:33' });
+    throw new Error(`Unexpected POST ${url}`);
+  });
+}
+
+// `settled: false` returns before the workspace reads resolve, for a test that
+// looks at the first paint.
+async function mountWorkspace({ settled = true, stubs = {}, ...options } = {}) {
+  const wrapper = mount(NetworksWorkspace, {
+    ...options,
+    global: {
+      directives: { tooltip: () => {} },
+      stubs: {
+        RouterLink: {
+          props: ['to'],
+          template: '<a :href="to"><slot /></a>',
+        },
+        Dialog: {
+          props: ['visible'],
+          template: '<section v-if="visible"><slot /><slot name="footer" /></section>',
+        },
+        // The reused NetworkDialogs editors use the vendor input, which needs
+        // the PrimeVue plugin; the workspace's own forms use plain inputs.
+        InputText: {
+          props: ['modelValue'],
+          emits: ['update:modelValue'],
+          template:
+            '<input class="w-full" :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
+        },
+        // The vendor select needs the PrimeVue plugin too (the bulk range dialog).
+        Select: { props: ['modelValue', 'options'], template: '<select />' },
+        // The vendor paginator needs the PrimeVue plugin; the stub keeps its
+        // contract (first/rows/totalRecords in, a page event out).
+        Paginator: {
+          props: ['first', 'rows', 'totalRecords', 'rowsPerPageOptions'],
+          emits: ['page'],
+          template:
+            '<nav class="p-paginator" :data-first="first" :data-rows="rows" :data-total="totalRecords">' +
+            '<button aria-label="Previous Page" :disabled="first === 0" @click="$emit(\'page\', { page: Math.floor(first / rows) - 1, first: first - rows, rows })" />' +
+            '<button aria-label="Next Page" :disabled="first + rows >= totalRecords" @click="$emit(\'page\', { page: Math.floor(first / rows) + 1, first: first + rows, rows })" />' +
+            '<select aria-label="Rows per page" :value="rows" @change="$emit(\'page\', { page: 0, first: 0, rows: Number($event.target.value) })"><option v-for="size in rowsPerPageOptions" :key="size" :value="size">{{ size }}</option></select>' +
+            '</nav>',
+        },
+        ...stubs,
+      },
+    },
+  });
+  if (!settled) return wrapper;
+  await flushPromises();
+  await flushPromises();
+  return wrapper;
+}
+
+// The open row menu's labels, and one of its items by label. Items with a
+// note render it beside the label, so match on the label element.
+const rowMenuLabels = (wrapper) =>
+  wrapper.findAll('.row-menu button strong').map((label) => label.text());
+const rowMenuItem = (wrapper, label) =>
+  wrapper.findAll('.row-menu button').find((button) => button.find('strong').text() === label);
+
+async function enterTestNetwork(wrapper) {
+  await wrapper.find('.network-row').trigger('click');
+  await flushPromises();
+  await flushPromises();
+}
+
+describe('Networks workspace', () => {
+  beforeEach(() => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    const auth = pinia.state.value;
+    auth.auth = {
+      user: {
+        username: 'admin',
+        role: 'admin',
+        is_admin: true,
+        permissions: ['*'],
+      },
+    };
+    localStorage.clear();
+    reservedIp33 = false;
+    deletedIps = new Set();
+    dnsRecordsHidden = false;
+    summaryStats = {
+      subnet_id: subnet.id,
+      total_addresses: 256,
+      assigned_count: subnet.used_count,
+      unassigned_count: 256 - subnet.used_count,
+      online_count: 1,
+      rogue_count: 0,
+    };
+    subnet.used_count = 5;
+    api.get.mockReset();
+    api.put.mockReset();
+    api.post.mockReset();
+    installApiFixtures();
+  });
+
+  it('applies a saved explorer query to the first workspace reads', async () => {
+    localStorage.setItem(
+      'cidrella_workspace_v1_admin',
+      JSON.stringify({ q: 'printer', context: 'all', view: 'networks' }),
+    );
+
+    await mountWorkspace();
+
+    const firstNetworkRead = api.get.mock.calls.find(([url]) => url === '/workspace/networks');
+    const firstDnsRead = api.get.mock.calls.find(([url]) => url === '/workspace/dns-records');
+    const firstDhcpRead = api.get.mock.calls.find(([url]) => url === '/workspace/dhcp-addresses');
+    expect(firstNetworkRead[1].params.q).toBe('printer');
+    expect(firstDnsRead[1].params.q).toBe('printer');
+    expect(firstDhcpRead[1].params.q).toBe('printer');
+  });
+
+  it('shows the network tab set on the first paint, before the tree has loaded', async () => {
+    localStorage.setItem(
+      'cidrella_workspace_v1_admin',
+      JSON.stringify({ context: 'network', network: '11', view: 'dhcp' }),
+    );
+    // Mount without waiting for the workspace reads. The estate tabs used to
+    // render here and swap to the network tabs once the tree came back.
+    const wrapper = await mountWorkspace({ settled: false });
+    const labels = () =>
+      wrapper.findAll('.view-tabs button').map((button) => button.text().split('\n')[0].trim());
+    expect(labels().map((label) => label.replace(/\d+$/, '').trim())).toEqual([
+      'Addresses',
+      'DNS',
+      'DHCP',
+      'Ranges',
+    ]);
+    await flushPromises();
+    expect(labels().map((label) => label.replace(/\d+$/, '').trim())).toEqual([
+      'Addresses',
+      'DNS',
+      'DHCP',
+      'Ranges',
+    ]);
+    wrapper.unmount();
+  });
+
+  it('composes the section 5 presentation boundaries around one orchestrator', async () => {
+    // W-01: the explorer, context header, toolbar, table, grid and details
+    // host are separate components. The orchestrator owns state; each child
+    // only renders what it is handed and emits what the operator did.
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    for (const component of [
+      ResourceExplorer,
+      WorkspaceContextHeader,
+      WorkspaceToolbar,
+      WorkspaceTable,
+    ]) {
+      expect(wrapper.findComponent(component).exists()).toBe(true);
+    }
+    expect(wrapper.findComponent(AddressGrid).exists()).toBe(false);
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    expect(wrapper.findComponent(AddressGrid).props('density')).toBe('spacious');
+    expect(wrapper.findComponent(WorkspaceTable).exists()).toBe(false);
+    await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
+    expect(wrapper.findComponent(AddressGrid).props('density')).toBe('compact');
+    // The grid shows the whole network, so a /24 has no pages to turn; the
+    // footer with its count stays.
+    expect(wrapper.find('.table-footer .p-paginator').exists()).toBe(false);
+    expect(wrapper.find('.table-footer').exists()).toBe(true);
+
+    await wrapper.find('button[aria-label="Table view"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.table-footer .p-paginator').exists()).toBe(true);
+    await wrapper.find('tbody tr').trigger('click');
+    await flushPromises();
+    expect(wrapper.findComponent(WorkspaceDetailsHost).props('row')).not.toBeNull();
+  });
+
+  it('reads the whole network for the grid and a page for the table', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const ipsCalls = () => api.get.mock.calls.filter(([url]) => url === '/subnets/11/ips');
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 256 });
+
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 4096 });
+    // The DNS and DHCP reads on the same page keep the table's size.
+    const dhcpCall = api.get.mock.calls
+      .filter(
+        ([url, config]) => url === '/workspace/dhcp-addresses' && config?.params?.page_size > 1,
+      )
+      .at(-1);
+    expect(dhcpCall[1].params.page_size).toBe(256);
+
+    // Compact is still the grid: no reload for a density change.
+    const before = ipsCalls().length;
+    await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
+    await flushPromises();
+    expect(ipsCalls().length).toBe(before);
+
+    await wrapper.find('button[aria-label="Table view"]').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 256 });
+  });
+
+  it('loads real API data and keeps network context across address, DNS, and DHCP views', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    expect(wrapper.find('.context-header').text()).toContain('Public test network');
+    expect(wrapper.find('table').text()).toContain('1.1.1.40');
+    expect(wrapper.find('table').text()).toContain('dynamic DHCP');
+    expect(wrapper.find('.table-footer').text()).toContain(
+      '256 on this page · 256 matching · 256 addresses in network',
+    );
+
+    const dnsTab = wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DNS'));
+    await dnsTab.trigger('click');
+    expect(wrapper.find('.context-header').text()).toContain('Public test network');
+    expect(wrapper.find('.view-summary').text()).toContain('test.example');
+    expect(wrapper.find('table').text()).toContain('client.test.example');
+
+    const dhcpTab = wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DHCP'));
+    await dhcpTab.trigger('click');
+    expect(wrapper.find('.view-summary').text()).toContain('Public test network scope');
+    expect(wrapper.find('table').text()).toContain('02:00:00:00:00:40');
+    // The Lease column reads the server's lease state the way the Addresses
+    // table does, alongside the shared Status.
+    expect(wrapper.find('table').text()).toContain('Active');
+    expect(wrapper.find('table').text()).toContain('in use');
+  });
+
+  it('offers all-network, zone, and scope inventories in the same work surface', async () => {
+    const wrapper = await mountWorkspace();
+    expect(wrapper.find('.service-shortcuts').exists()).toBe(false);
+    expect(wrapper.find('.estate-row.active').exists()).toBe(true);
+    expect(wrapper.find('.context-header').text()).toContain('All Allocated Networks');
+    expect(wrapper.findAll('.view-tabs button')).toHaveLength(3);
+    expect(wrapper.find('table').text()).toContain('Public test network');
+
+    // Was a click on the DNS stat tile. That tile was navigation duplicating
+    // the DNS tab, so the tile is a readout now and the tab is the only way in.
+    await wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DNS'))
+      .trigger('click');
+    expect(wrapper.find('.context-header').text()).toContain('All Allocated Networks');
+    expect(wrapper.find('.view-tabs button.active').text()).toContain('DNS');
+    // Every network's records, the same DNS table as inside a network; the
+    // zones are the cards above it.
+    await flushPromises();
+    expect(wrapper.find('table').text()).toContain('client.test.example');
+    expect(wrapper.find('.view-summary').text()).toContain('1.1.1.in-addr.arpa');
+
+    await wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DHCP'))
+      .trigger('click');
+    await flushPromises();
+    expect(wrapper.find('table').text()).toContain('1.1.1.40');
+    expect(wrapper.find('.view-summary').text()).toContain('1.1.1.33 – 1.1.1.126');
+  });
+
+  it('uses folders as intermediate inventory scopes', async () => {
+    const wrapper = await mountWorkspace();
+    await wrapper.find('.folder-select').trigger('click');
+
+    expect(wrapper.find('.folder-row.active').exists()).toBe(true);
+    expect(wrapper.find('.context-header').text()).toContain('Testerella');
+    expect(wrapper.findAll('.view-tabs button')).toHaveLength(3);
+
+    await wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DNS'))
+      .trigger('click');
+    expect(wrapper.find('table').text()).toContain('test.example');
+  });
+
+  it('creates networks from the Create menu only, and keeps the DNS and range add buttons', async () => {
+    const wrapper = await mountWorkspace();
+    // No explorer "+" and no Allocate network toolbar button: both repeated
+    // the header's Create menu.
+    expect(wrapper.find('.resource-explorer [aria-label="Create resource"]').exists()).toBe(false);
+    expect(wrapper.find('.table-toolbar .button.primary').exists()).toBe(false);
+    await wrapper.find('.context-actions button').trigger('click');
+    expect(wrapper.findAll('.create-menu button strong').map((label) => label.text())).toContain(
+      'Create network',
+    );
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    // A DNS record has no other creation point, so its tab keeps the button
+    // (once a zone is open; a network's DNS tab opens on its forward zone).
+    await enterTestNetwork(wrapper);
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.table-toolbar .button.primary').exists()).toBe(true);
+  });
+
+  it('shows every reverse zone of one network from its heading in the picker', async () => {
+    const base = api.get.getMockImplementation();
+    const owner = { id: subnet.id, cidr: subnet.cidr, name: subnet.name };
+    const reverse = (id, name) => ({
+      id,
+      name,
+      type: 'reverse',
+      enabled: 1,
+      record_count: 254,
+      related_subnet_ids: [subnet.id],
+      related_networks: [owner],
+    });
+    api.get.mockImplementation((url, config) =>
+      url === '/dns/zones'
+        ? base(url, config).then((res) => ({
+            ...res,
+            data: [
+              ...res.data.filter((zone) => zone.type !== 'reverse'),
+              reverse(41, '1.1.1.in-addr.arpa'),
+              reverse(42, '2.1.1.in-addr.arpa'),
+            ],
+          }))
+        : base(url, config),
+    );
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    await wrapper.find('.linked-picker').trigger('click');
+    globalThis.document.querySelector('[data-track="workspace-reverse-network"]').click();
+    await flushPromises();
+
+    const dnsReads = api.get.mock.calls.filter(([url]) => url === '/workspace/dns-records');
+    expect(dnsReads.at(-1)[1].params).toMatchObject({ subnet_id: subnet.id, zone_type: 'reverse' });
+    expect(dnsReads.at(-1)[1].params.zone_id).toBeUndefined();
+    expect(wrapper.find('.linked-picker strong').text()).toBe('Public test network · all zones');
+
+    // Picking one zone replaces the network-wide choice.
+    await wrapper.find('.linked-picker').trigger('click');
+    globalThis.document.querySelectorAll('[data-track="workspace-reverse-zone"]')[1].click();
+    await flushPromises();
+    const last = api.get.mock.calls.filter(([url]) => url === '/workspace/dns-records').at(-1);
+    expect(last[1].params).toMatchObject({ zone_id: 42 });
+    expect(last[1].params.zone_type).toBeUndefined();
+    expect(wrapper.find('.linked-picker strong').text()).toBe('2.1.1.in-addr.arpa');
+    wrapper.unmount();
+  });
+
+  it('leaves the reverse zone a deallocated network left behind out of the allocated estate', async () => {
+    const base = api.get.getMockImplementation();
+    const leftover = {
+      id: 29,
+      name: '2.1.1.in-addr.arpa',
+      type: 'reverse',
+      enabled: 0,
+      record_count: 0,
+      related_subnet_ids: [],
+    };
+    const standalone = {
+      id: 30,
+      name: '99.51.198.in-addr.arpa',
+      type: 'reverse',
+      enabled: 1,
+      record_count: 3,
+      related_subnet_ids: [],
+    };
+    api.get.mockImplementation((url, config) =>
+      url === '/dns/zones'
+        ? base(url, config).then((res) => ({ ...res, data: [...res.data, leftover, standalone] }))
+        : base(url, config),
+    );
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    // Two fixture zones plus the standalone one; the leftover is not counted.
+    expect(wrapper.find('[data-track="workspace-tab-dns"] span').text()).toBe('3');
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    await wrapper.find('.linked-picker').trigger('click');
+    const zonesListed = [...globalThis.document.querySelectorAll('.picker-item strong')].map(
+      (el) => el.textContent,
+    );
+    // Disabled and used by no allocated network: gone. Enabled and unlinked
+    // (address space kept outside IPAM): still there.
+    expect(zonesListed).toEqual(['1.1.1.in-addr.arpa', '99.51.198.in-addr.arpa']);
+    wrapper.unmount();
+  });
+
+  it('opens unallocated address space as a functional inventory context', async () => {
+    const wrapper = await mountWorkspace();
+    await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
+
+    expect(wrapper.find('.context-header').text()).toContain('All Unallocated Networks');
+    // The explorer names both estates by allocation state, each with its count.
+    const estates = wrapper.findAll('.estate-row').map((row) => row.text());
+    expect(estates[0]).toContain('All Allocated Networks');
+    expect(estates[1]).toContain('All Unallocated Networks');
+    expect(estates[1]).toContain('1 network ready to allocate');
+    expect(wrapper.find('.estate-row.active').text()).toContain('All Unallocated Networks');
+    expect(wrapper.text()).not.toContain('Browse unallocated');
+    // One table and no DNS or DHCP of its own: no tabs to switch between.
+    expect(wrapper.find('.view-tabs').exists()).toBe(false);
+    expect(wrapper.find('[data-track="workspace-tab-dns"]').exists()).toBe(false);
+    expect(wrapper.find('table').text()).toContain('1.1.2.0/24');
+    expect(wrapper.find('.network-tree').text()).toContain('1.1.2.0/24');
+    // All Allocated Networks has its three tabs back.
+    await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.findAll('.view-tabs button').map((tab) => tab.attributes('data-track'))).toEqual(
+      ['workspace-tab-networks', 'workspace-tab-dns', 'workspace-tab-dhcp'],
+    );
+  });
+
+  it('asks before Move to folder allocates an unallocated network', async () => {
+    // The allocation form's vendor inputs need the PrimeVue plugin.
+    const wrapper = await mountWorkspace({
+      stubs: { AutoComplete: true, InputNumber: true, ToggleSwitch: true, Checkbox: true },
+    });
+    await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
+    await flushPromises();
+    const moveFromMenu = async () => {
+      const row = wrapper.findAll('tbody tr').find((entry) => entry.text().includes('1.1.2.0/24'));
+      await row.trigger('contextmenu');
+      await flushPromises();
+      await rowMenuItem(wrapper, 'Move to folder').trigger('click');
+      await flushPromises();
+    };
+    const networkDialogs = () => wrapper.findComponent(NetworkDialogs);
+
+    const warning = 'Moving 1.1.2.0/24 into a folder allocates it.';
+    await moveFromMenu();
+    expect(wrapper.text()).toContain(warning);
+    // Nothing opens, and nothing is sent, until the operator continues.
+    expect(networkDialogs().exists() && networkDialogs().vm.showNetworkDialog).toBeFalsy();
+    await wrapper.find('[data-track="workspace-move-allocate-cancel"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain(warning);
+    expect(networkDialogs().exists() && networkDialogs().vm.showNetworkDialog).toBeFalsy();
+
+    await moveFromMenu();
+    await wrapper.find('[data-track="workspace-move-allocate-confirm"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).not.toContain(warning);
+    expect(networkDialogs().vm.showNetworkDialog).toBe(true);
+    expect(networkDialogs().vm.networkDialogMode).toBe('configure');
+    expect(networkDialogs().vm.activeNetworkData).toMatchObject({ id: 12, cidr: '1.1.2.0/24' });
+    expect(api.post).not.toHaveBeenCalledWith('/subnets/12/configure', expect.anything());
+  });
+
+  it('asks before a dropped unallocated network is allocated into the folder', async () => {
+    const wrapper = await mountWorkspace({
+      stubs: { AutoComplete: true, InputNumber: true, ToggleSwitch: true, Checkbox: true },
+    });
+    const dataTransfer = {
+      data: { 'application/x-subnet-id': '12' },
+      types: ['application/x-subnet-id'],
+      getData(type) {
+        return this.data[type] ?? '';
+      },
+    };
+    const [folderRow] = wrapper.findAll('.folder-row');
+    for (const type of ['dragover', 'drop']) {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      event.dataTransfer = dataTransfer;
+      folderRow.element.dispatchEvent(event);
+    }
+    await flushPromises();
+
+    expect(wrapper.text()).toContain('Moving 1.1.2.0/24 into Testerella allocates it.');
+    expect(api.put).not.toHaveBeenCalledWith('/subnets/12', expect.anything());
+    await wrapper.find('[data-track="workspace-move-allocate-confirm"]').trigger('click');
+    await flushPromises();
+    const dialogs = wrapper.findComponent(NetworkDialogs).vm;
+    expect(dialogs.networkDialogMode).toBe('configure');
+    expect(dialogs.dropTargetFolderIdForConfigure).toBe(1);
+  });
+
+  it('filters available canonical rows and opens details from a live row', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    expect(wrapper.find('table').text()).toContain('1.1.1.200');
+
+    await wrapper.find('.available-switch input').setValue(false);
+    await flushPromises();
+    expect(wrapper.find('table').text()).not.toContain('1.1.1.200');
+    expect(api.get).toHaveBeenCalledWith(
+      '/subnets/11/ips',
+      expect.objectContaining({
+        params: expect.objectContaining({ showAvailable: 'false' }),
+      }),
+    );
+
+    const gatewayRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.1'));
+    await gatewayRow.trigger('click');
+    expect(wrapper.find('.workspace-address-panel').text()).toContain('1.1.1.1');
+    // Nothing references the gateway, so no related resources are offered.
+    expect(wrapper.find('.workspace-address-panel').text()).not.toContain('RELATED RESOURCES');
+  });
+
+  it('builds the address grid from API rows instead of sample cells', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+
+    expect(wrapper.find('.address-grid').exists()).toBe(true);
+    expect(wrapper.findAll('.address-grid button')).toHaveLength(256);
+    expect(wrapper.find('button[title="1.1.1.1 · gateway"]').exists()).toBe(true);
+    expect(wrapper.find('button[title="1.1.1.40 · dynamic DHCP"]').exists()).toBe(true);
+    expect(wrapper.find('table').exists()).toBe(false);
+  });
+
+  it('offers a dense 64-column compact address grid using the same canonical rows', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
+
+    expect(wrapper.find('.compact-address-grid').exists()).toBe(true);
+    expect(wrapper.findAll('.compact-address-grid button')).toHaveLength(256);
+    expect(wrapper.find('button[aria-label="1.1.1.1, gateway"]').exists()).toBe(true);
+    expect(wrapper.find('button[aria-label="1.1.1.40, dynamic DHCP"]').exists()).toBe(true);
+    expect(wrapper.findAll('.compact-address-grid button.section')).toHaveLength(16);
+  });
+
+  it('shares address selection across table and grids and opens the real bulk reservation flow', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const rowCheckboxes = wrapper.findAll('tbody input[type="checkbox"]');
+    await rowCheckboxes[2].trigger('click');
+    await rowCheckboxes[3].trigger('click');
+
+    // No bar pushes the rows down; the selection is acted on from its menu.
+    expect(wrapper.find('.selection-bar').exists()).toBe(false);
+    await wrapper.find('button[aria-label="Compact grid view"]').trigger('click');
+    expect(wrapper.findAll('.compact-address-grid button.selected')).toHaveLength(2);
+    await wrapper.find('button[aria-label="Table view"]').trigger('click');
+
+    await wrapper.findAll('tbody tr')[3].trigger('contextmenu');
+    await flushPromises();
+    await rowMenuItem(wrapper, 'Reserve').trigger('click');
+    const form = wrapper.find('.bulk-action-form');
+    expect(form.text()).toContain('1.1.1.2 through 1.1.1.3');
+    await form.find('textarea').setValue('Lab hosts');
+    await form.trigger('submit');
+    await flushPromises();
+
+    expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/bulk-allocation', {
+      start_ip: '1.1.1.2',
+      end_ip: '1.1.1.3',
+      allocation_state: 'reserved',
+      note: 'Lab hosts',
+    });
+    expect(
+      wrapper.findAll('tbody input[type="checkbox"]').filter((box) => box.element.checked),
+    ).toHaveLength(0);
+  });
+
+  it('uses the explorer search as a hostname and IP table filter', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const search = wrapper.find('input[data-track="workspace-global-search"]');
+
+    await search.setValue('client.test.example');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1);
+    expect(wrapper.find('tbody').text()).toContain('1.1.1.40');
+    expect(api.get).toHaveBeenCalledWith(
+      '/subnets/11/ips',
+      expect.objectContaining({
+        params: expect.objectContaining({ search: 'client.test.example' }),
+      }),
+    );
+
+    await search.setValue('1.1.1.40');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1);
+    expect(wrapper.find('tbody').text()).toContain('client.test.example');
+  });
+
+  it('sends column filters to the table on screen and counts them when the menu opens', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const menu = () => wrapper.findComponent(FilterMenu);
+
+    // Opening the menu asks the server for the counts of the whole result.
+    menu().vm.$emit('open');
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/subnets/11/ips',
+      expect.objectContaining({ params: expect.objectContaining({ facets: 1, pageSize: 1 }) }),
+    );
+    expect(menu().props('facets')).toEqual({
+      is_online: [{ value: false, count: expect.any(Number) }],
+    });
+    expect(
+      menu()
+        .props('columns')
+        .map((column) => column.key),
+    ).toEqual(expect.arrayContaining(['is_online', 'hostname', 'status']));
+
+    menu().vm.$emit('update:modelValue', { is_online: [false] });
+    await new Promise((resolve) => setTimeout(resolve, 120));
+    await flushPromises();
+    const filtered = api.get.mock.calls
+      .filter(([url, config]) => url === '/subnets/11/ips' && !config?.params?.facets)
+      .at(-1);
+    expect(JSON.parse(filtered[1].params.filters)).toEqual({ is_online: [false] });
+    expect(wrapper.find('.filter-chips').text()).toContain('Online: Offline');
+    // The other tables' reads carry no filter of this one.
+    const dnsCall = api.get.mock.calls.filter(([url]) => url === '/workspace/dns-records').at(-1);
+    expect(dnsCall[1].params.filters).toBeUndefined();
+
+    await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
+    await wrapper.find('input[aria-label="Search current table"]').setValue('Public');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/networks',
+      expect.objectContaining({ params: expect.objectContaining({ table_q: 'Public' }) }),
+    );
+
+    await wrapper.find('input[aria-label="Search current table"]').setValue('not returned');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+    expect(wrapper.findAll('tbody tr')).toHaveLength(0);
+  });
+
+  it('narrows the all-network DNS and DHCP tables to a zone or scope, URL-backed', async () => {
+    const wrapper = await mountWorkspace();
+    const tab = (name) =>
+      wrapper
+        .findAll('.view-tabs button')
+        .find((button) => button.text().includes(name))
+        .trigger('click');
+    const card = (text) =>
+      wrapper
+        .findAll('.view-summary .linked-card')
+        .find((button) => button.text().includes(text))
+        .trigger('click');
+
+    await tab('DNS');
+    await flushPromises();
+    await card('test.example');
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dns-records',
+      expect.objectContaining({ params: expect.objectContaining({ zone_id: 21 }) }),
+    );
+    expect(JSON.parse(localStorage.getItem('cidrella_workspace_v1_admin'))).toMatchObject({
+      view: 'dns',
+      zone: '21',
+    });
+    expect(wrapper.find('tbody').text()).toContain('client.test.example');
+
+    await tab('DHCP');
+    await flushPromises();
+    await card('1.1.1.33');
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dhcp-addresses',
+      expect.objectContaining({ params: expect.objectContaining({ scope_id: 31 }) }),
+    );
+    expect(JSON.parse(localStorage.getItem('cidrella_workspace_v1_admin'))).toMatchObject({
+      view: 'dhcp',
+      scope: '31',
+    });
+  });
+
+  it('opens related resources inside the details panel, never by switching the view', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
+
+    // No DNS record or DHCP row references 1.1.1.33: nothing to offer.
+    await rowFor('1.1.1.33').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.workspace-address-panel').text()).not.toContain('RELATED RESOURCES');
+    expect(wrapper.findAll('.related-button')).toHaveLength(0);
+
+    // 1.1.1.40 has two DNS records and one DHCP row.
+    await rowFor('1.1.1.40').trigger('click');
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dns-records',
+      expect.objectContaining({ params: expect.objectContaining({ ip_address: '1.1.1.40' }) }),
+    );
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dhcp-addresses',
+      expect.objectContaining({ params: expect.objectContaining({ ip_address: '1.1.1.40' }) }),
+    );
+    const related = wrapper.findAll('.related-button');
+    expect(related.map((button) => button.find('strong').text())).toEqual([
+      'DNS records',
+      'DHCP identity',
+    ]);
+    expect(related[0].text()).toContain('3 records reference this address');
+
+    await related[0].trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.view-tabs button.active').text()).toContain('Addresses');
+    expect(wrapper.find('.workspace-address-panel').exists()).toBe(false);
+    const panel = wrapper.find('.details-panel');
+    expect(panel.text()).toContain('DNS record');
+    expect(panel.text()).toContain('client');
+    expect(panel.text()).toContain('1.1.1.40');
+    const links = () => panel.findAll('.details-section button').map((button) => button.text());
+    // Back to the IP, the two sibling records, and the DHCP side.
+    expect(links().slice(0, 4)).toEqual(
+      expect.arrayContaining([
+        expect.stringContaining('Canonical IP record'),
+        expect.stringContaining('PTR record for the same address'),
+        expect.stringContaining('CNAME record for the same address'),
+        expect.stringContaining('DHCP identity'),
+      ]),
+    );
+
+    await panel
+      .findAll('.details-section button')
+      .find((button) => button.text().includes('PTR record'))
+      .trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.details-panel').text()).toContain('40');
+    expect(wrapper.find('.view-tabs button.active').text()).toContain('Addresses');
+
+    await wrapper
+      .find('.details-panel')
+      .findAll('.details-section button')
+      .find((button) => button.text().includes('DHCP identity'))
+      .trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.details-panel').text()).toContain('DHCP address');
+
+    await wrapper
+      .find('.details-panel')
+      .findAll('.details-section button')
+      .find((button) => button.text().includes('Canonical IP record'))
+      .trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(api.get).toHaveBeenCalledWith('/subnets/11/ips/1.1.1.40');
+    expect(wrapper.find('.workspace-address-panel').text()).toContain('1.1.1.40');
+    expect(wrapper.find('.view-tabs button.active').text()).toContain('Addresses');
+  });
+
+  it('keeps the pinned address open by identity when the page no longer holds it', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.33'))
+      .trigger('click');
+    expect(wrapper.find('.workspace-address-panel').text()).toContain('1.1.1.33');
+
+    await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.40');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1);
+    expect(api.get).toHaveBeenCalledWith('/subnets/11/ips/1.1.1.33');
+    expect(wrapper.find('.workspace-address-panel').text()).toContain('1.1.1.33');
+  });
+
+  it('closes the details panel with a notice when the pinned resource is gone', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.33'))
+      .trigger('click');
+    deletedIps.add('1.1.1.33');
+
+    await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.40');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+
+    expect(wrapper.find('.workspace-address-panel').exists()).toBe(false);
+    expect(wrapper.find('.prototype-notice').text()).toContain('no longer available');
+  });
+
+  it('re-reads a pinned DNS record by zone and id when it leaves the page', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper
+      .findAll('.view-tabs button')
+      .find((button) => button.text().includes('DNS'))
+      .trigger('click');
+    await flushPromises();
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('client'))
+      .trigger('click');
+    expect(wrapper.find('.details-panel').text()).toContain('DNS record');
+
+    dnsRecordsHidden = true;
+    api.get.mockClear();
+    await wrapper.find('input[aria-label="Search current table"]').setValue('nothing');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+
+    expect(wrapper.findAll('tbody tr')).toHaveLength(0);
+    expect(api.get).toHaveBeenCalledWith(
+      '/workspace/dns-records',
+      expect.objectContaining({
+        params: expect.objectContaining({ zone_id: 21, subnet_id: 11, table_q: 'client' }),
+      }),
+    );
+    expect(wrapper.find('.details-panel').text()).toContain('client');
+  });
+
+  it('creates and releases an IP Reservation while preserving address context', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const addressRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.33'));
+    await addressRow.trigger('click');
+
+    await wrapper.find('button[data-track="workspace-create-ip-reservation"]').trigger('click');
+    await wrapper.find('#workspace-reservation-note').setValue('Hold for printer');
+    await wrapper.find('.inline-action').trigger('submit');
+    await flushPromises();
+    await flushPromises();
+
+    expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/1.1.1.33/allocation', {
+      allocation_state: 'reserved',
+      note: 'Hold for printer',
+    });
+    expect(wrapper.find('.workspace-address-panel').text()).toContain('IP Reservation');
+    expect(wrapper.find('button[data-track="workspace-release-ip-reservation"]').exists()).toBe(
+      true,
+    );
+
+    await wrapper.find('button[data-track="workspace-release-ip-reservation"]').trigger('click');
+    await wrapper.find('.confirm-action button.danger').trigger('click');
+    await flushPromises();
+    await flushPromises();
+
+    expect(api.put).toHaveBeenLastCalledWith('/subnets/11/ips/1.1.1.33/allocation', {
+      allocation_state: 'unassigned',
+      note: null,
+    });
+    expect(wrapper.find('button[data-track="workspace-create-ip-reservation"]').exists()).toBe(
+      true,
+    );
+  });
+
+  it('re-reads shared inventories, drops the old cache and reports refresh failures after a save', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const store = useSubnetStore();
+    const invalidate = vi.spyOn(store, 'invalidateDetailCache');
+    const statsChanged = vi.fn();
+    globalThis.window.addEventListener('ipam:stats-changed', statsChanged);
+    const calls = () => api.get.mock.calls.map(([url]) => url);
+
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.33'))
+      .trigger('click');
+    await wrapper.find('button[data-track="workspace-create-ip-reservation"]').trigger('click');
+    await wrapper.find('#workspace-reservation-note').setValue('Hold for printer');
+    api.get.mockClear();
+    await wrapper.find('.inline-action').trigger('submit');
+    await flushPromises();
+    await flushPromises();
+
+    // IP Reservation: tree (utilization), scope counts, the address page,
+    // summary and the pinned address. Zones are untouched by an allocation.
+    expect(calls()).toEqual(
+      expect.arrayContaining([
+        '/subnets',
+        '/dhcp/scopes',
+        '/subnets/11/ips',
+        '/subnets/11/summary',
+      ]),
+    );
+    expect(calls()).not.toContain('/dns/zones');
+    expect(invalidate).toHaveBeenCalledWith(11);
+    expect(statsChanged).toHaveBeenCalledTimes(1);
+    expect(wrapper.find('.prototype-notice').text()).toBe('WorkspaceIP Reservation created');
+
+    // A DNS change re-reads zones as well and clears the whole old cache.
+    api.get.mockClear();
+    wrapper.findComponent(NetworksWorkspace).vm.refreshAfterMutation('dns', 'DNS record saved');
+    await flushPromises();
+    await flushPromises();
+    expect(calls()).toEqual(expect.arrayContaining(['/subnets', '/dns/zones', '/subnets/11/ips']));
+    expect(invalidate).toHaveBeenLastCalledWith(undefined);
+    expect(statsChanged).toHaveBeenCalledTimes(2);
+
+    // Saved but the follow-up read failed: say so, keep the page, offer Retry.
+    api.get.mockImplementationOnce(() => Promise.reject(new Error('tree offline')));
+    wrapper.findComponent(NetworksWorkspace).vm.refreshAfterMutation('address', 'Released');
+    await flushPromises();
+    await flushPromises();
+    expect(wrapper.find('.prototype-notice').text()).toContain('Released. Saved; refresh failed');
+    expect(wrapper.find('.prototype-notice').text()).toContain('tree offline');
+    expect(wrapper.findAll('tbody tr').length).toBeGreaterThan(0);
+    api.get.mockClear();
+    await wrapper.find('.prototype-notice button').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(calls()).toContain('/subnets');
+    expect(wrapper.find('.prototype-notice').text()).toBe('WorkspaceLive data refreshed.');
+    globalThis.window.removeEventListener('ipam:stats-changed', statsChanged);
+  });
+
+  it('keeps a zone chosen when stepping out to a folder; All Allocated Networks goes home', async () => {
+    const wrapper = await mountWorkspace();
+    const tableReads = () =>
+      api.get.mock.calls.filter(
+        ([url, config]) => url === '/workspace/dns-records' && config.params.sort_order,
+      );
+    const lastRead = () => tableReads().at(-1)[1].params;
+    const settle = async () => {
+      await new Promise((resolve) => setTimeout(resolve, 150));
+      await flushPromises();
+    };
+    const selectedCards = () =>
+      wrapper.findAll('.linked-card.selected').map((card) => card.find('strong').text());
+    const activeTab = () => wrapper.find('.view-tabs button.active').attributes('data-track');
+
+    // All Allocated Networks' DNS tab opens on the forward zone, not on the
+    // mixed list that sorts every PTR first.
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    expect(lastRead()).toMatchObject({ zone_id: 21 });
+    expect(selectedCards()).toEqual(['test.example']);
+
+    // From a network's DNS view, the zone it shows carries to a folder that
+    // holds it.
+    await enterTestNetwork(wrapper);
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    expect(lastRead()).toMatchObject({ subnet_id: 11, zone_id: 21 });
+    await wrapper.find('.folder-row .folder-select').trigger('click');
+    await settle();
+    expect(lastRead()).toMatchObject({ zone_id: 21 });
+    expect(lastRead().subnet_id).toBeUndefined();
+    expect(selectedCards()).toEqual(['test.example']);
+
+    // All Allocated Networks is home: the networks, whatever tab was open.
+    await wrapper.find('button[data-track="workspace-estate-select"]').trigger('click');
+    await settle();
+    expect(activeTab()).toBe('workspace-tab-networks');
+    expect(selectedCards()).toEqual([]);
+  });
+
+  it('carries the last zone choice to the next network on the DNS view', async () => {
+    const sibling = {
+      id: 13,
+      cidr: '1.1.0.0/24',
+      name: 'Sibling test network',
+      status: 'allocated',
+      total_addresses: 256,
+      used_count: 1,
+      children: [],
+    };
+    const siblingReverse = {
+      id: 23,
+      name: '0.1.1.in-addr.arpa',
+      type: 'reverse',
+      enabled: 1,
+      record_count: 1,
+      subnet_id: 13,
+      related_subnet_ids: [13],
+    };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) => {
+      if (url === '/subnets')
+        return response({
+          folders: [{ id: 1, name: 'Testerella', subnets: [subnet, sibling, unallocatedSubnet] }],
+        });
+      if (url === '/dns/zones')
+        return response([
+          { ...zones[0], related_subnet_ids: [subnet.id, 13] },
+          zones[1],
+          siblingReverse,
+        ]);
+      return base(url, config);
+    });
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    // The table read, not the one-row count read that follows it.
+    const lastDnsParams = () =>
+      api.get.mock.calls
+        .filter(([url, config]) => url === '/workspace/dns-records' && config.params.sort_order)
+        .at(-1)[1].params;
+    const selectSibling = async () => {
+      await wrapper
+        .findAll('.network-row')
+        .find((row) => row.text().includes('Sibling'))
+        .trigger('click');
+      await flushPromises();
+      await flushPromises();
+    };
+    const clickCard = async (side) => {
+      await wrapper
+        .findAll('.linked-card')
+        .find((card) => card.text().includes(side))
+        .trigger('click');
+      await flushPromises();
+      await flushPromises();
+    };
+    const selectFirst = async () => {
+      await wrapper.find('.network-row').trigger('click');
+      await flushPromises();
+      await flushPromises();
+    };
+
+    const selectedCards = () =>
+      wrapper.findAll('.linked-card.selected').map((card) => card.find('small').text());
+
+    // The DNS tab opens on the forward zone before any choice is made, and only
+    // that card reads as selected.
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 21 });
+    expect(selectedCards()).toEqual(['forward']);
+    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBeNull();
+
+    // Move to the sibling: its forward zone opens.
+    await selectSibling();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 21 });
+    expect(wrapper.find('.view-summary h3').text()).toBe('test.example');
+
+    // The reverse side follows the network: each has its own reverse zone.
+    await clickCard('reverse');
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 23 });
+    expect(selectedCards()).toEqual(['reverse']);
+    await selectFirst();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 22 });
+    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('"reverse"');
+
+    // Leaving the DNS tab and coming back reopens the remembered side.
+    await wrapper.find('[data-track="workspace-tab-addresses"]').trigger('click');
+    await flushPromises();
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 22 });
+    expect(selectedCards()).toEqual(['reverse']);
+    await selectSibling();
+
+    // Clicking the chosen card again keeps it. Clearing it used to drop the
+    // table to the mixed list, where the PTRs sort first and a forward zone
+    // looked as if it had turned into a reverse one.
+    const reads = api.get.mock.calls.length;
+    await clickCard('reverse');
+    expect(api.get.mock.calls.length).toBe(reads);
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 23 });
+    expect(selectedCards()).toEqual(['reverse']);
+    await clickCard('forward');
+    await clickCard('forward');
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 13, zone_id: 21 });
+    expect(selectedCards()).toEqual(['forward']);
+    await selectFirst();
+    expect(lastDnsParams()).toMatchObject({ subnet_id: 11, zone_id: 21 });
+    expect(localStorage.getItem('cidrella_workspace_dns_zone_side')).toBe('"forward"');
+
+    // Leaving the DNS view still resets the choice for that view's filters.
+    await wrapper.find('[data-track="workspace-tab-addresses"]').trigger('click');
+    await flushPromises();
+    await selectFirst();
+    expect(wrapper.find('.workspace-frame').exists()).toBe(true);
+  });
+
+  it('opens the zone or scope menu from a right-click on its linked card', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    const zoneCard = wrapper
+      .findAll('.linked-card')
+      .find((card) => card.text().includes('forward'));
+    await zoneCard.trigger('contextmenu', { clientX: 120, clientY: 220 });
+    await nextTick();
+    let labels = wrapper.findAll('.row-menu button strong').map((label) => label.text());
+    expect(labels).toContain('Edit zone');
+    expect(labels).toContain('Delete zone');
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 120px');
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    await wrapper.find('[data-track="workspace-tab-dhcp"]').trigger('click');
+    await flushPromises();
+    await wrapper.find('.linked-card').trigger('contextmenu', { clientX: 130, clientY: 230 });
+    await nextTick();
+    labels = wrapper.findAll('.row-menu button strong').map((label) => label.text());
+    expect(labels).toContain('Edit Scope');
+    expect(labels).toContain('Delete Scope');
+    await wrapper.find('.menu-scrim').trigger('click');
+  });
+
+  it('enables, disables and deletes checked DNS records from the selection menu', async () => {
+    api.post.mockImplementation((url, body) => {
+      if (url === '/dns/records/bulk')
+        return response({ action: body.action, applied: body.ids, skipped: [] });
+      throw new Error(`Unexpected POST ${url}`);
+    });
+    // The forward zone holds the manual A record and one a DHCP lease wrote.
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/workspace/dns-records' && !config?.params?.ip_address
+        ? base(url, config).then((res) => {
+            const [manual] = res.data.items;
+            const leased = {
+              ...manual,
+              id: 54,
+              name: 'laptop',
+              record_fqdn: 'laptop.test.example',
+              value: '1.1.1.41',
+              ip_address: '1.1.1.41',
+              dns_source: 'dhcp',
+            };
+            return { ...res, data: { ...res.data, items: [manual, leased], total: 2 } };
+          })
+        : base(url, config),
+    );
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await wrapper.find('[data-track="workspace-tab-dns"]').trigger('click');
+    await flushPromises();
+    const recordRows = () => wrapper.findAll('tbody tr');
+    expect(recordRows()).toHaveLength(2);
+    const checkBoth = async () => {
+      await recordRows()[0].trigger('click', { ctrlKey: true });
+      await recordRows()[1].trigger('click', { ctrlKey: true });
+      await recordRows()[1].trigger('contextmenu');
+      await flushPromises();
+    };
+
+    // A manual record and a generated one are checked together.
+    await checkBoth();
+    expect(wrapper.find('.row-menu span').text()).toBe('2 RECORDS SELECTED');
+    expect(rowMenuLabels(wrapper)).toEqual(['Enable records', 'Disable records', 'Delete records']);
+    const enable = rowMenuItem(wrapper, 'Enable records');
+    expect(enable.attributes('aria-disabled')).toBe('true');
+    expect(enable.attributes('title')).toBe('Every selected record is already enabled.');
+
+    // Only the manual record is sent; the generated one follows its lease.
+    await rowMenuItem(wrapper, 'Disable records').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/dns/records/bulk', { action: 'disable', ids: [51] });
+    expect(wrapper.find('.prototype-notice').text()).toContain('1 DNS record disabled');
+
+    // Delete asks first and says what stays.
+    await checkBoth();
+    await rowMenuItem(wrapper, 'Delete records').trigger('click');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Delete 1 DNS record?');
+    expect(wrapper.text()).toContain('1 generated record in the selection stay');
+    expect(api.post).not.toHaveBeenCalledWith(
+      '/dns/records/bulk',
+      expect.objectContaining({ action: 'delete' }),
+    );
+    await wrapper.find('[data-track="workspace-dns-bulk-delete-confirm"]').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/dns/records/bulk', { action: 'delete', ids: [51] });
+    wrapper.unmount();
+  });
+
+  it('checks networks in the explorer with Ctrl and Shift and merges them from its menu', async () => {
+    const halves = [
+      { id: 31, cidr: '1.1.4.0/25', status: 'unallocated', parent_id: 30, children: [] },
+      { id: 32, cidr: '1.1.4.128/25', status: 'unallocated', parent_id: 30, children: [] },
+    ];
+    const dividedParent = {
+      id: 30,
+      cidr: '1.1.4.0/24',
+      name: null,
+      status: 'unallocated',
+      total_addresses: 256,
+      used_count: 0,
+      children: halves,
+    };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets'
+        ? response({
+            folders: [
+              { id: 1, name: 'Testerella', subnets: [subnet, unallocatedSubnet, dividedParent] },
+            ],
+          })
+        : base(url, config),
+    );
+    api.post.mockImplementation((url) => {
+      if (url === '/subnets/merge/preview')
+        return response({
+          source_cidrs: ['1.1.4.0/25', '1.1.4.128/25'],
+          merged_cidr: '1.1.4.0/24',
+          plan: {},
+        });
+      throw new Error(`Unexpected POST ${url}`);
+    });
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
+    await flushPromises();
+    const explorerRow = (cidr) =>
+      wrapper
+        .findAll('.network-tree [data-track="workspace-network-select"]')
+        .find((row) => row.text().includes(cidr));
+
+    // Ctrl checks one row without opening it; Shift checks the run to another.
+    await explorerRow('1.1.4.0/25').trigger('click', { ctrlKey: true });
+    expect(explorerRow('1.1.4.0/25').classes()).toContain('checked');
+    expect(wrapper.find('.context-header').text()).toContain('All Unallocated Networks');
+    await explorerRow('1.1.4.128/25').trigger('click', { shiftKey: true });
+    expect(explorerRow('1.1.4.128/25').classes()).toContain('checked');
+    // The Networks table shows the same selection.
+    const tableChecked = wrapper
+      .findAll('tbody tr')
+      .filter((row) => row.find('input[type="checkbox"]').element.checked)
+      .map((row) => row.text());
+    expect(tableChecked.some((text) => text.includes('1.1.4.0/25'))).toBe(true);
+    expect(tableChecked.some((text) => text.includes('1.1.4.128/25'))).toBe(true);
+
+    // Right-clicking a checked explorer row opens the selection's menu.
+    await explorerRow('1.1.4.128/25').trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('2 NETWORKS SELECTED');
+    await rowMenuItem(wrapper, 'Merge').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/subnets/merge/preview', { subnet_ids: [31, 32] });
+
+    // Ctrl again unchecks; a plain right-click then targets the one network.
+    await explorerRow('1.1.4.0/25').trigger('click', { ctrlKey: true });
+    expect(explorerRow('1.1.4.0/25').classes()).not.toContain('checked');
+    await explorerRow('1.1.2.0/24').trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('NETWORK ACTIONS');
+    expect(rowMenuLabels(wrapper)).toContain('Allocate network');
+    wrapper.unmount();
+  });
+
+  it('merges and re-templates checked networks from their context menu', async () => {
+    const sibling = {
+      id: 13,
+      cidr: '1.1.0.0/24',
+      name: 'Sibling test network',
+      status: 'allocated',
+      total_addresses: 256,
+      used_count: 1,
+      children: [],
+    };
+    // A divided, unallocated parent with two unallocated halves: the only
+    // shape the merge rules accept.
+    const halves = [
+      { id: 31, cidr: '1.1.4.0/25', status: 'unallocated', parent_id: 30, children: [] },
+      { id: 32, cidr: '1.1.4.128/25', status: 'unallocated', parent_id: 30, children: [] },
+    ];
+    const dividedParent = {
+      id: 30,
+      cidr: '1.1.4.0/24',
+      name: null,
+      status: 'unallocated',
+      total_addresses: 256,
+      used_count: 0,
+      children: halves,
+    };
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets'
+        ? response({
+            folders: [
+              {
+                id: 1,
+                name: 'Testerella',
+                subnets: [subnet, sibling, unallocatedSubnet, dividedParent],
+              },
+            ],
+          })
+        : base(url, config),
+    );
+    api.post.mockImplementation((url, body) => {
+      if (url === '/subnets/merge/preview')
+        return response({
+          source_cidrs: ['1.1.4.0/25', '1.1.4.128/25'],
+          merged_cidr: '1.1.4.0/24',
+          plan: {},
+        });
+      if (url === '/subnets/apply-template') return response({ updated: body.subnet_ids });
+      if (url === '/subnets/merge') return response({ merged_cidr: '1.1.4.0/24' });
+      throw new Error(`Unexpected POST ${url}`);
+    });
+    const wrapper = await mountWorkspace();
+    let checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
+    expect(checkboxes).toHaveLength(2);
+    const openMenu = async (index) => {
+      await wrapper.findAll('tbody tr')[index].trigger('contextmenu');
+      await flushPromises();
+    };
+    const closeMenu = () => wrapper.find('.menu-scrim').trigger('click');
+
+    // One checked network: its menu is the network's own, with no Merge.
+    await checkboxes[0].trigger('click');
+    await openMenu(0);
+    expect(rowMenuLabels(wrapper)).not.toContain('Merge');
+    await closeMenu();
+
+    // Two allocated roots: Merge stays greyed out with why (they have to be
+    // deallocated first), does nothing when chosen, and Apply defaults
+    // re-applies the defaults to both.
+    await checkboxes[1].trigger('click');
+    await openMenu(1);
+    expect(wrapper.find('.row-menu span').text()).toContain('SELECTED');
+    const blockedMerge = rowMenuItem(wrapper, 'Merge');
+    expect(blockedMerge.attributes('aria-disabled')).toBe('true');
+    expect(blockedMerge.attributes('title')).toContain('Deallocate');
+    await blockedMerge.trigger('click');
+    expect(rowMenuLabels(wrapper)).not.toContain('Reserve');
+    await rowMenuItem(wrapper, 'Apply defaults').trigger('click');
+    await flushPromises();
+    expect(api.post).not.toHaveBeenCalledWith('/subnets/merge/preview', expect.anything());
+    expect(api.post).toHaveBeenCalledWith('/subnets/apply-template', { subnet_ids: [11, 13] });
+
+    // The unallocated halves merge.
+    await wrapper.find('button[data-track="workspace-unallocated-select"]').trigger('click');
+    await flushPromises();
+    checkboxes = wrapper.findAll('tbody input[type="checkbox"]');
+    expect(checkboxes).toHaveLength(3);
+    await checkboxes[1].trigger('click');
+    await checkboxes[2].trigger('click');
+    await openMenu(2);
+    await rowMenuItem(wrapper, 'Merge').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/subnets/merge/preview', { subnet_ids: [31, 32] });
+    expect(wrapper.text()).toContain('1.1.4.0/24');
+
+    // Merge sends the networks it previewed. It used to send the classic
+    // view's selection, empty here: "At least 2 subnet IDs required".
+    await wrapper
+      .find('[data-track="dialog-network-merge"]')
+      .findAll('button')
+      .find((button) => button.text() === 'Merge')
+      .trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith(
+      '/subnets/merge',
+      expect.objectContaining({ subnet_ids: [31, 32] }),
+    );
+  });
+
+  it('opens folder actions from the explorer row and carries the description into rename', async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets'
+        ? response({
+            folders: [
+              { id: 1, name: 'Testerella', description: 'Lab racks', subnets: [subnet] },
+              { id: null, name: 'Ungrouped', description: null, subnets: [unallocatedSubnet] },
+            ],
+          })
+        : base(url, config),
+    );
+    const wrapper = await mountWorkspace();
+    // The folder row has no menu button; a right-click on the row opens the
+    // folder menu, with the same reach from the keyboard menu key.
+    expect(wrapper.find('.row-menu-button').exists()).toBe(false);
+    const folderRows = wrapper.findAll('.folder-row');
+    expect(folderRows).toHaveLength(2);
+
+    await folderRows[1].trigger('contextmenu', { clientX: 40, clientY: 120 });
+    expect(wrapper.find('.row-menu span').text()).toBe('FOLDER ACTIONS');
+    expect(wrapper.findAll('.row-menu button strong').map((label) => label.text())).toEqual([
+      'Create network',
+    ]);
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    await folderRows[0].trigger('contextmenu', { clientX: 40, clientY: 80 });
+    expect(wrapper.findAll('.row-menu button strong').map((label) => label.text())).toEqual([
+      'Create network',
+      'Rename folder',
+      'Delete folder',
+    ]);
+    await wrapper
+      .findAll('.row-menu button')
+      .find((button) => button.text() === 'Rename folder')
+      .trigger('click');
+    await flushPromises();
+    await flushPromises();
+    const inputs = wrapper.findAll('input.w-full');
+    expect(inputs.map((input) => input.element.value)).toEqual(['Testerella', 'Lab racks']);
+
+    // The folder context header targets the folder too.
+    await wrapper.find('.folder-select').trigger('click');
+    await flushPromises();
+    await wrapper
+      .findAll('.context-actions button')
+      .find((button) => button.text().startsWith('Actions'))
+      .trigger('click');
+    expect(wrapper.find('.actions-menu span').text()).toBe('FOLDER ACTIONS');
+    expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
+      'Create network',
+      'Rename folder',
+      'Delete folder',
+    ]);
+  });
+
+  it('moves a network dropped on an explorer folder through the same PUT as the row menu', async () => {
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/subnets'
+        ? response({
+            folders: [
+              { id: 1, name: 'Testerella', description: 'Lab racks', subnets: [subnet] },
+              { id: null, name: 'Ungrouped', description: null, subnets: [unallocatedSubnet] },
+            ],
+          })
+        : base(url, config),
+    );
+    const basePut = api.put.getMockImplementation();
+    api.put.mockImplementation((url, body) =>
+      url === '/subnets/11' ? response({ id: 11, ...body }) : basePut(url, body),
+    );
+    const wrapper = await mountWorkspace();
+    // The old store's PUT re-reads the tree itself; the zone read only comes
+    // from the workspace's network refresh contract.
+    const zoneReads = () =>
+      api.get.mock.calls.filter(([url]) => url.startsWith('/dns/zones')).length;
+    const readsBefore = zoneReads();
+
+    // A fake DataTransfer: jsdom has no DragEvent, so the events are plain
+    // Events carrying the same fields the browser would.
+    const dataTransfer = {
+      data: {},
+      types: [],
+      effectAllowed: null,
+      dropEffect: null,
+      setData(type, value) {
+        this.data[type] = value;
+        this.types.push(type);
+      },
+      getData(type) {
+        return this.data[type] ?? '';
+      },
+    };
+    const dispatch = (element, type) => {
+      const event = new Event(type, { bubbles: true, cancelable: true });
+      event.dataTransfer = dataTransfer;
+      element.dispatchEvent(event);
+      return event;
+    };
+
+    const networkRow = wrapper.find('.network-row');
+    expect(networkRow.attributes('draggable')).toBe('true');
+    dispatch(networkRow.element, 'dragstart');
+    expect(dataTransfer.getData('application/x-subnet-id')).toBe('11');
+    expect(dataTransfer.effectAllowed).toBe('move');
+
+    const [homeFolder, ungrouped] = wrapper.findAll('.folder-row');
+    const over = dispatch(ungrouped.element, 'dragover');
+    await nextTick();
+    expect(over.defaultPrevented).toBe(true);
+    expect(dataTransfer.dropEffect).toBe('move');
+    expect(ungrouped.classes()).toContain('drop-target');
+
+    const drop = dispatch(ungrouped.element, 'drop');
+    await flushPromises();
+    await flushPromises();
+    expect(drop.defaultPrevented).toBe(true);
+    expect(ungrouped.classes()).not.toContain('drop-target');
+    expect(api.put).toHaveBeenCalledWith('/subnets/11', { folder_id: null });
+    expect(wrapper.find('.prototype-notice').text()).toContain('1.1.1.0/24 moved to Ungrouped');
+    expect(zoneReads()).toBeGreaterThan(readsBefore);
+
+    // Dropping on the folder it already lives in is a no-op.
+    const putCalls = api.put.mock.calls.length;
+    dispatch(homeFolder.element, 'dragover');
+    dispatch(homeFolder.element, 'drop');
+    await flushPromises();
+    expect(api.put.mock.calls.length).toBe(putCalls);
+
+    // The networks table row carries the same payload.
+    dataTransfer.data = {};
+    dataTransfer.types = [];
+    const tableRow = wrapper.find('tbody tr');
+    expect(tableRow.attributes('draggable')).toBe('true');
+    dispatch(tableRow.element, 'dragstart');
+    expect(dataTransfer.getData('application/x-subnet-id')).toBe('11');
+
+    // A drag that carries no network never marks a folder as a drop target.
+    dataTransfer.types = [];
+    const plain = dispatch(ungrouped.element, 'dragover');
+    await nextTick();
+    expect(plain.defaultPrevented).toBe(false);
+    expect(ungrouped.classes()).not.toContain('drop-target');
+  });
+
+  it('offers no network drag without subnets:write', async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    pinia.state.value.auth = {
+      user: {
+        username: 'viewer',
+        role: 'readonly',
+        is_admin: false,
+        permissions: ['subnets:read'],
+      },
+    };
+    const wrapper = await mountWorkspace();
+    expect(wrapper.find('.network-row').attributes('draggable')).toBeUndefined();
+    expect(wrapper.find('tbody tr').attributes('draggable')).toBeUndefined();
+  });
+
+  it('opens context menus where they were asked for', async () => {
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    // Right-click on an explorer network: the menu sits at the pointer.
+    await wrapper.find('.network-row').trigger('contextmenu', { clientX: 240, clientY: 310 });
+    await nextTick();
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('top: 310px');
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 240px');
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    // Right-click on a table row opens that row's menu at the pointer too,
+    // without pinning the row's details.
+    await enterTestNetwork(wrapper);
+    const scopeRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
+    await scopeRow.trigger('contextmenu', { clientX: 400, clientY: 500 });
+    await nextTick();
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('top: 500px');
+    expect(wrapper.find('.row-menu').text()).toContain('Edit Scope');
+    expect(wrapper.find('.workspace-address-panel').exists()).toBe(false);
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    // The keyboard opens a row's menu under the row itself: there is no
+    // per-row button, the pointer and the ContextMenu key are the two ways in.
+    expect(wrapper.find('button[aria-label="Row actions"]').exists()).toBe(false);
+    const firstRow = wrapper.find('tbody tr');
+    firstRow.element.getBoundingClientRect = () => ({
+      left: 600,
+      bottom: 420,
+      top: 400,
+      right: 630,
+    });
+    await firstRow.trigger('keydown', { key: 'ContextMenu' });
+    await nextTick();
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('top: 424px');
+    expect(wrapper.find('.row-menu').attributes('style')).toContain('left: 600px');
+    await wrapper.find('.menu-scrim').trigger('click');
+
+    // A pointer near the edge is pulled back inside the viewport.
+    await wrapper.find('.network-row').trigger('contextmenu', { clientX: 5000, clientY: 5000 });
+    await nextTick();
+    await nextTick();
+    const style = wrapper.find('.row-menu').attributes('style');
+    const top = Number(style.match(/top: (\d+)px/)[1]);
+    const left = Number(style.match(/left: (\d+)px/)[1]);
+    expect(top).toBeLessThanOrEqual(globalThis.innerHeight);
+    expect(left).toBeLessThanOrEqual(globalThis.innerWidth);
+    wrapper.unmount();
+  });
+
+  it('drives every menu through the action registry with a row-derived target', async () => {
+    const wrapper = await mountWorkspace();
+    // No network is selected, so there is no target for the network actions.
+    expect(wrapper.find('.context-actions').text()).not.toContain('Actions');
+
+    await enterTestNetwork(wrapper);
+    const scopeMember = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
+    await scopeMember.trigger('contextmenu');
+    const menu = wrapper.find('.row-menu');
+    expect(menu.findAll('button').map((button) => button.text())).toEqual([
+      'Edit Scope',
+      'Remove this IP from Scope',
+      'Delete Scope',
+      'Create IP Reservation',
+      'Create DNS entry',
+      'Create DHCP Reservation',
+      'Set Range Type',
+      'Liveness scan',
+      'Probe now',
+    ]);
+    // A pooled address cannot be named: the entry stays, greyed, with why.
+    const dnsEntry = menu.findAll('button').find((button) => button.text() === 'Create DNS entry');
+    expect(dnsEntry.attributes('aria-disabled')).toBe('true');
+    expect(dnsEntry.classes()).toContain('unavailable');
+    expect(dnsEntry.attributes('title')).toMatch(/DHCP pool/);
+    // One separator, above Probe now, which closes the menu.
+    const separators = menu.findAll('[role="separator"]');
+    expect(separators).toHaveLength(1);
+    expect(separators[0].element.nextElementSibling.textContent).toContain('Probe now');
+    expect(wrapper.find('.table-toolbar').text()).not.toContain('Reserve address');
+
+    await menu
+      .findAll('button')
+      .find((button) => button.text() === 'Create IP Reservation')
+      .trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.row-menu').exists()).toBe(false);
+    const editor = wrapper.findComponent(IpReservationEditor);
+    expect(editor.exists()).toBe(true);
+    expect(editor.props()).toMatchObject({ address: '1.1.1.50', mode: 'reserve', visible: true });
+
+    // The header Actions menu targets the selected network.
+    await wrapper
+      .findAll('.context-actions button')
+      .find((button) => button.text().startsWith('Actions'))
+      .trigger('click');
+    expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
+      'Edit network',
+      'Divide network',
+      'Move to folder',
+      'Apply defaults',
+      'Deallocate network',
+      'Delete network',
+    ]);
+  });
+
+  it('opens menus to the keyboard and returns focus to the invoker', async () => {
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await enterTestNetwork(wrapper);
+    const scopeRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.50'));
+    scopeRow.element.focus();
+    await scopeRow.trigger('keydown', { key: 'ContextMenu' });
+    await flushPromises();
+
+    const items = wrapper.findAll('.row-menu [role="menuitem"]');
+    expect(globalThis.document.activeElement).toBe(items[0].element);
+    await wrapper.find('.row-menu').trigger('keydown', { key: 'ArrowDown' });
+    expect(globalThis.document.activeElement).toBe(items[1].element);
+    await wrapper.find('.row-menu').trigger('keydown', { key: 'End' });
+    expect(globalThis.document.activeElement).toBe(items.at(-1).element);
+
+    globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect(wrapper.find('.row-menu').exists()).toBe(false);
+    expect(globalThis.document.activeElement).toBe(scopeRow.element);
+
+    // The grid reaches the same menu from the keyboard.
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    await flushPromises();
+    const cell = wrapper.find('.address-grid button[tabindex="0"]');
+    cell.element.focus();
+    await cell.trigger('keydown', { key: 'F10', shiftKey: true });
+    await flushPromises();
+    expect(wrapper.find('.row-menu').exists()).toBe(true);
+    expect(globalThis.document.activeElement).toBe(
+      wrapper.find('.row-menu [role="menuitem"]').element,
+    );
+    globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect(globalThis.document.activeElement).toBe(cell.element);
+    wrapper.unmount();
+  });
+
+  it('operates table rows from the keyboard', async () => {
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await enterTestNetwork(wrapper);
+    const rows = wrapper.findAll('tbody tr');
+    rows[0].element.focus();
+    await rows[0].trigger('keydown', { key: 'ArrowDown' });
+    expect(globalThis.document.activeElement).toBe(rows[1].element);
+
+    await rows[1].trigger('keydown', { key: 'Enter' });
+    await flushPromises();
+    expect(wrapper.find('.workspace-address-panel').text()).toContain(rows[1].text().slice(0, 7));
+    expect(rows[1].attributes('aria-selected')).toBe('true');
+
+    await rows[1].trigger('keydown', { key: ' ' });
+    expect(rows[1].find('input[type="checkbox"]').element.checked).toBe(true);
+
+    await rows[1].trigger('keydown', { key: 'F10', shiftKey: true });
+    await flushPromises();
+    expect(wrapper.find('.row-menu').exists()).toBe(true);
+    globalThis.window.dispatchEvent(new globalThis.KeyboardEvent('keydown', { key: 'Escape' }));
+    await flushPromises();
+    expect(globalThis.document.activeElement).toBe(rows[1].element);
+    wrapper.unmount();
+  });
+
+  it('picks a range with Shift in the table and right-clicks a selection as a whole', async () => {
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await enterTestNetwork(wrapper);
+    const rows = wrapper.findAll('tbody tr');
+    const checked = () =>
+      wrapper
+        .findAll('tbody input[type="checkbox"]')
+        .map((box, index) => (box.element.checked ? index : null))
+        .filter((index) => index != null);
+    const menuLabels = () =>
+      wrapper.findAll('.row-menu button strong').map((label) => label.text());
+
+    await rows[2].find('input[type="checkbox"]').trigger('click');
+    await rows[5].trigger('click', { shiftKey: true });
+    expect(checked()).toEqual([2, 3, 4, 5]);
+    // Shift on an already checked box keeps it checked.
+    await rows[3].find('input[type="checkbox"]').trigger('click', { shiftKey: true });
+    expect(checked()).toEqual([2, 3, 4, 5]);
+
+    // Right-click inside the selection targets all of it, not the one row.
+    await rows[4].trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('4 ADDRESSES SELECTED');
+    expect(menuLabels()).toContain('Set range type');
+    expect(menuLabels()).not.toContain('Set Range Type');
+    await wrapper
+      .findAll('.row-menu button')
+      .find((button) => button.text() === 'Set range type')
+      .trigger('click');
+    await flushPromises();
+    const dialog = wrapper.findComponent({ name: 'BulkRangeTypeDialog' });
+    expect(dialog.props('visible')).toBe(true);
+    expect(dialog.props('selectedRuns')).toEqual([
+      { start_ip: '1.1.1.2', end_ip: '1.1.1.5', count: 4 },
+    ]);
+    expect(checked()).toEqual([2, 3, 4, 5]);
+
+    // Outside the selection a right-click is the row's own menu.
+    await rows[9].trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('ADDRESSES ACTIONS');
+    expect(menuLabels()).toContain('Set Range Type');
+    wrapper.unmount();
+  });
+
+  it('right-clicks a grid drag as the dragged range', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    const cells = wrapper.findAll('.address-grid button');
+    await cells[10].trigger('pointerdown', { button: 0 });
+    await cells[11].trigger('pointerenter', { buttons: 1 });
+    await cells[12].trigger('pointerenter', { buttons: 1 });
+    globalThis.window.dispatchEvent(new globalThis.Event('pointerup'));
+    await cells[12].trigger('click');
+    await flushPromises();
+    expect(wrapper.findAll('.address-grid button.selected')).toHaveLength(3);
+
+    await cells[11].trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu span').text()).toBe('3 ADDRESSES SELECTED');
+    const pick = async (label) => {
+      await cells[11].trigger('contextmenu');
+      await flushPromises();
+      await wrapper
+        .findAll('.row-menu button')
+        .find((button) => button.text() === label)
+        .trigger('click');
+      await flushPromises();
+    };
+    // Every picked address scans, so the one switch reads on and turns it off.
+    await cells[11].trigger('contextmenu');
+    await flushPromises();
+    expect(wrapper.find('.row-menu [role="menuitemcheckbox"]').attributes('aria-checked')).toBe(
+      'true',
+    );
+    await pick('Liveness scan');
+    expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/bulk-scan-enabled', {
+      start_ip: '1.1.1.10',
+      end_ip: '1.1.1.12',
+      scan_enabled: false,
+    });
+    await pick('Probe now');
+    expect(api.post).toHaveBeenCalledWith('/scans/probe', {
+      subnet_id: 11,
+      ips: ['1.1.1.10', '1.1.1.11', '1.1.1.12'],
+    });
+    expect(wrapper.text()).toContain('Probed 3 addresses: 1 responded');
+  });
+
+  it('applies the shared small-text size set from the header user menu', async () => {
+    const wrapper = await mountWorkspace();
+    expect(wrapper.find('.preview-banner').exists()).toBe(false);
+    expect(wrapper.find('.workspace').attributes('style')).toContain(
+      '--workspace-font-bump: 1.333px',
+    );
+    const { resize, fontBump } = useWorkspaceFontBump();
+    resize(1);
+    await nextTick();
+    expect(wrapper.find('.workspace').attributes('style')).toContain(
+      '--workspace-font-bump: 2.666px',
+    );
+    expect(localStorage.getItem('cidrella_workspace_font_bump')).toBe('2');
+    resize(1);
+    expect(fontBump.value).toBe(2);
+    resize(-1);
+  });
+
+  it('uses tab semantics, one main landmark, and reflows for open details (W-07)', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    expect(wrapper.find('main').exists()).toBe(false);
+    expect(wrapper.find('.work-surface').attributes('aria-label')).toBe('Work surface');
+    const tabs = wrapper.findAll('[role="tablist"] [role="tab"]');
+    expect(tabs.length).toBeGreaterThan(2);
+    expect(tabs.filter((tab) => tab.attributes('aria-selected') === 'true')).toHaveLength(1);
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
+    await wrapper
+      .findAll('tbody tr')
+      .find((row) => row.text().includes('1.1.1.33'))
+      .trigger('click');
+    expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
+    await wrapper.find('button[aria-label="Close details"]').trigger('click');
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
+  });
+
+  it('closes the details on an outside press and swaps rows in place', async () => {
+    const wrapper = await mountWorkspace({ attachTo: globalThis.document.body });
+    await enterTestNetwork(wrapper);
+    const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
+    const press = (element) =>
+      element.dispatchEvent(new globalThis.Event('pointerdown', { bubbles: true }));
+
+    await rowFor('1.1.1.33').trigger('click');
+    const panel = wrapper.findComponent(AddressDetailsPanel);
+    expect(panel.exists()).toBe(true);
+    expect(panel.text()).toContain('1.1.1.33');
+    // A remount would produce a fresh element without this marker.
+    panel.element.dataset.mounted = 'first';
+
+    // A press on another row is not "outside": the same panel shows the new
+    // address without unmounting, so nothing slides.
+    press(rowFor('1.1.1.34').element);
+    await nextTick(); // the browser renders between pointerdown and click
+    await rowFor('1.1.1.34').trigger('click');
+    await flushPromises();
+    const swapped = wrapper.findComponent(AddressDetailsPanel);
+    expect(swapped.element.dataset.mounted).toBe('first');
+    expect(swapped.text()).toContain('1.1.1.34');
+    expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
+
+    // Presses inside the panel and on layered UI keep it open.
+    press(wrapper.find('.workspace-address-panel').element);
+    await flushPromises();
+    expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
+    const dialog = globalThis.document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    globalThis.document.body.append(dialog);
+    press(dialog);
+    await flushPromises();
+    expect(wrapper.find('.workspace-frame').classes()).toContain('details-open');
+
+    // Anywhere else closes it and drops the address from the route.
+    press(wrapper.find('.context-header h2').element);
+    await flushPromises();
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('details-open');
+    expect(wrapper.findComponent(AddressDetailsPanel).exists()).toBe(false);
+
+    wrapper.unmount();
+    dialog.remove();
+    // Unmounted workspaces stop listening.
+    press(globalThis.document.body);
+  });
+
+  it('pages every table through the shared paginator', async () => {
+    const wrapper = await mountWorkspace();
+    // Aggregate lists page in the browser: the paginator knows their length.
+    expect(wrapper.find('.p-paginator').attributes('data-total')).toBe('1');
+    expect(wrapper.find('.p-paginator').attributes('data-rows')).toBe('256');
+
+    await enterTestNetwork(wrapper);
+    const ipsCalls = () => api.get.mock.calls.filter(([url]) => url === '/subnets/11/ips');
+    expect(wrapper.find('.p-paginator').attributes('data-total')).toBe('256');
+
+    // Rows per page reloads from page 1 with the new size.
+    await wrapper.find('.p-paginator select').setValue('128');
+    await flushPromises();
+    await flushPromises();
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 1, pageSize: 128 });
+    expect(wrapper.find('.p-paginator').attributes('data-rows')).toBe('128');
+
+    // Next page asks the API for page 2 and the paginator follows.
+    await wrapper.find('.p-paginator button[aria-label="Next Page"]').trigger('click');
+    await flushPromises();
+    await flushPromises();
+    expect(ipsCalls().at(-1)[1].params).toMatchObject({ page: 2, pageSize: 128 });
+    expect(wrapper.find('.p-paginator').attributes('data-first')).toBe('128');
+
+    // The loading state is a popover over the table, not a bar above it.
+    expect(wrapper.find('.loading-bar').exists()).toBe(false);
+  });
+
+  it('refreshes a network context once a minute without the loading popover', async () => {
+    vi.useFakeTimers({ toFake: ['setInterval', 'clearInterval'] });
+    try {
+      const wrapper = await mountWorkspace();
+      await enterTestNetwork(wrapper);
+      const ipsCalls = () => api.get.mock.calls.filter(([url]) => url === '/subnets/11/ips');
+      const before = ipsCalls().length;
+
+      // Hold the address read open so the refresh is observably in flight.
+      let release;
+      const base = api.get.getMockImplementation();
+      api.get.mockImplementation((url, config) =>
+        url === '/subnets/11/ips'
+          ? new Promise((resolve) => {
+              release = () => resolve(base(url, config));
+            })
+          : base(url, config),
+      );
+      vi.advanceTimersByTime(60_000);
+      await flushPromises();
+      expect(ipsCalls().length).toBe(before + 1);
+      // The rows stay put; nothing dims them and no popover appears.
+      expect(wrapper.find('[data-track="workspace-loading"]').exists()).toBe(false);
+      expect(wrapper.find('.table-card').classes()).not.toContain('is-loading');
+      expect(wrapper.find('tbody tr').exists()).toBe(true);
+      release();
+      await flushPromises();
+      expect(wrapper.find('[data-track="workspace-loading"]').exists()).toBe(false);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('renders type and status with the current interface tags, in use neutral', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const rowFor = (ip) => wrapper.findAll('tbody tr').find((row) => row.text().includes(ip));
+    const lease = rowFor('1.1.1.40');
+    expect(lease.find('.address-type-pill.type-dynamic-dhcp').text()).toBe('dynamic DHCP');
+    expect(lease.find('.status-pill').classes()).toContain('status-in-use');
+    expect(lease.find('.status-pill').classes()).not.toContain('type-rogue');
+    const rogue = rowFor('1.1.1.0');
+    expect(rogue.find('.address-type-pill.type-system').text()).toBe('system');
+    expect(rowFor('1.1.1.50').find('.status-pill').classes()).toContain('status-dhcp-scope');
+    expect(rowFor('1.1.1.200').find('.status-pill').classes()).toContain('status-available');
+    expect(wrapper.find('.table-pill').exists()).toBe(false);
+    expect(wrapper.find('.type-value').exists()).toBe(false);
+
+    await wrapper.find('[data-track="workspace-tab-dhcp"]').trigger('click');
+    await flushPromises();
+    const dhcpRow = wrapper.findAll('tbody tr').find((row) => row.text().includes('1.1.1.40'));
+    expect(dhcpRow.find('.address-type-pill.type-dynamic-dhcp').text()).toBe('Dynamic');
+    expect(dhcpRow.find('.status-pill.status-in-use').exists()).toBe(true);
+    expect(dhcpRow.find('.status-pill.status-active').text()).toBe('Active');
+  });
+
+  it('toggles the liveness scan from one switch in the row menu and offers Reset to Inherit', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    const row = wrapper.findAll('tbody tr').find((entry) => entry.text().includes('1.1.1.33'));
+    await row.trigger('contextmenu');
+    // One switch item, showing that the address scans now.
+    const scanSwitch = () => wrapper.find('.row-menu [role="menuitemcheckbox"]');
+    expect(scanSwitch().text()).toBe('Liveness scan');
+    expect(scanSwitch().attributes('aria-checked')).toBe('true');
+    expect(scanSwitch().find('.menu-switch.on').exists()).toBe(true);
+    let labels = wrapper.findAll('.row-menu button').map((button) => button.text());
+    expect(labels).not.toContain('Disable liveness scan');
+    expect(labels).not.toContain('Reset to Inherit');
+    await scanSwitch().trigger('click');
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith('/subnets/11/ips/1.1.1.33/scan-enabled', {
+      scan_enabled: false,
+    });
+    expect(wrapper.find('.prototype-notice').text()).toContain('liveness scan disabled');
+
+    // With an override in place the menu also offers Reset to Inherit.
+    const base = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) => {
+      if (url === '/subnets/11/ips') {
+        return base(url, config).then((response) => {
+          response.data.ips = response.data.ips.map((ip) =>
+            ip.ip_address === '1.1.1.33' ? { ...ip, scan_enabled: 0, scanning_enabled: false } : ip,
+          );
+          return response;
+        });
+      }
+      return base(url, config);
+    });
+    await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.33');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+    await wrapper.find('tbody tr').trigger('contextmenu');
+    labels = wrapper.findAll('.row-menu button').map((button) => button.text());
+    expect(scanSwitch().attributes('aria-checked')).toBe('false');
+    expect(scanSwitch().find('.menu-switch.off').exists()).toBe(true);
+    expect(labels).toContain('Reset to Inherit');
+    await wrapper
+      .findAll('.row-menu button')
+      .find((button) => button.text() === 'Reset to Inherit')
+      .trigger('click');
+    await flushPromises();
+    expect(api.put).toHaveBeenLastCalledWith('/subnets/11/ips/1.1.1.33/scan-enabled', {
+      scan_enabled: null,
+    });
+  });
+
+  it('gives the details panel a column only on the grid presentations', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('grid-open');
+    await wrapper.find('button[aria-label="Grid view"]').trigger('click');
+    expect(wrapper.find('.workspace-frame').classes()).toContain('grid-open');
+    await wrapper.find('button[aria-label="Table view"]').trigger('click');
+    expect(wrapper.find('.workspace-frame').classes()).not.toContain('grid-open');
+    expect(wrapper.find('.table-toolbar').text()).not.toContain('Reserve address');
+    await wrapper.find('[data-track="workspace-tab-dhcp"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.table-toolbar').text()).not.toContain('Add reservation');
+    expect(wrapper.find('.table-toolbar button.primary').exists()).toBe(false);
+  });
+
+  it('keeps header actions anchored after the responsive health metrics', async () => {
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    expect(wrapper.find('.context-overview > .context-title-row').exists()).toBe(true);
+    expect(wrapper.find('.context-overview > .health-strip + .context-actions').exists()).toBe(
+      true,
+    );
+    expect(wrapper.findAll('.health-strip .health-stat')).toHaveLength(5);
+    expect(wrapper.find('.context-actions').text()).toContain('Scan now');
+    expect(wrapper.find('.context-actions').text()).toContain('Actions');
+    expect(wrapper.find('.context-actions').text()).toContain('Create');
+  });
+
+  it('uses whole-network summary counts when the address page is filtered', async () => {
+    summaryStats.online_count = 17;
+    summaryStats.rogue_count = 4;
+    const wrapper = await mountWorkspace();
+    await enterTestNetwork(wrapper);
+    await wrapper.find('input[aria-label="Search current table"]').setValue('1.1.1.40');
+    await new Promise((resolve) => setTimeout(resolve, 320));
+    await flushPromises();
+
+    const stats = wrapper.find('.health-strip').text();
+    expect(wrapper.findAll('tbody tr')).toHaveLength(1);
+    expect(stats).toContain('17');
+    expect(stats).toContain('4 rogue');
+    expect(stats).not.toContain('on this page');
+  });
+
+  it('requests only permitted domains and hides denied write actions', async () => {
+    const pinia = createPinia();
+    setActivePinia(pinia);
+    pinia.state.value.auth = {
+      user: {
+        username: 'dns-reader',
+        role: 'readonly_dns',
+        is_admin: false,
+        permissions: ['subnets:read', 'dns:read'],
+      },
+    };
+    const wrapper = await mountWorkspace();
+
+    expect(api.get.mock.calls.some(([url]) => url.startsWith('/dhcp'))).toBe(false);
+    expect(api.get.mock.calls.some(([url]) => url === '/workspace/dhcp-addresses')).toBe(false);
+    expect(wrapper.find('button.primary').exists()).toBe(false);
+  });
+});

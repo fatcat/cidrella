@@ -1,105 +1,110 @@
 <template>
-  <div class="dhcp-page" style="display: flex; flex-direction: column; height: 100%;">
+  <div class="dhcp-page" style="display: flex; flex-direction: column; height: 100%">
     <!-- Option Defaults -->
     <div class="section-header">
-      <Button label="Add Custom Option" icon="pi pi-plus" size="small" severity="secondary"
-              @click="customOptionForm = { code: null, label: '', name: '', type: 'text', description: '' }; showCustomOptionDialog = true" />
-      <Button label="Apply Config" icon="pi pi-refresh" size="small" data-track="sys-apply-dhcp-config" @click="applyConfig" />
-      <Button label="Save Defaults" icon="pi pi-save" size="small" data-track="dhcp-save-defaults" @click="saveDefaults" :loading="savingDefaults" :disabled="!defaultsDirty" />
+      <Button
+        label="Add Custom Option"
+        icon="pi pi-plus"
+        size="small"
+        severity="secondary"
+        @click="
+          customOptionForm = { code: null, label: '', name: '', type: 'text', description: '' };
+          showCustomOptionDialog = true;
+        "
+      />
+      <Button
+        label="Apply Config"
+        icon="pi pi-refresh"
+        size="small"
+        :data-track="track('sys-apply-dhcp-config')"
+        @click="applyConfig"
+      />
+      <Button
+        label="Save Defaults"
+        icon="pi pi-save"
+        size="small"
+        :data-track="track('dhcp-save-defaults')"
+        @click="saveDefaults"
+        :loading="savingDefaults"
+        :disabled="!defaultsDirty"
+      />
     </div>
     <p class="field-help dhcp-defaults-note">
-      These settings are the defaults for newly created DHCP scopes. Changing these settings will not affect existing scopes.
+      A default reaches a {{ familyLabel }} scope only when the scope uses it (Use default in the
+      scope's options), and an edit here reaches every scope that does. Add to new scopes picks
+      the defaults a newly created scope uses. To change the options of existing scopes, use Bulk
+      Change.
+      <template v-if="isV6">
+        Routers, prefixes and address lifetimes come from Router Advertisements and are not options;
+        a SLAAC-only scope sends no options at all.
+      </template>
     </p>
-    <DataTable :value="optionDefaultRows" size="small" :loading="loadingOptions"
-              
-               rowGroupMode="subheader" groupRowsBy="_group"
-               :rowClass="(data) => defaultEnabled[data.code] ? 'option-enabled-row' : ''"
-               scrollable scrollHeight="flex">
-      <template #groupheader="{ data }">
-        <strong>{{ data._group }}</strong>
-      </template>
-      <template #empty>
-        <EmptyState icon="pi-sliders-h" title="No DHCP options" description="Options appear here once a scope or global option is defined." />
-      </template>
-      <Column field="code" header="Code" style="width: 4rem" />
-      <Column field="label" header="Option" style="min-width: 12rem">
-        <template #body="{ data }">
-          {{ data.label }}
-          <i class="pi pi-question-circle option-help-icon" @click="showOptionHelp($event, data)" />
-        </template>
-      </Column>
-      <Column field="type" header="Type" style="width: 6rem">
-        <template #body="{ data }">
-          <span class="text-sm muted">{{ data.type }}</span>
-        </template>
-      </Column>
-      <Column header="Default Value" style="min-width: 14rem">
-        <template #body="{ data }">
-          <Select v-if="data.type === 'select'" v-model="defaultValues[data.code]"
-                  :options="data.choices" class="w-full" size="small" showClear placeholder="—" />
-          <InputNumber v-else-if="data.type === 'number'" v-model="defaultValues[data.code]"
-                       class="w-full" size="small" :useGrouping="false" placeholder="—" />
-          <InputText v-else v-model="defaultValues[data.code]" class="w-full" size="small"
-                     :placeholder="getOptionPlaceholder(data.code, data.type)"
-                     @blur="data.type === 'ip-list' || data.type === 'ip' ? resolveDefaultHostname(data.code) : null" />
-        </template>
-      </Column>
-      <Column header="Enabled by Default" style="width: 9rem; text-align: center">
-        <template #body="{ data }">
-          <input type="checkbox" :checked="!!defaultEnabled[data.code]"
-                 @change="defaultEnabled[data.code] = $event.target.checked" />
-        </template>
-      </Column>
-      <Column header="" style="width: 3rem">
-        <template #body="{ data }">
-          <div class="action-buttons">
-            <Button icon="pi pi-times" severity="secondary" text rounded size="small"
-                    @click="defaultValues[data.code] = null" title="Clear" />
-            <Button v-if="data.custom" icon="pi pi-trash" severity="danger" text rounded size="small"
-                    @click="deleteCustomOption(data.code)" title="Delete custom option" />
-          </div>
-        </template>
-      </Column>
-    </DataTable>
-
-    <!-- Help Popover -->
-    <Popover ref="helpPopoverRef">
-      <div class="option-help-popover">
-        <strong>{{ helpPopoverData.label }}</strong>
-        <p>{{ helpPopoverData.description }}</p>
-        <a v-if="helpPopoverData.rfcUrl" :href="helpPopoverData.rfcUrl" target="_blank" rel="noopener" class="rfc-link">
-          {{ helpPopoverData.rfc }}
-        </a>
-      </div>
-    </Popover>
+    <DhcpOptionTable
+      :values="defaultValues"
+      :enabled="defaultEnabled"
+      :family="family"
+      :rows="optionRows"
+      :loading="loadingOptions"
+      :usage="linkedCounts"
+      deletable-custom
+      @delete-custom="deleteCustomOption"
+    />
 
     <!-- Custom Option Dialog -->
-    <Dialog v-model:visible="showCustomOptionDialog" header="Add Custom Option" modal :style="{ width: '26rem' }" data-track="dialog-dhcp-custom-option">
+    <Dialog
+      v-model:visible="showCustomOptionDialog"
+      header="Add Custom Option"
+      modal
+      :style="{ width: '26rem' }"
+      :data-track="track('dialog-dhcp-custom-option')"
+    >
       <div class="form-grid">
         <div class="field">
-          <label>Option Code (128–254) *</label>
-          <InputNumber v-model="customOptionForm.code" class="w-full" :min="128" :max="254" :useGrouping="false" placeholder="e.g. 200" />
+          <label>Option Code ({{ customRange[0] }}–{{ customRange[1] }}) *</label>
+          <InputNumber
+            v-model="customOptionForm.code"
+            class="w-full"
+            :min="customRange[0]"
+            :max="customRange[1]"
+            :useGrouping="false"
+            placeholder="e.g. 200"
+          />
         </div>
         <div class="field">
           <label>Label *</label>
-          <InputText v-model="customOptionForm.label" class="w-full" placeholder="e.g. Vendor Config URL" />
+          <InputText
+            v-model="customOptionForm.label"
+            class="w-full"
+            placeholder="e.g. Vendor Config URL"
+          />
         </div>
         <div class="field">
           <label>Type</label>
-          <Select v-model="customOptionForm.type" :options="['ip', 'ip-list', 'text', 'text-list', 'number']" class="w-full" />
+          <Select
+            v-model="customOptionForm.type"
+            :options="['ip', 'ip-list', 'text', 'text-list', 'number']"
+            class="w-full"
+          />
         </div>
         <div class="field">
           <label>Description</label>
-          <InputText v-model="customOptionForm.description" class="w-full" placeholder="Brief explanation" />
+          <InputText
+            v-model="customOptionForm.description"
+            class="w-full"
+            placeholder="Brief explanation"
+          />
         </div>
       </div>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showCustomOptionDialog = false" />
-        <Button label="Create" @click="createCustomOption" :loading="savingCustomOption"
-                :disabled="!customOptionForm.code || !customOptionForm.label" />
+        <Button
+          label="Create"
+          @click="createCustomOption"
+          :loading="savingCustomOption"
+          :disabled="!customOptionForm.code || !customOptionForm.label"
+        />
       </template>
     </Dialog>
-
   </div>
 </template>
 
@@ -107,38 +112,45 @@
 import { ref, reactive, computed, onMounted } from 'vue';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
-import EmptyState from '../components/EmptyState.vue';
-import DataTable from '../ui/DataTable.js';
-import Column from '../ui/Column.js';
 import Dialog from '../ui/Dialog.js';
 import InputText from '../ui/InputText.js';
 import InputNumber from '../ui/InputNumber.js';
 import Select from '../ui/Select.js';
-import Popover from '../ui/Popover.js';
+import DhcpOptionTable from '../components/dhcp/DhcpOptionTable.vue';
+import {
+  useDhcpOptionCatalog,
+  fillByCode,
+  optionEditorPayload,
+} from '../composables/useDhcpOptionCatalog.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
-import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { apiError } from '../utils/format.js';
 
-const DHCP_PLACEHOLDERS = {
-  1: "Defaults to network's mask",
-  3: "Defaults to network's gateway",
-  15: "Defaults to network's domain",
-  119: "Defaults to network's domain"
-};
-
-function getOptionPlaceholder(code, type) {
-  return DHCP_PLACEHOLDERS[code] || placeholderForType(type);
-}
+// One editor for both families. The family decides which catalog is
+// fetched, which rows a save replaces and how the request is shaped; the
+// server keeps DHCPv4 and DHCPv6 defaults in separate namespaces.
+const props = defineProps({
+  family: { type: Number, default: 4 },
+});
+const isV6 = computed(() => Number(props.family) === 6);
+const familyLabel = computed(() => (isV6.value ? 'DHCPv6' : 'DHCPv4'));
+// The IPv4 editor keeps its historic tracking ids; the IPv6 one is suffixed.
+const track = (id) => (isV6.value ? `${id}-v6` : id);
 
 const store = useDhcpStore();
 const toast = useToast();
 
 // DHCP Options
-const optionCatalog = ref([]);
+const {
+  catalog: optionCatalog,
+  rows: optionRows,
+  customRange,
+  linkedCounts,
+  loading: loadingOptions,
+  load: loadCatalog,
+} = useDhcpOptionCatalog(() => props.family);
 const defaultValues = reactive({});
 const defaultEnabled = reactive({});
-const loadingOptions = ref(false);
 const savingDefaults = ref(false);
 const savedDefaultsSnapshot = ref('');
 
@@ -149,50 +161,10 @@ const defaultsDirty = computed(() => {
 });
 
 function snapshotDefaults() {
-  savedDefaultsSnapshot.value = JSON.stringify({ v: { ...defaultValues }, e: { ...defaultEnabled } });
-}
-const optionGroupOrder = ref([]);
-
-const optionGroups = computed(() => {
-  const order = optionGroupOrder.value.map(g => g.name);
-  const groups = {};
-  for (const opt of optionCatalog.value) {
-    const g = opt.group || 'Common';
-    if (!groups[g]) groups[g] = [];
-    groups[g].push(opt);
-  }
-  const result = [];
-  for (const name of order) {
-    if (groups[name]?.length) {
-      const meta = optionGroupOrder.value.find(g => g.name === name);
-      result.push({ name, label: meta?.label || name, options: groups[name] });
-    }
-  }
-  for (const [name, opts] of Object.entries(groups)) {
-    if (!order.includes(name) && opts.length) {
-      result.push({ name, label: name, options: opts });
-    }
-  }
-  return result;
-});
-
-const optionDefaultRows = computed(() => {
-  const rows = [];
-  for (const group of optionGroups.value) {
-    for (const opt of group.options) {
-      rows.push({ ...opt, _group: group.label });
-    }
-  }
-  return rows;
-});
-
-// Help popover
-const helpPopoverRef = ref(null);
-const helpPopoverData = ref({ label: '', description: '', rfc: '', rfcUrl: '' });
-
-function showOptionHelp(event, opt) {
-  helpPopoverData.value = { label: opt.label, description: opt.description || '', rfc: opt.rfc || '', rfcUrl: opt.rfcUrl || '' };
-  helpPopoverRef.value.toggle(event);
+  savedDefaultsSnapshot.value = JSON.stringify({
+    v: { ...defaultValues },
+    e: { ...defaultEnabled },
+  });
 }
 
 // Custom option dialog
@@ -205,7 +177,12 @@ async function createCustomOption() {
   try {
     const f = customOptionForm.value;
     await api.post('/dhcp/options/custom', {
-      code: f.code, label: f.label, name: f.name || `custom-${f.code}`, type: f.type, description: f.description
+      code: f.code,
+      label: f.label,
+      name: f.name || `custom-${f.code}`,
+      type: f.type,
+      description: f.description,
+      address_family: props.family,
     });
     showCustomOptionDialog.value = false;
     toast.add({ severity: 'success', summary: 'Custom option created', life: 3000 });
@@ -219,7 +196,7 @@ async function createCustomOption() {
 
 async function deleteCustomOption(code) {
   try {
-    await api.delete(`/dhcp/options/custom/${code}`);
+    await api.delete(`/dhcp/options/custom/${code}`, { params: { family: props.family } });
     toast.add({ severity: 'success', summary: 'Custom option deleted', life: 3000 });
     await loadOptions();
   } catch (err) {
@@ -228,49 +205,28 @@ async function deleteCustomOption(code) {
 }
 
 async function loadOptions() {
-  loadingOptions.value = true;
   try {
-    const res = await api.get('/dhcp/options');
-    optionCatalog.value = res.data.catalog;
-    if (res.data.groups) optionGroupOrder.value = res.data.groups;
-    Object.keys(defaultValues).forEach(k => delete defaultValues[k]);
-    for (const [code, value] of Object.entries(res.data.defaults || {})) {
-      defaultValues[Number(code)] = value;
-    }
-    Object.keys(defaultEnabled).forEach(k => delete defaultEnabled[k]);
-    for (const code of (res.data.enabledDefaults || [])) {
-      defaultEnabled[Number(code)] = true;
-    }
+    const data = await loadCatalog();
+    fillByCode(defaultValues, Object.entries(data.defaults || {}));
+    fillByCode(
+      defaultEnabled,
+      (data.enabledDefaults || []).map((code) => [code, true]),
+    );
     snapshotDefaults();
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
-  } finally {
-    loadingOptions.value = false;
   }
-}
-
-
-
-
-async function resolveDefaultHostname(code) {
-  const val = defaultValues[code];
-  if (!val) return;
-  const resolved = await resolveHostname(val, api, toast);
-  if (resolved !== val) defaultValues[code] = resolved;
 }
 
 async function saveDefaults() {
   savingDefaults.value = true;
   try {
-    const options = [];
-    for (const opt of optionCatalog.value) {
-      const val = defaultValues[opt.code];
-      if (val != null && val !== '') {
-        options.push({ code: opt.code, value: String(val) });
-      }
-    }
-    const enabledDefaults = Object.keys(defaultEnabled).filter(k => defaultEnabled[k]).map(Number);
-    await api.put('/dhcp/options/defaults', { options, enabledDefaults });
+    const { options, enabledDefaults } = optionEditorPayload(
+      optionCatalog.value,
+      defaultValues,
+      defaultEnabled,
+    );
+    await api.put('/dhcp/options/defaults', { family: props.family, options, enabledDefaults });
     snapshotDefaults();
     toast.add({ severity: 'success', summary: 'Defaults saved', life: 3000 });
   } catch (err) {
@@ -280,13 +236,16 @@ async function saveDefaults() {
   }
 }
 
-
-
 async function applyConfig() {
   try {
     const result = await store.applyConfig();
     const reservationLabel = `DHCP Reservation${result.reservations === 1 ? '' : 's'}`;
-    toast.add({ severity: 'success', summary: 'Config applied', detail: `${result.scopes} scopes, ${result.reservations} ${reservationLabel}`, life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: 'Config applied',
+      detail: `${result.scopes} scopes, ${result.reservations} ${reservationLabel}`,
+      life: 3000,
+    });
     for (let i = 0; i < 3; i++) {
       setTimeout(() => window.dispatchEvent(new Event('ipam:stats-changed')), (i + 1) * 2000);
     }
@@ -298,7 +257,6 @@ async function applyConfig() {
 onMounted(async () => {
   await loadOptions();
 });
-
 </script>
 
 <style scoped>
@@ -313,11 +271,6 @@ onMounted(async () => {
   margin: 0 0 0.75rem;
 }
 
-.action-buttons { display: flex; gap: 0.25rem; }
-
-.text-sm { font-size: var(--app-fs-sm); }
-.muted { color: var(--p-text-muted-color); }
-
 .form-grid {
   display: flex;
   flex-direction: column;
@@ -328,22 +281,5 @@ onMounted(async () => {
   margin-bottom: 0.4rem;
   font-size: var(--app-fs-sm);
   font-weight: 500;
-}
-
-/* Defaults table help icon */
-.option-help-icon {
-  font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
-  cursor: pointer;
-  margin-left: 0.3rem;
-  vertical-align: middle;
-}
-.option-help-icon:hover {
-  color: var(--p-primary-color);
-}
-
-/* Subtle highlight for enabled-by-default rows */
-:deep(.option-enabled-row) {
-  background: color-mix(in srgb, var(--p-primary-color) 6%, transparent) !important;
 }
 </style>

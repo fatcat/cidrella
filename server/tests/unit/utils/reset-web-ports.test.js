@@ -26,14 +26,21 @@ describe('reset-web-ports CLI helper', () => {
       execFileSync(process.execPath, ['src/reset-web-ports.js'], {
         cwd: path.resolve(__dirname, '../../..'),
         env: { ...process.env, DATA_DIR: tmpDir },
-        stdio: 'pipe'
+        stdio: 'pipe',
       });
 
       const checkDb = new Database(dbPath, { readonly: true });
       try {
-        expect(checkDb.prepare("SELECT value FROM settings WHERE key = 'https_port'").get().value).toBe('');
-        expect(checkDb.prepare("SELECT value FROM settings WHERE key = 'http_port'").get().value).toBe('');
-        expect(checkDb.prepare("SELECT value FROM settings WHERE key = 'http_redirect_enabled'").get().value).toBe('true');
+        expect(
+          checkDb.prepare("SELECT value FROM settings WHERE key = 'https_port'").get().value,
+        ).toBe('');
+        expect(
+          checkDb.prepare("SELECT value FROM settings WHERE key = 'http_port'").get().value,
+        ).toBe('');
+        expect(
+          checkDb.prepare("SELECT value FROM settings WHERE key = 'http_redirect_enabled'").get()
+            .value,
+        ).toBe('true');
       } finally {
         checkDb.close();
       }

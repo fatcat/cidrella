@@ -42,7 +42,9 @@ describe('#58: one placeholder, one definition', () => {
         offenders.push(path.relative(SRC, f));
       }
     }
-    expect(offenders, `these should import EMPTY_CELL instead: ${offenders.join(', ')}`).toEqual([]);
+    expect(offenders, `these should import EMPTY_CELL instead: ${offenders.join(', ')}`).toEqual(
+      [],
+    );
   });
 
   it('actually scanned a meaningful number of files, so an empty pass is not a pass by accident', () => {

@@ -35,7 +35,7 @@ export function readProcessCapabilities(pid = 'self') {
       CapEff: caps.CapEff?.toString(16) || '0',
       CapBnd: caps.CapBnd?.toString(16) || '0',
       CapAmb: caps.CapAmb?.toString(16) || '0',
-    }
+    },
   };
 }
 

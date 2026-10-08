@@ -43,13 +43,19 @@ function buildPrefixes(octets) {
  * Returns the matched value or null.
  */
 function lookupByPrefixes(db, prefixes, column) {
-  const r36 = db.prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 36`).get(prefixes.prefix36);
+  const r36 = db
+    .prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 36`)
+    .get(prefixes.prefix36);
   if (r36?.[column]) return r36[column];
 
-  const r28 = db.prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 28`).get(prefixes.prefix28);
+  const r28 = db
+    .prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 28`)
+    .get(prefixes.prefix28);
   if (r28?.[column]) return r28[column];
 
-  const r24 = db.prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 24`).get(prefixes.prefix24);
+  const r24 = db
+    .prepare(`SELECT ${column} FROM mac_vendors WHERE prefix = ? AND prefix_length = 24`)
+    .get(prefixes.prefix24);
   return r24?.[column] ?? null;
 }
 
@@ -124,9 +130,13 @@ export async function refreshVendorDb() {
 
     if (!res.ok) {
       if (res.cause?.code === TOO_LARGE_CODE) {
-        console.error(`MAC vendor DB: download exceeded ${Math.round(MANUF_MAX_BYTES / 1024 / 1024)}MB, refusing (upstream file should be around 5MB)`);
+        console.error(
+          `MAC vendor DB: download exceeded ${Math.round(MANUF_MAX_BYTES / 1024 / 1024)}MB, refusing (upstream file should be around 5MB)`,
+        );
       } else {
-        console.error(`MAC vendor DB: download failed (${res.error || `HTTP ${res.status} ${res.statusText}`})`);
+        console.error(
+          `MAC vendor DB: download failed (${res.error || `HTTP ${res.status} ${res.statusText}`})`,
+        );
       }
       return;
     }
@@ -142,7 +152,9 @@ export async function refreshVendorDb() {
       }
     } catch (err) {
       if (err?.code === TOO_LARGE_CODE) {
-        console.error(`MAC vendor DB: download exceeded ${Math.round(MANUF_MAX_BYTES / 1024 / 1024)}MB mid-stream, refusing`);
+        console.error(
+          `MAC vendor DB: download exceeded ${Math.round(MANUF_MAX_BYTES / 1024 / 1024)}MB mid-stream, refusing`,
+        );
       } else {
         console.error(`MAC vendor DB: read failed (${err.message})`);
       }
@@ -150,12 +162,14 @@ export async function refreshVendorDb() {
     }
 
     if (entries.length < 1000) {
-      console.error(`MAC vendor DB: parsed only ${entries.length} entries, skipping (possible bad download)`);
+      console.error(
+        `MAC vendor DB: parsed only ${entries.length} entries, skipping (possible bad download)`,
+      );
       return;
     }
 
     const insertVendor = db.prepare(
-      'INSERT OR REPLACE INTO mac_vendors (prefix, prefix_length, short_name, vendor_name) VALUES (?, ?, ?, ?)'
+      'INSERT OR REPLACE INTO mac_vendors (prefix, prefix_length, short_name, vendor_name) VALUES (?, ?, ?, ?)',
     );
 
     const populate = db.transaction(() => {
@@ -205,7 +219,10 @@ export function generateFallbackHostname(mac) {
   const shortName = lookupShortName(mac);
   if (!shortName) return null;
 
-  const clean = shortName.replace(/[^a-zA-Z0-9]/g, '').slice(0, 16).toLowerCase();
+  const clean = shortName
+    .replace(/[^a-zA-Z0-9]/g, '')
+    .slice(0, 16)
+    .toLowerCase();
   if (!clean) return null;
 
   return `${clean}-device`;

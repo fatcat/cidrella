@@ -2,61 +2,114 @@
   <div class="interface-panel">
     <div class="content-card settings-form">
       <h3>Web Ports</h3>
-      <p class="field-help" style="margin-bottom: 0.75rem;">
-        Ports the CIDRella web UI binds to. Changes take effect immediately with no service
-        restart needed. You will be redirected to the new HTTPS port after saving.
+      <p class="field-help" style="margin-bottom: 0.75rem">
+        Ports the CIDRella web UI binds to. Changes take effect immediately with no service restart
+        needed. You will be redirected to the new HTTPS port after saving.
       </p>
       <div class="web-ports-info">
         <div class="field field-inline">
           <label>HTTP Port</label>
-          <input type="number" min="1" max="65535" step="1" class="port-input"
-                 :class="{ 'port-input-invalid': httpRedirectEnabled && !httpPortValid }"
-                 v-model.number="httpPortEdit" data-track="iface-http-port"
-                 :disabled="!httpRedirectEnabled" />
+          <input
+            type="number"
+            min="1"
+            max="65535"
+            step="1"
+            class="port-input"
+            :class="{ 'port-input-invalid': httpRedirectEnabled && !httpPortValid }"
+            v-model.number="httpPortEdit"
+            data-track="iface-http-port"
+            :disabled="!httpRedirectEnabled"
+          />
         </div>
         <div class="field field-inline">
           <label>HTTPS Port</label>
-          <input type="number" min="1" max="65535" step="1" class="port-input"
-                 :class="{ 'port-input-invalid': !httpsPortValid }"
-                 v-model.number="httpsPortEdit" data-track="iface-https-port" />
+          <input
+            type="number"
+            min="1"
+            max="65535"
+            step="1"
+            class="port-input"
+            :class="{ 'port-input-invalid': !httpsPortValid }"
+            v-model.number="httpsPortEdit"
+            data-track="iface-https-port"
+          />
         </div>
         <div class="field field-inline">
           <label>Redirect HTTP → HTTPS</label>
           <ToggleSwitch v-model="httpRedirectEnabled" data-track="iface-http-redirect" />
         </div>
       </div>
-      <small v-if="portValidationError" class="field-help warn-text" style="margin-top: 0.5rem; display: block;">
+      <small
+        v-if="portValidationError"
+        class="field-help warn-text"
+        style="margin-top: 0.5rem; display: block"
+      >
         {{ portValidationError }}
       </small>
     </div>
 
     <div class="content-card settings-form">
       <h3>Service Controls</h3>
-      <p class="field-help" style="margin-bottom: 0.75rem;">
+      <p class="field-help" style="margin-bottom: 0.75rem">
         Globally enable or disable DNS and DHCP services. When a service is disabled globally,
         per-interface toggles are overridden.
       </p>
       <div class="service-toggles">
         <div class="field field-inline">
           <label>DNS Service</label>
-          <ToggleSwitch v-model="dnsEnabled" data-track="iface-dns-global" @update:modelValue="onGlobalDnsToggle" />
+          <ToggleSwitch
+            v-model="dnsEnabled"
+            data-track="iface-dns-global"
+            @update:modelValue="onGlobalDnsToggle"
+          />
         </div>
         <div class="field field-inline">
           <label>DHCP Service</label>
-          <ToggleSwitch v-model="dhcpEnabled" data-track="iface-dhcp-global" @update:modelValue="onGlobalDhcpToggle" />
+          <ToggleSwitch
+            v-model="dhcpEnabled"
+            data-track="iface-dhcp-global"
+            @update:modelValue="onGlobalDhcpToggle"
+          />
+        </div>
+        <div class="field field-inline">
+          <label>IPv6 Support</label>
+          <ToggleSwitch v-model="ipv6Enabled" data-track="iface-ipv6-global" />
         </div>
       </div>
-      <small v-if="!dnsEnabled" class="field-help warn-text">DNS is disabled globally. DHCP requires DNS and is also disabled.</small>
+      <small v-if="!dnsEnabled" class="field-help warn-text"
+        >DNS is disabled globally. DHCP requires DNS and is also disabled.</small
+      >
+      <small
+        class="field-help"
+        style="display: block; margin-top: 0.5rem"
+        data-track="iface-ipv6-help"
+      >
+        <template v-if="ipv6Enabled">
+          IPv6 is on: DNS and DHCP listen on the host's IPv6 addresses, IPv6 networks can be
+          created, and the DHCPv6 and Router Advertisement checks run with rogue detection.
+        </template>
+        <template v-else>
+          IPv6 is off: CIDRella listens on IPv4 only, runs no DHCPv6 or Router Advertisement checks,
+          schedules no IPv6 scans, and refuses new IPv6 networks, records and scopes. Anything IPv6
+          that already exists stays visible.
+        </template>
+      </small>
     </div>
 
     <div class="content-card">
       <div class="card-header">
         <h3>Network Interfaces</h3>
-        <Button icon="pi pi-refresh" size="small" text data-track="iface-refresh" @click="loadInterfaces" :loading="loading" />
+        <Button
+          icon="pi pi-refresh"
+          size="small"
+          text
+          data-track="iface-refresh"
+          @click="loadInterfaces"
+          :loading="loading"
+        />
       </div>
 
-      <DataTable :value="mergedInterfaces" :loading="loading" stripedRows size="small"
-                >
+      <DataTable :value="mergedInterfaces" :loading="loading" stripedRows size="small">
         <template #empty>
           <EmptyState icon="pi-sitemap" title="No network interfaces found" />
         </template>
@@ -65,17 +118,30 @@
             <span class="iface-name">{{ data.name }}</span>
             <Tag v-if="data.state === 'down'" value="down" severity="warn" class="iface-badge" />
             <Tag v-if="data.missing" value="missing" severity="danger" class="iface-badge" />
-            <Button v-if="data.missing" icon="pi pi-trash" text rounded size="small" severity="danger"
-                    class="iface-remove" title="Remove this stale interface from config"
-                    :data-track="'iface-remove-' + data.name" @click="removeMissing(data)" />
+            <Button
+              v-if="data.missing"
+              icon="pi pi-trash"
+              text
+              rounded
+              size="small"
+              severity="danger"
+              class="iface-remove"
+              title="Remove this stale interface from config"
+              :data-track="'iface-remove-' + data.name"
+              @click="removeMissing(data)"
+            />
           </template>
         </Column>
         <Column header="IP Address">
           <template #body="{ data }">
-            <template v-if="data.addresses && data.addresses.length">
-              <div v-for="addr in data.addresses" :key="addr.address">{{ addr.address }}</div>
+            <template v-if="visibleAddresses(data).length">
+              <div v-for="addr in visibleAddresses(data)" :key="addr.address">
+                {{ addr.address }}
+              </div>
             </template>
-            <span v-else class="muted" title="Interface present but has no IPv4 address">no IP</span>
+            <span v-else class="muted" title="Interface present but has no usable address"
+              >no IP</span
+            >
           </template>
         </Column>
         <Column header="MAC" style="width: 10rem">
@@ -84,35 +150,46 @@
             <span v-else class="muted">—</span>
           </template>
         </Column>
-        <Column header="DNS" style="width: 5rem; text-align: center;">
+        <Column header="DNS" style="width: 5rem; text-align: center">
           <template #body="{ data }">
             <!-- Show the EFFECTIVE state: a globally-disabled service overrides
                  the per-interface preference to off (the stored value is kept
                  for when the service is re-enabled). -->
-            <ToggleSwitch :model-value="dnsEnabled && data.dns" :disabled="!dnsEnabled || data.missing"
-                          :data-track="'iface-dns-' + data.name"
-                          @update:modelValue="val => onDnsToggle(data, val)" />
+            <ToggleSwitch
+              :model-value="dnsEnabled && data.dns"
+              :disabled="!dnsEnabled || data.missing"
+              :data-track="'iface-dns-' + data.name"
+              @update:modelValue="(val) => onDnsToggle(data, val)"
+            />
           </template>
         </Column>
-        <Column header="DHCP" style="width: 5rem; text-align: center;">
+        <Column header="DHCP" style="width: 5rem; text-align: center">
           <template #body="{ data }">
-            <ToggleSwitch :model-value="dhcpEnabled && dnsEnabled && data.dhcp"
-                          :disabled="!dhcpEnabled || !dnsEnabled || data.missing"
-                          :data-track="'iface-dhcp-' + data.name"
-                          @update:modelValue="val => onDhcpToggle(data, val)" />
+            <ToggleSwitch
+              :model-value="dhcpEnabled && dnsEnabled && data.dhcp"
+              :disabled="!dhcpEnabled || !dnsEnabled || data.missing"
+              :data-track="'iface-dhcp-' + data.name"
+              @update:modelValue="(val) => onDhcpToggle(data, val)"
+            />
           </template>
         </Column>
       </DataTable>
 
-      <small class="field-help" style="margin-top: 0.5rem; display: block;">
-        DHCP requires DNS, so enabling DHCP will auto-enable DNS on that interface.
-        Disabling DNS will auto-disable DHCP.
+      <small class="field-help" style="margin-top: 0.5rem; display: block">
+        DHCP requires DNS, so enabling DHCP will auto-enable DNS on that interface. Disabling DNS
+        will auto-disable DHCP.
       </small>
     </div>
 
     <div class="settings-actions">
-      <Button label="Save Configuration" icon="pi pi-save" data-track="iface-save"
-              @click="saveConfig" :loading="saving" :disabled="saveDisabled" />
+      <Button
+        label="Save Configuration"
+        icon="pi pi-save"
+        data-track="iface-save"
+        @click="saveConfig"
+        :loading="saving"
+        :disabled="saveDisabled"
+      />
     </div>
   </div>
 </template>
@@ -122,7 +199,6 @@
   port numbers are install-time-fixed (see the help text above) but the
   HTTP redirect toggle is live, saving applies it without a service restart.
 -->
-
 
 <script setup>
 import { ref, computed, onMounted } from 'vue';
@@ -135,12 +211,16 @@ import Column from '../ui/Column.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import Button from '../ui/Button.js';
 import Tag from '../ui/Tag.js';
+import { useFeatures } from '../composables/useFeatures.js';
 
 const toast = useToast();
+const { reload: reloadFeatures } = useFeatures();
 const loading = ref(false);
 const saving = ref(false);
 const dnsEnabled = ref(true);
 const dhcpEnabled = ref(true);
+// The global IPv6 switch. Applied by the same save as the rest of this page.
+const ipv6Enabled = ref(false);
 const httpRedirectEnabled = ref(true);
 const webPorts = ref({ https_port: 0, http_port: 0, http_redirect_enabled: true });
 const httpsPortEdit = ref(443);
@@ -153,10 +233,13 @@ const configSnapshot = ref('');
 const configDirty = computed(() => {
   if (!configSnapshot.value) return false;
   const current = JSON.stringify({
-    dns: dnsEnabled.value, dhcp: dhcpEnabled.value,
+    dns: dnsEnabled.value,
+    dhcp: dhcpEnabled.value,
+    v6: ipv6Enabled.value,
     http: httpRedirectEnabled.value,
-    hps: httpsPortEdit.value, hpp: httpPortEdit.value,
-    ifaces: mergedInterfaces.value.map(i => ({ n: i.name, d: i.dns, h: i.dhcp }))
+    hps: httpsPortEdit.value,
+    hpp: httpPortEdit.value,
+    ifaces: mergedInterfaces.value.map((i) => ({ n: i.name, d: i.dns, h: i.dhcp })),
   });
   return current !== configSnapshot.value;
 });
@@ -187,7 +270,7 @@ const portsValid = computed(() => {
 });
 const portValidationError = computed(() => {
   if (!httpsPortValid.value) return 'HTTPS Port must be an integer between 1 and 65535.';
-  if (!httpPortValid.value)  return 'HTTP Port must be an integer between 1 and 65535.';
+  if (!httpPortValid.value) return 'HTTP Port must be an integer between 1 and 65535.';
   if (httpRedirectEnabled.value && httpsPortEdit.value === httpPortEdit.value) {
     return 'HTTPS Port and HTTP Port must differ.';
   }
@@ -197,11 +280,21 @@ const saveDisabled = computed(() => !configDirty.value || !portsValid.value);
 
 function snapshotConfig() {
   configSnapshot.value = JSON.stringify({
-    dns: dnsEnabled.value, dhcp: dhcpEnabled.value,
+    dns: dnsEnabled.value,
+    dhcp: dhcpEnabled.value,
+    v6: ipv6Enabled.value,
     http: httpRedirectEnabled.value,
-    hps: httpsPortEdit.value, hpp: httpPortEdit.value,
-    ifaces: mergedInterfaces.value.map(i => ({ n: i.name, d: i.dns, h: i.dhcp }))
+    hps: httpsPortEdit.value,
+    hpp: httpPortEdit.value,
+    ifaces: mergedInterfaces.value.map((i) => ({ n: i.name, d: i.dns, h: i.dhcp })),
   });
+}
+
+// The server already withholds IPv6 addresses while the switch is off; this
+// covers the moment between flipping the toggle and saving it.
+function visibleAddresses(iface) {
+  const addresses = iface.addresses || [];
+  return ipv6Enabled.value ? addresses : addresses.filter((addr) => addr.family !== 6);
 }
 
 function mergeData() {
@@ -247,18 +340,24 @@ async function loadInterfaces() {
     savedConfig.value = configRes.data.interfaces || {};
     dnsEnabled.value = configRes.data.dns_enabled !== false;
     dhcpEnabled.value = configRes.data.dhcp_enabled !== false;
+    ipv6Enabled.value = configRes.data.ipv6_enabled === true;
     // v0.4.15: web_ports block. Absent on pre-v0.4.15 backends, keep
     // sensible defaults if the field isn't there.
     if (configRes.data.web_ports) {
       webPorts.value = configRes.data.web_ports;
       httpRedirectEnabled.value = configRes.data.web_ports.http_redirect_enabled !== false;
       httpsPortEdit.value = configRes.data.web_ports.https_port || 443;
-      httpPortEdit.value  = configRes.data.web_ports.http_port  || 80;
+      httpPortEdit.value = configRes.data.web_ports.http_port || 80;
     }
     mergeData();
     snapshotConfig();
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to load interfaces', life: 3000 });
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to load interfaces',
+      life: 3000,
+    });
   } finally {
     loading.value = false;
   }
@@ -281,7 +380,7 @@ function onDhcpToggle(iface, val) {
 // host) from the list. Persists on Save, it won't be written back to
 // interface_config, so the stale entry is dropped.
 function removeMissing(iface) {
-  mergedInterfaces.value = mergedInterfaces.value.filter(i => i.name !== iface.name);
+  mergedInterfaces.value = mergedInterfaces.value.filter((i) => i.name !== iface.name);
 }
 
 function onGlobalDnsToggle(val) {
@@ -322,19 +421,36 @@ async function saveConfig() {
       }
     }
     const originalHttpsPort = webPorts.value.https_port;
+    const ipv6Changed = JSON.parse(configSnapshot.value || '{}').v6 !== ipv6Enabled.value;
     const { data } = await api.put('/interfaces/config', {
       interfaces,
       dns_enabled: dnsEnabled.value,
       dhcp_enabled: dhcpEnabled.value,
+      ipv6_enabled: ipv6Enabled.value,
       http_redirect_enabled: httpRedirectEnabled.value,
       https_port: httpsPortEdit.value,
       http_port: httpPortEdit.value,
     });
     snapshotConfig();
+    if (ipv6Changed) {
+      // The address list and every other page follow the switch.
+      await reloadFeatures();
+      await loadInterfaces();
+    }
     if (data.dnsmasq === 'restart_failed') {
-      toast.add({ severity: 'warn', summary: 'Saved with warning', detail: 'Configuration saved but dnsmasq failed to restart. Check server logs.', life: 5000 });
+      toast.add({
+        severity: 'warn',
+        summary: 'Saved with warning',
+        detail: 'Configuration saved but dnsmasq failed to restart. Check server logs.',
+        life: 5000,
+      });
     } else {
-      toast.add({ severity: 'success', summary: 'Saved', detail: 'Configuration applied', life: 3000 });
+      toast.add({
+        severity: 'success',
+        summary: 'Saved',
+        detail: 'Configuration applied',
+        life: 3000,
+      });
     }
 
     // If the HTTPS port changed, the browser is still connected on the old
@@ -349,10 +465,12 @@ async function saveConfig() {
         severity: 'info',
         summary: 'Reconnecting',
         detail: `HTTPS moved to port ${newHttpsPort}. Redirecting…`,
-        life: 4000
+        life: 4000,
       });
       // 1500ms gives the old in-flight toast a moment to render.
-      setTimeout(() => { window.location.assign(target); }, 1500);
+      setTimeout(() => {
+        window.location.assign(target);
+      }, 1500);
     }
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -378,23 +496,24 @@ onMounted(loadInterfaces);
 }
 .port-readout {
   font-weight: 600;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .port-input {
   width: 6em;
   padding: 0.375rem 0.5rem;
   font-family: var(--font-mono, monospace);
-  /* Use PrimeVue v4 form-field tokens. The older --p-inputtext-* tokens are
-     unset in this build, so they fell back to the light --p-surface-0, giving a
-     white field (with light text) that's invisible on dark themes. The
-     form-field tokens adapt to light/dark mode like the real InputText. */
-  background: var(--p-form-field-background, var(--p-content-background));
-  color: var(--p-form-field-color, var(--p-text-color));
-  border: 1px solid var(--p-form-field-border-color, var(--p-surface-300));
-  border-radius: var(--p-form-field-border-radius, 4px);
+  /* Use the form-field tokens. The vendor's older inputtext tokens
+     (--p-inputtext-*) are unset in this build, so these fell back to the light
+     end of the surface ramp, giving a white field with light text that was
+     invisible on dark themes. The form-field tokens track light/dark the way
+     the real InputText does. */
+  background: var(--cid-form-field-background, var(--cid-content-background));
+  color: var(--cid-form-field-color, var(--cid-text-color));
+  border: 1px solid var(--cid-form-field-border-color, var(--cid-surface-300));
+  border-radius: var(--cid-form-field-border-radius, 4px);
 }
 .port-input:focus {
-  outline: 2px solid var(--p-primary-color);
+  outline: 2px solid var(--cid-primary-color);
   outline-offset: -1px;
 }
 .port-input:disabled {
@@ -402,11 +521,11 @@ onMounted(loadInterfaces);
   cursor: not-allowed;
 }
 .port-input-invalid {
-  border-color: var(--p-red-500, #ef4444);
-  background: color-mix(in srgb, var(--p-red-500, #ef4444) 8%, transparent);
+  border-color: var(--cid-red-500, #ef4444);
+  background: color-mix(in srgb, var(--cid-red-500, #ef4444) 8%, transparent);
 }
 .port-input-invalid:focus {
-  outline-color: var(--p-red-500, #ef4444);
+  outline-color: var(--cid-red-500, #ef4444);
 }
 /* Hide the native up/down spinners. Users requested plain entry fields. */
 .port-input::-webkit-outer-spin-button,
@@ -448,10 +567,7 @@ onMounted(loadInterfaces);
   font-family: var(--font-mono, monospace);
   font-size: 0.85em;
 }
-.muted {
-  color: var(--p-text-muted-color);
-}
 .warn-text {
-  color: var(--p-orange-400);
+  color: var(--cid-orange-400);
 }
 </style>

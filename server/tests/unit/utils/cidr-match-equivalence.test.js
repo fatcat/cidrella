@@ -21,44 +21,93 @@ import * as prev from './fixtures/cidr-match-pre-address-refactor.js';
 
 const CASES = [
   // Plain v4, including the leading-zero spelling the allowlist relies on.
-  '10.0.0.1', '0.0.0.0', '255.255.255.255', '010.0.0.0', '10.5.5.5',
-  '10.0.0.256', '10.0.0', '10.0.0.1.5', '1.2.3.04',
+  '10.0.0.1',
+  '0.0.0.0',
+  '255.255.255.255',
+  '010.0.0.0',
+  '10.5.5.5',
+  '10.0.0.256',
+  '10.0.0',
+  '10.0.0.1.5',
+  '1.2.3.04',
   // v4 CIDR.
-  '10.0.0.0/8', '10.5.5.5/8', '010.0.0.0/8', '8.8.8.8/32', '0.0.0.0/0',
-  '10.0.0.0/33', '10.0.0.0/999', '10.0.0.0/', '10.0.0.0/x', '10.0.0.0/8/8',
+  '10.0.0.0/8',
+  '10.5.5.5/8',
+  '010.0.0.0/8',
+  '8.8.8.8/32',
+  '0.0.0.0/0',
+  '10.0.0.0/33',
+  '10.0.0.0/999',
+  '10.0.0.0/',
+  '10.0.0.0/x',
+  '10.0.0.0/8/8',
   // v6 spellings that exercise the compression threshold from both sides.
-  '::1', '::', '2001:db8::1', '2001:DB8:0:0:0:0:0:1',
-  '2001:0:0:1:0:0:0:1', '1:2:3:4:5:6:7:8', '0:0:0:0:0:0:0:0',
-  '1:0:0:2:0:0:0:3', '1:0:2:0:3:0:4:0', 'fe80:0:0:0:0:0:0:1',
-  '2001:db8:0:0:1:0:0:1', 'a:0:0:b:0:0:0:c',
+  '::1',
+  '::',
+  '2001:db8::1',
+  '2001:DB8:0:0:0:0:0:1',
+  '2001:0:0:1:0:0:0:1',
+  '1:2:3:4:5:6:7:8',
+  '0:0:0:0:0:0:0:0',
+  '1:0:0:2:0:0:0:3',
+  '1:0:2:0:3:0:4:0',
+  'fe80:0:0:0:0:0:0:1',
+  '2001:db8:0:0:1:0:0:1',
+  'a:0:0:b:0:0:0:c',
   // v6 CIDR.
-  '2001:db8::/32', '2001:0DB8::/32', '::1/128', '::/0', '2001:db8::1/129',
-  'fe80::/10', '2001:db8:abcd::/48',
+  '2001:db8::/32',
+  '2001:0DB8::/32',
+  '::1/128',
+  '::/0',
+  '2001:db8::1/129',
+  'fe80::/10',
+  '2001:db8:abcd::/48',
   // Forms address.js accepts but cidr-match must keep refusing.
-  '::ffff:10.0.0.1', '::ffff:c0a8:101', '2001:db8::192.168.1.1',
-  'fe80::1%eth0', '10.0.0.1%eth0', '::ffff:10.0.0.1/128',
+  '::ffff:10.0.0.1',
+  '::ffff:c0a8:101',
+  '2001:db8::192.168.1.1',
+  'fe80::1%eth0',
+  '10.0.0.1%eth0',
+  '::ffff:10.0.0.1/128',
   // Malformed.
-  '1::2::3', '2001:db8::1::2', ':::', '1:2:3:4:5:6:7:8:9', 'g::1',
-  '', '   ', 'not-an-ip', '  10.0.0.1  ', ' 2001:db8::1 ',
+  '1::2::3',
+  '2001:db8::1::2',
+  ':::',
+  '1:2:3:4:5:6:7:8:9',
+  'g::1',
+  '',
+  '   ',
+  'not-an-ip',
+  '  10.0.0.1  ',
+  ' 2001:db8::1 ',
 ];
 
 const MATCH_PROBES = [
-  '10.0.0.1', '10.255.255.255', '11.0.0.1', '2001:db8::1', '2001:db9::1',
-  '::1', '::ffff:10.0.0.1', 'fe80::1', '192.168.1.1',
+  '10.0.0.1',
+  '10.255.255.255',
+  '11.0.0.1',
+  '2001:db8::1',
+  '2001:db9::1',
+  '::1',
+  '::ffff:10.0.0.1',
+  'fe80::1',
+  '192.168.1.1',
 ];
 
 describe('cidr-match: equivalence with the pre-address.js implementation', () => {
   it('isValidIpOrCidr agrees on every fixture', () => {
     for (const c of CASES) {
-      expect(next.isValidIpOrCidr(c), `isValidIpOrCidr(${JSON.stringify(c)})`)
-        .toBe(prev.isValidIpOrCidr(c));
+      expect(next.isValidIpOrCidr(c), `isValidIpOrCidr(${JSON.stringify(c)})`).toBe(
+        prev.isValidIpOrCidr(c),
+      );
     }
   });
 
   it('canonicalizeIpOrCidr agrees on every fixture', () => {
     for (const c of CASES) {
-      expect(next.canonicalizeIpOrCidr(c), `canonicalizeIpOrCidr(${JSON.stringify(c)})`)
-        .toBe(prev.canonicalizeIpOrCidr(c));
+      expect(next.canonicalizeIpOrCidr(c), `canonicalizeIpOrCidr(${JSON.stringify(c)})`).toBe(
+        prev.canonicalizeIpOrCidr(c),
+      );
     }
   });
 
@@ -67,7 +116,10 @@ describe('cidr-match: equivalence with the pre-address.js implementation', () =>
       const a = next.parseCidrEntry(c);
       const b = prev.parseCidrEntry(c);
       const label = `parseCidrEntry(${JSON.stringify(c)})`;
-      if (b === null) { expect(a, label).toBeNull(); continue; }
+      if (b === null) {
+        expect(a, label).toBeNull();
+        continue;
+      }
       expect(a, label).not.toBeNull();
       expect(a.bits, `${label}.bits`).toBe(b.bits);
       expect(a.prefix, `${label}.prefix`).toBe(b.prefix);
@@ -83,9 +135,10 @@ describe('cidr-match: equivalence with the pre-address.js implementation', () =>
       const entryPrev = prev.parseCidrEntry(c);
       if (entryPrev === null) continue;
       for (const probe of MATCH_PROBES) {
-        expect(next.ipMatchesEntry(probe, entryNext),
-          `ipMatchesEntry(${probe}, ${JSON.stringify(c)})`)
-          .toBe(prev.ipMatchesEntry(probe, entryPrev));
+        expect(
+          next.ipMatchesEntry(probe, entryNext),
+          `ipMatchesEntry(${probe}, ${JSON.stringify(c)})`,
+        ).toBe(prev.ipMatchesEntry(probe, entryPrev));
         compared++;
       }
     }
@@ -96,7 +149,7 @@ describe('cidr-match: equivalence with the pre-address.js implementation', () =>
 
   it('the fixture table actually reaches both sides of the branches that matter', () => {
     // At least one address whose canonical form uses '::' compression.
-    expect(CASES.some(c => (prev.canonicalizeIpOrCidr(c) || '').includes('::'))).toBe(true);
+    expect(CASES.some((c) => (prev.canonicalizeIpOrCidr(c) || '').includes('::'))).toBe(true);
     // At least one v6 address with a SINGLE zero group, which must NOT compress.
     // This is the case that dies if the >= 2 threshold is wrong.
     expect(prev.canonicalizeIpOrCidr('1:2:3:4:5:0:7:8')).toBe('1:2:3:4:5:0:7:8/128');

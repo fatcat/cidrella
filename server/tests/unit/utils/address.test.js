@@ -1,7 +1,13 @@
 import { describe, it, expect } from 'vitest';
 import {
-  parseIp, canonicalizeIp, sortKey, addressFamily,
-  isValidIp, isValidIpv6, IPV4_BITS, IPV6_BITS
+  parseIp,
+  canonicalizeIp,
+  sortKey,
+  addressFamily,
+  isValidIp,
+  isValidIpv6,
+  IPV4_BITS,
+  IPV6_BITS,
 } from '../../../src/utils/address.js';
 import { ipToLong, longToIp } from '../../../src/utils/ip.js';
 
@@ -38,7 +44,11 @@ describe('parseIp', () => {
   });
 
   it('strips a zone id and reports it separately', () => {
-    expect(parseIp('fe80::1%eth0')).toEqual({ value: parseIp('fe80::1').value, bits: 128, zoneId: 'eth0' });
+    expect(parseIp('fe80::1%eth0')).toEqual({
+      value: parseIp('fe80::1').value,
+      bits: 128,
+      zoneId: 'eth0',
+    });
     expect(parseIp('fe80::1%')).toBeNull();
     // A zone id on a v4 literal is meaningless, so it is refused rather than
     // quietly ignored.
@@ -80,6 +90,57 @@ describe('parseIp: IPv4-mapped addresses', () => {
   it('parses an embedded v4 tail in a non-mapped prefix', () => {
     expect(canonicalizeIp('2001:db8::192.168.1.1')).toBe('2001:db8::c0a8:101');
   });
+
+  // RFC 4291 s2.2(3) puts the dotted-quad in the TRAILING two hextets. A '::'
+  // after the quad means it is not trailing, so the address is malformed.
+  it('rejects a dotted-quad that sits before the "::"', () => {
+    expect(parseIp('1.2.3.4::')).toBeNull();
+    expect(parseIp('1.2.3.4::1')).toBeNull();
+    expect(parseIp('a:b:1.2.3.4::')).toBeNull();
+    expect(canonicalizeIp('1.2.3.4::')).toBeNull();
+  });
+
+  // The reason the above matters. '1.2.3.4::' used to take its quad from the
+  // head and then fill six zero groups in FRONT of it, landing on exactly the
+  // value of the legitimate '::1.2.3.4'. An invalid string and a valid one
+  // canonicalizing to one address is the kind of thing that turns into two
+  // rows for one host.
+  it('does not canonicalize the malformed form onto the valid one', () => {
+    expect(canonicalizeIp('::1.2.3.4')).toBe('::102:304');
+    expect(canonicalizeIp('1.2.3.4::')).not.toBe(canonicalizeIp('::1.2.3.4'));
+  });
+
+  it('still accepts every legitimate trailing-quad spelling', () => {
+    expect(canonicalizeIp('::1.2.3.4')).toBe('::102:304');
+    expect(canonicalizeIp('a:b::1.2.3.4')).toBe('a:b::102:304');
+    expect(canonicalizeIp('64:ff9b::1.2.3.4')).toBe('64:ff9b::102:304');
+    expect(canonicalizeIp('::ffff:0:1.2.3.4')).toBe('::ffff:0:102:304');
+    expect(canonicalizeIp('0:0:0:0:0:0:1.2.3.4')).toBe('::102:304');
+  });
+});
+
+describe('"::" stands for at least one zero group (RFC 4291 2.2)', () => {
+  it('rejects a "::" with nothing left to fill', () => {
+    for (const bad of [
+      '1::2:3:4:5:6:7:8',
+      '1:2:3:4:5:6::7:8',
+      '::1:2:3:4:5:6:7:8',
+      '1:2:3:4:5:6:7:8::',
+    ]) {
+      expect(parseIp(bad)).toBeNull();
+      expect(canonicalizeIp(bad)).toBeNull();
+      expect(isValidIp(bad)).toBe(false);
+      expect(isValidIpv6(bad)).toBe(false);
+    }
+    expect(parseIp('1::2:3:4:5:6:1.2.3.4')).toBeNull();
+  });
+
+  it('still accepts a "::" standing for exactly one group', () => {
+    expect(canonicalizeIp('1::3:4:5:6:7:8')).toBe('1:0:3:4:5:6:7:8');
+    expect(canonicalizeIp('1:2:3:4:5:6:7::')).toBe('1:2:3:4:5:6:7:0');
+    expect(canonicalizeIp('::2:3:4:5:6:7:8')).toBe('0:2:3:4:5:6:7:8');
+    expect(canonicalizeIp('1::3:4:5:6:1.2.3.4')).toBe('1:0:3:4:5:6:102:304');
+  });
 });
 
 describe('formatIp: RFC 5952', () => {
@@ -102,8 +163,17 @@ describe('formatIp: RFC 5952', () => {
   });
 
   it('round-trips every canonical form back to itself', () => {
-    for (const s of ['::', '::1', '2001:db8::1', '1:2:3:4:5:6:7:8',
-      '1:2:3:4:5:0:7:8', '1::2:0:0:3:4', 'fe80::1', '10.0.0.1', '0.0.0.0']) {
+    for (const s of [
+      '::',
+      '::1',
+      '2001:db8::1',
+      '1:2:3:4:5:6:7:8',
+      '1:2:3:4:5:0:7:8',
+      '1::2:0:0:3:4',
+      'fe80::1',
+      '10.0.0.1',
+      '0.0.0.0',
+    ]) {
       expect(canonicalizeIp(canonicalizeIp(s)), s).toBe(canonicalizeIp(s));
     }
   });
@@ -131,26 +201,29 @@ describe('addressFamily / validators', () => {
 describe('sortKey', () => {
   it('is fixed width so byte order equals numeric order', () => {
     const keys = ['10.0.0.1', '2001:db8::1', '::1'].map(sortKey);
-    expect(new Set(keys.map(k => k.length)).size).toBe(1);
+    expect(new Set(keys.map((k) => k.length)).size).toBe(1);
     expect(keys[0]).toHaveLength(33);
   });
 
   it('orders v4 numerically, not lexically', () => {
     // The bug a plain string sort gives: '9.x' after '10.x'.
-    const sorted = ['10.0.0.2', '9.255.255.255', '10.0.0.1']
-      .sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : 1));
+    const sorted = ['10.0.0.2', '9.255.255.255', '10.0.0.1'].sort((a, b) =>
+      sortKey(a) < sortKey(b) ? -1 : 1,
+    );
     expect(sorted).toEqual(['9.255.255.255', '10.0.0.1', '10.0.0.2']);
   });
 
   it('orders v6 numerically', () => {
-    const sorted = ['2001:db8::10', '2001:db8::2', '::1']
-      .sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : 1));
+    const sorted = ['2001:db8::10', '2001:db8::2', '::1'].sort((a, b) =>
+      sortKey(a) < sortKey(b) ? -1 : 1,
+    );
     expect(sorted).toEqual(['::1', '2001:db8::2', '2001:db8::10']);
   });
 
   it('keeps the families apart rather than interleaving', () => {
-    const sorted = ['2001:db8::1', '10.0.0.1', '::1', '255.255.255.255']
-      .sort((a, b) => (sortKey(a) < sortKey(b) ? -1 : 1));
+    const sorted = ['2001:db8::1', '10.0.0.1', '::1', '255.255.255.255'].sort((a, b) =>
+      sortKey(a) < sortKey(b) ? -1 : 1,
+    );
     expect(sorted).toEqual(['10.0.0.1', '255.255.255.255', '::1', '2001:db8::1']);
   });
 

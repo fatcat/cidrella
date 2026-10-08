@@ -20,8 +20,8 @@ fields produced by `server/src/models/ip-view.js`.
 | `interface_id` | Interface context required for scoped addresses such as IPv6 link-local. | identifier, null |
 | `ip_display_status` | User-facing availability derived by the server. | `available`, `DHCP Scope`, `in use` |
 | `ip_status_severity` | UI severity for `ip_display_status`. | `secondary`, `danger` |
-| `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `DHCP Reservation`, `SLAAC`, `rogue`, `system`, `gateway`, `IP Reservation` |
-| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, IP Reservation note |
+| `address_type` | User-facing reason the IP is in use. Empty/null when available. | `static DNS`, `dynamic DHCP`, `DHCP Reservation`, `SLAAC`, `rogue`, `system`, `gateway`, `IP Reservation`, `disabled DNS` |
+| `address_type_tooltip` | Optional explanation for `address_type`. | rogue reason, IP Reservation note, the disabled record's name |
 | `computed_type` | Sort/search alias for `address_type`, or `available`. | same as `address_type`, plus `available` |
 | `is_online` | Current liveness state. | `0`/`1`, boolean in some API rows |
 | `last_seen_at` | Last observation time from scans, DHCP, or passive checks. | datetime/null |
@@ -63,6 +63,41 @@ IPv4 identity. IPv6 link-local addresses require `interface_id`; global
 addresses must leave it null. API consumers must not use textual address
 spelling for identity or ordering.
 
+## Address History
+
+`GET /api/subnets/:id/ips/:ip/events` (`subnets:read`, `limit` 1 to 500,
+default 100) returns one address's history, newest first. History belongs to
+the address, not its `ip_addresses` row: it is read by canonical address (and
+`interface_id` for a link-local IPv6 address), so it survives the row being
+deleted, the network being deallocated or deleted, and the address moving to
+another network. An address with no row answers with whatever history it has.
+
+Each event carries `event_type`, `old_value`, `new_value`, `source` (the
+subsystem: scanner, dhcp_lease, dns, manual, range, retirement and so on),
+`actor` (the signed-in user whose request caused it, null for background work)
+and `created_at` (UTC, millisecond resolution). Types:
+
+| Type | Recorded when | Values |
+| --- | --- | --- |
+| `online`, `offline` | liveness changes (a probe that confirms the current state records nothing; `last_scanned_at` says when it ran) | |
+| `rogue_detected`, `rogue_cleared` | the rogue flag changes | reason |
+| `allocation_changed` | an allocation state changes with no more specific event | old and new state |
+| `ip_reservation_created`, `ip_reservation_released` | an IP Reservation is made or released | note |
+| `dhcp_reservation_created`, `dhcp_reservation_removed` | a DHCP Reservation takes or leaves the address | MAC or DUID, hostname |
+| `dns_hold_taken`, `dns_hold_released` | a disabled record holds the address, or stops (ADR 004) | record name |
+| `dns_added`, `dns_removed` | a served A or AAAA record names the address, or stops | record name |
+| `lease_obtained`, `lease_expired` | a DHCP lease lands (no lease, another client's, or an expired one before it; a renewal records nothing), or lapses | MAC |
+| `range_assigned`, `range_unassigned` | a Network Range Type covers the address, or stops | type name |
+| `hostname_changed`, `mac_changed`, `scan_enabled_changed` | the field changes | old and new |
+| `retired` | automatic cleanup frees a stale address (an address with nothing learned on it records nothing) | |
+
+Range events are stored once per run of addresses (`ip_range_events`) and
+joined in by range, so a type covering a /16 or an IPv6 /64 is one row. Only
+what a write changes is recorded: widening a range records the added
+addresses, a description edit nothing. Functional system ranges (DHCP Scope,
+Gateway) are not history. History is kept for `ip_history_retention_days`
+(default 7). `models/ip-events.js` owns both tables.
+
 ## Lifecycle Diagnostics
 
 `GET /api/metrics/ip-lifecycle` requires `analytics:read` and returns allocation
@@ -88,6 +123,85 @@ Do not expose or consume bare `type` or `status` for DHCP table rows. Use
 `unavailable` means the address is not assigned by DHCP but is still not safe
 for dynamic lease use, such as a rogue online host, static DNS assignment, IP
 Reservation, or system-owned address inside a DHCP scope.
+
+DHCPv6 is configured per network through `dhcp_scopes.v6_mode`: `slaac`
+(Router Advertisement only), `stateless` (SLAAC plus stateless DHCPv6 for
+options), or `stateful` (managed addresses from a pool). The SLAAC modes require
+a /64, and `stateful` a /64 or longer: no DHCPv6 scope exists on a shorter
+prefix, since dnsmasq refuses its range. Only `stateful` scopes issue leases and
+accept reservations, and only they are address pools: a `slaac` or `stateless`
+scope's range is the prefix kept for display, so a static AAAA record, an IP
+Reservation or the gateway may sit anywhere in it and a free address in it is
+`available`, not `DHCP Scope`. CIDRella's Router Advertisements announce a
+router lifetime of 0 (clients take their router from the network router's own
+RA), and give the prefix the scope's lease time as its valid lifetime. IPv6
+reservations and leases are keyed by `duid` (with optional `iaid`) instead of a
+MAC; the MAC, when present, is learned metadata. Rogue detection covers three
+kinds of finding under `/api/dhcp/rogue`: `dhcp` (a DHCPv4 server answered a
+DISCOVER), `dhcpv6` (a DHCPv6 server answered a SOLICIT, identified by
+`server_duid`), and `ra` (a router advertised itself, with
+`advertised_prefixes`). The allowlist trusts a server by `server_ip` of either
+family, `server_mac`, or `server_duid`.
+
+### DHCP option defaults by family
+
+DHCPv4 and DHCPv6 option codes are separate namespaces (v4 23 is the default
+TTL, v6 23 is the DNS server list), so `dhcp_option_defaults`,
+`dhcp_scope_options` and `dhcp_custom_options` are keyed by
+`(address_family, code)` and every option endpoint takes a family, IPv4 when
+omitted so pre-IPv6 callers are unchanged:
+
+| Endpoint | Family |
+| --- | --- |
+| `GET /api/dhcp/options?family=4\|6` | Catalog, defaults, `enabledDefaults`, custom options and `customRange` for that family, and `shipped` (`{ defaults, enabledDefaults }`, what CIDRella ships). |
+| `PUT /api/dhcp/options/defaults` | Body `{ family, options, enabledDefaults }`; replaces only that family's rows. |
+| `POST /api/dhcp/scopes/bulk-options/preview` | Bulk Change. Body `{ family, options, enabledDefaults, save_defaults }`. Every scope of the family with `changes` (`{ code, before, after }` of its effective options) if it took this set; writes nothing. |
+| `POST /api/dhcp/scopes/bulk-options` | The same body plus `scope_ids`. Each listed scope gets exactly the enabled options, blanks filled from its network as for a new scope (`fillScopeOptions`); its other option rows and its pre-catalog `dns_servers`, `ntp_servers` and `domain_search` go. Lease time and pools are untouched. A SLAAC-only scope is skipped (`skip_reason`). With `save_defaults` the family's defaults are replaced first. |
+| `POST /api/dhcp/options/custom` | Body `address_family`; codes 128-254 for IPv4, 1-65535 for IPv6 minus the codes dnsmasq builds itself (1-7, 12-17, 39). |
+| `DELETE /api/dhcp/options/custom/:code?family=` | Deletes the option, its default and its scope values within that family. |
+
+Scope `options` on `POST`/`PUT /api/dhcp/scopes` are validated against the
+network's family. The IPv6 catalog (`DHCP6_OPTIONS`) is written to dnsmasq as
+`option6:<name>` lines with bracketed addresses; a custom IPv6 code is written
+as `option6:<code>`. An entry with `builtIn: true` (Rapid Commit, 14) is
+listed for reference only: dnsmasq always honors a client's rapid-commit
+request and has no switch for it, so the code stays refused as a value, a
+default or a custom option, with an error that says it is always on. Startup seeds two IPv6 defaults, DNS servers (23) and the
+search list (24), enabled without a value: a new IPv6 scope inherits the
+enabled defaults and fills 23 with CIDRella's IPv6 address on the network and
+24 with the network's domain, the IPv6 twin of what IPv4 does with 1, 3, 6, 15,
+28 and 119. Routers, prefixes and lifetimes are never options in DHCPv6. The
+`dhcp_scopes` columns `dns_servers`, `domain_search` and `ntp_servers` remain
+a valid way to set 23, 24 and 56 on an IPv6 scope and sit between the global
+defaults and the scope's own option rows. Lease time stays one shared setting,
+`default_lease_time`.
+
+### The IPv6 switch
+
+`ipv6_enabled` (default `false` on new installs and upgrades) is persisted and
+applied by `PUT /api/interfaces/config` and read back from
+`GET /api/interfaces/config` and `GET /api/features` (`{ ipv6 }`, any signed-in
+user). It is not editable through the generic settings route. While it is off
+the appliance is an IPv4 product: dnsmasq and the resolver bind IPv4 only,
+IPv6 DHCP scopes are left out of the generated config, the DHCPv6 and Router
+Advertisement detectors are skipped and reported with `disabled: true`, the
+scan scheduler skips IPv6 networks and a manual scan of one fails,
+`GET /api/interfaces` withholds host IPv6 addresses, and every route that would
+create an IPv6 object answers `400` with one message:
+
+```
+IPv6 support is disabled. Enable it under Settings > General > Interfaces.
+```
+
+That covers `POST /api/subnets` with an IPv6 CIDR, `POST /api/subnets/:id/configure`
+on an IPv6 network, `ip6.arpa` zone create or rename, AAAA record create or
+edit of type or value, `PUT /api/dns/forwarders` and `PUT /api/dns/encryption`
+with an IPv6 address, DHCP scope create on an IPv6 network or a mode, pool or
+gateway change on one, reservation create with a DUID or an identity or
+address change on one, and a non-empty `blocklist_redirect_ip6`. Existing IPv6
+rows stay readable, their non-IPv6 fields (name, description, enabled,
+hostname) stay editable, and deletes work. `GET /api/subnets/:id/ips` on an
+IPv6 network answers `sparse: true` with only the addresses that hold rows.
 
 ## Network Read Model
 
@@ -128,6 +242,45 @@ An unallocated network row with child networks is a hierarchy container, not
 available address space. Clients must not list a fully subdivided container in
 an unallocated-space browser; its allocated leaves are the operating networks.
 
+Network rows carry `address_family` (`4` or `6`) and `last_address`.
+`broadcast_address` is null for IPv6 and `total_addresses` is null when the
+prefix holds more addresses than a JavaScript number represents exactly. The
+per-network IP listing for an IPv6 network returns persisted rows only, sorted
+by the canonical sort key, with no synthesized available rows; its summary
+reports `assigned_count` and leaves `unassigned_count` null when
+`total_addresses` is null. Split and calculate previews report child counts as
+decimal strings when they exceed that limit. Divide and merge use the same
+rules for both families with the prefix bound at the family's width.
+
+## Cross-Table Facts
+
+The Addresses, DNS and DHCP workspace tables are one table model: each can show
+any column the others have. The reads attach what the other tables know about
+an address, from `server/src/models/ip-row-facts.js`, as nested objects so a
+table's own fields never collide with them:
+
+| Field | On | Meaning |
+| --- | --- | --- |
+| `dns_record` | Addresses, DHCP rows | The forward A/AAAA record behind the address: the one the allocation names, else the lowest-id served record, else the lowest-id record. `record_fqdn`, `record_type`, `value`, `ttl`, `served_ttl`, `priority`, `port`, `enabled`, `dns_source`, `zone_soa_minimum_ttl`; null when none. `ttl` is what the operator stored; `served_ttl` is what dnsmasq answers with (`servedRecordTtl` in `utils/dnsmasq.js`), which is what a TTL display shows. DNS record reads carry `served_ttl` too. |
+| `dns_record_count` | Addresses, DHCP rows | How many forward address records name the address. |
+| `dhcp` | Addresses, DNS rows | The DHCP Reservation, else the active lease, else the newest lease for the address: `dhcp_assignment_type`, `lease_status`, `enabled`, `duid`, `iaid`, `subnet_name`, `related_scope_ids`; null when none. |
+
+## Column Filters
+
+`GET /api/subnets/:id/ips`, `/api/workspace/dns-records` and
+`/api/workspace/dhcp-addresses` take the same column parameters, applied to the
+whole result before paging (`server/src/utils/ip-columns.js`):
+
+| Parameter | Meaning |
+| --- | --- |
+| `filters` | JSON object `{ column: [value, ...] }`. A value is a string, a boolean, or null for "none". A value-list column matches any listed value; a text column takes one string and matches a case-insensitive substring. Unknown columns and other value types are refused with 400. |
+| `facets=1` | Adds `facets` (`{ column: [{ value, count }] }` for every value-list column, each counted over rows matching the other filters, free addresses included) and `filter_kinds` (`{ column: 'enum' \| 'text' }`). |
+| `sort_column` | Sort by any column key, empty values last. |
+
+The older single-purpose filters (`display_status`, `address_type`, `online`,
+`record_type`, `dns_source`, `lease_status`, `dhcp_assignment_type`, and so on)
+still work.
+
 ## IP Allocation Writes
 
 An IP Reservation is an administrative address hold without a DHCP client
@@ -140,10 +293,14 @@ binding. Create or release one IP Reservation with
 
 Release it by sending `{"allocation_state":"unassigned"}`. For a contiguous
 IP Reservation range, use `PUT /api/subnets/:id/ips/bulk-allocation` with
-`start_ip`, `end_ip`, `allocation_state`, and an optional `note`. These
+`start_ip`, `end_ip`, `allocation_state`, and an optional `note`
+(`PUT /api/subnets/:id/ips/bulk-scan-enabled` takes the same run with
+`scan_enabled` for the liveness scan override, which is not allocation). These
 endpoints accept only the internal values `reserved` and `unassigned`; DNS,
 DHCP, SLAAC, and topology allocations must be changed through their owning
-APIs. A DHCP Reservation is a static DHCP client-to-address binding and is
+APIs. An address held by a disabled DNS record (`reserved` owned by `dns`,
+shown as `disabled DNS`) is refused here with 409: enable or delete the record
+instead (ADR 004). A DHCP Reservation is a static DHCP client-to-address binding and is
 managed through `/api/dhcp/reservations`.
 
 ## DNS Rows
@@ -160,6 +317,28 @@ DNS write APIs still accept `type` because the submitted form is a DNS record
 write model. UI read paths should use `record_type` and `dns_source`; form
 submission should map `record_type` back to `type` only when editing a record.
 
+`GET /api/workspace/dns-records` takes `zone_type` (`forward` or `reverse`)
+beside `zone_id`: with `subnet_id` it returns every record in that network's
+reverse zones, the reverse picker's network-wide choice.
+
+A zone carries `forward_unknown` (0 or 1, set with a boolean on
+`POST`/`PUT /api/dns/zones`). At 0, the default, the zone answers every name
+under it itself; at 1, names it has no record for are looked up upstream, for a
+split-horizon domain.
+
+### Bulk record actions
+
+`POST /api/dns/records/bulk` (`dns:write`) takes `{ action, ids }`: `action`
+is `enable`, `disable` or `delete`, and `ids` is 1 to 1000 record ids from any
+zones. Each record goes through the same workflow as the single-record
+`PUT` or `DELETE`, so its address converges the same way (static DNS, an
+ADR 004 hold, or freed), each on its own savepoint. The response is
+`{ action, applied: [ids], skipped: [{ id, reason }] }`: a generated record
+(`dns_source` other than `manual`), one already in the requested state, a
+missing id, a hostname conflict or a lifecycle refusal (an address a DHCP
+pool owns) is skipped with its reason while the rest apply. DNS is
+regenerated once when anything applied.
+
 ## Storage Fields
 
 The database may continue to use table-local names when they are meaningful in
@@ -169,6 +348,9 @@ that table:
 | --- | --- |
 | `ip_addresses.allocation_state` | Canonical mutually exclusive allocation state. |
 | `subnets.status` | Network allocation state. |
+| `subnets.address_family` | Network address family, `4` or `6`. |
+| `dhcp_scopes.v6_mode` | DHCPv6 mode for an IPv6 scope, null for IPv4. |
+| `dhcp_reservations.duid`, `dhcp_leases.duid` | DHCPv6 client identity. |
 | `dns_records.type` | DNS RR type. |
 | `dns_records.source` | DNS record provenance. |
 | `network_scans.status` | Scan execution state. |

@@ -36,10 +36,13 @@ function cellColour({ typeClass, functionalRole = null, rangeColour = null }) {
   if (functionalRole === 'Gateway') return 'var(--cid-gateway)';
   if (typeClass === 'type-rogue') return 'var(--cid-rogue)';
   if (typeClass === 'type-system') return 'var(--cid-system)';
-  return rangeColour || 'var(--p-surface-200)';
+  return rangeColour || 'var(--cid-surface-200)';
 }
 
-const POOL_TINT = 'var(--p-dhcp-pool)';
+// Opaque stand-in for whatever colour a DHCP range supplies. The assertions
+// below only care that it differs from the address-type colours, so this is
+// deliberately not a real token.
+const POOL_TINT = 'rgb(1 2 3)';
 
 describe('grid cell colour can express what the classifier emits', () => {
   it('paints a rogue address distinctly from free space', () => {
@@ -69,25 +72,33 @@ describe('grid cell colour can express what the classifier emits', () => {
   });
 
   it('uses one system color for network and broadcast addresses', () => {
-    expect(cellColour({ typeClass: 'type-system', functionalRole: 'Network', rangeColour: 'grey' }))
-      .toBe('var(--cid-system)');
-    expect(cellColour({ typeClass: 'type-system', functionalRole: 'Broadcast', rangeColour: 'black' }))
-      .toBe('var(--cid-system)');
+    expect(
+      cellColour({ typeClass: 'type-system', functionalRole: 'Network', rangeColour: 'grey' }),
+    ).toBe('var(--cid-system)');
+    expect(
+      cellColour({ typeClass: 'type-system', functionalRole: 'Broadcast', rangeColour: 'black' }),
+    ).toBe('var(--cid-system)');
   });
 
   it('keeps the gateway on its separate gateway color', () => {
-    expect(cellColour({ typeClass: 'type-gateway', functionalRole: 'Gateway', rangeColour: 'grey' }))
-      .toBe('var(--cid-gateway)');
+    expect(
+      cellColour({ typeClass: 'type-gateway', functionalRole: 'Gateway', rangeColour: 'grey' }),
+    ).toBe('var(--cid-gateway)');
   });
 
   it('every type the classifier can emit maps to a colour or an explicit fallback', () => {
     // Guards the ladder against a NEW address type being added upstream and
     // silently rendering as free space, which is how rogue went unnoticed.
     const all = [
-      ADDRESS_TYPE_ROGUE, ADDRESS_TYPE_SYSTEM, ADDRESS_TYPE_RESERVED,
-      ADDRESS_TYPE_RESERVED_DHCP, ADDRESS_TYPE_STATIC_DNS,
-      ADDRESS_TYPE_GATEWAY, ADDRESS_TYPE_DYNAMIC_DHCP,
-      ADDRESS_TYPE_SLAAC, ADDRESS_TYPE_QUARANTINED,
+      ADDRESS_TYPE_ROGUE,
+      ADDRESS_TYPE_SYSTEM,
+      ADDRESS_TYPE_RESERVED,
+      ADDRESS_TYPE_RESERVED_DHCP,
+      ADDRESS_TYPE_STATIC_DNS,
+      ADDRESS_TYPE_GATEWAY,
+      ADDRESS_TYPE_DYNAMIC_DHCP,
+      ADDRESS_TYPE_SLAAC,
+      ADDRESS_TYPE_QUARANTINED,
     ];
     for (const t of all) {
       const colour = cellColour({ typeClass: t.className, rangeColour: POOL_TINT });

@@ -4,9 +4,18 @@ import api from '../api/client.js';
 
 export const useBlocklistStore = defineStore('blocklists', () => {
   const categories = ref([]);
-  const whitelist = ref([]);
-  const stats = ref({ enabled_categories: 0, total_domains: 0, whitelist_count: 0, last_update: null });
-  const settings = ref({ blocklist_enabled: 'true', blocklist_redirect_ip: '', blocklist_update_schedule: 'daily' });
+  const allowlist = ref([]);
+  const stats = ref({
+    enabled_categories: 0,
+    total_domains: 0,
+    allowlist_count: 0,
+    last_update: null,
+  });
+  const settings = ref({
+    blocklist_enabled: 'true',
+    blocklist_redirect_ip: '',
+    blocklist_update_schedule: 'daily',
+  });
   const loading = ref(false);
 
   async function fetchCategories() {
@@ -62,21 +71,21 @@ export const useBlocklistStore = defineStore('blocklists', () => {
     return res.data;
   }
 
-  async function fetchWhitelist() {
-    const res = await api.get('/blocklists/whitelist');
-    whitelist.value = res.data;
+  async function fetchAllowlist() {
+    const res = await api.get('/blocklists/allowlist');
+    allowlist.value = res.data;
     return res.data;
   }
 
-  async function addWhitelist(domain, reason) {
-    const res = await api.post('/blocklists/whitelist', { domain, reason });
-    await fetchWhitelist();
+  async function addAllowlist(domain, reason) {
+    const res = await api.post('/blocklists/allowlist', { domain, reason });
+    await fetchAllowlist();
     return res.data;
   }
 
-  async function removeWhitelist(id) {
-    await api.delete(`/blocklists/whitelist/${id}`);
-    await fetchWhitelist();
+  async function removeAllowlist(id) {
+    await api.delete(`/blocklists/allowlist/${id}`);
+    await fetchAllowlist();
   }
 
   async function searchDomains(q, page = 1, limit = 50) {
@@ -85,10 +94,22 @@ export const useBlocklistStore = defineStore('blocklists', () => {
   }
 
   return {
-    categories, whitelist, stats, settings, loading,
-    fetchCategories, toggleCategory, updateCategoryUrl, refreshCategory, refreshAll,
-    fetchStats, fetchSettings, updateSettings,
-    fetchWhitelist, addWhitelist, removeWhitelist,
-    searchDomains
+    categories,
+    allowlist,
+    stats,
+    settings,
+    loading,
+    fetchCategories,
+    toggleCategory,
+    updateCategoryUrl,
+    refreshCategory,
+    refreshAll,
+    fetchStats,
+    fetchSettings,
+    updateSettings,
+    fetchAllowlist,
+    addAllowlist,
+    removeAllowlist,
+    searchDomains,
   };
 });

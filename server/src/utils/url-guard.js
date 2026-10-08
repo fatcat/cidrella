@@ -2,8 +2,11 @@ import dns from 'dns';
 import http from 'http';
 import https from 'https';
 import net from 'net';
+import { parseIp, formatIp } from './address.js';
+import { networkContains } from './cidr.js';
 import { PassThrough, Transform, pipeline } from 'node:stream';
 import { createGunzip } from 'node:zlib';
+import { ipv6Enabled } from './ipv6-support.js';
 
 // SSRF guard for outbound HTTP fetches. The Pi-hole probe / fetch path and
 // the blocklist source_url field both accept operator-supplied URLs that
@@ -12,41 +15,29 @@ import { createGunzip } from 'node:zlib';
 // services or exfiltrate their responses. v0.4.15 adds this guard and
 // wires it into both callers.
 //
-// Policy: hostname resolves to IPv4, IP must be in the public-unicast space.
-// IPv6 is blocked entirely (simpler + our target feeds are all v4).
+// Policy: the connected IP must be in the public-unicast space. IPv4 always;
+// IPv6 too while IPv6 support is switched on (literal URLs and AAAA answers,
+// checked by isBlockedIpv6), never while it is off. A hostname that resolves
+// to both families connects over IPv4.
 // CIDRs blocked: loopback, link-local, multicast, broadcast, private
 // (10/8, 172.16/12, 192.168/16), CGNAT (100.64/10), 0/8, metadata (169.254/16),
 // TEST-NET ranges.
 
-function ipInCidr(ip, cidr) {
-  const [base, prefixStr] = cidr.split('/');
-  const prefix = parseInt(prefixStr, 10);
-  const ipLong = ipToLong(ip);
-  const baseLong = ipToLong(base);
-  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
-  return (ipLong & mask) === (baseLong & mask);
-}
-
-function ipToLong(ip) {
-  const p = ip.split('.').map(Number);
-  return (((p[0] << 24) | (p[1] << 16) | (p[2] << 8) | p[3]) >>> 0);
-}
-
 const BLOCKED_IPV4_RANGES = [
-  '0.0.0.0/8',        // "this network"
-  '10.0.0.0/8',       // RFC1918
-  '100.64.0.0/10',    // CGNAT (RFC6598)
-  '127.0.0.0/8',      // loopback
-  '169.254.0.0/16',   // link-local + AWS/GCP metadata (169.254.169.254)
-  '172.16.0.0/12',    // RFC1918
-  '192.0.0.0/24',     // IETF protocol assignments
-  '192.0.2.0/24',     // TEST-NET-1
-  '192.168.0.0/16',   // RFC1918
-  '198.18.0.0/15',    // benchmarking
-  '198.51.100.0/24',  // TEST-NET-2
-  '203.0.113.0/24',   // TEST-NET-3
-  '224.0.0.0/4',      // multicast
-  '240.0.0.0/4',      // reserved (includes 255.255.255.255 broadcast)
+  '0.0.0.0/8', // "this network"
+  '10.0.0.0/8', // RFC1918
+  '100.64.0.0/10', // CGNAT (RFC6598)
+  '127.0.0.0/8', // loopback
+  '169.254.0.0/16', // link-local + AWS/GCP metadata (169.254.169.254)
+  '172.16.0.0/12', // RFC1918
+  '192.0.0.0/24', // IETF protocol assignments
+  '192.0.2.0/24', // TEST-NET-1
+  '192.168.0.0/16', // RFC1918
+  '198.18.0.0/15', // benchmarking
+  '198.51.100.0/24', // TEST-NET-2
+  '203.0.113.0/24', // TEST-NET-3
+  '224.0.0.0/4', // multicast
+  '240.0.0.0/4', // reserved (includes 255.255.255.255 broadcast)
 ];
 
 /**
@@ -56,7 +47,36 @@ const BLOCKED_IPV4_RANGES = [
  */
 export function isBlockedIpv4(ip) {
   if (net.isIP(ip) !== 4) return false; // not a v4 literal, caller validates format separately
-  return BLOCKED_IPV4_RANGES.some(range => ipInCidr(ip, range));
+  return BLOCKED_IPV4_RANGES.some((range) => networkContains(range, ip));
+}
+
+// The IPv6 counterpart for literal upstream addresses: unspecified, loopback,
+// unique local, link-local, multicast, documentation, plus the IPv4-mapped and
+// 6to4/Teredo blocks, whose embedded IPv4 gets the IPv4 check.
+const BLOCKED_IPV6_RANGES = [
+  '::/128',
+  '::1/128',
+  '::ffff:0:0/96',
+  '64:ff9b::/96',
+  '2001::/32',
+  '2001:db8::/32',
+  '2002::/16',
+  'fc00::/7',
+  'fe80::/10',
+  'ff00::/8',
+];
+
+export function isBlockedIpv6(ip) {
+  const parsed = parseIp(ip, { zoneId: false, mapV4: false });
+  if (!parsed || parsed.bits !== 128) return false;
+  const mapped = parseIp(ip, { zoneId: false, mapV4: true });
+  if (mapped && mapped.bits === 32) return isBlockedIpv4(formatIp(mapped.value, 32));
+  return BLOCKED_IPV6_RANGES.some((range) => networkContains(range, formatIp(parsed.value, 128)));
+}
+
+/** Either family: a literal address in a private, loopback, reserved or scoped range. */
+export function isBlockedAddress(ip) {
+  return isBlockedIpv4(ip) || isBlockedIpv6(ip);
 }
 
 /**
@@ -85,27 +105,49 @@ export async function validateOutboundUrl(rawUrl) {
   }
 
   // If hostname is already a literal IP, check directly. Otherwise resolve.
+  // URL keeps an IPv6 literal in brackets.
+  const host = parsed.hostname.replace(/^\[(.*)\]$/, '$1');
+  const ipv6 = ipv6Enabled();
   let ip;
-  if (net.isIP(parsed.hostname) === 4) {
-    ip = parsed.hostname;
-  } else if (net.isIP(parsed.hostname) === 6) {
-    return { ok: false, reason: 'IPv6 URLs are not allowed' };
+  if (net.isIP(host) === 4) {
+    ip = host;
+  } else if (net.isIP(host) === 6) {
+    if (!ipv6) return { ok: false, reason: 'IPv6 URLs need IPv6 support switched on' };
+    ip = host;
   } else {
     try {
-      const lookup = await dns.promises.lookup(parsed.hostname, { family: 4 });
-      ip = lookup.address;
+      const answers = await dns.promises.lookup(host, { all: true, family: ipv6 ? 0 : 4 });
+      const chosen = answers.find((a) => a.family === 4) || answers.find((a) => a.family === 6);
+      if (!chosen) throw Object.assign(new Error('no address'), { code: 'ENOTFOUND' });
+      ip = chosen.address;
     } catch (err) {
-      return { ok: false, reason: `Hostname does not resolve (IPv4): ${err.code || err.message}` };
+      const families = ipv6 ? 'IPv4 or IPv6' : 'IPv4';
+      return {
+        ok: false,
+        reason: `Hostname does not resolve (${families}): ${err.code || err.message}`,
+      };
     }
   }
 
-  for (const range of BLOCKED_IPV4_RANGES) {
-    if (ipInCidr(ip, range)) {
-      return { ok: false, reason: `IP ${ip} is in blocked range ${range}` };
+  if (net.isIP(ip) === 6) {
+    if (isBlockedIpv6(ip)) return { ok: false, reason: `IP ${ip} is in a blocked IPv6 range` };
+  } else {
+    for (const range of BLOCKED_IPV4_RANGES) {
+      if (networkContains(range, ip)) {
+        return { ok: false, reason: `IP ${ip} is in blocked range ${range}` };
+      }
     }
   }
 
   return { ok: true, url: parsed.toString(), hostname: parsed.hostname, ip };
+}
+
+// The pinned connection's lookup: always the validated address, in its own
+// family, in the array form Node asks for when autoSelectFamily is on.
+function pinnedLookup(ip) {
+  const family = net.isIP(ip);
+  return (_hostname, opts, cb) =>
+    opts?.all ? cb(null, [{ address: ip, family }]) : cb(null, ip, family);
 }
 
 /**
@@ -113,26 +155,29 @@ export async function validateOutboundUrl(rawUrl) {
  * validated once, then the socket connects to that exact IP. Redirects are not
  * followed; callers can validate a new Location explicitly if needed later.
  */
-export async function requestPinnedOutboundUrl(rawUrl, {
-  method = 'GET',
-  body = null,
-  headers = {},
-  timeout = 5000,
-  maxBytes = 10 * 1024 * 1024,
-} = {}) {
-  const check = rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
-    ? rawUrl
-    : await validateOutboundUrl(rawUrl);
+export async function requestPinnedOutboundUrl(
+  rawUrl,
+  { method = 'GET', body = null, headers = {}, timeout = 5000, maxBytes = 10 * 1024 * 1024 } = {},
+) {
+  const check =
+    rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
+      ? rawUrl
+      : await validateOutboundUrl(rawUrl);
   if (!check.ok) return { ok: false, error: check.reason };
 
   const parsed = new URL(check.url);
-  const data = body == null
-    ? null
-    : Buffer.isBuffer(body) || typeof body === 'string'
-      ? body
-      : JSON.stringify(body);
+  const data =
+    body == null
+      ? null
+      : Buffer.isBuffer(body) || typeof body === 'string'
+        ? body
+        : JSON.stringify(body);
   const requestHeaders = { ...headers, Host: parsed.host };
-  if (data != null && requestHeaders['Content-Length'] == null && requestHeaders['content-length'] == null) {
+  if (
+    data != null &&
+    requestHeaders['Content-Length'] == null &&
+    requestHeaders['content-length'] == null
+  ) {
     requestHeaders['Content-Length'] = Buffer.byteLength(data);
   }
 
@@ -145,8 +190,11 @@ export async function requestPinnedOutboundUrl(rawUrl, {
       method,
       timeout,
       headers: requestHeaders,
-      servername: parsed.hostname,
-      lookup: (_hostname, _opts, cb) => cb(null, check.ip, 4),
+      // SNI names a host, never an address (an IPv6 literal keeps its brackets).
+      servername: net.isIP(parsed.hostname.replace(/^\[(.*)\]$/, '$1'))
+        ? undefined
+        : parsed.hostname,
+      lookup: pinnedLookup(check.ip),
     };
 
     try {
@@ -178,7 +226,10 @@ export async function requestPinnedOutboundUrl(rawUrl, {
         });
       });
       req.on('error', (err) => resolve({ ok: false, error: err.message }));
-      req.on('timeout', () => { req.destroy(); resolve({ ok: false, error: 'Connection timed out' }); });
+      req.on('timeout', () => {
+        req.destroy();
+        resolve({ ok: false, error: 'Connection timed out' });
+      });
       if (data != null) req.write(data);
       req.end();
     } catch (err) {
@@ -231,26 +282,31 @@ function byteCap(limit, stage) {
  *     operator-editable, which makes a zip bomb a real input
  * A Content-Length over the cap is rejected before any body is read.
  */
-export async function openPinnedOutboundStream(rawUrl, {
-  headers = {},
-  timeout = 5000,
-  maxBytes = 10 * 1024 * 1024,
-  acceptGzip = true,
-} = {}) {
-  const check = rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
-    ? rawUrl
-    : await validateOutboundUrl(rawUrl);
+export async function openPinnedOutboundStream(
+  rawUrl,
+  { headers = {}, timeout = 5000, maxBytes = 10 * 1024 * 1024, acceptGzip = true } = {},
+) {
+  const check =
+    rawUrl && typeof rawUrl === 'object' && rawUrl.ok && rawUrl.url && rawUrl.ip
+      ? rawUrl
+      : await validateOutboundUrl(rawUrl);
   if (!check.ok) return { ok: false, error: check.reason };
 
   const parsed = new URL(check.url);
   const requestHeaders = { ...headers, Host: parsed.host };
-  const hasAcceptEncoding = Object.keys(requestHeaders)
-    .some(h => h.toLowerCase() === 'accept-encoding');
+  const hasAcceptEncoding = Object.keys(requestHeaders).some(
+    (h) => h.toLowerCase() === 'accept-encoding',
+  );
   if (acceptGzip && !hasAcceptEncoding) requestHeaders['Accept-Encoding'] = 'gzip';
 
   return new Promise((resolve) => {
     let settled = false;
-    const settle = (value) => { if (!settled) { settled = true; resolve(value); } };
+    const settle = (value) => {
+      if (!settled) {
+        settled = true;
+        resolve(value);
+      }
+    };
 
     const mod = parsed.protocol === 'https:' ? https : http;
     const reqOpts = {
@@ -260,8 +316,11 @@ export async function openPinnedOutboundStream(rawUrl, {
       method: 'GET',
       timeout,
       headers: requestHeaders,
-      servername: parsed.hostname,
-      lookup: (_hostname, _opts, cb) => cb(null, check.ip, 4),
+      // SNI names a host, never an address (an IPv6 literal keeps its brackets).
+      servername: net.isIP(parsed.hostname.replace(/^\[(.*)\]$/, '$1'))
+        ? undefined
+        : parsed.hostname,
+      lookup: pinnedLookup(check.ip),
     };
 
     try {
@@ -307,7 +366,10 @@ export async function openPinnedOutboundStream(rawUrl, {
       });
 
       req.on('error', (err) => settle({ ok: false, error: err.message }));
-      req.on('timeout', () => { req.destroy(); settle({ ok: false, error: 'Connection timed out' }); });
+      req.on('timeout', () => {
+        req.destroy();
+        settle({ ok: false, error: 'Connection timed out' });
+      });
       req.end();
     } catch (err) {
       settle({ ok: false, error: err.message });

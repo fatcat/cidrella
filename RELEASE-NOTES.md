@@ -6,6 +6,1231 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.5.0 — 2026-10-08
+
+```yaml
+min_from: "0.4.17"
+breaking: true
+security: false
+```
+
+### Breaking changes
+
+The workspace UI is now the interface. `/networks` and `/system` render the
+new views; the previous ones stay reachable at `/networks-classic` and
+`/system-classic` from the "Classic interface" links in the header user menu.
+The Interface preference that switched between them is gone. The preview
+routes from the 0.4.x era (`/networks-preview`, `/system-preview`,
+`/anomalies-preview`) redirect to the new paths and keep their query and hash,
+so bookmarks still land. `/dns`, `/dhcp`, `/blocklists`, `/geoip` and
+`/range-types` redirect into the matching Settings area. The classic views
+will be removed in a later release.
+
+Schema runs to 73. Migrations 070 through 073 rebuild `subnets`,
+`dns_records`, the DHCP tables and the rogue tables so every row carries an
+address family. Anything that reads these tables directly must expect:
+
+- `subnets.broadcast_address` and `subnets.total_addresses` are nullable (an
+  IPv6 /64 holds more addresses than an INTEGER represents) and
+  `last_address` carries the top of the prefix for both families.
+- `dhcp_reservations` and `dhcp_leases` make the MAC optional and add `duid`
+  and `iaid`. The DHCP option tables include the address family in their
+  unique keys, since DHCPv4 and DHCPv6 option codes are separate namespaces.
+- `dhcp_authorized_servers.server_ip` is nullable. A trusted server may be
+  named by IP of either family, MAC or DUID, with at least one required.
+- `rogue_dhcp_events` gains `kind` (`dhcp4`, `dhcp6`, `ra`), the address
+  family, the server DUID and the advertised prefixes, and the dedup key
+  includes `kind`.
+
+Backups taken on 0.5.0 carry `schema_version: 73` and are refused by the
+0.4.x restore. Rolling back through the slot swap restores the pre-update
+database snapshot, so changes made on 0.5.0 do not carry back.
+
+The client toolkit moved from PrimeVue 4.5.5 (archived upstream on
+2026-06-28) to OpenVue 1.0.0, an API-compatible continuation of the same
+line. No page, theme or stylesheet changed as a result; the swap was audited
+file by file and every theme verified against the values captured under
+PrimeVue.
+
+Every enabled DNS zone now answers the names under it itself. A name that
+exists only in the domain's public DNS, such as an apex address or MX records
+hosted elsewhere, stops resolving for LAN clients until it is added to the
+zone in CIDRella, or the zone's "Look up names this zone doesn't have
+upstream" switch is turned on. Migration 083 adds that switch, off for every
+zone.
+
+`min_from` stays at 0.4.17: installs on 0.4.17, 0.4.18 or any 0.4.18
+pre-release upgrade directly. The 0.4.18 lifecycle reconciliation still runs
+first on a 0.4.17 host.
+
+### New
+
+- **Dashboard is a health board.** Analytics > Dashboard now answers one
+  question, is the network healthy right now. A status rail (services,
+  forwarders, detector, and the inventory counts as links), a Needs attention
+  list of every open condition with a link to where it is acted on (rogue
+  DHCP servers, rogue hosts, anomalous devices, scope conflicts, DHCP review,
+  reconciliation, a stopped service, and a note when the rogue probe cannot
+  run so silence is not read as safety), resolution figures with sparklines
+  (p95 latency, cache hit rate, timeouts), DNS traffic as answered against
+  blocked with the top clients and domains, DHCP traffic as client requests
+  against server replies, and the address plan as one bar. The range selector
+  drives the traffic and resolution panels only. Each source loads on its own,
+  so one failing endpoint marks its panel unavailable instead of blanking the
+  page. The old doughnuts and inventory tiles are gone.
+- **Performance reads like the Dashboard.** Analytics > Performance has the
+  same head, service rail and panels. Seven figures with sparklines lead
+  (queries per minute, p95 latency, cache hit rate, timeouts, peak pending,
+  process CPU and memory), then Latency, Queries and Cache charts side by
+  side and the process charts under their figures. The Dashboard's
+  resolution figures and these are the same numbers from one helper. A range
+  with no queries says so instead of drawing a zero line, p95 leads instead
+  of the average, sub-10 ms latencies keep one decimal, process CPU reads as
+  a share of one core the way top does (it was divided by the host's cores,
+  which on a 16-core box turned 30% into 1.9%), and the memory gauge that
+  measured the process against total system RAM is gone. The DNS Requests
+  chart (a copy of the Dashboard's DNS traffic plus DHCP) and the dual-axis
+  Process Resources chart (the memory and CPU charts drawn a third time) are
+  gone.
+- **Intelligence shows the permitted side.** Analytics > Intelligence is
+  "DNS filtering": a rail that says whether the blocklist, GeoIP and DNSSEC
+  are on (and how many categories, countries), a Verdicts panel with the
+  allowed count, block rate and the two block counts over one stacked bar,
+  and an allowed-against-blocked line over the range from the same query log
+  the counts come from. Then ranked lists: Permitted domains and clients
+  (new endpoints `/api/analytics/allowed/top-domains` and `top-clients`;
+  the old top lists counted blocked queries too), Blocked by list (domains,
+  categories, hosts, and the host-and-domain pairs), Blocked by GeoIP
+  (countries, new, plus domains and hosts), and Answered without DNSSEC
+  last. A filter that is off says so with a link to its setting instead of
+  an empty chart. The doughnuts are gone: a top-10 reads as a bar per row,
+  and a category split of 16,698 ads to 29 malware is unreadable as slices.
+  Chart legends are buttons: clicking one hides that series, so the blocked
+  line can be read on its own axis without the allowed line dwarfing it.
+- The per-minute DHCP counter is split into client messages (DISCOVER,
+  REQUEST, RELEASE, INFORM, DECLINE) and server messages (OFFER, ACK, NAK),
+  migration 079. The old combined column stays as their sum.
+- The DHCP view tags each lease and reservation "in pool" or "outside pool"
+  beside its assignment. A reservation outside the pool is plain
+  information; a dynamic lease outside every pool is flagged, since dnsmasq
+  only hands out pool addresses.
+- Each contributing factor in the Evidence drawer now shows what the
+  device's peers typically do beside its own observed and baseline values,
+  with a one-line reading: "Above its peers too" for a device that stands
+  out from the network, or "In line with what peers do" when the whole
+  network moved together, which is what a CDN change looks like. The
+  sidecar computes the fleet median from the per-device medians it already
+  keeps at training time, so nothing new is stored per window.
+- **Anomaly triage.** Analytics > Anomalies is now a triage page: a queue of
+  flagged devices and a map of every monitored device, plotted by how far its
+  latest window sits from its own baseline against how much the traffic is
+  shaped like an attack. Hovering either side highlights the other. Opening a
+  device slides in an Evidence drawer with the behavior timeline, score
+  history, contributing signals, why the latest window was flagged, the DNS
+  queries behind that window, and where the device sits among its peers.
+  Each contributing factor also lists the names that back it, ranked by the
+  factor's own measure: the random-looking names for the entropy signal, the
+  longest for the length signal, the NXDOMAIN or blocked ones for those rates,
+  the never-seen-before ones for the new-domain ratio. A plain top-by-count
+  list never shows a DGA hour of once-each names; this does.
+  Picking another device while the drawer is open swaps its content in place;
+  a click anywhere else closes it. The previous panel stays reachable as
+  Anomalies under the user menu's classic links, and the old
+  `/anomalies-workspace` address lands on the new page.
+- **Threat shape.** The sidecar now scores every window it scores for the
+  model on five attack-shaped signals (domain entropy, NXDOMAIN rate, longest
+  name, subdomain depth, blocked share) and stores the 0..1 result beside the
+  model score as `threat_score` (migration 077). A device the model has
+  learned to accept, say one that has tunneled every night since a firmware
+  update, still lands high on this axis. Windows scored before the upgrade
+  have no value and draw as hollow dots until the next scoring cycle.
+- **A first-run setup.** The first sign-in on a fresh install now opens a
+  five-step wizard: set the admin password, optionally add a second factor,
+  choose the deployment (DNS & DHCP, DNS only, or DHCP only) and the interfaces
+  it applies to, bring in a Pi-hole's records and static leases or restore a
+  CIDRella backup, then review and start. Nothing but the password and the
+  second factor is applied before the last step, each step keeps its own marker
+  so an interrupted setup resumes, and the workspace's empty state offers to
+  create the first network afterwards. The old account wizard, dead since
+  v0.4.0, and its pre-auth `POST /api/setup` are gone; `/api/setup/state`
+  behind auth holds the step markers, and the login and `/api/auth/me` payloads
+  carry `setup_required`. Upgraded installs are marked done by migration 074.
+- **Two-factor sign-in.** Any account can add a time-based one-time password
+  (TOTP, the standard authenticator-app kind) and receives ten one-time backup
+  codes when it does. Sign-in then takes the password first and the code
+  second (`POST /api/auth/login` answers `totp_required` with a five-minute
+  challenge, `POST /api/auth/login/totp` finishes it); a used backup code is
+  spent, and a low count is mentioned after sign-in. Enrolment, fresh backup
+  codes and turning it off live under Settings > Access > Two-factor, and the
+  first-run wizard offers the same enrolment. The verification runs on node's
+  own crypto; the client gained the `qrcode` package to draw the enrolment QR.
+  Migration 075 adds the columns and the backup-code table.
+- **The password rule is four settings.** A minimum length (`password_min_length`,
+  0 for none), mixed case, a number and a symbol
+  (`password_require_mixed_case`, `password_require_number`,
+  `password_require_symbol`), each changed on its own from the first-run
+  password step or Settings > Access > Password rule. The served policy tells
+  every password form which parts apply. The maximum stays 1024.
+- **DHCP is off on a fresh install** until the first-run deployment step
+  applies a role that serves it. Installs already in use keep their setting
+  (migration 076).
+- **A restore keeps the restoring operator's two-factor enrolment.** The
+  backup's users and passwords win, as before, but an authenticator enrolled
+  minutes earlier no longer vanishes with them: it is parked in the restored
+  data and applied to the same username at the first boot, unless that account
+  already had two-factor on in the backup.
+- **IPv6, off by default.** One switch, "IPv6 support" under Settings >
+  General > Interfaces, turns it on. While it is off dnsmasq and the resolver
+  bind IPv4 only, IPv6 DHCP scopes are left out of the generated config, the
+  DHCPv6 and Router Advertisement detectors are skipped and reported as
+  disabled, scheduled scans skip IPv6 networks, host IPv6 addresses are hidden
+  from the Interfaces page, and creating an IPv6 network, an `ip6.arpa` zone,
+  an AAAA record, an IPv6 forwarder or encrypted upstream, an IPv6 scope or
+  reservation, or an IPv6 blocklist sinkhole answers 400 with "IPv6 support
+  is disabled. Enable it under Settings > General > Interfaces." Existing IPv6
+  rows stay readable, editable in their non-IPv6 fields, and deletable.
+  Turning the switch on regenerates dnsmasq and rebinds the resolver, no
+  restart of the appliance needed. `GET /api/features` reports the state to
+  every signed-in user.
+- **IPv6 networks.** Create, divide, carve, merge and template-name IPv6
+  prefixes with the same dialogs as IPv4; prefix bounds run to 128 and the
+  name template fills hextets. An IPv6 network is shown as a table of the
+  addresses CIDRella knows about (there is no grid or utilization gauge, since
+  a /64 cannot be enumerated), with an assigned count and the DHCPv6 mode in
+  place of the pool tile. Discovery uses all-nodes multicast plus the kernel
+  neighbor cache, never a sweep, and echoes every allocated address so quiet
+  static hosts go offline correctly.
+- **DNS over IPv6.** AAAA records in forward zones, `ip6.arpa` reverse zones
+  with PTRs for allocated addresses, IPv6 forwarders and encrypted upstreams,
+  and the DNS proxy listening on IPv6. Reverse zones of either spelling sort
+  by the network they cover.
+- **DHCPv6 per network.** Each IPv6 network picks a mode: `slaac` (Router
+  Advertisement only), `stateless` (SLAAC plus DHCPv6 for options) or
+  `stateful` (managed addresses from a pool). The SLAAC modes need a /64.
+  Only `stateful` issues leases and accepts reservations, which bind a DUID
+  (and optional IAID) instead of a MAC; the leases table and search know both
+  identities, and the DUID and IAID columns are available in the column
+  picker. Under the SLAAC modes an observed global address becomes a `slaac`
+  claim that expires with the scope lease time.
+- **DHCPv6 option defaults.** Settings > DHCP now has "Scopes & Leases IPv4"
+  and "Scopes & Leases IPv6" tabs, one set of global defaults per family (the
+  IPv6 tab shows while the IPv6 switch is on). The IPv6 catalog covers the
+  `option6:` names dnsmasq accepts (DNS servers, domain search, NTP, SNTP,
+  information refresh time, time zones, SIP, NIS, boot file URL, captive
+  portal) plus custom codes. DNS servers and the search list are enabled by
+  default and resolve to CIDRella's IPv6 address on the network and the
+  network's domain, the same way the IPv4 defaults do. New IPv6 scopes inherit
+  the enabled defaults, the scope editor shows the IPv6 catalog on an IPv6
+  network, and every value reaches dnsmasq as an `option6:` line with
+  bracketed addresses. Routers, prefixes and lifetimes are never options in
+  DHCPv6; they come from Router Advertisements. Rapid Commit (14) is listed
+  as always on: dnsmasq gives a stateful client that asks for it its address
+  in one Reply and has no switch to turn that off, so it has no value to set.
+- **Rogue DHCPv6 servers and rogue routers.** The rogue detector now sends a
+  DHCPv6 SOLICIT and keys answers by server DUID, and reads Router
+  Advertisement default routes from the kernel. The Rogue DHCP page labels
+  each finding DHCPv4, DHCPv6 or Router, shows the DUID or the MAC and
+  advertised prefixes, and the allowlist accepts an IP, MAC or DUID. RA
+  detection needs `accept_ra` on the interface and is reported per interface
+  as unsupported, never as clean, when it is off.
+- **Anomaly detection** identifies IPv6 hosts and the blocklist sinkhole has
+  its own IPv6 address field.
+- **The networks workspace.** An explorer tree with folders (drag a network
+  onto a folder to move it), a work surface of network, address, DNS and DHCP
+  tables that filter and sort the whole set before paging so a hostname on
+  page three is found, a details popover pinned to the resource rather than
+  the row, row menus that carry the current context, keyboard-operable rows,
+  bulk selection with run-aware actions, divide and merge from the selection
+  bar with a reviewed plan, and one mutation-and-refresh contract so every
+  edit shows up where it should. Configuration of a new network is previewed
+  by the server (`POST /api/subnets/configuration-preview`) so the dialog
+  shows what allocation will actually do.
+- **The settings workspace.** `/system` hosts every settings editor in one
+  shell with the open area and section carried in the URL. Banners are gone;
+  text size lives in the header user menu. Analytics sections are likewise
+  carried as `?view=` so links and Back work.
+- **Anomaly triage view** at `/anomalies-workspace`, alongside the existing
+  anomalies view on Analytics; the two are kept until real data decides the
+  merge.
+- **Role capabilities in the client.** Login and `/auth/me` carry the user's
+  permissions, so the UI skips reads the user cannot make and hides write
+  controls. The server still authorizes every call.
+- **Workspace read API.** `/api/workspace/networks`, `/dns-records` and
+  `/dhcp-addresses`; `GET /api/subnets/:id/ips/:ip` returns one canonical
+  projection without creating a row; `GET /api/subnets/:id/summary` returns
+  whole-network counts; `/subnets/:id/ips` accepts explicit filters and
+  returns `filteredTotal`; `GET /api/dns/zones` and `GET /api/dhcp/scopes`
+  accept folder, network and search filters; `GET /api/audit` accepts
+  `entity_id`.
+- **Install a local build.** `cidrella-update --tarball FILE` installs a
+  signed release tarball from disk through the same verify, downgrade,
+  `min_from` and preflight path as a GitHub release. The `.minisig` sits next
+  to the tarball and the version comes from its `RELEASE.json`.
+- **Plain-text update logs.** `update.log` no longer contains color codes or
+  box-drawing characters, so it reads cleanly in vim, less, journalctl and
+  the web UI. The installer warns when the host locale is not UTF-8.
+- **A restore asks about DHCP.** The restore dialog now requires a choice:
+  serve DHCP after the restart (this is the appliance the backup came from)
+  or DNS only (this is a copy of another appliance, and a second DHCP server
+  would fight the real one). The choice is written into the restored data
+  before the swap, applied on the first boot, and can be changed later under
+  Settings > General > Interfaces. The restored database also gains its own
+  audit entry naming who restored, which backup, and the DHCP choice; before
+  this the only record lived in the database the restore replaced.
+  `POST /api/operations/restore` takes `?dhcp=enabled|disabled`; omitted
+  keeps the backup's own setting.
+- Bundled Node runtime is 24.21.0.
+- **Selected addresses get the single-address actions.** Right-clicking one
+  of several checked addresses, in the table or either grid, opens a menu for
+  the whole selection: Create DHCP Scope (one unbroken run outside any scope,
+  opened with that run as the pool), Reserve or Release, Set range type,
+  the Liveness scan switch, Reset scan to Inherit, and Probe now (up to
+  256 addresses). Right-clicking checked networks likewise offers Merge and
+  Apply defaults. New endpoint `PUT /api/subnets/:id/ips/bulk-scan-enabled`
+  takes `start_ip`, `end_ip` and `scan_enabled` (`true`, `false` or `null`);
+  `POST /api/scans/probe` also takes `{ subnet_id, ips: [...] }` and answers
+  `{ results: [...] }` from one targeted scan.
+- **Create DNS entry for an address.** The address row menu and the address
+  details panel offer Create DNS entry, which opens the record editor with an
+  A (or AAAA) record for that address in the network's domain zone. It is
+  available where DNS may claim the address (unassigned, an IP Reservation or
+  the gateway, outside a DHCP pool) and needs `dns:write`. Elsewhere it is
+  shown greyed out, with the reason as its tooltip.
+- **Gateway position in the DHCP scope dialog and first-run setup.** The scope
+  dialog shows its network's gateway as First IP, Last IP, None or Custom (an
+  IPv4 scope; DHCPv6 has no router option). The gateway is the network's, so
+  changing it updates the network, and with it the Gateway range, before the
+  scope saves. The router option follows the new gateway unless the scope
+  overrides it, and a new scope's untouched suggested pool is refilled around
+  it. First-run setup asks where new networks put their gateway (first or
+  last address) on the deployment step and sets New Network Defaults at Start,
+  before a Pi-hole import creates its network.
+- **Address history says more, and keeps it.** An address's Lifecycle tab
+  now survives the address row: deallocating or deleting a network, or a
+  reservation removed with its row, no longer erases what happened to its
+  addresses, and the history follows an address into a new network. New
+  events name what used to read as "Allocation changed": IP Reservation
+  created and released (with the note), DHCP Reservation created and removed
+  (with the MAC or DUID and hostname), held for a disabled DNS record and
+  released, and Lease expired. A Network Range Type added to or taken off an
+  address is recorded too, stored once per run of addresses so a /16 or an
+  IPv6 /64 costs one row, and only for what changed. Each event names the
+  user whose action caused it. Migration 080 rebuilds `ip_events` and adds
+  `ip_range_events`; `GET /api/subnets/:id/ips/:ip/events` answers for an
+  address with no row.
+- Address tables offer a Last Scanned column, and the address panel shows
+  it.
+- **DHCP Bulk Change.** Settings, DHCP has a Bulk Change tab: the defaults
+  editor beside a list of the family's scopes. It starts from your DHCPv4 (or,
+  with IPv6 on, DHCPv6) defaults, can reset to the defaults CIDRella ships,
+  and shows per scope which options would change, old and new. Each selected
+  scope gets exactly the options ticked under Apply (typing a value into a
+  blank row ticks it); a blank Subnet Mask,
+  Router, Domain, Search List or DNS Servers is filled from that scope's
+  network, as for a new scope. Lease time and pools stay as they are. A
+  checkbox (on by default) saves the editor as your defaults too. A
+  SLAAC-only scope sends no options and is listed but not selectable.
+- **Analytics, Performance shows failed answers and each upstream.** A
+  Failed answers panel gives the failure rate and counts DNSSEC and upstream
+  failures and provider failovers. Charts show failures by cause, upstream
+  timeouts, resent drops and refused connections, and each provider's p95
+  latency; lists name the domains that failed and rank the upstreams. The
+  cause comes from the Extended DNS Error (RFC 8914) dnsmasq puts in a
+  SERVFAIL, so a DNSSEC failure, an unreachable upstream and the proxy timing
+  out are told apart. The query log keeps the error code and cause per query.
+  Migration 085 adds the counts to the minute rows and a `metrics_forwarder`
+  table with one row a minute per provider address.
+- **The Forwarders health chip probes the upstreams in use.** With encrypted
+  forwarding on it used to test the plain DNS servers, which nothing queried.
+  It now sends a real query to each provider address over DoT or DoH, all at
+  once, and the tooltip gives each one's time or what went wrong.
+- **A backup resolver, used on failure or in turn.** Settings > DNS >
+  Upstream Forwarders takes a primary and a backup in every mode: a preset or
+  a custom resolver, plaintext, DoT or DoH. "When there is a backup" picks On
+  failure (every query goes to the primary, the backup answers only when it
+  does not) or Load balance (queries take turns, each covering for the
+  other). Load balance is the default, which is how two encrypted providers
+  behaved before. An existing plaintext list stays as the primary.
+- **Test performance.** A button beside the resolvers times every preset and
+  any custom resolver for a minute over the mode's protocol, straight from
+  CIDRella with no local cache: common names a resolver usually has cached,
+  and random names under unsigned zones that it has to look up. The dialog
+  lists each one's p50 and p95 for both, and its failures, and sets the one
+  you pick as the primary or the backup. Nothing is saved until you save.
+
+### Changed
+- **Plaintext DNS goes through CIDRella's forwarder.** dnsmasq now forwards
+  to the in-Node forwarder in every mode, not only with DoT or DoH, so On
+  failure and Load balance mean the same thing for plaintext. Left to
+  itself, dnsmasq sent 45 queries to one plain server for every one to the
+  other. Plain forwarding now gets per-address counts in
+  `metrics_forwarder` and shows on Performance like an encrypted provider.
+  One trade-off: with the DNS proxy bypassed and the Node service fully
+  down, plaintext forwarding stops too.
+- **History no longer records every probe.** A scan that only confirms an
+  address's state records nothing; Online and Offline mark a change, and Last
+  Scanned says when it was last probed. Migration 080 drops the existing
+  "Scanned" rows, which were most of the history table.
+
+- **DHCPv6 defaults.** A new /64 scope now defaults to stateless DHCPv6:
+  addresses still come from SLAAC (which Android needs; it has no DHCPv6
+  addressing), and DHCPv6 adds NTP and the other options. SLAAC stays
+  available, first among the alternatives. The configure API takes the same
+  default when `dhcp_v6_mode` is left out.
+- **IPv6 NTP default.** DHCPv6 option 56 now has a default, like option 42:
+  four IPv6 servers from `2.pool.ntp.org`, the only pool name that answers
+  with IPv6 addresses. New IPv6 scopes use it. Existing scopes keep what they
+  served before the upgrade (see the next item), so to offer it on them, use
+  Bulk Change. The release build refreshes both lists, so
+  `scripts/refresh-ntp-defaults.js`
+  now updates `DHCP6_DEFAULT_NTP_SERVERS` as well.
+- **DHCP defaults are opt-in per scope.** A default option used to reach
+  every scope that had no value of its own, ticked or not, so Bulk Change
+  could not take one off a scope. Now a scope serves a default only when the
+  option is set to Use default in the scope's options, and then it follows
+  every later edit of the default. Settings > DHCP calls the checkbox column
+  Add to new scopes (the defaults a new scope uses) and counts the scopes
+  using each default. Bulk Change with "Also make these my defaults" sets the
+  selected scopes to Use default; without it they get the values as their
+  own. The upgrade keeps what every scope serves: migration 086 sets each
+  scope to Use default for every default it was being served. It also
+  repairs IPv6 scope options that a divide or merge had stored as IPv4.
+
+- Checking rows no longer opens a bar above the table. The bar pushed the
+  rows down as it appeared, so the row under the pointer moved and the
+  selection looked wrong. A checked selection is acted on from its
+  right-click menu, which already offered every action the bar had. The
+  header checkbox now shows the selection (checked, or partly checked) and
+  clears it when clicked. Merge (on checked networks) and Divide network
+  stay in their menus when they cannot run, greyed out with the reason
+  (only unallocated sibling networks merge, only an unallocated network
+  divides), as the bar's Merge button used to.
+- Liveness scan is one switch in the row menu instead of an Enable or a
+  Disable entry. The switch shows the current state, on or off for an
+  address and on, off or half-way (mixed) for a selection, and choosing it
+  flips the state; a mixed selection turns scanning on.
+- At All Allocated Networks and in a folder, the DNS and DHCP tabs are the same record
+  and address tables as inside a network, across every network in view,
+  with the same columns and filters. They used to list zones and scopes
+  until one was picked. The zones and scopes are now the cards above the
+  table: click one to narrow the table to it, right-click for its actions
+  (open, edit, add a record or reservation, delete). "Switch forward /
+  reverse" is gone; the forward zone cards and the reverse zone picker do
+  that.
+
+- Every IP table filters and sorts on any column, over the whole result. A
+  Filter button lists every column; picking one shows its values with how
+  many rows carry each, or a text box for a free-text column, and the active
+  filters show as chips. The same filters on Addresses, DNS and DHCP. The
+  old dropdowns took their choices from the page on screen, so a value that
+  was not on it could not be picked: a disabled DNS record among a network's
+  1,068 could not be found. Free addresses and free DHCP pool addresses are
+  counted and filtered too. Links written with the old filter keys (the
+  Dashboard's rogue link among them) still open with the same filter.
+
+- Addresses, DNS and DHCP are one table model. Each of the three tables can
+  show any column the others have: an address row can show its DNS record
+  (name, type, TTL, whether it is enabled, what wrote it) and its DHCP
+  Reservation or lease (assignment, pool membership, DUID, IAID), and a DNS
+  row can show its address's status, type, lease and MAC. A column means
+  the same thing on every table, so the old Enabled and Source columns are
+  split into Record Enabled, Reservation Enabled, Source (the address's
+  allocation) and Record Source. Each table keeps a few columns it cannot
+  hide, marked with a lock in the Columns dialog; they can still be moved.
+  Saved column choices carry over.
+
+- The address grid shows the whole network. Grid and compact grid read up
+  to 4,096 addresses (a /20) in one page, so a /22 or /21 is one grid with
+  no pages to turn; a /19 or larger pages the grid in /20 chunks. The table
+  keeps its 32 to 512 rows a page, and the DNS and DHCP reads on the same
+  page keep the table's size. Measured on the dev stack: a /22 grid draws in
+  60 ms and answers a click in 85 ms, a /20 in 200 and 250.
+- API responses are gzip compressed. A full /20 address read is 4 MB of
+  JSON that leaves as 70 KB; a 256-row table page goes from 260 KB to 7 KB.
+  Every JSON response benefits, the table views included. The log event
+  stream is excluded, since compression would hold events back.
+- "Whitelist" is now "Allowlist" everywhere: the DNS exception list under
+  Blocklists, the anomaly detector's skip list, the UI, the API and the
+  schema. Migration 078 renames the two tables and the anomaly column in
+  place; nothing in the lists changes. The API answers both
+  `/api/blocklists/allowlist` and `/api/anomalies/allowlist` and their old
+  `/whitelist` spellings for this release, so a page loaded before the
+  upgrade keeps working. Audit entries written from now on use the new
+  names; older entries keep theirs.
+- Every confirmation in the app is one component. The 29 hand-built confirm
+  dialogs (delete this, deallocate that, accept an overlap, merge, reset,
+  restore) now share `ConfirmDialog`: same Cancel and primary buttons, same
+  busy and disabled handling, Escape and the close button both count as
+  Cancel, and the two type-the-word gates (deleting a zone with records,
+  resetting the database) use one field. Merge Networks shows a disabled
+  Merge button while the plan has conflicts instead of hiding it. A guard in
+  `npm run check:reuse` refuses a new hand-built one.
+- Status dots are one component. The dashboard rail and attention list, the
+  triage rail, the log viewer, the Intelligence, Performance and GeoIP
+  service tiles, the workspace explorer, the network header's state chip and
+  health strip, and the Online and Enabled table cells all render through
+  `StatusDot` instead of drawing their own circle. Off states now show the
+  same hollow muted ring everywhere; Online and Enabled keep the green word.
+- The duplicated scoped CSS behind the reuse audit moved into shared sheets:
+  `utilities.css` (muted, text-sm, w-full, mono, sr-only, action-buttons,
+  dialog-actions, card-header, field-error), `panel-chrome.css` (the DNS and
+  DHCP panels' info bar, sidebar search and empty states) and the range
+  dialogs' `range-dialogs.css`. The scoped-CSS guard's baseline dropped from
+  52 classes to 27; what remains is drift (same name, different bodies) that
+  needs a design decision, plus the classic views.
+- The network editor uses the shared `ScanToggle` instead of its own copy of
+  the Inherit / Enabled / Disabled control, and its checkboxes and the divide
+  slider are the toolkit's `Checkbox` and `Slider` rather than raw inputs.
+
+### Fixed
+
+- **Names under a CIDRella zone are answered locally.** dnsmasq answered only
+  the exact names and types CIDRella had records for and sent every other
+  query in the zone upstream: the AAAA and HTTPS lookups browsers make for a
+  host with only an A record, service discovery (`lb._dns-sd._udp`), and ad
+  names with the search suffix appended after the blocklist refused them. For
+  a domain that is also public those ended at its public nameservers, and one
+  slow to answer stalled the lookup for 2 to 3 seconds (3,305 such lookups a
+  day on one install). `conf.d/local-zones.conf` now makes every enabled
+  zone local, so these get an immediate NXDOMAIN or NODATA. A zone that needs
+  its unknown names looked up publicly can opt out in its settings. The
+  zones are rendered at every start, so an upgraded install gets the file
+  without waiting for a DNS edit.
+- **A zone's record list no longer fails with an internal error** when one
+  name has both an address record and one without an address, such as an
+  apex with an A and an MX. Sorting tied on the name and then compared the
+  missing address, which threw. Records without an address now sort first.
+- **MX and SRV targets take a trailing dot**, as a zone file writes them
+  (`aspmx.l.google.com.`). CNAME already did. The dot is dropped when the
+  record is stored, on create and on edit.
+- **An SRV record can be entered by its full name**
+  (`_sip._tcp.example.com`), as the DNS table shows it. Every other type
+  already took its full name; an SRV took only `_sip._tcp`.
+- **Show domain names, in the DNS table's toolbar.** On, as before, every
+  name is shown in full. Off, names read as a zone file writes them: the
+  apex is `@`, names in the zone are relative, and anything else is absolute
+  with a trailing dot, targets (CNAME, MX, SRV, PTR) included. The choice is
+  kept per browser.
+- **Choosing a zone, a network's reverse zones or a DHCP scope starts its
+  table on page 1.** It kept the page of the list before it, so a short zone
+  picked from page 2 of a long one showed an empty page.
+- **A network's DNS tab lists its domain's zone-wide records.** An MX, a TXT,
+  or an apex A on a public address has no network of its own, so it was only
+  in the All Allocated Networks view and vanished from a network's DNS tab
+  even with its zone picked. Such a record now shows under every network
+  whose domain is its zone, with Zone-wide as its Network.
+- **Reserved names no longer fail DNSSEC validation.** Names set aside for
+  local use (`localhost`, `.internal`, `home.arpa`, `.local`, `.onion`,
+  `_dns.resolver.arpa`, the encrypted-DNS discovery probe, and the reverse
+  zones of loopback, link-local and private addresses in both families) were
+  forwarded upstream. Quad9 makes up an answer for them with no DNSSEC proof,
+  so with DNSSEC on dnsmasq called it BOGUS and the client got SERVFAIL:
+  2,192 times in one day's log on one install. dnsmasq now answers them
+  itself. `.internal`, `home.arpa`, `.local` and the IPv6 ULA reverse zone
+  stay forwarded when an upstream is a private address, since a site
+  resolver may serve them.
+- **Encrypted forwarding rides out Quad9 dropping its connections.** Quad9
+  ends a DoT connection after anything from 1 to 25 seconds, busy or not,
+  and the queries in flight went with it. A dropped query was sent once more
+  and then given up, which surfaced as SERVFAIL, often on the DNSSEC lookups
+  behind an answer. It is now sent up to three times on fresh connections
+  before the next address is tried, and only a query that finally fails is
+  logged as an upstream error.
+- **Encrypted forwarding tries the next provider when one fails.** With
+  more than one provider set, the providers took turns per query and a
+  query the chosen one could not answer got SERVFAIL. When Quad9 timed out
+  on both its addresses for two hours one night, about one forwarded query
+  in ten came back BOGUS. A query now goes to the next provider when the
+  first gives no answer. A send waits 2.5 seconds rather than 5 and a query
+  gets 4.5 seconds in all, under the proxy's 5 seconds and dnsmasq's 10. A
+  provider that gave no answer goes to the back of the line for 30 seconds,
+  so a dead primary costs one slow query rather than one on every query.
+- **The DNS proxy's query count stopped at 1,000 a minute.** It counted the
+  latency samples it kept rather than the queries it saw, so a busy minute
+  read as 1,000. It now counts every query.
+- **Encrypted forwarding keeps its connections open.** With DNS-over-TLS or
+  DNS-over-HTTPS on, every lookup that missed dnsmasq's cache opened a new
+  TCP and TLS connection to the upstream: about 46 ms an answer against a
+  10 ms round trip. One connection per upstream address now carries every
+  query (DoT pipelined, DoH over HTTP/2 with one stream per query, or
+  keep-alive HTTP/1.1 for a server that offers nothing newer), and a
+  reconnect resumes the TLS session; a repeat lookup takes about 12 ms. A
+  connection the upstream closed while a query was in flight is retried once
+  on a new one, an address that refuses the connection moves to the
+  upstream's next address (only the first was ever used), and every answer
+  is still verified against the upstream's certificate with no plaintext
+  fallback. Failures of the encrypted path now reach the journal, at most one
+  line a minute with a count of the ones in between; before, they were only
+  counted.
+- **The AdGuard preset works.** It named `unfiltered.dns.adguard-dns.com`,
+  which doesn't resolve and which AdGuard's servers refuse, so every
+  encrypted query to it failed. It is now `unfiltered.adguard-dns.com`, and
+  migration 084 moves an upstream saved from the old preset.
+- **Local names get a 60 second TTL, and the appliance's `/etc/hosts` stays
+  home.** dnsmasq answered every local record with a TTL of 0, so clients
+  looked a name up again for nearly every request. On a client that also
+  lists a public resolver (a scope handing out `10.0.3.250,9.9.9.9`, say),
+  any slow answer let the public resolver's NXDOMAIN win, and the browser
+  failed a burst of requests with `ERR_NAME_NOT_RESOLVED`. Local records now
+  carry a 60 second TTL. dnsmasq also read the appliance's own `/etc/hosts`,
+  where Proxmox and Debian map the host's name to `127.0.1.1`, and served
+  that to the whole network next to the real addresses; `no-hosts` stops it.
+  Both are lines CIDRella manages in `dnsmasq.conf`, so the first boot after
+  the upgrade adds them and restarts dnsmasq once. The installer's include
+  mode, which points a host's own dnsmasq at CIDRella's `conf.d`, is not
+  affected.
+- **The TTL column shows the TTL clients get.** It showed a record's stored
+  TTL, or the zone's SOA minimum (the negative-cache TTL) when it had none,
+  but dnsmasq serves every record except a CNAME with its one local TTL.
+  Record reads now carry `served_ttl`, and the column shows it, marked
+  "default" when it is not the record's own. The stored TTL is kept.
+- **Address history stops repeating itself.** Three loops filled it on a
+  busy network:
+  - Every lease sync, about every 10 seconds, wrote "Lease obtained" again for
+    each DHCP Reservation address. One production install had 610,000 of
+    these in a week, nearly all of its history. A renewal now records
+    nothing; a lease is recorded when it is new to the address (no lease,
+    another client's, or an expired one before it).
+  - Devices that ignore the scanner's probe but renew DHCP or query DNS all
+    day flipped offline at every scan and back online minutes later. A missed
+    probe now leaves a host online when anything heard from it since the
+    previous scan, and marks it offline only after a whole scan interval of
+    silence.
+  - Hosts on WiFi flipped offline now and then while they were up, Proxmox
+    hosts with a WiFi management interface among them. WiFi drops broadcast
+    ARP (about one probe in three on one install) and sometimes a lone ping.
+    A host that was online now gets three more pings before the scanner
+    calls it offline.
+  - The cleanup sweep "retired" the same empty addresses every hour, because
+    an unanswered probe labeled them as found by the scanner. Only a reply
+    does that now, and retiring an address with nothing learned on it
+    records nothing.
+  - A lease sync that read the lease file while dnsmasq was rewriting it saw
+    some leases or none, released the rest, and restored them on the next
+    sync. Each one left a "Hostname changed" pair that showed the same name,
+    dozens of addresses at a time. The lease file is now synced only once two
+    reads a moment apart agree and it ends on a whole line.
+
+  Existing repeated rows age out with the usual history retention.
+- **Quieter logs and a smaller scan table.**
+  - The anomaly detector's own requests to the server, about one a second,
+    no longer go into the server's access log. On one install they were 9
+    of every 10 lines in its journal. A failed one is still logged.
+  - A device model saved by another scikit-learn version (a backup restored
+    from another machine, or a package upgrade) printed a warning on every
+    scoring cycle and could score wrongly. The detector now retrains that
+    device's model and uses the new one.
+  - Device model files nothing tracks are removed after each training run:
+    the files left under old IP names when models moved to MAC keys, and
+    the model of a device added to the allowlist. One install carried 32 of
+    them in every backup. A client that later held one of those addresses
+    without a known MAC would have been scored with another device's model.
+  - Finished network scans are pruned to the newest 100 per network. They
+    were never deleted, about 175 a day on one install.
+- **dnsmasq no longer reads CIDRella's half-written files.** DNS records and
+  DHCP Reservations are written through a temp file beside the real one, in a
+  directory dnsmasq watches, and dnsmasq loaded the temp file too, once
+  mid-write. The temp file's name now starts with a dot, which dnsmasq skips.
+- **Anomaly scores are no longer dropped for clients on short leases.** On
+  installs where the anomaly detector created its score table itself, a
+  client scored under its MAC and then under its IP in the same hour (its
+  lease lapsed in between) lost that hour's score to a leftover uniqueness
+  rule. Migration 081 rebuilds the table without it, keeping every score and
+  its id.
+- **A new NIC is no longer a conflict forever.** A host behind a DNS record
+  or a gateway that got a new network card, or a VM recreated with one, was
+  reported as a MAC mismatch on every scan, and nothing in the UI could change
+  the stored MAC. The scan now takes the new MAC and records one "MAC changed"
+  event. A DHCP Reservation or a live lease still sets its MAC, and a
+  different one answering there is still reported.
+- **The address panel stays on the tab you picked.** The Networks
+  workspace refreshes its rows every minute, and each refresh sent an open
+  address panel back to Overview from Lifecycle or Device, and cleared a
+  reservation note being typed. Only choosing another address resets it now.
+- **A tab left open across an update no longer breaks on its next page.**
+  It asked for script files the new build had replaced, the server answered
+  with the app's page instead of a 404, and the browser stopped with "Failed
+  to fetch dynamically imported module". A missing file under `/assets/` is
+  now a 404, and the app reloads itself once to pick up the new build.
+- Divide Network worked on the selected network instead of the one it was
+  opened for. Opening it from the menu of one network while another (or one
+  already deleted or merged) was selected previewed and divided the selected
+  one: "subnet not found" for a deleted network, or an allocated network
+  divided and its children allocated. The dialog now keeps the network it was
+  opened for.
+- Create network opens with no folder. It used to fill in the folder being
+  browsed, or the first folder in the list when there was none, so a network
+  landed in a folder nobody picked. A folder's own menu still fills in that
+  folder.
+- Allocating a network started its gateway at None, so the network was
+  allocated without one unless the operator noticed. It now starts at the New
+  Network Defaults gateway position (Settings > General).
+- Deallocating a network now clears everything the allocation gave it. Its
+  folder, gateway position and scanning settings used to stay behind, so the
+  unallocated block still sat in its old folder.
+- In the address grid, a press anywhere but on a cell clears the selection.
+  A press inside a menu or dialog keeps it, since that is where a selection
+  is acted on.
+- The Network Range editor now edits the chosen type's name, color and
+  description (a type is shared, so the change reaches every range that uses
+  it). The Set Range Type dialog has a Clear range type button, for one
+  address or a multi-selection in either view: it removes the tag from the
+  selected addresses and keeps it on the rest of its range
+  (`PUT /subnets/:id/ranges/clear-type`).
+- A Network Range's color now shows. In the address grid a cell inside a
+  range takes the range's color (a status cell keeps its status color and
+  shows the range as a stripe along its foot); in the tables the range name
+  is drawn in the range's color. A rename or recolor of a Network Range Type
+  shows on every address in its ranges at the next read, since the name and
+  color are read from the type, never copied. The colors the grid uses for a
+  status (gray, amber, violet, red, cyan, blue, green) and anything close to
+  them, plus grays, are refused for a type; a type that already holds one can
+  still be renamed. The type dialog offers swatches that pass.
+
+- SLAAC IPv6 scopes advertised no DNS server. dnsmasq carries the DNS
+  servers and search list in its Router Advertisements only when those
+  options are set, and a SLAAC scope wrote no options at all, so clients got
+  addresses but no IPv6 DNS. A SLAAC scope now writes those two options (and
+  only those; it runs no DHCPv6 service for the rest).
+- A hostname typed into a DHCP option resolved to every address it has, so
+  `2.pool.ntp.org` put IPv6 addresses into DHCPv4 option 42 and IPv4 ones into
+  DHCPv6 option 56. The lookup now keeps only the option's family and warns
+  when a name has none (`pool.ntp.org` has no IPv6 address).
+
+- Renaming a host no longer restarts dnsmasq. Generated PTRs were written as
+  `ptr-record` lines in `conf.d`, which dnsmasq only reads at start, so every
+  DNS name change from a DHCP lease or a record edit restarted DNS and DHCP.
+  They are now served from the hosts file, which dnsmasq reloads in place:
+  `hosts.d/records.hosts` (one file replacing the per-zone `zone-*.hosts`)
+  lists each address's canonical PTR name first. `conf.d` keeps only the PTRs
+  the hosts file cannot answer, such as operator overrides.
+
+- Two DHCP clients sending the same hostname no longer restart dnsmasq all day.
+  dnsmasq gives a shared name to whichever client renewed last, and every
+  renewal moved the DNS name and swapped the PTRs, which restarted dnsmasq (33
+  times an hour on one network with two mesh units both named `deco-XE75`). A
+  lease name is now unique in its zone and stays with the address that holds
+  it; the next client to ask for it gets the first free of `-00` through `-FF`
+  (`deco-XE75-00`), in DNS and in every table. Two unnamed clients of one
+  vendor are told apart the same way. See ADR 005.
+
+- Right-clicking a dragged grid range acted on the one cell under the pointer,
+  and its Set Range Type reset the selection to that cell. The menu now
+  targets the selection.
+- Shift+click selects a run of rows in the address table, as it already did
+  in the grid; Ctrl+click (Command on a Mac) checks one row.
+
+- DHCP scope cards show their lease time. The scopes API gives it as
+  dnsmasq writes it ("900s", "12h"), which the cards read as a number and
+  showed as a dash.
+
+- The select-all box in the workspace tables showed a "-" after it cleared
+  every row, and could show unchecked after checking them all. It now shows
+  checked, partly checked or clear as the selection is. A partly checked box
+  now checks every row when clicked, as macOS and Windows do; it used to
+  clear the selection. A fully checked box still clears it.
+- Several networks can be allocated at once. Check unallocated networks
+  and choose Allocate N networks from the row menu. Each keeps the name it
+  was given (a network still named by its CIDR takes the name template) and
+  gets the default gateway, with no reverse DNS zone or DHCP scope. A
+  network that fails is reported and stays in the dialog.
+- A new network is always created unallocated: address space only, with a
+  name, folder, VLAN and description. Gateway, domain, scanning, reverse DNS
+  and DHCP are chosen when you allocate it, and the Add Network form no
+  longer offers them. Create used to allocate every new network, and then
+  allocated one when its reverse DNS or DHCP box was ticked.
+
+- Selection reads the same everywhere: the open or selected item (a network
+  in the explorer, a zone or scope in the DNS and DHCP panels, a triage row,
+  an anomaly host, the Analytics section) is outlined and tinted like All
+  Allocated Networks, and a checked network is tinted, instead of carrying
+  a colored bar on its left edge. Notes that carried a colored edge for
+  their state (first-run and backup-code notes, the update panel) now lead
+  with a status dot or an icon.
+
+- DNS records can be enabled, disabled and deleted in bulk. The DNS table
+  has checkboxes, Ctrl-click and Shift-click, and right-clicking the checked
+  records offers Enable records, Disable records and Delete records (which
+  asks first). Generated records (PTRs, lease-written A records) are left
+  out, and an entry that cannot apply stays greyed out with the reason. New
+  endpoint `POST /api/dns/records/bulk` with `{ action, ids }` answers
+  `{ action, applied, skipped }`; each record goes through the same workflow
+  as the single-record routes, and one that is refused is skipped with its
+  reason while the rest apply.
+
+- The explorer's network list picks like the tables: Ctrl-click (Command
+  on a Mac) checks or unchecks a network, Shift-click checks the run from
+  the last one checked, and a plain click still opens it. The explorer and
+  the Networks table share one selection, and right-clicking a checked
+  network in either opens the menu for the whole selection (Merge, Apply
+  defaults). Unallocated networks in the explorer now have the right-click
+  menu too. The DNS and DHCP tables have no bulk actions, so their rows
+  stay single-pick.
+
+- All Allocated Networks is the home button: whichever table was open, it
+  shows every allocated network on the Networks tab, with no search,
+  filter, sort or zone choice left over. The Infrastructure breadcrumb does
+  the same. Stepping into a folder on the DNS tab keeps the zone you were
+  looking at when the folder has it, and otherwise opens on the first zone
+  of the side you last used. Both used to drop to the page's first load of
+  every zone's records, PTRs first, and kept the rows from before.
+
+- A network with only a reverse zone opens its DNS tab on that zone. With
+  the forward side remembered it used to open on the mixed list with no
+  zone chosen.
+
+- The zone and scope cards follow the explorer search without losing the
+  rest: a search on one tab used to replace the workspace's list of zones
+  with the matches, so a network opened afterwards showed no zone cards,
+  and a chosen zone the search hid left an empty table with no card lit.
+  The table now moves to a zone the search leaves.
+
+- Searching All Unallocated Networks finds its networks. Any search used to
+  empty the table. A folder picked in the unallocated explorer opens that
+  folder's allocated networks; it used to list the unallocated ones.
+
+- The Ungrouped folder shows only its own networks' DNS records and DHCP
+  addresses; it used to show the whole estate's. The workspace reads take
+  `folder_id=ungrouped` for the networks in no folder (`/api/workspace/*`,
+  `/api/dns/zones`, `/api/dhcp/scopes`), and Ungrouped survives a reload.
+
+- A reload brings back the table as it was: the page (it went back to the
+  first), the sort (it was not kept), a network's reverse zones chosen in
+  the picker (never saved), the Show available switch (it reset to on), and
+  the table search on the first load of a folder or All Allocated Networks.
+
+- Analytics keeps the range you picked. A minute's auto-refresh still out
+  when you changed the range could answer last and put the old range's
+  charts back; the spinner also stopped when the first of two overlapping
+  loads finished.
+
+- Leaving Settings > Updates stops its timers. A request still out when you
+  left used to start one afterwards: a status check every two seconds for
+  as long as the tab stayed open, or, if an update finished meanwhile, a
+  page reload wherever you had gone.
+
+- A SLAAC or stateless IPv6 network accepts static AAAA records, IP
+  Reservations and a gateway anywhere in the /64, and its free addresses read
+  available. Its scope used to count as a DHCP pool covering the whole prefix,
+  so every AAAA was refused, every address read "DHCP Scope", the gateway
+  could not be changed and the network health check flagged it. Only a
+  stateful DHCPv6 scope is a pool.
+
+- No DHCPv6 scope is offered on a prefix shorter than /64. A stateful one was,
+  and was the default, but dnsmasq refuses it, and the refused line then made
+  every later DHCP change fail until the scope was removed.
+
+- A stateful DHCPv6 scope's default pool steps around the gateway, as the
+  IPv4 one does. On a small network (a /120) it used to contain the gateway
+  and the configure failed with a server error.
+
+- Dividing or merging an IPv6 network carries its DHCPv6 scope, mode, lease
+  time and options to every new network whose prefix allows the mode (a
+  SLAAC scope cannot follow a /64 split into /65s). It used to drop the scope
+  without saying so.
+
+- CIDRella's IPv6 Router Advertisements no longer offer the appliance as a
+  default router (router lifetime 0); clients take their router from the
+  network router's own advertisements. The SLAAC and stateless modes now
+  advertise the scope's lease time as the prefix's valid lifetime.
+
+- Releasing an offline DHCPv6 lease works: dhcp_release6 is given dnsmasq's
+  server DUID, which it needs, instead of an address, which made dnsmasq
+  ignore every release and blocked the server for about five seconds each
+  time. The server DUID is read from anywhere in the lease file, not only its
+  first line, which on a dual-stack appliance it never is.
+
+- Creating a DHCP scope from a selection on an IPv6 network keeps the
+  addresses you selected as a stateful pool. The dialog used to open with no
+  DHCPv6 mode and save a stateful pool over the whole /64.
+
+- An IPv6 scan no longer fails when an address nobody assigned answers on a
+  network without a stateful DHCPv6 scope, or when a single address is probed
+  on a SLAAC network. Every such scan used to end "failed", so it marked
+  nothing offline, and a probe answered with a server error.
+
+- DNS-over-HTTPS forwarding connects. The upstream lookup answered in a form
+  current Node.js versions no longer accept, so every DoH query failed and
+  resolution returned SERVFAIL, for IPv4 upstreams as well; an IPv6 upstream
+  address was also given an IPv4 socket. DNS-over-TLS was not affected.
+
+- A CNAME can point at a host that has only an AAAA record, on the DNS page
+  and in a Pi-hole import. It used to be refused as a target that does not
+  exist.
+
+- The Pi-hole import handles IPv6. A host line with an IPv6 address becomes
+  an AAAA record (refused, with nothing imported, while IPv6 is switched
+  off) instead of failing the whole import as an invalid IPv4 address. DHCP
+  host lines are matched to a network of their own family: any IPv6 network
+  used to make the DHCP step fail with a server error after the DNS records
+  had already been imported. IPv6 DHCP host lines are counted and left out,
+  since a DHCPv6 reservation needs the client's DUID and Pi-hole gives a MAC.
+
+- An address typed in any spelling is stored in one. A gateway entered as
+  `FD00:1:0:0::1` used to be stored as typed beside the canonical address
+  row, so the network listed the gateway twice, counted it twice and called
+  its policy custom instead of first. Gateways, range bounds and DHCP scope
+  pool bounds and server lists are now stored canonical, and a probe of
+  `FD00::77` is a probe of `fd00::77` rather than of an unknown rogue host.
+
+- Searching an IPv6 network for one address finds it: an available address
+  is listed, as on IPv4, and a stored one is found in any spelling. DNS
+  record and zone searches also match an AAAA address however it is written.
+
+- With IPv6 switched off, every route that would add or change IPv6
+  configuration refuses it with the one IPv6-disabled message: dividing,
+  merging, reserving, ranges, a gateway change, scan settings and scans of an
+  IPv6 network, DHCPv6 options and custom options, a DHCPv6 scope's options,
+  and testing an IPv6 forwarder. Starting a scan of an IPv6 network used to
+  be accepted and then fail in the background. An IPv6 network can still be
+  renamed and described, and deleted.
+
+- A DHCP scope refuses a DNS or NTP server, or a gateway, of the other
+  family, naming the field. They used to be accepted and silently left out
+  of the configuration.
+
+- An IPv6 address whose `::` stands for no zero groups at all, such as
+  `1::2:3:4:5:6:7:8`, is refused as invalid. It used to be accepted as a
+  different address.
+
+- The DNS forwarders card shows a saved IPv6 forwarder in its stored
+  spelling and no longer reports unsaved changes after saving one typed
+  differently.
+
+- An IPv6 host the scan reported online can be reported gone. The scan now
+  echoes every online address of the network, including ones nobody
+  allocated and link-local ones (on their interface). Before, a departed
+  unassigned host or a rotated privacy address stayed online forever,
+  because the stale sweep leaves scanned networks to the scanner and the
+  scanner never looked at them again.
+
+- An IPv6 host whose firewall drops ping (Windows does by default) is
+  online when it answers Neighbor Discovery, the IPv6 counterpart of the
+  ARP probe IPv4 uses. It used to be marked offline on every scan, and on a
+  SLAAC network it flipped online and offline each time.
+
+- A scan clears the rogue flag only on addresses it actually re-checked, and
+  records a "rogue cleared" event for each. An IPv6 scan probes a sparse set,
+  so a rogue reported from DNS traffic was silently cleared by the next scan
+  that never looked at it.
+
+- The DHCP figures count DHCPv6. The DHCPv6 messages (SOLICIT, ADVERTISE,
+  RENEW, REPLY and the rest) were not recognised, so a healthy DHCPv6
+  network showed requests the server never answered.
+
+- Router Advertisement and DHCPv6 server checks read each router's MAC on its
+  own link. Two links using the same link-local address (fe80::1 is common)
+  used to share one MAC, so a rogue router could inherit a trusted one's.
+
+- Deallocating a network that was divided from a larger one removes its
+  generated reverse DNS. After an IPv6 divide (a /56 into /64s, say) a child's
+  PTRs live in its parent's `ip6.arpa` zone, and the cleanup only looked in
+  zones named after the child, so the PTRs kept answering.
+
+- Releasing an IPv6 address removes its placeholder PTR. IPv6 reverse DNS
+  covers allocated addresses only, but every AAAA record or DHCPv6
+  reservation ever removed left a bare-address PTR row behind.
+
+- A /128 network's reverse DNS works: its zone is the /124 one, which PTR
+  lookups find. A 32-nibble `ip6.arpa` zone name is refused, and a PTR name
+  must make one whole address with its zone (`7` or `ff.1` in an `ip6.arpa`
+  zone, or `999` in an `in-addr.arpa` one, used to be accepted). Upper-case
+  nibbles are lowercased.
+
+- A blocked query answered by the IPv6 sinkhole alone is logged NOERROR, as
+  it is sent, not NXDOMAIN.
+
+- Both addresses of a point-to-point network (/31, /127) and the one address
+  of a host network (/32, /128) can be reserved and read as ordinary
+  addresses. The first one used to be refused as a protected network
+  address, which those prefixes do not have.
+
+- An IPv6 network longer than /64 is named after its whole address by the
+  default template, so sibling /127 links get two names instead of one. The
+  template also takes `%network`, the whole network address.
+
+- An unnamed DHCPv6 client is named after its vendor, as a DHCPv4 one is,
+  from the MAC its DUID carries (DUID-LLT and DUID-LL).
+
+- Blocklist feeds, the Pi-hole import and the MAC vendor download reach IPv6
+  addresses while IPv6 support is switched on: an IPv6 address in the URL, or
+  a host with only an IPv6 address. Private, loopback and link-local IPv6
+  addresses are refused as their IPv4 counterparts are.
+
+- A host that left an IPv6 network is no longer marked online and then
+  offline again on every scan while the kernel still remembers it.
+
+- IPv6 addresses can be probed from the address panel and the probe dialog.
+  Probing one IPv6 address used to disable the Probe button for IPv4 addresses
+  too until the page was reloaded.
+
+- The DHCP scope and range tables show IPv6 pool and range sizes (a /64 reads
+  2^64) instead of "0 addresses" or a dash, and the pool total counts them.
+  A SLAAC or stateless scope says it has no pool.
+
+- IPv6 networks small enough to count, such as a /120, show their
+  utilization and count towards the high-utilization warning.
+
+- Tables of networks and ranges sort IPv6 by address: 2001:db8:a:: comes
+  before 2001:db8:10::.
+
+- An AAAA record inside a stateful DHCPv6 pool gets the same "inside a DHCP
+  pool" warning an A record gets.
+
+- A DHCP option address of the other family (192.168.1.53 in a DHCPv6
+  option) is left out with a warning when the option is saved. It used to be
+  saved and then never sent to clients.
+
+- Dividing an IPv6 network with a custom gateway keeps that gateway on the
+  new network that contains it.
+
+- The classic network view opens on an IPv6 network instead of failing to
+  render.
+
+- DHCPv6 traffic no longer contributes stray partial entries to device
+  fingerprinting, which reads DHCPv4 only.
+
+- Two backups started in the same second, a scheduled one and a click, keep
+  both archives. The second used to overwrite the first archive and then
+  fail. The later one now takes a `-2` suffix.
+
+- After a restore the backup list shows every archive in the backups
+  directory, the restored one and any taken after it included. The list
+  came back as it was when the restored backup was taken, so newer archives
+  stayed on disk unlisted, could be neither downloaded nor deleted, and
+  retention never counted them.
+
+- Clicking the DNS zone card that is already chosen keeps it. It used to
+  clear the choice and drop the table to the mixed record list, where the
+  PTR records sort first, so a second click on a forward zone looked like a
+  jump to a reverse one. The same holds for a network in the reverse zone
+  picker.
+
+- The reverse zone picker is grouped by network and searchable. Each
+  network is a heading (name, CIDR, zone count, record count) over its
+  zones in address order, each zone with the /24 it covers; reverse zones
+  no allocated network uses close the list under Other zones. The search
+  box matches a network's name or CIDR, a zone's name or CIDR, or an
+  address (10.0.1.77 finds 1.0.10.in-addr.arpa). Choosing a network's
+  heading shows every one of its reverse records at once, and the choice
+  is kept in the page address. `GET /api/workspace/dns-records` takes
+  `zone_type=forward|reverse`.
+
+- The DNS tab's reverse zone list is in address order (10.0.2.0 before
+  10.0.10.0 before 172.16.0.0) and scrolls when it is long. At All
+  Allocated Networks it no longer lists the reverse zone a deallocated
+  network leaves behind (disabled, and used by no allocated network); an
+  enabled reverse zone for space kept outside IPAM still shows.
+
+- Two repeated creation buttons are gone: the explorer's "+" (the header's
+  Create button opens the same menu) and the Networks tab's Allocate
+  network (Create network is in the Create menu, the Actions menu and a
+  folder's right-click menu). The DNS tab's Add DNS record and the Ranges
+  tab's add button stay; neither has another way in.
+
+- All Unallocated Networks shows its network table without the Networks,
+  DNS and DHCP tabs. Unallocated space has no DNS or DHCP of its own, so
+  the tabs had nothing to switch to.
+
+- All Unallocated Networks has a Show hierarchy switch beside Network
+  Scope. On (the default) the explorer draws the tree of subdivided
+  containers as before; off, it lists only the networks that can be
+  allocated. The choice is remembered per browser, and each folder's count
+  is the number of networks it can allocate.
+
+- The explorer names its two estates by allocation state: All Allocated
+  Networks (every configured network, with its zones and scopes; formerly
+  All Networks) and All Unallocated Networks (the address space ready to
+  allocate, with its count). The second replaces the Browse unallocated
+  link.
+
+- Moving an unallocated network into a folder asks first. Filing it in a
+  folder allocates it, so Move to folder, and dragging it onto a folder in
+  the explorer, now say so and wait for Continue before opening the network
+  form (which files it in that folder when saved). Dragging an unallocated
+  network used to do nothing at all.
+
+- Merge from the networks workspace failed with "At least 2 subnet IDs
+  required" after showing its preview. The dialog previewed the checked
+  networks but sent the old Networks page's selection, which is empty in
+  the workspace. It now merges exactly the networks it previewed.
+
+- Deallocating or deleting a network no longer merges its unallocated
+  siblings. Deallocating both halves of a divided /24, for example, folded
+  them back into one /24 on its own. The halves now stay as they are, and
+  are merged only when you choose Merge on them.
+
+- Sorting the DNS table by its Value column puts addresses in network order.
+  It compared them as text, so 10.0.0.10 came before 10.0.0.9. Addresses now
+  sort numerically, as the IP column does, with names (CNAME, MX and PTR
+  targets) after them.
+
+- A host named by a manual DNS record no longer shows a blank address. A
+  record created before its network existed, or kept when the network was
+  deleted and configured again, was served by DNS but never claimed its
+  address: the Addresses row had no type or hostname, and neither the
+  Addresses search nor the All Allocated Networks search could find the host.
+  Configuring a network now adopts the manual A and AAAA records that
+  already name its addresses (static DNS, a gateway's name, or a disabled
+  DNS hold), and addresses left blank this way are repaired on first start.
+
+- A disabled DNS record now holds its address (ADR 004). Disabling a record,
+  or its forward zone, used to leave the address unassigned: it could be
+  retired or offered as free, and a host still answering there showed as
+  rogue. The address is now kept for the record, shown as "disabled DNS",
+  and protected like an IP Reservation, while the name stays unpublished.
+  Enabling the record makes it static DNS again; deleting it frees the
+  address. A DHCP Reservation, a live lease, an enabled record or an IP
+  Reservation still take precedence, and a record inside an enabled DHCP
+  scope does not hold. Existing disabled records are picked up on first
+  start.
+
+- A disabled DNS record no longer passes for a live one. The address
+  details panel warns when every record naming an address is disabled, and
+  says a disabled record neither answers nor claims the address, which is
+  why an online host there shows as rogue. The related-records line counts
+  the disabled ones ("1 disabled record references this address", where it
+  used to read "1 records"), and disabled records, zones and scopes are
+  dimmed in the workspace tables.
+
+- The IP Management search's shortcut hint works and shows your platform's
+  key. It always read "⌘ K" and nothing listened for it. Ctrl+K on Windows
+  and Linux, Command+K on a Mac, now jumps to the search.
+
+- Hosts on a public network no longer stay "online" forever. The scheduler
+  skips a publicly routable network unless scanning is switched on for it by
+  name, but the offline sweep still counted it as scanned and left its
+  hosts alone, so one scan's results never aged out. A network like
+  `1.1.1.0/24` scanned once showed every address online and rogue from then
+  on. Both now use one rule.
+
+- The Dashboard's rogue hosts count matches the address tables and links
+  somewhere useful. It counted only flagged hosts while the tables call any
+  online host at an unassigned address rogue, and it linked to an
+  all-networks addresses view that does not exist, which landed on the
+  Networks tab with a filter nothing could match. It now shows a row per
+  network (the three busiest) linking to that network's addresses filtered
+  to rogue. A link to a view the workspace cannot show now drops its
+  filters instead of carrying them onto the tab it lands on.
+
+- Analytics charts shrink when the window does. They grew with a wider
+  window but kept their width when it narrowed, so the Performance CPU and
+  Memory charts overlapped until a reload.
+
+- The IP Management tables show each column the same way whichever table it
+  is in. The Addresses and DHCP tables read one column catalog but filled it
+  from different fields: a free pool address was "DHCP Scope" in one and a
+  dash or "available" in the other, Expires printed the raw `infinite` in
+  one and "Never" in the other, Last seen was relative in one and a raw
+  timestamp in the other, Enabled read "Disabled" on every row of both, and
+  Scanning printed `true`. Now the server stamps every address read, DHCP
+  view included, with the same status and a lease state (active, expired or
+  none), and one adapter fills the shared columns. The Lease column shows
+  the lease dnsmasq holds and nothing else; whether an address is free for
+  DHCP is the Status column's job. The DHCP status filter still selects by
+  what holds the pool slot, now named in words (Free in pool, Leased, No
+  active lease, Held outside DHCP). Each table offers only the columns its
+  rows can fill, so the DNS table no longer lists Lease or MAC and the
+  Addresses table no longer lists Enabled or Network.
+- Adding a range no longer needs a trip to Settings first. The Network Range
+  Type select in Add range offers "New type", which opens name, color and
+  description inline, and Create makes the type and the range in one save
+  (with no custom type yet the dialog opens on it). Settings > General >
+  Naming keeps the type list for renaming, recoloring and deleting, now
+  through the same editor the workspace uses.
+- The IP Management workspace refreshes its shared reads once a minute, and
+  in a network context that reload showed the "Loading live data" popover and
+  dimmed the table every time. The minute refresh now updates the rows in
+  place with no popover; the popover is for a load you asked for. A hidden
+  tab skips the tick on every auto-refreshing page (Dashboard, Performance,
+  Intelligence, Anomalies, the workspace).
+- The workspace DNS table printed "0 sec" as the TTL of every record, because
+  a record with no TTL of its own (which is all of them unless one was set by
+  hand) was read as zero. It now shows the zone TTL the record takes, in
+  seconds as the SOA form states it, marked "inherited" the way Scanning
+  marks an inherited setting. The column header reads "TTL (s)".
+- The anomaly bell counted flagged windows, so one device with a noisy
+  night read as a dozen anomalies. The bell and the "active anomalies"
+  figure now count devices; the per-severity breakdown still counts
+  windows, and the summary carries `active_windows` for the raw figure.
+- Opening IP Management on a network flashed the estate tabs (Networks, DNS,
+  DHCP) for a few hundred milliseconds before the network's own tabs
+  appeared. The page now reads the context from the route before any data
+  loads, so the right tab set is there on the first paint and only the
+  counts fill in.
+- In the workspace tables the word "online" and the word "Enabled" are green,
+  not only the dot beside them, matching the classic tables. The folder rows
+  in the resource explorer lost their "..." button; a right-click on the row
+  opens the same menu, with Create network on it.
+- The DHCP view showed "unknown" in the Online column for every free pool
+  address. Those rows are synthesized from the pool and had no online value
+  at all. An address nothing has ever answered at is offline, which is what
+  the Addresses view already said for the same rows.
+- Deallocating a network left its DNS behind: every placeholder and
+  lease-written PTR stayed, its reverse zones stayed enabled, dnsmasq kept
+  answering for an unallocated block, and DHCP reservations were left
+  pointing at it. Deallocate and delete now remove the generated PTR and
+  A/AAAA records, disable reverse zones no other allocated network covers
+  (configuring the block again re-enables them), and refuse while
+  reservations exist. The confirmation dialogs list what is removed,
+  disabled and kept before you commit; the old one-liner did not mention
+  DHCP at all.
+- The linked-zone strip above a network's DNS view showed at most two cards,
+  so a /22 with reverse DNS appeared to own one reverse zone when it owns
+  four. The strip now shows every linked zone and scope. Two or more reverse
+  zones fold into one card of the same shape that opens a list of them and
+  names the one the table is filtered to. A narrow-screen rule that silently
+  dropped the second card is gone too.
+- The update panel's checklist froze at "Verifying signature" and the page had
+  to be reloaded by hand to learn the update had finished. The checklist named
+  phases the script never reports and knew nothing of the ones it does, and
+  once the server restarted the panel fetched the status once and stopped
+  watching. The steps now follow the script's real phases, show its own
+  message under the active one, keep polling through the restart, and reload
+  the page five seconds after completion (or on the Reload now button) so the
+  browser picks up the new interface. An upgrade that starts from an older
+  release still runs that release's panel, so this first applies to upgrades
+  out of 0.5.0.
+- The anomaly score is the Isolation Forest decision value, where negative
+  means anomalous, and every chart treated it as a 0..1 badness. The Behavior
+  Timeline clamped negatives to zero and kept the highest score per cell, so
+  it has drawn a blank grid on every install since it shipped. The gauge drew
+  a sliver, the sparklines were flat, "more anomalous than N% of clients"
+  was backwards, and "Escalating" was awarded to a device whose score was
+  climbing, which is one calming down. All of them now read the sign the
+  sidecar writes. The timeline's day labels also clipped ("14d ago" read as
+  "4d ago").
+- A disabled DHCP reservation could not be deleted, renamed or moved once DNS
+  had claimed its address: the delete path tried to release an allocation
+  the reservation did not hold and got a 409. Only an enabled reservation
+  releases now.
+- A GeoIP block on a mixed answer set could name a country that had nothing
+  to do with the block, and charged every resolved country's hit counter in
+  the Intelligence analytics. Only the blocking countries are reported and
+  counted.
+- The header showed CPU 0% on a healthy dot when the health read failed. It
+  now shows Unavailable with an Unknown dot and drops the stale reading.
+- The Users page clears a revealed password or token when its dialog closes.
+- The address breakdown counted the current page instead of the network.
+- Four hover states never painted because their color variable was
+  undefined.
+- Custom DHCP options were stored and shown but never written to dnsmasq.
+  They are now emitted by code with the type they were defined with.
+- A host whose DHCP lease lapsed while it stayed online (a static address set
+  by hand, another DHCP server, a restored lease file) kept its old lease name
+  on the rogue row until it had been offline for an hour, which never came.
+  The lease name now goes the moment an online host loses its lease, or when
+  an absent host returns as a rogue still carrying a retained name. The
+  device's own name stays visible as DHCP fingerprint evidence.
+- After signing in, users return to the view they were on.
+- The client and server had drifted copies of the CIDR math: the client's
+  /31 and /32 usable range was wrong and garbage parsed to a plausible
+  number. Both tiers now share one core.
+- The IPv6 parser accepted a dotted quad before `::` and folded it onto a
+  different valid address.
+
+---
+
 ## v0.4.18 — 2026-09-07
 
 ```yaml
@@ -36,8 +1261,6 @@ rejected.
 
 ### New
 
-Add under ### New:
-
 - The `system` allocation is limited to the network number and broadcast
   address (schema 63). A gateway row that was classified `system` becomes
   `gateway`, a service address with an enabled manual A record becomes
@@ -61,17 +1284,20 @@ Add under ### New:
   Reservations and leases move to the resulting network instead of being
   deleted or left detached. Carve remainders can be merged back when their
   union is one exact CIDR.
-- DHCP scopes own explicit pool intervrned as `pools` on the scope. The mask,
-  router and broadcast options come from the target network, so a child scope
-  no  router. Merging children whose scope policies differ returns a
-  `dhcp_scope_policy_conflict` instead came first in the request.
-- Generated DNS and DHCP configurationed and
-  applied generations (schema 65). A network mutation can succeed in the
-  database while its configuration is ding work is retried and resumed after
-  a restart.
+- DHCP scopes own explicit pool intervals (schema 66), returned as `pools` on
+  the scope. The mask, router and broadcast options come from the target
+  network, so a child scope never keeps its parent's mask, broadcast or router.
+  Merging children whose scope policies differ returns a
+  `dhcp_scope_policy_conflict` instead of keeping the policy of whichever scope
+  came first in the request.
+- Generated DNS and DHCP configuration is tracked as desired and applied
+  generations (schema 65). A network mutation can succeed in the database
+  while its configuration is still being written; pending work is retried and
+  resumed after a restart.
 - A scan belongs to the topology revision that started it (schema 68). A scan
-  still running when its network was dd instead of writing stale ownership 
-  back into the new networks.
+  still running when its network was divided, merged or changed has its
+  results discarded instead of writing stale ownership back into the new
+  networks.
 - IP allocation now has one canonical state and transition boundary across
   Networks, DNS, DHCP, imports, scans, and passive liveness. The legacy
   `ip_addresses.status` storage field is removed by schema 58. Schema 59
@@ -87,10 +1313,6 @@ Add under ### New:
   on versions that include lifecycle-report support; an automatic rollback to
   v0.4.17 requires reading the same report from the CLI because that older UI
   predates the download control.
-- Manual A records may name a configured gateway or CIDRella service address
-  without taking ownership of it. The address remains protected as `gateway`
-  or `system`; DHCP Reservations and leases on protected addresses are still
-  rejected.
 - Pi-hole import rejects the entire batch when more than one A record targets
   the same canonical IP. The response lists every affected record and explains
   the CNAME remediation, so the source can be corrected and imported later.
@@ -244,7 +1466,7 @@ A feature release on top of the v0.4.15 resilience base: encrypted DNS forwardin
 - **Consolidated DNS forwarding settings.** "Upstream Forwarders" and the former standalone "DNS Encryption" card are now one card: a Plaintext / DoT / DoH mode selector swaps the plaintext IP list for the curated provider picker, with a single Save that writes both concerns.
 - **Rogue DHCP events record the relay that forwarded the offer.** The probe never read `giaddr`, the field that names the relay agent in the path. Without it, a genuine second DHCP server and CIDRella's own offer returning through a relay that rewrote the server identifier look identical in the events table. The relay address is now stored per event and the page shows a "Via relay" column reading either that address or "direct".
 - **"Blocklists" renamed to "Category Blocking"** in the navigation for clarity.
-- **Single shared whitelist for category + GeoIP blocking.** The whitelist (extracted into a shared component, now also a tab on the GeoIP page) is one global allowlist that exempts a domain from **both** category blocking and GeoIP. Previously it exempted only category blocking.
+- **Single shared allowlist for category + GeoIP blocking.** The allowlist (extracted into a shared component, now also a tab on the GeoIP page) is one global allowlist that exempts a domain from **both** category blocking and GeoIP. Previously it exempted only category blocking.
 - **Theme picker in the user menu.** The header user dropdown now has a quick theme switcher (grouped light/dark) alongside the full grid on the Themes page.
 - **Interfaces page fixes.** sysfs-based interface enumeration (IP-less interfaces no longer show as "missing"), stale-interface removal, a corrected `ToggleSwitch` binding, and a dark-mode CSS token regression fix.
 - **arm64 builds discontinued.** Releases are linux-x64 only from this version; v0.4.15 was the final arm64 release. The installer and updater now refuse on arm64 hosts instead of fetching a tarball whose bundled native modules (better-sqlite3, DuckDB) cannot load on that architecture.
@@ -267,7 +1489,7 @@ A feature release on top of the v0.4.15 resilience base: encrypted DNS forwardin
 
 ### Upgrade notes
 - **`min_from` is now `0.4.15` and the v0.4.15 legacy-updater compatibility bridge is removed.** Release tarballs no longer carry the placeholder `duckdb`/`raw-socket` binding files that let pre-bootstrap (v0.4.14-era, pre.4) updaters pass their stale native-binding checks. A host still running one of those updaters gets a clean `min_from` refusal naming the remedy: **upgrade to v0.4.15 first**, then to this release. Hosts on v0.4.15 (or any v0.4.16 pre-release) are unaffected. Their updaters self-bootstrap into this release's updater before any native checks run.
-- **Schema migrates forward to version 51**, adding the rogue-DHCP authorized-server allowlist (`047`), the per-MAC `device_fingerprints` table (`049`), the GeoIP IP/CIDR allowlist (`050`), and the rogue-DHCP relay-agent column (`051`). The `048` migration slot is intentionally skipped: it was an interim GeoIP-whitelist table that was superseded by unifying the whitelist into the existing one. Transparent and forward-only.
+- **Schema migrates forward to version 51**, adding the rogue-DHCP authorized-server allowlist (`047`), the per-MAC `device_fingerprints` table (`049`), the GeoIP IP/CIDR allowlist (`050`), and the rogue-DHCP relay-agent column (`051`). The `048` migration slot is intentionally skipped: it was an interim GeoIP-allowlist table that was superseded by unifying the allowlist into the existing one. Transparent and forward-only.
 - **Enabling DNSSEC enables system NTP** and installs a polkit rule scoped to exactly `org.freedesktop.timedate1.set-ntp` for the service account. Validation is lenient on signature timestamps until the clock first syncs, then becomes enforcing.
 - **No breaking API changes** and no manual config changes required.
 - **arm64 hosts cannot upgrade to this release.** v0.4.15 is the last supported version on arm64; `cidrella-update` on an arm64 host refuses with an explanatory error rather than installing a broken build.
@@ -314,7 +1536,7 @@ The v0.4.14 release is also flagged on GitHub as deprecated in favor of this rel
 - **CNAME self-loop accepted.** v0.4.14 let you create a CNAME whose value resolved back to itself (dnsmasq SERVFAILs but it's still a foot-gun). Now rejected at validation.
 - **Cross-forward-zone PTR overwrite.** Creating an A record whose IP already had a PTR pointing at a different forward zone silently rewrote the PTR. v0.4.15 refuses the write with a 409 and a `ptr_conflict` payload; callers can pass `force_ptr:true` to opt in explicitly.
 - **Display-string validator on subnet name/description.** Reject `<` `>` and control characters to keep stored data benign even if a future UI surface ever uses `v-html`. No v-html exists today, but the pentest flagged the latent risk.
-- **POST `/api/auth/logout`.** Bumps `users.updated_at` for the caller's user, which invalidates the caller's JWT via the existing iat-vs-updated_at check in the auth middleware. Not a true blacklist, but equivalent for a single-admin tool and doesn't grow unbounded.
+- **POST `/api/auth/logout`.** Bumps `users.updated_at` for the caller's user, which invalidates the caller's JWT via the existing iat-vs-updated_at check in the auth middleware. Not a true denylist, but equivalent for a single-admin tool and doesn't grow unbounded.
 - **MX/SRV/TTL integer range validation.** `{"priority":"high"}` or `{"ttl":"forever"}` now return 400 at the route. v0.4.14 persisted them unchecked and let them reach the config writer.
 - **`PUT /api/dhcp/scopes/:id` / POST scope** now validates `domain_name` / `domain_search` / lease_time as strings with domain+escape checks.
 - **`ipToLong()` type guard.** Defense-in-depth. Throws `"expected string, got <type>"` if anything non-string slips through a route.

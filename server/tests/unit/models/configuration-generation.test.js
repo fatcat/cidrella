@@ -5,7 +5,7 @@ import {
   findGeneration,
   markApplied,
   markApplying,
-  markFailed
+  markFailed,
 } from '../../../src/models/configuration-generation.js';
 
 let db;
@@ -22,17 +22,24 @@ afterAll(() => cleanupTestDb(tmpDir));
 describe('durable configuration generations', () => {
   it('tracks pending, applied, trailing, and failed generations', () => {
     const first = enqueueGeneration(db, 'regenerate_dhcp');
-    expect(first).toMatchObject({ desired_generation: 1, applied_generation: 0, status: 'pending' });
+    expect(first).toMatchObject({
+      desired_generation: 1,
+      applied_generation: 0,
+      status: 'pending',
+    });
     const applying = markApplying(db, 'regenerate_dhcp');
     expect(applying.status).toBe('applying');
     enqueueGeneration(db, 'regenerate_dhcp');
     markApplied(db, 'regenerate_dhcp', applying.desired_generation);
     expect(findGeneration(db, 'regenerate_dhcp')).toMatchObject({
-      desired_generation: 2, applied_generation: 1, status: 'pending'
+      desired_generation: 2,
+      applied_generation: 1,
+      status: 'pending',
     });
     markFailed(db, 'regenerate_dhcp', 'dnsmasq rejected configuration');
     expect(findGeneration(db, 'regenerate_dhcp')).toMatchObject({
-      status: 'failed', last_error: 'dnsmasq rejected configuration'
+      status: 'failed',
+      last_error: 'dnsmasq rejected configuration',
     });
   });
 });

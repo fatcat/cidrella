@@ -9,7 +9,13 @@
 import fs from 'fs';
 import path from 'path';
 import { readLogTail } from './log-reader.js';
-import { getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics, getAndResetBlocklistHits } from './dns-proxy.js';
+import {
+  getBlockedDelta,
+  getAndResetCountryHits,
+  getAndResetPerformanceMetrics,
+  getAndResetBlocklistHits,
+} from './dns-proxy.js';
+import { getAndResetForwarderMetrics } from './encrypted-forwarder.js';
 import { DATA_DIR } from '../config/defaults.js';
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
@@ -19,8 +25,18 @@ const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
 // Matches: "query[A] example.com from 192.168.1.100"
 const QUERY_RE = /\bquery\[.+?\]\s+\S+\s+from\s+/;
-// Matches DHCP request events: DHCPACK, DHCPREQUEST, DHCPDISCOVER
-const DHCP_RE = /\bDHCP(?:ACK|REQUEST|DISCOVER)\b/;
+// DHCP conversation halves. DHCPv4 clients send DISCOVER, REQUEST, RELEASE,
+// INFORM and DECLINE; the server answers with OFFER, ACK and NAK. DHCPv6
+// (RFC 8415, as dnsmasq's rfc3315.c logs it) has its own names: clients send
+// SOLICIT, REQUEST, RENEW, REBIND, CONFIRM, RELEASE, DECLINE and
+// INFORMATION-REQUEST, and the server answers with ADVERTISE and REPLY.
+// dnsmasq logs one line per message with the type as the first word after the
+// tag. The two counts are kept apart so the dashboard can show a request the
+// server never answered. dhcp_requests, the column older readers use, stays
+// as the sum.
+const DHCP_CLIENT_RE =
+  /\bDHCP(?:DISCOVER|REQUEST|RELEASE|INFORM|DECLINE|SOLICIT|RENEW|REBIND|CONFIRM|INFORMATION-REQUEST)\b/;
+const DHCP_SERVER_RE = /\bDHCP(?:OFFER|ACK|NAK|ADVERTISE|REPLY)\b/;
 
 let db = null;
 let timer = null;
@@ -37,28 +53,32 @@ let insertMetrics = null;
 let insertBlocklistHit = null;
 let insertGeoipHit = null;
 let insertProxyPerf = null;
+let insertForwarder = null;
 let deleteOldMetrics = null;
 let deleteOldBlocklistHits = null;
 let deleteOldGeoipHits = null;
 let deleteOldProxyPerf = null;
+let deleteOldForwarder = null;
 
 /**
- * Parse new log lines and return { dnsQueries, dhcpRequests }
+ * Parse new log lines and return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs }.
  */
-function parseLogLines(lines) {
+export function parseLogLines(lines) {
   let dnsQueries = 0;
-  let dhcpRequests = 0;
+  let dhcpClientMsgs = 0;
+  let dhcpServerMsgs = 0;
 
   for (const line of lines) {
     if (QUERY_RE.test(line)) {
       dnsQueries++;
-    }
-    if (DHCP_RE.test(line)) {
-      dhcpRequests++;
+    } else if (DHCP_CLIENT_RE.test(line)) {
+      dhcpClientMsgs++;
+    } else if (DHCP_SERVER_RE.test(line)) {
+      dhcpServerMsgs++;
     }
   }
 
-  return { dnsQueries, dhcpRequests };
+  return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs };
 }
 
 /**
@@ -71,7 +91,7 @@ function aggregate() {
     // Parse dnsmasq log for DNS query and DHCP counts
     const { lines, newOffset: newLogOffset } = readLogTail(LOG_FILE, logOffset);
     logOffset = newLogOffset;
-    const { dnsQueries, dhcpRequests } = parseLogLines(lines);
+    const { dnsQueries, dhcpClientMsgs, dhcpServerMsgs } = parseLogLines(lines);
 
     // Blocklist blocks from in-memory proxy counters
     const blocklistData = getAndResetBlocklistHits();
@@ -84,29 +104,39 @@ function aggregate() {
 
     // Proxy performance metrics
     const perf = getAndResetPerformanceMetrics();
+    const forwarderRows = getAndResetForwarderMetrics();
 
     // Process-level CPU (delta since last cycle)
     const now = Date.now();
     const cpu = process.cpuUsage(lastCpuUsage);
     const wallMs = now - lastCpuTs;
-    const cpuPercent = (wallMs > 0 && cpu)
-      ? Math.round(((cpu.user + cpu.system) / 1000) / wallMs * 100 * 100) / 100
-      : 0;
+    const cpuPercent =
+      wallMs > 0 && cpu
+        ? Math.round(((cpu.user + cpu.system) / 1000 / wallMs) * 100 * 100) / 100
+        : 0;
     lastCpuUsage = process.cpuUsage();
     lastCpuTs = now;
 
     // Process-level memory
     const mem = process.memoryUsage();
-    const rssMb = Math.round(mem.rss / 1048576 * 10) / 10;
-    const heapMb = Math.round(mem.heapUsed / 1048576 * 10) / 10;
+    const rssMb = Math.round((mem.rss / 1048576) * 10) / 10;
+    const heapMb = Math.round((mem.heapUsed / 1048576) * 10) / 10;
 
     // Record startup_ms only once
-    const startupMs = (!startupRecorded && perf.startupMs != null) ? perf.startupMs : null;
+    const startupMs = !startupRecorded && perf.startupMs != null ? perf.startupMs : null;
     if (perf.startupMs != null) startupRecorded = true;
 
     // Insert all metrics in a single transaction
     const insertAll = db.transaction(() => {
-      insertMetrics.run(ts, dnsQueries, dhcpRequests, blocklistBlocks, geoipBlocks);
+      insertMetrics.run(
+        ts,
+        dnsQueries,
+        dhcpClientMsgs + dhcpServerMsgs,
+        dhcpClientMsgs,
+        dhcpServerMsgs,
+        blocklistBlocks,
+        geoipBlocks,
+      );
       for (const [category, count] of categoryCounts) {
         insertBlocklistHit.run(ts, category, count);
       }
@@ -114,12 +144,28 @@ function aggregate() {
         insertGeoipHit.run(ts, country, count);
       }
       insertProxyPerf.run(
-        ts, perf.queryCount,
-        perf.latencyMin, perf.latencyAvg, perf.latencyMax, perf.latencyP95,
-        perf.cacheHits, perf.cacheMisses,
-        perf.timeouts, perf.pendingQueries,
-        cpuPercent, rssMb, heapMb, startupMs
+        ts,
+        perf.queryCount,
+        perf.latencyMin,
+        perf.latencyAvg,
+        perf.latencyMax,
+        perf.latencyP95,
+        perf.cacheHits,
+        perf.cacheMisses,
+        perf.timeouts,
+        perf.pendingQueries,
+        cpuPercent,
+        rssMb,
+        heapMb,
+        startupMs,
+        perf.failures?.dnssec ?? 0,
+        perf.failures?.upstream ?? 0,
+        perf.failures?.timeout ?? 0,
+        perf.failures?.refused ?? 0,
+        perf.failures?.other ?? 0,
+        perf.nxdomain ?? 0,
       );
+      for (const row of forwarderRows) insertForwarder.run({ ts, ...row });
     });
     insertAll();
 
@@ -131,6 +177,7 @@ function aggregate() {
       deleteOldBlocklistHits.run(cutoff);
       deleteOldGeoipHits.run(cutoff);
       deleteOldProxyPerf.run(cutoff);
+      deleteOldForwarder.run(cutoff);
     }
   } catch (err) {
     console.error('[metrics-aggregator] Error:', err.message);
@@ -145,30 +192,42 @@ export function startMetricsAggregator(database) {
 
   // Prepare statements
   insertMetrics = db.prepare(
-    'INSERT INTO metrics (ts, dns_queries, dhcp_requests, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?)'
+    'INSERT INTO metrics (ts, dns_queries, dhcp_requests, dhcp_client_msgs, dhcp_server_msgs, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?, ?, ?)',
   );
   insertBlocklistHit = db.prepare(
-    'INSERT INTO metrics_blocklist_hits (ts, category, count) VALUES (?, ?, ?)'
+    'INSERT INTO metrics_blocklist_hits (ts, category, count) VALUES (?, ?, ?)',
   );
   insertGeoipHit = db.prepare(
-    'INSERT INTO metrics_geoip_hits (ts, country, count) VALUES (?, ?, ?)'
+    'INSERT INTO metrics_geoip_hits (ts, country, count) VALUES (?, ?, ?)',
   );
   insertProxyPerf = db.prepare(
     `INSERT INTO metrics_proxy_perf
      (ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
       cache_hits, cache_misses, timeouts, pending_queries,
-      cpu_percent, rss_mb, heap_mb, startup_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+      cpu_percent, rss_mb, heap_mb, startup_ms,
+      servfail_dnssec, servfail_upstream, servfail_timeout, servfail_refused, servfail_other,
+      nxdomain)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   deleteOldMetrics = db.prepare('DELETE FROM metrics WHERE ts < ?');
   deleteOldBlocklistHits = db.prepare('DELETE FROM metrics_blocklist_hits WHERE ts < ?');
   deleteOldGeoipHits = db.prepare('DELETE FROM metrics_geoip_hits WHERE ts < ?');
   deleteOldProxyPerf = db.prepare('DELETE FROM metrics_proxy_perf WHERE ts < ?');
+  insertForwarder = db.prepare(
+    `INSERT INTO metrics_forwarder
+     (ts, provider, address, protocol, queries, answers, timeouts, drops, connect_failures,
+      failovers, latency_p50_us, latency_p95_us)
+     VALUES (@ts, @provider, @address, @protocol, @queries, @answers, @timeouts, @drops,
+      @connect_failures, @failovers, @latency_p50_us, @latency_p95_us)`,
+  );
+  deleteOldForwarder = db.prepare('DELETE FROM metrics_forwarder WHERE ts < ?');
 
   // Start from end of log file (don't process historical lines)
   try {
     logOffset = fs.statSync(LOG_FILE).size;
-  } catch { /* file may not exist yet */ }
+  } catch {
+    /* file may not exist yet */
+  }
 
   timer = setInterval(aggregate, AGGREGATE_INTERVAL_MS);
   console.log('[metrics-aggregator] Started (interval: 60s, retention: 30d)');

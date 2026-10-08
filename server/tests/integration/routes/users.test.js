@@ -48,18 +48,13 @@ describe('users role management', () => {
     const res = await request(app).get('/api/users/roles');
 
     expect(res.status).toBe(200);
-    expect(res.body.map(r => r.value).sort()).toEqual([
-      'admin',
-      'dhcp_admin',
-      'dns_admin',
-      'readonly',
-      'readonly_dhcp',
-      'readonly_dns'
-    ].sort());
-    expect(res.body.find(r => r.value === 'dns_admin')).toMatchObject({
-      label: 'DNS Administrator'
+    expect(res.body.map((r) => r.value).sort()).toEqual(
+      ['admin', 'dhcp_admin', 'dns_admin', 'readonly', 'readonly_dhcp', 'readonly_dns'].sort(),
+    );
+    expect(res.body.find((r) => r.value === 'dns_admin')).toMatchObject({
+      label: 'DNS Administrator',
     });
-    expect(res.body.find(r => r.value === 'dns_admin').permissions).toContain('dns:write');
+    expect(res.body.find((r) => r.value === 'dns_admin').permissions).toContain('dns:write');
   });
 
   it('rejects unknown roles on create and update', async () => {
@@ -73,9 +68,7 @@ describe('users role management', () => {
       .send({ username: 'rolecheck', role: 'readonly' });
     expect(user.status).toBe(201);
 
-    const update = await request(app)
-      .put(`/api/users/${user.body.id}`)
-      .send({ role: 'superuser' });
+    const update = await request(app).put(`/api/users/${user.body.id}`).send({ role: 'superuser' });
     expect(update.status).toBe(400);
   });
 
@@ -95,9 +88,7 @@ describe('users role management', () => {
     const row = db.prepare('SELECT role FROM users WHERE id = ?').get(user.body.id);
     expect(row.role).toBe('dhcp_admin');
 
-    const selfUpdate = await request(app)
-      .put('/api/users/1')
-      .send({ role: 'readonly' });
+    const selfUpdate = await request(app).put('/api/users/1').send({ role: 'readonly' });
     expect(selfUpdate.status).toBe(400);
   });
 

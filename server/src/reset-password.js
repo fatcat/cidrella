@@ -45,11 +45,7 @@ function resolveDataDir() {
   if (process.env.DATA_DIR) {
     return process.env.DATA_DIR;
   }
-  const candidates = [
-    '/var/lib/cidrella',
-    '/data',
-    path.join(__dirname, '..', 'data'),
-  ];
+  const candidates = ['/var/lib/cidrella', '/data', path.join(__dirname, '..', 'data')];
   for (const dir of candidates) {
     if (fs.existsSync(path.join(dir, 'cidrella.db'))) {
       return dir;
@@ -117,7 +113,10 @@ const actorLabel = `cli:${osUser}@${hostname}`;
 // the banner trail. This is the ONLY place in reset-password.js that needs
 // runtime schema introspection; elsewhere we use the known canonical schema
 // directly. Do the check once, up front, outside the transaction.
-const userCols = db.prepare('PRAGMA table_info(users)').all().map(r => r.name);
+const userCols = db
+  .prepare('PRAGMA table_info(users)')
+  .all()
+  .map((r) => r.name);
 const hasResetByCol = userCols.includes('password_reset_by');
 
 // Apply the reset + audit log atomically. The audit_log schema is canonical
@@ -128,22 +127,26 @@ const hasResetByCol = userCols.includes('password_reset_by');
 // audit_log has existed since day one so the CLI can assume it.
 const reset = db.transaction(() => {
   if (hasResetByCol) {
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE users
          SET password_hash = ?,
              must_change_password = 1,
              password_reset_by = ?,
              updated_at = datetime('now')
        WHERE username = ?
-    `).run(newHash, actorLabel, username);
+    `,
+    ).run(newHash, actorLabel, username);
   } else {
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE users
          SET password_hash = ?,
              must_change_password = 1,
              updated_at = datetime('now')
        WHERE username = ?
-    `).run(newHash, username);
+    `,
+    ).run(newHash, username);
   }
 
   // Audit log INSERT uses the canonical schema. user_id is NULL because the
@@ -159,7 +162,7 @@ const reset = db.transaction(() => {
   });
   try {
     db.prepare(
-      'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)'
+      'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)',
     ).run(null, 'password_reset_cli', 'user', user.id, details);
     return { auditInserted: true };
   } catch (err) {

@@ -11,18 +11,23 @@ const soaDefaults = {
   soa_refresh: 3600,
   soa_retry: 900,
   soa_expire: 604800,
-  soa_minimum_ttl: 86400
+  soa_minimum_ttl: 86400,
 };
 
 function createSubnet(name, cidr, domainName) {
   const [networkAddress] = cidr.split('/');
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     INSERT INTO subnets (
       cidr, name, network_address, broadcast_address, prefix_length,
       total_addresses, status, domain_name
     )
     VALUES (?, ?, ?, ?, 24, 256, 'allocated', ?)
-  `).run(cidr, name, networkAddress, networkAddress.replace(/\.\d+$/, '.255'), domainName).lastInsertRowid;
+  `,
+    )
+    .run(cidr, name, networkAddress, networkAddress.replace(/\.\d+$/, '.255'), domainName)
+    .lastInsertRowid;
 }
 
 beforeAll(async () => {
@@ -42,11 +47,15 @@ beforeEach(() => {
 
 describe('DNS zone ownership', () => {
   it('creates zones with SOA defaults', () => {
-    const zone = DnsZone.createZone(db, {
-      name: 'example.test',
-      type: 'forward',
-      description: 'Example zone'
-    }, soaDefaults);
+    const zone = DnsZone.createZone(
+      db,
+      {
+        name: 'example.test',
+        type: 'forward',
+        description: 'Example zone',
+      },
+      soaDefaults,
+    );
 
     expect(zone.name).toBe('example.test');
     expect(zone.description).toBe('Example zone');
@@ -64,7 +73,7 @@ describe('DNS zone ownership', () => {
 
     expect(updated.name).toBe('after.test');
     expect(updated.soa_serial).toBe(2);
-    expect(domains.map(row => row.domain_name)).toEqual(['after.test', 'after.test']);
+    expect(domains.map((row) => row.domain_name)).toEqual(['after.test', 'after.test']);
   });
 
   it('deletes forward zones and clears matching subnet domain pointers', () => {
@@ -77,6 +86,6 @@ describe('DNS zone ownership', () => {
     const deleted = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(zone.id);
     const domains = db.prepare('SELECT domain_name FROM subnets ORDER BY name').all();
     expect(deleted).toBeUndefined();
-    expect(domains.map(row => row.domain_name)).toEqual([null, null]);
+    expect(domains.map((row) => row.domain_name)).toEqual([null, null]);
   });
 });

@@ -47,6 +47,20 @@ FEATURE_NAMES = [
     "unique_resolved_ips", "null_resolved_ratio",
 ]
 
+# Threat shape: a rule score, independent of the model, over the five features
+# that make DNS traffic look like an attack rather than merely unusual for the
+# device. Each input is clamped to 0..1 between lo and hi, then weighted. The
+# weights sum to 1 so the result is 0..1. Reference points are rough
+# midpoints between ordinary browsing and textbook tunneling / DGA / probing;
+# tune here, never in threat.py.
+THREAT_SHAPE_RULES = {
+    "avg_domain_entropy": {"lo": 2.5, "hi": 4.0, "weight": 0.25},
+    "max_domain_length": {"lo": 40.0, "hi": 100.0, "weight": 0.20},
+    "subdomain_depth_mean": {"lo": 3.0, "hi": 6.0, "weight": 0.15},
+    "nxdomain_ratio": {"lo": 0.0, "hi": 0.5, "weight": 0.20},
+    "block_ratio": {"lo": 0.0, "hi": 0.3, "weight": 0.20},
+}
+
 # Human-readable labels for feature explanation
 FEATURE_LABELS = {
     "hour_sin": "Unusual time of day",

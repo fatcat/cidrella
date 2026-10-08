@@ -84,7 +84,8 @@ address in a managed subnet with reverse DNS enabled has one visible PTR row
 when the subnet has at most 65,536 usable addresses. Larger reverse zones
 remain supported without full placeholder materialization. The canonical
 hostname selector uses static DNS for `static_dns` and `gateway`, a
-DHCP Reservation name for `static_dhcp`, and a DHCP Lease name for `dynamic_dhcp`.
+DHCP Reservation name for `static_dhcp`, and a DHCP Lease name for `dynamic_dhcp`
+(the lease's effective name, unique and sticky in its zone; ADR 005).
 During learned-metadata retention, an address without a protocol-owned
 allocation resolves a naming tie as static DNS, DHCP Reservation, then DHCP
 Lease. With
@@ -109,9 +110,12 @@ desired model use the same words differently.
    hostname and additional names should be CNAMEs. If multiple A records to the
    same IP must be supported, the canonical-hostname selection rule must be
    specified instead.
-4. **Disabled configuration.** This plan treats disabled DNS records, DHCP
-   Reservations, and DHCP scopes as non-authoritative. They remain stored for
-   later re-enablement but do not allocate, protect, or classify an IP.
+4. **Disabled configuration.** This plan treats disabled DHCP Reservations and
+   DHCP scopes as non-authoritative. They remain stored for later
+   re-enablement but do not allocate, protect, or classify an IP. A disabled
+   manual DNS A or AAAA record (or one in a disabled forward zone) holds its
+   address instead: allocation `reserved` owned by `dns`, protected like an IP
+   Reservation, never `static_dns`. See ADR 004.
 5. **Lease history.** This plan keeps historical lease events outside the live
    allocation object. An expired lease is not an allocation claim.
 6. **SLAAC state.** This plan uses `slaac` for an address observed through
@@ -129,6 +133,41 @@ desired model use the same words differently.
    plus interface/network context. A zone identifier such as `%eth0` is parsed
    at an input boundary and stored as a separate interface reference, never as
    part of the canonical address text.
+10. **IPv6 network shape.** A network row records its `address_family`. An IPv6
+    network has no broadcast address and no Broadcast range; its subnet-router
+    anycast address is the network address and is the only IPv6 `system`
+    projection. Gateway policy `first` is network plus one and `last` is the
+    last address of the prefix. `total_addresses` is null when the prefix is
+    larger than a JavaScript number represents; no code enumerates or
+    materializes an IPv6 prefix, and reverse projection writes PTR rows only
+    for allocated IPv6 addresses.
+11. **DHCPv6 mode.** Each IPv6 network chooses `slaac`, `stateless`, or
+    `stateful` (the SLAAC modes on a /64, `stateful` on a /64 or longer; a
+    shorter prefix has no DHCPv6 scope). Only a `stateful` scope creates
+    `dynamic_dhcp` claims from DHCPv6 leases and accepts DHCP Reservations,
+    both keyed by DUID and IAID, and only it is a dynamic pool: a `slaac` or
+    `stateless` scope's range is a display projection of the prefix and never
+    blocks a static claim. A divide or merge carries a scope to each target
+    whose prefix allows its mode, as IPv4 carries one where a default pool fits.
+    SLAAC observations under any mode become `slaac` claims with their
+    lifetimes. Rogue DHCPv6 servers are found by an active SOLICIT probe and
+    identified by DUID; rogue routers by the default routes the kernel learned
+    from Router Advertisements, identified by link-local and MAC. A router
+    whose MAC matches a configured gateway is trusted. Both are detection
+    only and never touch allocation state. A global `ipv6_enabled` switch
+    (off by default) gates IPv6 listeners, probes, scans and object creation;
+    it changes no precedence, naming or lifecycle rule for rows that exist.
+12. **IPv6 discovery.** Active discovery for IPv6 is observation-driven: an
+    all-nodes multicast probe followed by the Neighbor Discovery table, plus a
+    unicast echo to every address CIDRella already holds an allocation for,
+    never a sweep of the prefix. Passive liveness accepts IPv6 query sources
+    except link-local, loopback, and unspecified addresses. What an observed
+    IPv6 address means depends on how its network hands out addresses: on a
+    `slaac` or `stateless` network an unclaimed global address becomes a
+    `slaac` allocation with the scope's lease time as its valid lifetime and
+    is never rogue; on a `stateful` network an unclaimed address is rogue,
+    the IPv4 meaning; a network with no scope records liveness only; a
+    link-local address is liveness with interface context and never a claim.
 
 ## Address-family Contract
 
@@ -146,7 +185,11 @@ not infer IPv4 behavior from the absence of an IPv6 branch.
 | Broadcast | Protected broadcast address | None |
 | Gateway source | Subnet configuration or DHCPv4 scope option | Configuration or trusted Router Advertisement |
 | Link-local context | Not applicable | Interface/network identity required |
-| Reverse DNS | `in-addr.arpa` PTR | Nibble-reversed `ip6.arpa` PTR |
+| Reverse DNS | `in-addr.arpa` PTR, placeholders for every usable address | Nibble-reversed `ip6.arpa` PTR, allocated addresses only |
+| Address materialization | Rows for prefixes of /20 and longer | Never; sparse reads only |
+| DHCP client identity | MAC | DUID plus IAID |
+| DHCP mode | Scope with pool | `slaac`, `stateless`, or `stateful` per network |
+| Rogue DHCP detection | Probe on UDP 67/68 | SOLICIT probe on UDP 546/547 by DUID; rogue routers from kernel-learned RA routes |
 
 All addresses must pass through `server/src/utils/address.js` for family
 classification and canonical formatting. IPv4-mapped IPv6 input folds to the
@@ -256,8 +299,9 @@ reconciliation backstops where practical.
 9. An expired or missing dynamic lease immediately ends dynamic allocation.
    SLAAC authority ends when its valid lifetime expires or the address is
    explicitly withdrawn.
-10. Disabled DNS records, DHCP Reservations, leases, and scopes do not create
-    live claims.
+10. Disabled DHCP Reservations, leases, and scopes do not create live claims.
+    A disabled DNS address record holds its address (ADR 004) but never makes
+    it `static_dns`.
 11. Scope creation, enabling, or resizing must reject conflicts with static DNS
     allocations and protected addresses before dnsmasq configuration changes.
 12. DNS allocation must reject scope membership and any existing incompatible
@@ -416,6 +460,11 @@ After one continuous hour offline:
 
 - Clear `last_seen_at`, observed MAC, dynamic hostname, rogue reason, and other
   address-bound learned metadata.
+
+The dynamic hostname does not wait for that hour when the host is online: a
+lease that lapses while its holder still answers, or a holder that comes back
+online as a rogue while its retained lease name is still on the row, loses the
+lease name immediately. The retention window exists for absent hosts only.
 - Remove the dynamic hostname generated from the lease or autonomous-address
   registration. For managed IPv4 reverse DNS, restore the generated PTR to its
   canonical IP placeholder rather than leaving a missing row.

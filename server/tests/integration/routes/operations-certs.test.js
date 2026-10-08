@@ -66,7 +66,7 @@ describe('certificate CSR flow', () => {
         san: ['cidrella.test', 'cidrella', '10.0.0.8'],
         organization: 'CIDRella Test',
         country: 'US',
-        key_size: 3072
+        key_size: 3072,
       });
 
     expect(csrRes.status, JSON.stringify(csrRes.body)).toBe(201);
@@ -81,10 +81,23 @@ describe('certificate CSR flow', () => {
     expect(fs.existsSync(csrPath)).toBe(true);
     expect(fs.existsSync(keyPath)).toBe(true);
 
-    execFileSync('openssl', [
-      'x509', '-req', '-in', csrPath, '-signkey', keyPath,
-      '-out', signedPath, '-days', '30', '-sha256'
-    ], { stdio: 'pipe', timeout: 10000 });
+    execFileSync(
+      'openssl',
+      [
+        'x509',
+        '-req',
+        '-in',
+        csrPath,
+        '-signkey',
+        keyPath,
+        '-out',
+        signedPath,
+        '-days',
+        '30',
+        '-sha256',
+      ],
+      { stdio: 'pipe', timeout: 10000 },
+    );
 
     const uploadRes = await request(app)
       .post('/api/operations/certs/upload')
@@ -105,7 +118,7 @@ describe('certificate CSR flow', () => {
         common_name: 'ecdsa-cidrella.test',
         san: ['ecdsa-cidrella.test'],
         key_algorithm: 'ecdsa',
-        curve: 'prime256v1'
+        curve: 'prime256v1',
       });
 
     expect(csrRes.status, JSON.stringify(csrRes.body)).toBe(201);
@@ -116,7 +129,7 @@ describe('certificate CSR flow', () => {
     const keyPath = path.join(tmpDir, 'certs', 'pending-csr.key');
     const keyText = execFileSync('openssl', ['pkey', '-in', keyPath, '-text', '-noout'], {
       encoding: 'utf-8',
-      timeout: 5000
+      timeout: 5000,
     });
     expect(keyText).toContain('ASN1 OID: prime256v1');
   });

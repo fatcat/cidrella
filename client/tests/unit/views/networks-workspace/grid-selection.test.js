@@ -1,0 +1,246 @@
+import { mount } from '@vue/test-utils';
+import { describe, expect, it } from 'vitest';
+import AddressGrid from '../../../../src/views/networks-workspace/AddressGrid.vue';
+import { RANGE_COLOR_PRESETS } from '../../../../src/utils/rangeTypeColors.js';
+
+import {
+  MAX_BULK_ADDRESSES,
+  addressIdentity,
+  contiguousIpv4Runs,
+  contiguousAddressRuns,
+  useWorkspaceSelection,
+} from '../../../../src/views/networks-workspace/composables/useWorkspaceSelection.js';
+
+describe('workspace address selection', () => {
+  it('uses the same canonical selection ID for table rows and both grid cell shapes', () => {
+    expect(addressIdentity({ address: '10.0.0.4' })).toBe('address:10.0.0.4');
+    expect(addressIdentity({ ip: '10.0.0.4' })).toBe('address:10.0.0.4');
+    expect(addressIdentity({ ip_address: '10.0.0.4' })).toBe('address:10.0.0.4');
+    expect(addressIdentity('address:10.0.0.4')).toBe('address:10.0.0.4');
+  });
+
+  it('keeps disjoint selections as exact runs without including gaps', () => {
+    expect(
+      contiguousIpv4Runs([
+        'address:10.0.0.33',
+        'address:10.0.0.34',
+        'address:10.0.0.40',
+        'address:10.0.0.42',
+        'address:10.0.0.41',
+      ]),
+    ).toEqual([
+      { start_ip: '10.0.0.33', end_ip: '10.0.0.34', count: 2 },
+      { start_ip: '10.0.0.40', end_ip: '10.0.0.42', count: 3 },
+    ]);
+  });
+
+  it('builds IPv6 runs with the shared address core and never mixes families', () => {
+    expect(
+      contiguousAddressRuns([
+        'fd00:1::10',
+        'address:fd00:1::11',
+        'fd00:1::13',
+        '10.0.0.9',
+        '10.0.0.10',
+        'FD00:1:0:0:0:0:0:12',
+      ]),
+    ).toEqual([
+      { start_ip: '10.0.0.9', end_ip: '10.0.0.10', count: 2 },
+      { start_ip: 'fd00:1::10', end_ip: 'fd00:1::13', count: 4 },
+    ]);
+  });
+
+  it('the selection composable reports IPv6 runs too', () => {
+    const selection = useWorkspaceSelection();
+    selection.replace([
+      { address: 'fd00:1::2' },
+      { address: 'fd00:1::1' },
+      { address: 'fd00:1::9' },
+    ]);
+    expect(selection.runs.value).toEqual([
+      { start_ip: 'fd00:1::1', end_ip: 'fd00:1::2', count: 2 },
+      { start_ip: 'fd00:1::9', end_ip: 'fd00:1::9', count: 1 },
+    ]);
+  });
+
+  it('chunks contiguous addresses into requests of no more than 1024', () => {
+    const addresses = Array.from({ length: MAX_BULK_ADDRESSES + 2 }, (_, index) => {
+      const third = Math.floor(index / 256);
+      const fourth = index % 256;
+      return `10.0.${third}.${fourth}`;
+    });
+    const runs = contiguousIpv4Runs(addresses);
+
+    expect(runs).toEqual([
+      { start_ip: '10.0.0.0', end_ip: '10.0.3.255', count: 1024 },
+      { start_ip: '10.0.4.0', end_ip: '10.0.4.1', count: 2 },
+    ]);
+  });
+
+  it('shares selection across presentations and shift-selects only visible identities', () => {
+    const selection = useWorkspaceSelection();
+    selection.toggle({ address: '10.0.0.1' });
+    expect(selection.isSelected({ ip: '10.0.0.1' })).toBe(true);
+
+    selection.selectVisibleRange([{ ip: '10.0.0.1' }, { ip: '10.0.0.3' }, { ip: '10.0.0.4' }], {
+      ip_address: '10.0.0.4',
+    });
+
+    expect(selection.selectedIds.value).toEqual([
+      'address:10.0.0.1',
+      'address:10.0.0.3',
+      'address:10.0.0.4',
+    ]);
+    expect(selection.runs.value).toEqual([
+      { start_ip: '10.0.0.1', end_ip: '10.0.0.1', count: 1 },
+      { start_ip: '10.0.0.3', end_ip: '10.0.0.4', count: 2 },
+    ]);
+  });
+
+  it('can clear only visible rows or the full selection', () => {
+    const selection = useWorkspaceSelection();
+    selection.replace(['10.0.0.1', '10.0.0.2', '10.0.0.8']);
+    selection.toggleVisible([{ address: '10.0.0.1' }, { address: '10.0.0.2' }], false);
+    expect(selection.selectedIds.value).toEqual(['address:10.0.0.8']);
+    selection.clear();
+    expect(selection.selectedCount.value).toBe(0);
+  });
+
+  it('supports roving keyboard focus, selection, opening, and context actions', async () => {
+    const cells = Array.from({ length: 20 }, (_, index) => ({
+      ip: `10.0.0.${index}`,
+      last: String(index),
+      kind: 'available',
+      label: 'Available',
+      row: { id: `address:10.0.0.${index}`, address: `10.0.0.${index}` },
+    }));
+    const wrapper = mount(AddressGrid, {
+      attachTo: globalThis.document.body,
+      props: { cells, density: 'spacious' },
+    });
+    const buttons = wrapper.findAll('.address-grid button');
+
+    await buttons[0].trigger('keydown', { key: 'ArrowDown' });
+    expect(globalThis.document.activeElement).toBe(buttons[16].element);
+    await buttons[16].trigger('keydown', { key: ' ' });
+    expect(wrapper.emitted('toggle')?.[0]).toEqual(['address:10.0.0.16']);
+    await buttons[16].trigger('keydown', { key: 'Enter' });
+    expect(wrapper.emitted('open')?.[0]?.[0].ip).toBe('10.0.0.16');
+    await buttons[16].trigger('contextmenu');
+    expect(wrapper.emitted('row-menu')?.[0]?.[0].address).toBe('10.0.0.16');
+    wrapper.unmount();
+  });
+
+  it.each(['spacious', 'compact'])(
+    'drag-selects the exact visible run in %s mode',
+    async (density) => {
+      const cells = Array.from({ length: 6 }, (_, index) => ({
+        ip: `10.0.0.${index}`,
+        last: String(index),
+        kind: 'available',
+        label: 'Available',
+        row: { id: `address:10.0.0.${index}`, address: `10.0.0.${index}` },
+      }));
+      const wrapper = mount(AddressGrid, {
+        attachTo: globalThis.document.body,
+        props: { cells, density },
+      });
+      const buttons = wrapper.findAll('button');
+
+      await buttons[1].trigger('pointerdown', { button: 0, ctrlKey: true });
+      await buttons[4].trigger('pointerenter', { buttons: 1 });
+      globalThis.window.dispatchEvent(new Event('pointerup'));
+      await wrapper.vm.$nextTick();
+
+      expect(wrapper.emitted('drag-select')?.[0]).toEqual([
+        {
+          ids: ['address:10.0.0.1', 'address:10.0.0.2', 'address:10.0.0.3', 'address:10.0.0.4'],
+          additive: true,
+        },
+      ]);
+      await buttons[4].trigger('click');
+      expect(wrapper.emitted('open')).toBeUndefined();
+      wrapper.unmount();
+    },
+  );
+
+  it('hands a cell its range color and leaves a cell outside any range alone', () => {
+    const cell = (ip, kind, rangeColor) => ({
+      ip,
+      last: ip.split('.').at(-1),
+      kind,
+      rangeColor,
+      label: kind,
+      row: { id: `address:${ip}` },
+    });
+    const wrapper = mount(AddressGrid, {
+      props: {
+        cells: [
+          cell('10.0.0.1', 'available', '#0ea5e9'),
+          cell('10.0.0.2', 'dns', '#0ea5e9'),
+          cell('10.0.0.3', 'available', null),
+        ],
+      },
+    });
+    const buttons = wrapper.findAll('.address-grid button');
+    expect(buttons[0].classes()).toContain('ranged');
+    expect(buttons[0].attributes('style')).toContain('--range-color: #0ea5e9');
+    expect(buttons[1].classes()).toEqual(expect.arrayContaining(['dns', 'ranged']));
+    expect(buttons[2].classes()).not.toContain('ranged');
+    expect(buttons[2].attributes('style')).toBeUndefined();
+    // The legend swatch is drawn from the colors a type can be given.
+    const swatch = wrapper.find('.grid-key i.ranged').attributes('style');
+    for (const color of RANGE_COLOR_PRESETS) expect(swatch).toContain(color);
+  });
+
+  it('clears the selection on a press outside the cells, but not inside a menu or on a cell', async () => {
+    const cells = [1, 2].map((n) => ({
+      ip: `10.0.0.${n}`,
+      last: String(n),
+      kind: 'available',
+      label: 'available',
+      row: { id: `address:10.0.0.${n}` },
+    }));
+    const outside = globalThis.document.createElement('div');
+    const menu = globalThis.document.createElement('div');
+    menu.setAttribute('role', 'menu');
+    const item = globalThis.document.createElement('button');
+    menu.append(item);
+    globalThis.document.body.append(outside, menu);
+    const wrapper = mount(AddressGrid, {
+      attachTo: globalThis.document.body,
+      props: { cells, selectedRows: ['address:10.0.0.1'] },
+    });
+    const press = (element, button = 0) =>
+      element.dispatchEvent(new globalThis.MouseEvent('pointerdown', { bubbles: true, button }));
+
+    press(wrapper.find('.address-grid button').element);
+    press(item);
+    press(outside, 2);
+    expect(wrapper.emitted('clear-selection')).toBeUndefined();
+
+    // A select panel portaled to the body, and anything while a modal is open.
+    const panel = globalThis.document.createElement('div');
+    panel.className = 'p-select-overlay p-anchored-overlay';
+    const option = globalThis.document.createElement('li');
+    panel.append(option);
+    const mask = globalThis.document.createElement('div');
+    mask.className = 'p-dialog-mask';
+    globalThis.document.body.append(panel, mask);
+    press(option);
+    press(outside);
+    expect(wrapper.emitted('clear-selection')).toBeUndefined();
+    mask.remove();
+    panel.remove();
+
+    press(outside);
+    expect(wrapper.emitted('clear-selection')).toHaveLength(1);
+
+    await wrapper.setProps({ selectedRows: [] });
+    press(outside);
+    expect(wrapper.emitted('clear-selection')).toHaveLength(1);
+    wrapper.unmount();
+    outside.remove();
+    menu.remove();
+  });
+});

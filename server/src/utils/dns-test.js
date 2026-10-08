@@ -27,7 +27,7 @@ export async function testDnsForwarder(ip) {
     return { reachable: true, addresses };
   } catch {
     // Retry once after delay
-    await new Promise(r => setTimeout(r, DNS_TEST_RETRY_DELAY_MS));
+    await new Promise((r) => setTimeout(r, DNS_TEST_RETRY_DELAY_MS));
     try {
       const addresses = await tryResolve();
       return { reachable: true, addresses };

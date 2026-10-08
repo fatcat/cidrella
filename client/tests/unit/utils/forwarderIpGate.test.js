@@ -1,5 +1,5 @@
 /**
- * The forwarder-IP gate in DNS.vue must range-check octets.
+ * The forwarder-IP gate (DNS.vue then, ResolverPicker.vue now) must range-check octets.
  *
  * DNS.vue carried its own /^(\d{1,3}\.){3}\d{1,3}$/ next to a file that already
  * exports a range-checking predicate. Shape-only means 999.999.999.999 passed
@@ -43,15 +43,19 @@ describe('forwarder IP gate', () => {
   // the source is crude, but it is what actually covers the wiring, and
   // mounting DNS.vue costs the router, the store and a dozen PrimeVue parts for
   // one `if`.
-  it('DNS.vue uses the shared predicate and carries no local IPv4 regex', async () => {
+  // The gate lives in the resolver picker since the forwarders became a primary
+  // and a backup (it used to be in DNS.vue).
+  it('ResolverPicker uses the shared predicate and carries no local IPv4 regex', async () => {
     // Vite's ?raw import, deliberately, after two worse attempts: import.meta.url
     // is an http:// URL under happy-dom so fileURLToPath throws, and
     // process.cwd() is the repo root here but the client dir under
     // `npm run test:client`, so a cwd-relative path passes one way and ENOENTs
     // the other. ?raw resolves through Vite's module graph and depends on
     // neither.
-    const { default: src } = await import('../../../src/views/DNS.vue?raw');
+    const { default: src } = await import('../../../src/components/dns/ResolverPicker.vue?raw');
     expect(src).toMatch(/isValidIpv4\s*\(\s*ip\s*\)/);
+    // An IPv6 upstream goes through the shared IPv6 predicate, behind the switch.
+    expect(src).toMatch(/ipv6Supported\.value\s*&&\s*isValidIpv6\s*\(\s*ip\s*\)/);
     // Match the regex being EXECUTED, not merely mentioned: the comment above
     // the import quotes the old pattern on purpose, and a bare text search for
     // it fails against that comment rather than against real code.

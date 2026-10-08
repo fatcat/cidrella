@@ -9,7 +9,7 @@ export const useDebugStore = defineStore('debug', () => {
 
   function pruneOld() {
     const cutoff = Date.now() - maxAgeMs;
-    entries.value = entries.value.filter(e => e.timestamp.getTime() > cutoff);
+    entries.value = entries.value.filter((e) => e.timestamp.getTime() > cutoff);
   }
 
   function add(type, message, detail = null) {
@@ -19,21 +19,31 @@ export const useDebugStore = defineStore('debug', () => {
       type,
       message,
       detail,
-      timestamp: new Date()
+      timestamp: new Date(),
     });
     if (entries.value.length > maxEntries) {
       entries.value.splice(maxEntries);
     }
   }
 
-  function logError(message, detail) { add('error', message, detail); }
-  function logWarn(message, detail) { add('warn', message, detail); }
-  function logInfo(message, detail) { add('info', message, detail); }
-  function logApi(message, detail) { add('api', message, detail); }
+  function logError(message, detail) {
+    add('error', message, detail);
+  }
+  function logWarn(message, detail) {
+    add('warn', message, detail);
+  }
+  function logInfo(message, detail) {
+    add('info', message, detail);
+  }
+  function logApi(message, detail) {
+    add('api', message, detail);
+  }
 
-  function clear() { entries.value = []; }
+  function clear() {
+    entries.value = [];
+  }
 
-  const errorCount = computed(() => entries.value.filter(e => e.type === 'error').length);
+  const errorCount = computed(() => entries.value.filter((e) => e.type === 'error').length);
 
   return { entries, errorCount, logError, logWarn, logInfo, logApi, clear };
 });

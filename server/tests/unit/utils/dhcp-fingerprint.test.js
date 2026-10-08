@@ -35,6 +35,33 @@ describe('ingestLine (log-dhcp transaction parsing)', () => {
     expect(pending.size).toBe(0);
   });
 
+  it('ignores a DHCPv6 exchange, its REQUEST and option lines included (IPV6-20)', () => {
+    const pending = new Map();
+    const duid = '00:01:00:01:2e:3f:40:51:aa:bb:cc:dd:ee:ff';
+    const v6 = [
+      `host dnsmasq-dhcp[1]: 4242 DHCPSOLICIT(eth0) ${duid}`,
+      `host dnsmasq-dhcp[1]: 4242 vendor class: 0000a4f1 xyz`,
+      `host dnsmasq-dhcp[1]: 4242 DHCPADVERTISE(eth0) fd00::10 ${duid}`,
+      `host dnsmasq-dhcp[1]: 4243 DHCPREQUEST(eth0) ${duid}`,
+      `host dnsmasq-dhcp[1]: 4243 requested options: dns-server, domain-search`,
+      `host dnsmasq-dhcp[1]: 4243 DHCPREPLY(eth0) fd00::10 ${duid} printer6`,
+    ];
+    for (const line of v6) ingestLine(line, pending, 1000);
+    expect([...pending.values()].every((tx) => tx.ignored && !tx.mac && !tx.opt55)).toBe(true);
+    expect(drainFinalized(pending, { now: 5000 })).toEqual([]);
+
+    // A DHCPv4 REQUEST beside it is still read.
+    ingestLine(
+      'host dnsmasq-dhcp[1]: 77 DHCPREQUEST(eth0) 10.0.0.9 11:22:33:44:55:66',
+      pending,
+      1000,
+    );
+    ingestLine('host dnsmasq-dhcp[1]: 77 DHCPACK(eth0) 10.0.0.9 11:22:33:44:55:66', pending, 1000);
+    expect(drainFinalized(pending, { now: 5000 }).map((tx) => tx.mac)).toEqual([
+      '11:22:33:44:55:66',
+    ]);
+  });
+
   it('ignores non-dhcp lines', () => {
     const pending = new Map();
     expect(ingestLine('Jun 8 query[A] example.com from 10.0.0.5', pending)).toBeNull();
@@ -53,12 +80,18 @@ describe('ingestLine (log-dhcp transaction parsing)', () => {
     ingestLine(`${prefix}DHCPREQUEST(eth0) 10.0.0.9 11:22:33:44:55:66`, pending, 1000);
     ingestLine(`${prefix}DHCPACK(eth0) 10.0.0.9 11:22:33:44:55:66`, pending, 1000);
     ingestLine(`${prefix}requested options: 1:netmask, 3:router, 6:dns-server, `, pending, 1000);
-    ingestLine(`${prefix}requested options: 15:domain-name, 119:domain-search, 252:ms-proxy-autoconfig`, pending, 1000);
+    ingestLine(
+      `${prefix}requested options: 15:domain-name, 119:domain-search, 252:ms-proxy-autoconfig`,
+      pending,
+      1000,
+    );
 
-    expect(drainFinalized(pending, { now: 2000 })).toEqual([expect.objectContaining({
-      mac: '11:22:33:44:55:66',
-      opt55: '1,3,6,15,119,252'
-    })]);
+    expect(drainFinalized(pending, { now: 2000 })).toEqual([
+      expect.objectContaining({
+        mac: '11:22:33:44:55:66',
+        opt55: '1,3,6,15,119,252',
+      }),
+    ]);
   });
 
   it('does not combine the same xid across dnsmasq processes', () => {

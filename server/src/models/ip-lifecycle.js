@@ -15,18 +15,18 @@ export const ALLOCATION_STATE = Object.freeze({
   SLAAC: 'slaac',
   SYSTEM: 'system',
   GATEWAY: 'gateway',
-  QUARANTINED: 'quarantined'
+  QUARANTINED: 'quarantined',
 });
 
 export const DISPLAY_STATUS = Object.freeze({
   AVAILABLE: 'available',
   DHCP_SCOPE: 'DHCP Scope',
-  IN_USE: 'in use'
+  IN_USE: 'in use',
 });
 
 export const ADDRESS_FAMILY = Object.freeze({
   IPV4: 4,
-  IPV6: 6
+  IPV6: 6,
 });
 
 export const LIFECYCLE_SOURCE = Object.freeze({
@@ -36,7 +36,7 @@ export const LIFECYCLE_SOURCE = Object.freeze({
   DHCP_LEASE: 'dhcp_lease',
   SLAAC: 'slaac',
   TOPOLOGY: 'topology',
-  RECONCILIATION: 'reconciliation'
+  RECONCILIATION: 'reconciliation',
 });
 
 const A = ALLOCATION_STATE;
@@ -50,38 +50,52 @@ const S = LIFECYCLE_SOURCE;
 export const ALLOCATION_TRANSITIONS = Object.freeze({
   [S.ADMIN_RESERVATION]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.RESERVED]),
-    [A.RESERVED]: Object.freeze([A.RESERVED, A.UNASSIGNED])
+    [A.RESERVED]: Object.freeze([A.RESERVED, A.UNASSIGNED]),
   }),
+  // A record that exists but is not served holds its address as `reserved`
+  // owned by dns (ADR 004). Which `reserved` row DNS may renew or release is
+  // decided by its allocation_source_type in the lifecycle service.
   [S.DNS]: Object.freeze({
-    [A.UNASSIGNED]: Object.freeze([A.STATIC_DNS]),
-    [A.RESERVED]: Object.freeze([A.STATIC_DNS]),
-    [A.STATIC_DNS]: Object.freeze([A.STATIC_DNS, A.UNASSIGNED])
+    [A.UNASSIGNED]: Object.freeze([A.STATIC_DNS, A.RESERVED]),
+    [A.RESERVED]: Object.freeze([A.STATIC_DNS, A.RESERVED, A.UNASSIGNED]),
+    [A.STATIC_DNS]: Object.freeze([A.STATIC_DNS, A.UNASSIGNED, A.RESERVED]),
   }),
   [S.DHCP_RESERVATION]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.STATIC_DHCP]),
     [A.RESERVED]: Object.freeze([A.STATIC_DHCP]),
-    [A.STATIC_DHCP]: Object.freeze([A.STATIC_DHCP, A.UNASSIGNED])
+    [A.STATIC_DHCP]: Object.freeze([A.STATIC_DHCP, A.UNASSIGNED]),
   }),
   [S.DHCP_LEASE]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.DYNAMIC_DHCP]),
-    [A.DYNAMIC_DHCP]: Object.freeze([A.DYNAMIC_DHCP, A.UNASSIGNED])
+    [A.DYNAMIC_DHCP]: Object.freeze([A.DYNAMIC_DHCP, A.UNASSIGNED]),
   }),
   [S.SLAAC]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.SLAAC]),
-    [A.SLAAC]: Object.freeze([A.SLAAC, A.UNASSIGNED])
+    [A.SLAAC]: Object.freeze([A.SLAAC, A.UNASSIGNED]),
   }),
   [S.TOPOLOGY]: Object.freeze({
     [A.UNASSIGNED]: Object.freeze([A.SYSTEM, A.GATEWAY]),
     [A.SYSTEM]: Object.freeze([A.SYSTEM, A.UNASSIGNED]),
-    [A.GATEWAY]: Object.freeze([A.GATEWAY, A.UNASSIGNED])
+    [A.GATEWAY]: Object.freeze([A.GATEWAY, A.UNASSIGNED]),
   }),
   [S.RECONCILIATION]: Object.freeze(
-    Object.fromEntries(Object.values(A).map(from => [from, Object.freeze(Object.values(A))]))
-  )
+    Object.fromEntries(Object.values(A).map((from) => [from, Object.freeze(Object.values(A))])),
+  ),
 });
 
 export function canTransitionAllocation(from, to, source) {
   return ALLOCATION_TRANSITIONS[source]?.[from]?.includes(to) === true;
+}
+
+// The allocations whose MAC comes from DHCP: a reservation's client, or the
+// holder of a live lease. Another MAC answering there is a conflict. Every
+// other address's MAC is only what was last seen on it (a DNS record, a
+// gateway, an unassigned row), so a new one answering replaces it: a host
+// that got a new NIC, or a VM recreated with a new one, is not a conflict.
+const MAC_AUTHORITY_STATES = new Set([ALLOCATION_STATE.STATIC_DHCP, ALLOCATION_STATE.DYNAMIC_DHCP]);
+
+export function macIsAuthoritative(allocationState) {
+  return MAC_AUTHORITY_STATES.has(allocationState);
 }
 
 export function displayStatusFor({ allocationState, inDynamicPool = false }) {
@@ -102,10 +116,12 @@ export function canonicalHostnameForAllocation({
   allocationState,
   dnsHostname = null,
   reservationHostname = null,
-  leaseHostname = null
+  leaseHostname = null,
 }) {
   if ([A.STATIC_DNS, A.GATEWAY].includes(allocationState)) {
-    return dnsHostname ? { hostname: dnsHostname, source: S.DNS } : { hostname: null, source: null };
+    return dnsHostname
+      ? { hostname: dnsHostname, source: S.DNS }
+      : { hostname: null, source: null };
   }
   if (allocationState === A.SYSTEM) {
     return { hostname: null, source: null };

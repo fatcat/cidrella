@@ -1,7 +1,19 @@
 <template>
   <!-- Create/Edit Folder Dialog -->
-  <Dialog v-model:visible="showFolderDialog" :header="editingFolder ? 'Edit Folder' : 'Create Folder'" modal :style="{ width: '26rem' }" data-track="dialog-folder-edit"
-          @hide="folderCreateFromEdit = false">
+  <Dialog
+    :visible="showFolderDialog"
+    :header="editingFolder ? 'Edit Folder' : 'Create Folder'"
+    modal
+    :style="{ width: '26rem' }"
+    data-track="dialog-folder-edit"
+    @update:visible="folderDiscard.requestClose"
+    @hide="folderCreateFromEdit = false"
+  >
+    <DiscardPrompt
+      v-if="folderDiscard.confirmingDiscard.value"
+      @keep="folderDiscard.keepEditing"
+      @discard="folderDiscard.discard"
+    />
     <div class="form-grid">
       <div class="field">
         <label>Name *</label>
@@ -13,14 +25,22 @@
       </div>
     </div>
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showFolderDialog = false" />
+      <Button label="Cancel" severity="secondary" @click="folderDiscard.requestClose(false)" />
       <Button label="Save" @click="saveFolder" :loading="saving" />
     </template>
   </Dialog>
 
   <!-- First-time Guided Setup Wizard -->
-  <Dialog v-model:visible="showWizard" header="First-time Guided Setup" modal :style="{ width: '32rem' }" data-track="dialog-setup-wizard"
-          :closable="true" @hide="onWizardClose">
+  <Dialog
+    v-model:visible="showWizard"
+    header="First-time Guided Setup"
+    modal
+    :style="{ width: '32rem' }"
+    data-track="dialog-setup-wizard"
+    :closable="true"
+    :close-on-escape="!showWizardCreateVlan"
+    @hide="onWizardClose"
+  >
     <!-- Step indicators -->
     <div class="wizard-steps">
       <div class="wizard-step" :class="{ active: wizardStep === 1, done: wizardStep > 1 }">
@@ -41,13 +61,17 @@
 
     <!-- Step 1: Interfaces -->
     <div v-if="wizardStep === 1">
-      <p class="field-help" style="margin-bottom: 0.75rem;">
+      <p class="field-help" style="margin-bottom: 0.75rem">
         Select which network interfaces CIDRella should listen on for DNS and DHCP.
       </p>
-      <div v-if="wizardIfaceLoading" style="text-align: center; padding: 2rem;">
-        <i class="pi pi-spinner pi-spin" style="font-size: 1.5rem;"></i>
+      <div v-if="wizardIfaceLoading" style="text-align: center; padding: 2rem">
+        <i class="pi pi-spinner pi-spin" style="font-size: 1.5rem"></i>
       </div>
-      <div v-else-if="wizardIfaces.length === 0" class="field-help" style="padding: 1rem; text-align: center;">
+      <div
+        v-else-if="wizardIfaces.length === 0"
+        class="field-help"
+        style="padding: 1rem; text-align: center"
+      >
         No network interfaces found.
       </div>
       <table v-else class="wizard-iface-table">
@@ -55,14 +79,19 @@
           <tr>
             <th>Interface</th>
             <th>IP Address</th>
-            <th style="text-align: center;">DNS</th>
+            <th style="text-align: center">DNS</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="iface in wizardIfaces" :key="iface.name">
             <td>
               <span class="iface-name">{{ iface.name }}</span>
-              <Tag v-if="iface.state === 'down'" value="down" severity="warn" style="margin-left: 0.4rem; font-size: 0.7rem;" />
+              <Tag
+                v-if="iface.state === 'down'"
+                value="down"
+                severity="warn"
+                style="margin-left: 0.4rem; font-size: 0.7rem"
+              />
             </td>
             <td>
               <template v-if="iface.addresses && iface.addresses.length">
@@ -70,32 +99,40 @@
               </template>
               <span v-else class="muted">--</span>
             </td>
-            <td style="text-align: center;">
+            <td style="text-align: center">
               <ToggleSwitch v-model="iface.dns" />
             </td>
           </tr>
         </tbody>
       </table>
-      <div class="field" style="margin-top: 0.75rem;">
-        <label style="display: block; margin-bottom: 0.3rem;">DNS listen port</label>
+      <div class="field" style="margin-top: 0.75rem">
+        <label style="display: block; margin-bottom: 0.3rem">DNS listen port</label>
         <!-- PrimeVue InputNumber only commits its model on blur/Enter, which delays
              the "non-53" warning. Use a plain numeric <input> so the warning fires
              on every keystroke. -->
-        <input type="number" min="1" max="65535" step="1"
-               :value="wizardDnsListenPort"
-               @input="wizardDnsListenPort = Number($event.target.value) || 0"
-               class="port-input port-input-plain" style="width: 6.5rem" />
-        <small class="field-help" style="display: block; margin-top: 0.4rem;">
+        <!-- eslint-disable-next-line vue/no-restricted-html-elements -->
+        <input
+          type="number"
+          min="1"
+          max="65535"
+          step="1"
+          :value="wizardDnsListenPort"
+          @input="wizardDnsListenPort = Number($event.target.value) || 0"
+          class="port-input port-input-plain"
+          style="width: 6.5rem"
+        />
+        <small class="field-help" style="display: block; margin-top: 0.4rem">
           Default 53. Change only if another DNS service holds that port.
         </small>
         <Message v-if="wizardDnsListenPort !== 53" severity="warn" :closable="false" class="mt-1">
-          Most DHCP clients (Windows, macOS, systemd-resolved, Android) ignore non-standard DNS ports and
-          will still try {{ resolverIpForHint }}:53.
-          Only change this if clients are statically configured or a port-53 redirect (iptables/NAT) is in place.
+          Most DHCP clients (Windows, macOS, systemd-resolved, Android) ignore non-standard DNS
+          ports and will still try {{ resolverIpForHint }}:53. Only change this if clients are
+          statically configured or a port-53 redirect (iptables/NAT) is in place.
         </Message>
       </div>
-      <small class="field-help" style="margin-top: 0.5rem; display: block;">
-        DHCP can be enabled per-interface later from System &rarr; Interfaces once your network is fully configured.
+      <small class="field-help" style="margin-top: 0.5rem; display: block">
+        DHCP can be enabled per-interface later from System &rarr; Interfaces once your network is
+        fully configured.
       </small>
     </div>
 
@@ -110,8 +147,15 @@
         <label>Name</label>
         <div class="name-with-template">
           <InputText v-model="wizardNet.name" class="w-full" :placeholder="wizardAutoName || ''" />
-          <Button icon="pi pi-sync" severity="secondary" text rounded size="small"
-                  title="Apply name template" @click="wizardNet.name = wizardAutoName" />
+          <Button
+            icon="pi pi-sync"
+            severity="secondary"
+            text
+            rounded
+            size="small"
+            title="Apply name template"
+            @click="wizardNet.name = wizardAutoName"
+          />
         </div>
       </div>
       <div class="field">
@@ -121,55 +165,90 @@
       <div class="field">
         <label>VLAN</label>
         <div style="display: flex; gap: 0.25rem; align-items: center">
-          <AutoComplete v-model="wizardVlanSelection" :suggestions="vlanSuggestions"
-                        @complete="searchWizardVlans" optionLabel="display"
-                        placeholder="Search by name or ID..." class="w-full"
-                        @item-select="onWizardVlanSelect" @clear="wizardNet.vlan_id = null" dropdown />
-          <Button icon="pi pi-plus" text rounded size="small"
-                  title="Create VLAN" @click="wizardNewVlanNameManual = false; wizardNewVlanForm = { vlan_id: null, name: '' }; showWizardCreateVlan = true" />
+          <AutoComplete
+            v-model="wizardVlanSelection"
+            :suggestions="vlanSuggestions"
+            @complete="searchWizardVlans"
+            optionLabel="display"
+            placeholder="Search by name or ID..."
+            class="w-full"
+            @item-select="onWizardVlanSelect"
+            @clear="wizardNet.vlan_id = null"
+            dropdown
+          />
+          <Button
+            icon="pi pi-plus"
+            text
+            rounded
+            size="small"
+            title="Create VLAN"
+            @click="
+              wizardNewVlanNameManual = false;
+              wizardNewVlanForm = { vlan_id: null, name: '' };
+              showWizardCreateVlan = true;
+            "
+          />
         </div>
       </div>
-      <div class="field">
-        <label>Gateway</label>
-        <div class="gateway-row">
-          <SelectButton v-model="wizardNet.gateway_position" :options="gatewayPositionOptions"
-                        optionLabel="label" optionValue="value" size="small" />
-        </div>
-        <InputText v-model="wizardNet.gateway_address"
-                   :placeholder="wizardGatewayPlaceholder"
-                   :disabled="wizardNet.gateway_position !== 'custom' && wizardNet.gateway_position !== 'none'"
-                   class="w-full" />
-      </div>
+      <GatewayField
+        v-if="wizardFamily !== 6"
+        v-model:position="wizardNet.gateway_position"
+        v-model:address="wizardNet.gateway_address"
+        :placeholder="wizardGatewayPlaceholder"
+      />
       <div class="field">
         <label>Domain Name</label>
         <InputText v-model="wizardNet.domain_name" class="w-full" />
-        <Message v-if="domainWarningShown && !wizardNet.domain_name" severity="warn" :closable="false" class="mt-1">
-          No domain name entered, so DNS features will be limited. Click "Create &amp; Continue" again to proceed anyway.
+        <Message
+          v-if="domainWarningShown && !wizardNet.domain_name"
+          severity="warn"
+          :closable="false"
+          class="mt-1"
+        >
+          No domain name entered, so DNS features will be limited. Click "Create &amp; Continue"
+          again to proceed anyway.
         </Message>
       </div>
       <div class="field wizard-toggle-stack">
         <label class="toggle-label">
-          <input type="checkbox" v-model="wizardNet.create_reverse_dns" />
+          <Checkbox v-model="wizardNet.create_reverse_dns" binary />
           Create reverse DNS zone
         </label>
         <label class="toggle-label">
-          <input type="checkbox" v-model="wizardNet.scan_enabled" />
+          <Checkbox v-model="wizardNet.scan_enabled" binary />
           Include hosts in liveness scans by default
         </label>
-        <label class="toggle-label">
-          <input type="checkbox" v-model="wizardNet.create_dhcp_scope" />
+        <label v-if="wizardFamily !== 6 || wizardDhcpV6ModeOptions.length" class="toggle-label">
+          <Checkbox v-model="wizardNet.create_dhcp_scope" binary />
           Create DHCP scope
         </label>
       </div>
-      <template v-if="wizardNet.create_dhcp_scope && wizardPrefixLength <= 29">
-        <Message v-if="wizardDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
-          A /{{ wizardPrefixLength }} is larger than CIDRella will auto-size a DHCP pool for.
-          RAM is the primary concern: every IP in an allocated subnet gets a row in
-          <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB.
-          See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue,
-          just enter Start IP and End IP manually.
+      <template v-if="wizardShowsDhcp">
+        <div v-if="wizardFamily === 6" class="field">
+          <label>DHCPv6 mode</label>
+          <SelectButton
+            v-model="wizardNet.dhcp_v6_mode"
+            :options="wizardDhcpV6ModeOptions"
+            optionLabel="label"
+            optionValue="value"
+            size="small"
+            data-track="wizard-dhcp-v6-mode"
+          />
+          <small class="field-help">{{ DHCP_V6_MODE_HELP[wizardNet.dhcp_v6_mode] || '' }}</small>
+        </div>
+        <Message
+          v-if="wizardFamily !== 6 && wizardDhcpRiskySize"
+          severity="warn"
+          :closable="false"
+          class="mt-1"
+        >
+          A /{{ wizardPrefixLength }} is larger than CIDRella will auto-size a DHCP pool for. RAM is
+          the primary concern: every IP in an allocated subnet gets a row in
+          <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB. See
+          <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue, just enter
+          Start IP and End IP manually.
         </Message>
-        <div class="wizard-dhcp-row">
+        <div v-if="wizardShowsPool" class="wizard-dhcp-row">
           <div class="field">
             <label>DHCP Scope Start IP</label>
             <InputText v-model="wizardNet.dhcp_start_ip" class="w-full" />
@@ -195,19 +274,42 @@
             <div class="form-grid" style="margin-top: 0.5rem">
               <div class="field">
                 <label>Pi-hole URL</label>
-                <InputText v-model="piholeUrl" placeholder="http://pihole.local" class="w-full"
-                           :class="{ 'pihole-reachable': piholeProbeStatus === 'ok', 'pihole-unreachable': piholeProbeStatus === 'fail' }" />
-                <small v-if="piholeProbeStatus === 'fail'" class="field-error">{{ piholeProbeError }}</small>
-                <small v-if="piholeProbeStatus === 'ok' && piholeNeedsPassword && !piholePassword" class="field-warn">Password required</small>
+                <InputText
+                  v-model="piholeUrl"
+                  placeholder="http://pihole.local"
+                  class="w-full"
+                  :class="{
+                    'pihole-reachable': piholeProbeStatus === 'ok',
+                    'pihole-unreachable': piholeProbeStatus === 'fail',
+                  }"
+                />
+                <small v-if="piholeProbeStatus === 'fail'" class="field-error">{{
+                  piholeProbeError
+                }}</small>
+                <small
+                  v-if="piholeProbeStatus === 'ok' && piholeNeedsPassword && !piholePassword"
+                  class="field-warn"
+                  >Password required</small
+                >
               </div>
               <div class="field">
                 <label>Password (optional)</label>
-                <InputText v-model="piholePassword" type="password" class="w-full" placeholder="Leave empty if none" />
+                <InputText
+                  v-model="piholePassword"
+                  type="password"
+                  class="w-full"
+                  placeholder="Leave empty if none"
+                />
               </div>
               <div class="field" style="text-align: right">
-                <Button label="Connect" icon="pi pi-download" size="small"
-                        @click="fetchPiholeConfig" :loading="piholeFetching"
-                        :disabled="piholeProbeStatus !== 'ok' || (piholeNeedsPassword && !piholePassword)" />
+                <Button
+                  label="Connect"
+                  icon="pi pi-download"
+                  size="small"
+                  @click="fetchPiholeConfig"
+                  :loading="piholeFetching"
+                  :disabled="piholeProbeStatus !== 'ok' || (piholeNeedsPassword && !piholePassword)"
+                />
               </div>
             </div>
           </TabPanel>
@@ -215,11 +317,22 @@
             <div class="form-grid" style="margin-top: 0.5rem">
               <div class="field">
                 <label>Select pihole.toml</label>
-                <input type="file" accept=".toml" @change="onPiholeFileSelect" ref="piholeFileInput" />
+                <!-- eslint-disable-next-line vue/no-restricted-html-elements -->
+                <input
+                  type="file"
+                  accept=".toml"
+                  @change="onPiholeFileSelect"
+                  ref="piholeFileInput"
+                />
               </div>
               <div class="field" style="text-align: right" v-if="piholeFileContent">
-                <Button label="Parse" icon="pi pi-cog" size="small"
-                        @click="parsePiholeFile" :loading="piholeParsing" />
+                <Button
+                  label="Parse"
+                  icon="pi pi-cog"
+                  size="small"
+                  @click="parsePiholeFile"
+                  :loading="piholeParsing"
+                />
               </div>
             </div>
           </TabPanel>
@@ -232,7 +345,7 @@
         <div class="preview-summary">
           <div class="preview-item">
             <span class="preview-count">{{ piholePreview.hosts.length }}</span>
-            <span class="preview-label">A records</span>
+            <span class="preview-label">Host records</span>
           </div>
           <div class="preview-item">
             <span class="preview-count">{{ piholePreview.cnames.length }}</span>
@@ -243,20 +356,16 @@
             <span class="preview-label">DHCP Reservations</span>
           </div>
         </div>
-        <small v-if="piholePreview.zoneName" class="muted">Zone: {{ piholePreview.zoneName }}</small>
+        <small v-if="piholePreview.zoneName" class="muted"
+          >Zone: {{ piholePreview.zoneName }}</small
+        >
       </div>
 
       <!-- Import results -->
       <div v-if="piholeImportResults" class="pihole-results">
-        <Message severity="success" :closable="false">
-          Import complete:
-          {{ piholeImportResults.a.created }} A created<template v-if="piholeImportResults.a.updated">, {{ piholeImportResults.a.updated }} updated</template>;
-          {{ piholeImportResults.cname.created }} CNAME created<template v-if="piholeImportResults.cname.updated">, {{ piholeImportResults.cname.updated }} updated</template>;
-          {{ piholeImportResults.dhcp.created }} DHCP created
-          <template v-if="piholeImportResults.dhcp.noSubnet > 0">
-            ({{ piholeImportResults.dhcp.noSubnet }} DHCP skipped: no matching subnet)
-          </template>
-        </Message>
+        <Message severity="success" :closable="false">{{
+          piholeImportSummary(piholeImportResults)
+        }}</Message>
       </div>
     </div>
 
@@ -264,87 +373,191 @@
       <div class="wizard-footer">
         <span style="flex: 1"></span>
         <Button label="Skip" severity="secondary" text @click="wizardSkip" />
-        <Button v-if="wizardStep === 1" label="Continue" icon="pi pi-arrow-right" iconPos="right"
-                @click="wizardSaveInterfaces" :loading="wizardIfaceSaving"
-                :disabled="!wizardHasSelectedIface" />
-        <Button v-if="wizardStep === 2" label="Create & Continue" icon="pi pi-arrow-right" iconPos="right"
-                @click="wizardCreateAndContinue" :loading="saving"
-                :disabled="!!wizardCidrError || !!wizardDhcpScopeError || !wizardNet.cidr" />
-        <Button v-if="wizardStep === 3" label="Skip Import" severity="secondary"
-                @click="wizardFinish" :disabled="piholeImporting" />
-        <Button v-if="wizardStep === 3 && !piholeImportResults" label="Import" icon="pi pi-download"
-                @click="executePiholeImport" :loading="piholeImporting"
-                :disabled="!piholePreview" />
-        <Button v-if="wizardStep === 3 && piholeImportResults" label="Done" icon="pi pi-check"
-                @click="wizardFinish" />
+        <Button
+          v-if="wizardStep === 1"
+          label="Continue"
+          icon="pi pi-arrow-right"
+          iconPos="right"
+          @click="wizardSaveInterfaces"
+          :loading="wizardIfaceSaving"
+          :disabled="!wizardHasSelectedIface"
+        />
+        <Button
+          v-if="wizardStep === 2"
+          label="Create & Continue"
+          icon="pi pi-arrow-right"
+          iconPos="right"
+          @click="wizardCreateAndContinue"
+          :loading="saving"
+          :disabled="!!wizardCidrError || !!wizardDhcpScopeError || !wizardNet.cidr"
+        />
+        <Button
+          v-if="wizardStep === 3"
+          label="Skip Import"
+          severity="secondary"
+          @click="wizardFinish"
+          :disabled="piholeImporting"
+        />
+        <Button
+          v-if="wizardStep === 3 && !piholeImportResults"
+          label="Import"
+          icon="pi pi-download"
+          @click="executePiholeImport"
+          :loading="piholeImporting"
+          :disabled="!piholePreview"
+        />
+        <Button
+          v-if="wizardStep === 3 && piholeImportResults"
+          label="Done"
+          icon="pi pi-check"
+          @click="wizardFinish"
+        />
       </div>
     </template>
   </Dialog>
 
   <!-- Create VLAN from Wizard -->
-  <Dialog v-model:visible="showWizardCreateVlan" header="Create VLAN" modal :style="{ width: '24rem' }">
+  <Dialog
+    v-model:visible="showWizardCreateVlan"
+    header="Create VLAN"
+    modal
+    :style="{ width: '24rem' }"
+  >
     <div class="form-grid">
       <div class="field">
         <label>VLAN ID *</label>
-        <InputNumber v-model="wizardNewVlanForm.vlan_id" :min="1" :max="4094" :useGrouping="false" class="w-full"
-                     @update:modelValue="onWizardNewVlanIdInput" />
+        <InputNumber
+          v-model="wizardNewVlanForm.vlan_id"
+          :min="1"
+          :max="4094"
+          :useGrouping="false"
+          class="w-full"
+          @update:modelValue="onWizardNewVlanIdInput"
+        />
       </div>
       <div class="field">
         <label>Name *</label>
-        <InputText v-model="wizardNewVlanForm.name" class="w-full" @input="wizardNewVlanNameManual = true" />
+        <InputText
+          v-model="wizardNewVlanForm.name"
+          class="w-full"
+          @input="wizardNewVlanNameManual = true"
+        />
       </div>
     </div>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showWizardCreateVlan = false" />
-      <Button label="Save" @click="createVlanFromWizard" :loading="saving"
-              :disabled="!wizardNewVlanForm.vlan_id || !wizardNewVlanForm.name" />
+      <Button
+        label="Save"
+        @click="createVlanFromWizard"
+        :loading="saving"
+        :disabled="!wizardNewVlanForm.vlan_id || !wizardNewVlanForm.name"
+      />
     </template>
   </Dialog>
 
   <!-- Delete Folder Dialog -->
-  <Dialog v-model:visible="showDeleteFolderDialog" header="Delete Folder" modal :style="{ width: '28rem' }" data-track="dialog-folder-delete">
-    <p>Delete folder <strong>{{ deletingFolder?.name }}</strong>?</p>
-    <p v-if="deletingFolder?.subnet_count > 0" style="font-size: 0.85rem; color: var(--p-text-muted-color);">
+  <ConfirmDialog
+    v-model:visible="showDeleteFolderDialog"
+    header="Delete Folder"
+    width="28rem"
+    :loading="saving"
+    data-track="dialog-folder-delete"
+    @confirm="executeDeleteFolder"
+  >
+    <p>
+      Delete folder <strong>{{ deletingFolder?.name }}</strong
+      >?
+    </p>
+    <p
+      v-if="deletingFolder?.subnet_count > 0"
+      style="font-size: 0.85rem; color: var(--cid-text-muted-color)"
+    >
       {{ deletingFolder.subnet_count }} network(s) will be moved to ungrouped.
     </p>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showDeleteFolderDialog = false" />
-      <Button label="Delete" severity="danger" @click="executeDeleteFolder" :loading="saving" />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Create Network Dialog -->
-  <Dialog v-model:visible="showSubnetDialog" :header="quickAddMode ? 'Add Network' : 'Create Network'" modal :style="{ width: '28rem' }" data-track="dialog-network-create">
+  <Dialog
+    :visible="showSubnetDialog"
+    :header="quickAddMode ? 'Add Network' : 'Create Network'"
+    modal
+    :style="{ width: '28rem' }"
+    data-track="dialog-network-create"
+    @update:visible="supernetDiscard.requestClose"
+  >
+    <DiscardPrompt
+      v-if="supernetDiscard.confirmingDiscard.value"
+      @keep="supernetDiscard.keepEditing"
+      @discard="supernetDiscard.discard"
+    />
     <div class="form-grid">
       <div class="field">
         <label>CIDR *</label>
         <InputText v-model="supernetForm.cidr" placeholder="10.0.0.0/8" class="w-full" />
-        <small v-if="supernetValidationError" class="field-error">{{ supernetValidationError }}</small>
+        <small v-if="supernetValidationError" class="field-error">{{
+          supernetValidationError
+        }}</small>
       </div>
       <template v-if="!quickAddMode">
         <div class="field">
           <label>Name</label>
-          <InputText v-model="supernetForm.name" :placeholder="supernetAutoName || 'Optional, defaults to template'" class="w-full" />
+          <InputText
+            v-model="supernetForm.name"
+            :placeholder="supernetAutoName || 'Optional, defaults to template'"
+            class="w-full"
+          />
         </div>
         <div class="field">
           <label>Folder (optional)</label>
-          <Select v-model="supernetForm.folder_id" :options="folderOptions" optionLabel="name" optionValue="id"
-                  placeholder="None (ungrouped)" class="w-full" showClear />
+          <Select
+            v-model="supernetForm.folder_id"
+            :options="folderOptions"
+            optionLabel="name"
+            optionValue="id"
+            placeholder="None (ungrouped)"
+            class="w-full"
+            showClear
+          />
         </div>
       </template>
     </div>
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showSubnetDialog = false" />
-      <Button label="Create" @click="createSupernet" :loading="saving" :disabled="!!supernetValidationError" />
+      <Button label="Cancel" severity="secondary" @click="supernetDiscard.requestClose(false)" />
+      <Button
+        label="Create"
+        @click="createSupernet"
+        :loading="saving"
+        :disabled="!!supernetValidationError"
+      />
     </template>
   </Dialog>
 
   <!-- Divide Network Dialog -->
-  <Dialog v-model:visible="showDivide" header="Divide Network" modal :style="{ width: '36rem' }" data-track="dialog-network-divide">
-    <p>Network: <strong>{{ props.selectedNode?.data.cidr }}</strong></p>
+  <Dialog
+    :visible="showDivide"
+    header="Divide Network"
+    modal
+    :style="{ width: '36rem' }"
+    data-track="dialog-network-divide"
+    :close-on-escape="!showLossyConfirm"
+    @update:visible="divideDiscard.requestClose"
+  >
+    <DiscardPrompt
+      v-if="divideDiscard.confirmingDiscard.value"
+      @keep="divideDiscard.keepEditing"
+      @discard="divideDiscard.discard"
+    />
+    <p>
+      Network: <strong>{{ divideNode?.data.cidr }}</strong>
+    </p>
 
     <div class="divide-mode-toggle">
-      <SelectButton v-model="divideMode" :options="divideModeOptions" optionLabel="label" optionValue="value" />
+      <SelectButton
+        v-model="divideMode"
+        :options="divideModeOptions"
+        optionLabel="label"
+        optionValue="value"
+      />
     </div>
 
     <!-- Equal Division mode -->
@@ -353,34 +566,56 @@
         <div class="field">
           <label>Divide into</label>
           <div class="divide-count-row">
-            <input type="range" class="divide-slider"
-                   :min="1" :max="maxDivideSteps"
-                   v-model.number="divideSteps"
-                   :step="1" />
-            <InputNumber v-model="divideCount" :min="2" :max="maxDivideCount"
-                         class="divide-count-input" @update:modelValue="onDivideCountInput" />
+            <Slider
+              v-model="divideSteps"
+              class="divide-slider"
+              :min="1"
+              :max="maxDivideSteps"
+              :step="1"
+            />
+            <InputNumber
+              v-model="divideCount"
+              :min="2"
+              :max="maxDivideCount"
+              class="divide-count-input"
+              @update:modelValue="onDivideCountInput"
+            />
             <span class="divide-count-label">networks (/{{ divideTargetPrefix }})</span>
           </div>
         </div>
       </div>
 
-      <div v-if="authoritativeDivideTargets.length > 0 && authoritativeDivideTargets.length <= 256" class="divide-preview">
-        <h4>Preview: {{ authoritativeDivideTargets.length }} networks (/{{ divideTargetPrefix }})</h4>
+      <div
+        v-if="authoritativeDivideTargets.length > 0 && authoritativeDivideTargets.length <= 256"
+        class="divide-preview"
+      >
+        <h4>
+          Preview: {{ authoritativeDivideTargets.length }} networks (/{{ divideTargetPrefix }})
+        </h4>
         <ul class="remainder-list">
           <li v-for="target in authoritativeDivideTargets" :key="target.cidr">
             <strong>{{ target.cidr }}</strong>
             · gateway {{ target.gateway?.address || 'none' }}
             <template v-if="target.scopes?.length">
-              <template v-for="scope in target.scopes" :key="`${target.cidr}-${scope.source_scope_id}-${scope.origin}`">
+              <template
+                v-for="scope in target.scopes"
+                :key="`${target.cidr}-${scope.source_scope_id}-${scope.origin}`"
+              >
                 · default DHCP pool
-                {{ scope.intervals.map(interval => `${interval.start_ip}–${interval.end_ip}`).join(', ') }}
+                {{
+                  scope.intervals
+                    .map((interval) => `${interval.start_ip}–${interval.end_ip}`)
+                    .join(', ')
+                }}
               </template>
             </template>
           </li>
         </ul>
       </div>
       <div v-else-if="dividePreviewSubnets.length > 256" class="divide-preview divide-preview-warn">
-        <p>Cannot divide into more than 256 networks ({{ dividePreviewSubnets.length }} requested)</p>
+        <p>
+          Cannot divide into more than 256 networks ({{ dividePreviewSubnets.length }} requested)
+        </p>
       </div>
     </template>
 
@@ -392,8 +627,13 @@
           <div class="carve-cidr-row">
             <InputText v-model="carveNetwork" class="carve-network-input" />
             <span class="carve-slash">/</span>
-            <InputNumber v-model="carvePrefix" :min="(props.selectedNode?.data.prefix_length || 0) + 1" :max="32"
-                         class="carve-prefix-input" :useGrouping="false" />
+            <InputNumber
+              v-model="carvePrefix"
+              :min="(divideNode?.data.prefix_length || 0) + 1"
+              :max="maxPrefixFor(divideNode?.data.cidr)"
+              class="carve-prefix-input"
+              :useGrouping="false"
+            />
           </div>
           <small v-if="carveValidationError" class="field-error">{{ carveValidationError }}</small>
         </div>
@@ -402,62 +642,114 @@
       <div v-if="authoritativeDivideTargets.length && !carveValidationError" class="divide-preview">
         <h4>Result</h4>
         <ul class="remainder-list">
-          <li v-for="target in authoritativeDivideTargets" :key="target.cidr"
-              :class="{ 'carved-highlight': target.cidr === normalizeCidr(carveCidr) }">
+          <li
+            v-for="target in authoritativeDivideTargets"
+            :key="target.cidr"
+            :class="{ 'carved-highlight': target.cidr === normalizeNetwork(carveCidr) }"
+          >
             <strong>{{ target.cidr }}</strong>
-            {{ target.cidr === normalizeCidr(carveCidr) ? '(created)' : '(remainder)' }}
+            {{ target.cidr === normalizeNetwork(carveCidr) ? '(created)' : '(remainder)' }}
             · gateway {{ target.gateway?.address || 'none' }}
-            <template v-for="scope in target.scopes || []" :key="`${target.cidr}-${scope.source_scope_id}-${scope.origin}`">
+            <template
+              v-for="scope in target.scopes || []"
+              :key="`${target.cidr}-${scope.source_scope_id}-${scope.origin}`"
+            >
               · default DHCP pool
-              {{ scope.intervals.map(interval => `${interval.start_ip}–${interval.end_ip}`).join(', ') }}
+              {{
+                scope.intervals
+                  .map((interval) => `${interval.start_ip}–${interval.end_ip}`)
+                  .join(', ')
+              }}
             </template>
           </li>
         </ul>
       </div>
     </template>
 
-    <Message v-if="props.selectedNode?.data.status === 'allocated'" severity="warn" class="mt-3">
-      This network is allocated. Its configuration, leases, and reservations will be transferred to the resulting networks.
+    <Message v-if="divideNode?.data.status === 'allocated'" severity="warn" class="mt-3">
+      This network is allocated. Its configuration, leases, and reservations will be transferred to
+      the resulting networks.
     </Message>
     <Message v-if="divideAddsDefaultScopes" severity="info" class="mt-3">
-      Because the source has a DHCP scope, each resulting network will receive the default-sized pool shown above. Existing pool bounds will not be retained.
+      Because the source has a DHCP scope, each resulting network will receive the default-sized
+      pool shown above. Existing pool bounds will not be retained.
     </Message>
-    <Message v-if="dividePreviewError" severity="error" class="mt-3">{{ dividePreviewError }}</Message>
+    <Message v-if="divideStaleNotice" severity="warn" class="mt-3" data-track="divide-stale-plan">{{
+      divideStaleNotice
+    }}</Message>
+    <Message v-if="dividePreviewError" severity="error" class="mt-3">{{
+      dividePreviewError
+    }}</Message>
     <Message v-if="serverDividePreview?.plan?.conflicts?.length" severity="warn" class="mt-3">
-      Resolve {{ serverDividePreview.plan.conflicts.length }} reported transformation conflict(s) before dividing.
+      Resolve {{ serverDividePreview.plan.conflicts.length }} reported transformation conflict(s)
+      before dividing.
     </Message>
 
-    <div v-if="props.selectedNode?.data.gateway_policy === 'custom'" class="divide-preview">
+    <div v-if="divideNode?.data.gateway_policy === 'custom'" class="divide-preview">
       <h4>Gateway policy for resulting networks</h4>
       <div v-for="cidr in divideResultCidrs" :key="`gateway-${cidr}`" class="field">
         <label>{{ cidr }}</label>
-        <Select v-model="divideGatewayPolicies[cidr].policy"
-                :options="gatewayPolicyOptions" optionLabel="label" optionValue="value" />
-        <InputText v-if="divideGatewayPolicies[cidr].policy === 'custom'"
-                   v-model="divideGatewayPolicies[cidr].address"
-                   placeholder="Custom gateway address" />
+        <Select
+          v-model="divideGatewayPolicies[cidr].policy"
+          :options="gatewayPolicyOptions"
+          optionLabel="label"
+          optionValue="value"
+        />
+        <InputText
+          v-if="divideGatewayPolicies[cidr].policy === 'custom'"
+          v-model="divideGatewayPolicies[cidr].address"
+          placeholder="Custom gateway address"
+        />
       </div>
     </div>
 
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showDivide = false" />
-      <Button v-if="divideMode === 'equal'" label="Divide" @click="executeDivide" :loading="saving"
-              :disabled="dividePreviewLoading || !!dividePreviewError || !authoritativeDivideTargets.length || !!serverDividePreview?.plan?.conflicts?.length" />
-      <Button v-else label="Create Network" @click="executeCarve" :loading="saving"
-              :disabled="dividePreviewLoading || !!dividePreviewError || !!carveValidationError || !carveNetwork || !!serverDividePreview?.plan?.conflicts?.length" />
+      <Button label="Cancel" severity="secondary" @click="divideDiscard.requestClose(false)" />
+      <Button
+        v-if="divideMode === 'equal'"
+        label="Divide"
+        @click="executeDivide"
+        :loading="saving"
+        :disabled="
+          dividePreviewLoading ||
+          !!dividePreviewError ||
+          !authoritativeDivideTargets.length ||
+          !!serverDividePreview?.plan?.conflicts?.length
+        "
+      />
+      <Button
+        v-else
+        label="Create Network"
+        @click="executeCarve"
+        :loading="saving"
+        :disabled="
+          dividePreviewLoading ||
+          !!dividePreviewError ||
+          !!carveValidationError ||
+          !carveNetwork ||
+          !!serverDividePreview?.plan?.conflicts?.length
+        "
+      />
     </template>
   </Dialog>
 
   <!-- Lossy-IP confirmation dialog (shown when divide would place host data
        on a new subnet's network/broadcast/outside-selection) -->
-  <Dialog v-model:visible="showLossyConfirm" header="Some host data will be lost"
-          modal :style="{ width: '40rem' }" data-track="dialog-divide-lossy">
+  <ConfirmDialog
+    v-model:visible="showLossyConfirm"
+    header="Some host data will be lost"
+    width="40rem"
+    confirm-label="Divide Anyway"
+    :loading="saving"
+    data-track="dialog-divide-lossy"
+    @confirm="confirmLossyDivide"
+    @cancel="cancelLossyDivide"
+  >
     <Message severity="warn" :closable="false">
       After dividing, the IP addresses below will land on a new subnet's
       <strong>network</strong>, <strong>broadcast</strong>, or
-      <strong>outside the selected children</strong> and will no longer be
-      usable. The division will still run, but these hosts will be stripped
-      from the database or lose routing.
+      <strong>outside the selected children</strong> and will no longer be usable. The division will
+      still run, but these hosts will be stripped from the database or lose routing.
     </Message>
 
     <div class="lossy-list">
@@ -468,45 +760,87 @@
         </div>
         <div class="lossy-meta">
           <span class="lossy-carries">{{ lossyCarriesLabel(row.carries) }}</span>
-          <template v-if="row.hostname"><span>·</span><span>{{ row.hostname }}</span></template>
-          <template v-if="row.mac"><span>·</span><code>{{ row.mac }}</code></template>
+          <template v-if="row.hostname"
+            ><span>·</span><span>{{ row.hostname }}</span></template
+          >
+          <template v-if="row.mac"
+            ><span>·</span><code>{{ row.mac }}</code></template
+          >
         </div>
       </div>
     </div>
-
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="cancelLossyDivide" />
-      <Button label="Divide Anyway" severity="danger" @click="confirmLossyDivide" :loading="saving" />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Edit Network Dialog -->
-  <Dialog v-model:visible="showNetworkDialog" :header="networkDialogHeader" modal :style="{ width: '30rem' }" data-track="dialog-network-edit">
+  <Dialog
+    :visible="showNetworkDialog"
+    :header="networkDialogHeader"
+    modal
+    :style="{ width: '30rem' }"
+    data-track="dialog-network-edit"
+    :close-on-escape="
+      !showCreateVlanFromEdit && !showCreateDomainFromEdit && !showVlanWarning && !showFolderDialog
+    "
+    @update:visible="networkDiscard.requestClose"
+  >
+    <DiscardPrompt
+      v-if="networkDiscard.confirmingDiscard.value"
+      @keep="networkDiscard.keepEditing"
+      @discard="networkDiscard.discard"
+    />
     <div class="form-grid">
       <template v-if="networkDialogMode === 'create'">
         <div class="field">
           <label>CIDR *</label>
           <InputText v-model="networkForm.cidr" placeholder="10.0.0.0/8" class="w-full" />
           <small v-if="createCidrError" class="field-error">{{ createCidrError }}</small>
+          <small v-else-if="configurationPreviewError" class="field-error">
+            {{ configurationPreviewError }}
+          </small>
         </div>
       </template>
 
       <div class="field">
         <label>Folder (optional)</label>
         <div style="display: flex; gap: 0.25rem; align-items: center">
-          <Select v-model="networkForm.folder_id" :options="selectableFolderOptions" optionLabel="name" optionValue="id"
-                  placeholder="None (ungrouped)" class="w-full" showClear
-                  :filter="selectableFolderOptions.length > 6" filterPlaceholder="Search folders…" />
-          <Button icon="pi pi-plus" text rounded size="small"
-                  title="Create folder" @click="openCreateFolderFromEdit" />
+          <Select
+            v-model="networkForm.folder_id"
+            :options="selectableFolderOptions"
+            optionLabel="name"
+            optionValue="id"
+            placeholder="None (ungrouped)"
+            class="w-full"
+            showClear
+            :filter="selectableFolderOptions.length > 6"
+            filterPlaceholder="Search folders…"
+          />
+          <Button
+            icon="pi pi-plus"
+            text
+            rounded
+            size="small"
+            title="Create folder"
+            @click="openCreateFolderFromEdit"
+          />
         </div>
       </div>
       <div class="field">
         <label>Name *</label>
         <div class="name-with-template">
-          <InputText v-model="networkForm.name" class="w-full" :placeholder="createAutoName || ''" />
-          <Button icon="pi pi-sync" severity="secondary" text rounded size="small"
-                  title="Apply name template" @click="applyTemplateToEdit" />
+          <InputText
+            v-model="networkForm.name"
+            class="w-full"
+            :placeholder="createAutoName || ''"
+          />
+          <Button
+            icon="pi pi-sync"
+            severity="secondary"
+            text
+            rounded
+            size="small"
+            title="Apply name template"
+            @click="applyTemplateToEdit"
+          />
         </div>
       </div>
       <div class="field">
@@ -516,80 +850,129 @@
       <div class="field">
         <label>VLAN</label>
         <div style="display: flex; gap: 0.25rem; align-items: center">
-          <AutoComplete v-model="editVlanSelection" :suggestions="vlanSuggestions"
-                        @complete="searchVlans" optionLabel="display"
-                        placeholder="Search by name or ID..." class="w-full"
-                        @item-select="onVlanSelect" @clear="onVlanClear" dropdown />
-          <Button icon="pi pi-plus" text rounded size="small"
-                  title="Create VLAN" @click="newVlanNameManual = false; newVlanForm = { vlan_id: null, name: '' }; showCreateVlanFromEdit = true" />
+          <AutoComplete
+            v-model="editVlanSelection"
+            :suggestions="vlanSuggestions"
+            @complete="searchVlans"
+            optionLabel="display"
+            placeholder="Search by name or ID..."
+            class="w-full"
+            @item-select="onVlanSelect"
+            @clear="onVlanClear"
+            dropdown
+          />
+          <Button
+            icon="pi pi-plus"
+            text
+            rounded
+            size="small"
+            title="Create VLAN"
+            @click="
+              newVlanNameManual = false;
+              newVlanForm = { vlan_id: null, name: '' };
+              showCreateVlanFromEdit = true;
+            "
+          />
         </div>
       </div>
-      <div class="field">
-        <label>Gateway</label>
-        <div class="gateway-row">
-          <SelectButton v-model="gatewayPosition" :options="gatewayPositionOptions"
-                        optionLabel="label" optionValue="value" size="small" />
-        </div>
-        <InputText v-model="networkForm.gateway_address"
-                   :placeholder="gatewayPlaceholder"
-                   :disabled="gatewayPosition !== 'custom' && gatewayPosition !== 'none'"
-                   class="w-full" />
-      </div>
-      <div class="field">
+      <!-- A new network is address space only. Gateway, domain, scanning, DNS
+           and DHCP are allocation settings, set when the network is allocated. -->
+      <GatewayField
+        v-if="dialogAddressFamily !== 6 && networkDialogMode !== 'create'"
+        v-model:position="gatewayPosition"
+        v-model:address="networkForm.gateway_address"
+        :placeholder="gatewayPlaceholder"
+      />
+      <div v-if="networkDialogMode !== 'create'" class="field">
         <label>Domain Name</label>
         <div style="display: flex; gap: 0.25rem; align-items: center">
-          <AutoComplete v-model="editDomainSelection" :suggestions="domainSuggestions"
-                        @complete="searchDomains" optionLabel="name"
-                        placeholder="e.g. office.example.com" class="w-full"
-                        @item-select="onDomainSelect" @clear="onDomainClear"
-                        @change="onDomainChange"
-                        :forceSelection="false" dropdown />
-          <Button icon="pi pi-plus" text rounded size="small"
-                  title="Create DNS zone" @click="openCreateDomainFromEdit" />
+          <AutoComplete
+            v-model="editDomainSelection"
+            :suggestions="domainSuggestions"
+            @complete="searchDomains"
+            optionLabel="name"
+            placeholder="e.g. office.example.com"
+            class="w-full"
+            @item-select="onDomainSelect"
+            @clear="onDomainClear"
+            @change="onDomainChange"
+            :forceSelection="false"
+            dropdown
+          />
+          <Button
+            icon="pi pi-plus"
+            text
+            rounded
+            size="small"
+            title="Create DNS zone"
+            @click="openCreateDomainFromEdit"
+          />
         </div>
       </div>
-      <div class="field">
-        <label>Liveness Scanning</label>
-        <div class="scan-toggle-group">
-          <button type="button" :class="['scan-toggle-btn', 'scan-inherit', { active: networkForm.scan_enabled === null }]"
-                  @click="networkForm.scan_enabled = null">Inherit</button>
-          <button type="button" :class="['scan-toggle-btn', 'scan-enabled', { active: networkForm.scan_enabled === true, resolved: networkForm.scan_enabled === null && resolvedOrgScanEnabled }]"
-                  @click="networkForm.scan_enabled = true">Enabled</button>
-          <button type="button" :class="['scan-toggle-btn', 'scan-disabled', { active: networkForm.scan_enabled === false, resolved: networkForm.scan_enabled === null && !resolvedOrgScanEnabled }]"
-                  @click="networkForm.scan_enabled = false">Disabled</button>
-        </div>
-        <small class="field-help" v-if="networkForm.scan_enabled === null">
-          Inherits from global default: scanning is {{ resolvedGlobalScanEnabled ? 'enabled' : 'disabled' }} for this network
-        </small>
-        <small class="field-help" v-else-if="networkForm.scan_enabled === true">Scanning is enabled for this network</small>
-        <small class="field-help" v-else>Scanning is disabled for this network</small>
-      </div>
-      <template v-if="networkDialogMode === 'configure' || networkDialogMode === 'create'">
+      <ScanToggle
+        v-if="networkDialogMode !== 'create'"
+        v-model="networkForm.scan_enabled"
+        :resolved-enabled="resolvedGlobalScanEnabled"
+        inherits-from="global default"
+      />
+      <Message
+        v-if="networkSaveError"
+        severity="error"
+        :closable="false"
+        class="mt-1"
+        data-track="network-save-error"
+        >{{ networkSaveError }}</Message
+      >
+      <template v-if="networkDialogMode === 'configure'">
         <div class="field">
           <label class="toggle-label">
-            <input type="checkbox" v-model="networkForm.create_reverse_dns" />
+            <Checkbox v-model="networkForm.create_reverse_dns" binary />
             Create reverse DNS zone
           </label>
         </div>
-        <div class="field" v-if="effectivePrefixLength <= 29">
+        <div
+          class="field"
+          v-if="
+            dialogAddressFamily === 6 ? dhcpV6ModeOptions.length > 0 : effectivePrefixLength <= 29
+          "
+        >
           <label class="toggle-label">
-            <input type="checkbox" v-model="networkForm.create_dhcp_scope" />
+            <Checkbox v-model="networkForm.create_dhcp_scope" binary />
             Create DHCP scope
           </label>
         </div>
         <template v-if="networkForm.create_dhcp_scope">
-          <Message v-if="editDhcpRiskySize" severity="warn" :closable="false" class="mt-1">
+          <div v-if="dialogAddressFamily === 6" class="field">
+            <label>DHCPv6 mode</label>
+            <SelectButton
+              v-model="networkForm.dhcp_v6_mode"
+              :options="dhcpV6ModeOptions"
+              optionLabel="label"
+              optionValue="value"
+              size="small"
+              data-track="net-dhcp-v6-mode"
+            />
+            <small class="field-help">{{
+              DHCP_V6_MODE_HELP[networkForm.dhcp_v6_mode] || ''
+            }}</small>
+          </div>
+          <Message
+            v-if="dialogAddressFamily !== 6 && editDhcpRiskySize"
+            severity="warn"
+            :closable="false"
+            class="mt-1"
+          >
             A /{{ effectivePrefixLength }} is larger than CIDRella will auto-size a DHCP pool for.
             RAM is the primary concern: every IP in an allocated subnet gets a row in
-            <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB.
-            See <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue,
-            just enter Start IP and End IP manually.
+            <code>ip_addresses</code>, and CIDRella's target hosts have only 1–2&nbsp;GB. See
+            <code>docs/SIZING.md</code> in the repo for the sizing table. You can continue, just
+            enter Start IP and End IP manually.
           </Message>
-          <div class="field">
+          <div v-if="dialogShowsDhcpPool" class="field">
             <label>Start IP *</label>
             <InputText v-model="networkForm.dhcp_start_ip" class="w-full" />
           </div>
-          <div class="field">
+          <div v-if="dialogShowsDhcpPool" class="field">
             <label>End IP *</label>
             <InputText v-model="networkForm.dhcp_end_ip" class="w-full" />
           </div>
@@ -597,19 +980,35 @@
       </template>
     </div>
     <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showNetworkDialog = false" />
-      <Button :label="networkDialogMode === 'create' ? 'Create' : 'Save'" @click="executeNetworkSave" :loading="saving"
-              :disabled="networkDialogMode === 'create' && !!createCidrError" />
+      <Button label="Cancel" severity="secondary" @click="networkDiscard.requestClose(false)" />
+      <Button
+        :label="networkDialogMode === 'create' ? 'Create' : 'Save'"
+        data-track="network-save"
+        @click="executeNetworkSave"
+        :loading="saving"
+        :disabled="networkDialogMode === 'create' && !!createCidrError"
+      />
     </template>
   </Dialog>
 
   <!-- Create VLAN from Edit Dialog -->
-  <Dialog v-model:visible="showCreateVlanFromEdit" header="Create VLAN" modal :style="{ width: '24rem' }">
+  <Dialog
+    v-model:visible="showCreateVlanFromEdit"
+    header="Create VLAN"
+    modal
+    :style="{ width: '24rem' }"
+  >
     <div class="form-grid">
       <div class="field">
         <label>VLAN ID *</label>
-        <InputNumber v-model="newVlanForm.vlan_id" :min="1" :max="4094" :useGrouping="false" class="w-full"
-                     @update:modelValue="onNewVlanIdInput" />
+        <InputNumber
+          v-model="newVlanForm.vlan_id"
+          :min="1"
+          :max="4094"
+          :useGrouping="false"
+          class="w-full"
+          @update:modelValue="onNewVlanIdInput"
+        />
       </div>
       <div class="field">
         <label>Name *</label>
@@ -618,28 +1017,51 @@
     </div>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showCreateVlanFromEdit = false" />
-      <Button label="Save" @click="createVlanFromEdit" :loading="saving"
-              :disabled="!newVlanForm.vlan_id || !newVlanForm.name" />
+      <Button
+        label="Save"
+        @click="createVlanFromEdit"
+        :loading="saving"
+        :disabled="!newVlanForm.vlan_id || !newVlanForm.name"
+      />
     </template>
   </Dialog>
 
   <!-- Create DNS Zone (domain) from Edit Dialog -->
-  <Dialog v-model:visible="showCreateDomainFromEdit" header="Create Forward DNS Zone" modal :style="{ width: '24rem' }">
+  <Dialog
+    v-model:visible="showCreateDomainFromEdit"
+    header="Create Forward DNS Zone"
+    modal
+    :style="{ width: '24rem' }"
+  >
     <div class="form-grid">
       <div class="field">
         <label>Domain Name *</label>
-        <InputText v-model="newDomainForm.name" placeholder="e.g. office.example.com" class="w-full" autofocus />
+        <InputText
+          v-model="newDomainForm.name"
+          placeholder="e.g. office.example.com"
+          class="w-full"
+          autofocus
+        />
       </div>
     </div>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showCreateDomainFromEdit = false" />
-      <Button label="Save" @click="createDomainFromEdit" :loading="savingDomain"
-              :disabled="!newDomainForm.name?.trim()" />
+      <Button
+        label="Save"
+        @click="createDomainFromEdit"
+        :loading="savingDomain"
+        :disabled="!newDomainForm.name?.trim()"
+      />
     </template>
   </Dialog>
 
   <!-- VLAN Shared Warning Dialog -->
-  <Dialog v-model:visible="showVlanWarning" header="VLAN Already Assigned" modal :style="{ width: '26rem' }">
+  <Dialog
+    v-model:visible="showVlanWarning"
+    header="VLAN Already Assigned"
+    modal
+    :style="{ width: '26rem' }"
+  >
     <p>Usually networks do not share VLANs, are you sure?</p>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="cancelVlanAssignment" />
@@ -648,49 +1070,83 @@
   </Dialog>
 
   <!-- Delete Network Dialog -->
-  <Dialog v-model:visible="showDelete" header="Delete Network" modal :style="{ width: '26rem' }" data-track="dialog-network-delete">
+  <ConfirmDialog
+    v-model:visible="showDelete"
+    header="Delete Network"
+    width="26rem"
+    :loading="saving"
+    :disabled="deallocationBlocked"
+    data-track="dialog-network-delete"
+    @confirm="executeDelete"
+  >
     <template v-if="dialogNetworkData">
-      <p>Delete <strong>{{ dialogNetworkData.cidr }}</strong>?</p>
-      <p v-if="dialogNetworkData.status === 'allocated'" class="warn-text">
-        This will remove all configuration, ranges, and IP assignments.
+      <p>
+        Delete <strong>{{ dialogNetworkData.cidr }}</strong
+        >?
       </p>
       <p v-if="dialogNetworkData.child_count > 0" class="warn-text">
         This network has {{ dialogNetworkData.child_count }} children that will also be affected.
       </p>
+      <DeallocationImpact
+        v-if="dialogNetworkData.status === 'allocated' || dialogNetworkData.child_count > 0"
+        :preview="deallocationPreview"
+        :error="deallocationPreviewError"
+      />
     </template>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showDelete = false" />
-      <Button label="Delete" severity="danger" @click="executeDelete" :loading="saving" />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Deallocate Network Dialog -->
-  <Dialog v-model:visible="showDeallocate" header="Deallocate Network" modal :style="{ width: '26rem' }" data-track="dialog-network-deallocate">
+  <ConfirmDialog
+    v-model:visible="showDeallocate"
+    header="Deallocate Network"
+    width="26rem"
+    confirm-label="Deallocate"
+    :loading="saving"
+    :disabled="deallocationBlocked"
+    data-track="dialog-network-deallocate"
+    @confirm="executeDeallocate"
+  >
     <template v-if="dialogNetworkData">
-      <p>Deallocate <strong>{{ dialogNetworkData.cidr }}</strong>?</p>
-      <p class="warn-text">
-        This will remove all configuration, ranges, and IP assignments. The network block will remain as unallocated space.
+      <p>
+        Deallocate <strong>{{ dialogNetworkData.cidr }}</strong
+        >?
       </p>
+      <p>The network block stays as unallocated space.</p>
+      <DeallocationImpact :preview="deallocationPreview" :error="deallocationPreviewError" />
     </template>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showDeallocate = false" />
-      <Button label="Deallocate" severity="danger" @click="executeDeallocate" :loading="saving" />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Merge Networks Dialog -->
-  <Dialog v-model:visible="showMerge" header="Merge Networks" modal :style="{ width: '32rem' }" data-track="dialog-network-merge">
+  <ConfirmDialog
+    v-model:visible="showMerge"
+    header="Merge Networks"
+    width="32rem"
+    severity="warn"
+    confirm-label="Merge"
+    :loading="saving"
+    :disabled="
+      !mergePreview || Boolean(mergeError) || Boolean(mergePreview.plan?.conflicts?.length)
+    "
+    data-track="dialog-network-merge"
+    @confirm="executeMerge"
+  >
     <template v-if="mergePreview">
-      <p>Merging <strong>{{ mergePreview.source_cidrs.length }}</strong> networks into:</p>
+      <p>
+        Merging <strong>{{ mergePreview.source_cidrs.length }}</strong> networks into:
+      </p>
       <p class="merge-result-cidr">{{ mergePreview.merged_cidr }}</p>
       <div v-if="mergePreview.plan?.targets?.[0]?.gateway" class="merge-info">
-        Gateway policy <strong>{{ mergePreview.plan.targets[0].gateway.policy }}</strong>
-        resolves to <strong>{{ mergePreview.plan.targets[0].gateway.address || 'no gateway' }}</strong>.
+        Gateway policy <strong>{{ mergePreview.plan.targets[0].gateway.policy }}</strong> resolves
+        to <strong>{{ mergePreview.plan.targets[0].gateway.address || 'no gateway' }}</strong
+        >.
       </div>
       <div v-if="mergePreview.plan?.targets?.[0]?.scopes?.length" class="merge-info">
         The result will receive default DHCP pool
-        <strong>{{ mergePreview.plan.targets[0].scopes[0].intervals[0].start_ip }}–{{ mergePreview.plan.targets[0].scopes[0].intervals[0].end_ip }}</strong>.
-        Existing child pool bounds will not be retained.
+        <strong
+          >{{ mergePreview.plan.targets[0].scopes[0].intervals[0].start_ip }}–{{
+            mergePreview.plan.targets[0].scopes[0].intervals[0].end_ip
+          }}</strong
+        >. Existing child pool bounds will not be retained.
       </div>
       <div v-if="mergePreview.plan?.conflicts?.length" class="warn-text">
         Resolve the reported network policy conflicts before merging.
@@ -699,34 +1155,51 @@
     <template v-if="mergeError">
       <p class="warn-text">{{ mergeError }}</p>
     </template>
-    <template #footer>
-      <Button label="Cancel" severity="secondary" @click="showMerge = false" />
-      <Button v-if="mergePreview && !mergeError && !mergePreview.plan?.conflicts?.length" label="Merge" severity="warn" @click="executeMerge" :loading="saving" />
-    </template>
-  </Dialog>
+  </ConfirmDialog>
 
   <!-- Group Allocate Dialog -->
-  <Dialog v-model:visible="showGroupConfigure" header="Allocate Group" modal :style="{ width: '28rem' }" data-track="dialog-group-allocate">
-    <p>Allocate <strong>{{ groupDropIds.length }}</strong> networks to this folder?</p>
-    <p style="font-size: 0.85rem; color: var(--p-text-muted-color);">
-      Each network will be named using the current template and allocated with default settings.
+  <Dialog
+    v-model:visible="showGroupConfigure"
+    :header="groupDropFolderId == null ? 'Allocate Networks' : 'Allocate Group'"
+    modal
+    :style="{ width: '28rem' }"
+    data-track="dialog-group-allocate"
+  >
+    <p>
+      Allocate <strong>{{ groupDropIds.length }}</strong> networks{{
+        groupDropFolderId == null ? '' : ' to this folder'
+      }}?
+    </p>
+    <ul class="group-allocate-list">
+      <li v-for="network in groupNetworks" :key="network.id" class="mono">{{ network.cidr }}</li>
+    </ul>
+    <p class="muted text-sm">
+      Each keeps the name it was given, or takes the name template when it has none, and gets the
+      default gateway. No reverse DNS zone or DHCP scope is created; add those by editing a network.
     </p>
     <template #footer>
       <Button label="Cancel" severity="secondary" @click="showGroupConfigure = false" />
-      <Button label="Allocate All" @click="executeGroupConfigure" :loading="saving" />
+      <Button
+        label="Allocate All"
+        data-track="group-allocate-confirm"
+        @click="executeGroupConfigure"
+        :loading="saving"
+      />
     </template>
   </Dialog>
 </template>
 
 <script setup>
-import { ref, computed, watch } from 'vue';
+import { ref, computed, nextTick, watch } from 'vue';
 import { useToast } from '../ui/useToast.js';
-import { usePiholeImport } from '../composables/usePiholeImport.js';
+import { usePiholeImport, piholeImportSummary } from '../composables/usePiholeImport.js';
 import Button from '../ui/Button.js';
 import SelectButton from '../ui/SelectButton.js';
 import Dialog from '../ui/Dialog.js';
 import InputText from '../ui/InputText.js';
 import InputNumber from '../ui/InputNumber.js';
+import Checkbox from '../ui/Checkbox.js';
+import Slider from '../ui/Slider.js';
 import Select from '../ui/Select.js';
 import Message from '../ui/Message.js';
 import AutoComplete from '../ui/AutoComplete.js';
@@ -737,10 +1210,39 @@ import TabList from '../ui/TabList.js';
 import Tab from '../ui/Tab.js';
 import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
+import DeallocationImpact from './DeallocationImpact.vue';
+import ScanToggle from './ScanToggle.vue';
+import GatewayField from './GatewayField.vue';
+import ConfirmDialog from './ConfirmDialog.vue';
 import { useSubnetStore } from '../stores/subnets.js';
 import api from '../api/client.js';
+import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
+import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
 import { apiError } from '../utils/format.js';
-import { isValidCidr, isValidIpv4, normalizeCidr, dhcpPoolError, cidrValidationError, applyNameTemplate, calculateSubnets, subtractCidr, isSubnetOf, isIpInSubnet, parseCidr, dhcpRangeDefaults, gatewayIpFromPosition, normalizeGatewayPositionDefault, DHCP_DEFAULT_MIN_PREFIX, DHCP_DEFAULT_MAX_PREFIX } from '../utils/ip.js';
+import {
+  isValidIpv4,
+  dhcpRangeDefaults,
+  gatewayIpFromPosition,
+  normalizeGatewayPositionDefault,
+  inferGatewayPosition,
+  DHCP_DEFAULT_MIN_PREFIX,
+  DHCP_DEFAULT_MAX_PREFIX,
+  isValidNetwork,
+  normalizeNetwork,
+  parseNetwork,
+  splitNetwork,
+  subtractNetwork,
+  isNetworkWithin,
+  networkNameFromTemplate,
+  networkValidationError,
+  dhcpPoolErrorForNetwork,
+  maxPrefixFor,
+  cidrFamily,
+  dhcpV6ModesFor,
+  DHCP_V6_MODE_LABELS,
+  divideGatewayDefault,
+} from '../utils/ip.js';
+import { useFeatures } from '../composables/useFeatures.js';
 
 const props = defineProps({
   selectedNode: { type: Object, default: null },
@@ -750,14 +1252,33 @@ const props = defineProps({
 });
 
 const emit = defineEmits([
-  'folder-created', 'folder-updated', 'folder-deleted',
-  'network-created', 'network-configured', 'network-updated',
-  'network-divided', 'network-deleted', 'networks-merged',
+  'folder-created',
+  'folder-updated',
+  'folder-deleted',
+  'network-created',
+  'network-configured',
+  'network-updated',
+  'network-divided',
+  'network-deleted',
+  'networks-merged',
   'group-configured',
 ]);
 
 const store = useSubnetStore();
 const toast = useToast();
+// The global IPv6 switch: an IPv6 CIDR is refused inline while it is off.
+const { ipv6: ipv6Supported } = useFeatures();
+
+// What each DHCPv6 mode does, for the mode picker.
+const DHCP_V6_MODE_HELP = Object.freeze({
+  slaac:
+    'Router Advertisements only. Hosts choose their own addresses; CIDRella records them as SLAAC.',
+  stateless: 'SLAAC for addresses, DHCPv6 for DNS and domain options.',
+  stateful: 'CIDRella hands out addresses from a pool. Reservations are by DUID.',
+});
+function dhcpV6ModeOptionsFor(modes) {
+  return modes.map((value) => ({ value, label: DHCP_V6_MODE_LABELS[value] || value }));
+}
 const saving = ref(false);
 
 // ── Folder dialogs ──
@@ -766,35 +1287,43 @@ const showDeleteFolderDialog = ref(false);
 const editingFolder = ref(null);
 const deletingFolder = ref(null);
 const folderForm = ref({ name: '', description: '' });
+// Unsaved-form guards (W-05). Each form dialog snapshots its fields when it
+// opens and compares on dismissal; a dirty form asks before closing.
+let folderFormBaseline = '';
+const folderDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(folderForm.value) !== folderFormBaseline,
+  close: () => {
+    showFolderDialog.value = false;
+  },
+  busy: saving,
+});
+function showFolderEditor() {
+  folderFormBaseline = JSON.stringify(folderForm.value);
+  folderDiscard.reset();
+  showFolderDialog.value = true;
+}
 
 // ── Guided Setup Wizard ──
 const showWizard = ref(false);
 const wizardStep = ref(1);
 const wizardNet = ref({
-  cidr: '', name: '', description: '', vlan_id: null,
-  gateway_position: 'first', gateway_address: '', domain_name: '',
-  create_dhcp_scope: false, create_reverse_dns: false,
-  dhcp_start_ip: '', dhcp_end_ip: '',
+  cidr: '',
+  name: '',
+  description: '',
+  vlan_id: null,
+  gateway_position: 'first',
+  gateway_address: '',
+  domain_name: '',
+  create_dhcp_scope: false,
+  create_reverse_dns: false,
+  dhcp_start_ip: '',
+  dhcp_end_ip: '',
+  dhcp_v6_mode: null,
   scan_enabled: true,
 });
 // Gateway position options live here but watchers that reference `networkForm`
 // must wait until `networkForm` itself is declared, installed further below.
-const gatewayPositionOptions = [
-  { label: 'First IP', value: 'first' },
-  { label: 'Last IP', value: 'last' },
-  { label: 'None', value: 'none' },
-  { label: 'Custom', value: 'custom' },
-];
 const gatewayPosition = ref('custom');
-
-function inferGatewayPosition(cidr, address) {
-  const addr = (address || '').trim();
-  if (!addr) return 'none';
-  if (!cidr || !isValidCidr(cidr)) return 'custom';
-  if (addr === gatewayIpFromPosition(cidr, 'first')) return 'first';
-  if (addr === gatewayIpFromPosition(cidr, 'last'))  return 'last';
-  return 'custom';
-}
 
 const domainWarningShown = ref(false);
 const wizardVlanSelection = ref(null);
@@ -808,16 +1337,16 @@ const wizardCreatedVlanId = ref(null);
 const wizardIfaces = ref([]);
 const wizardIfaceLoading = ref(false);
 const wizardIfaceSaving = ref(false);
-const wizardHasSelectedIface = computed(() => wizardIfaces.value.some(i => i.dns));
+const wizardHasSelectedIface = computed(() => wizardIfaces.value.some((i) => i.dns));
 const wizardDnsListenPort = ref(53);
 
 // Used in the non-53 port warning, first DNS-enabled interface's IPv4, or a
 // placeholder if none picked yet.
 const resolverIpForHint = computed(() => {
-  const picked = wizardIfaces.value.find(i => i.dns);
+  const picked = wizardIfaces.value.find((i) => i.dns);
   // isValidIpv4 rather than a bare shape regex: the inline one accepted
   // "1234.1.1.1" and any out-of-range octet. See audit #51.
-  const ip = picked?.addresses?.find(a => isValidIpv4(a.address))?.address;
+  const ip = picked?.addresses?.find((a) => isValidIpv4(a.address))?.address;
   return ip || 'server';
 });
 
@@ -825,12 +1354,17 @@ async function loadWizardInterfaces() {
   wizardIfaceLoading.value = true;
   try {
     const res = await api.get('/interfaces');
-    wizardIfaces.value = res.data.map(iface => ({
+    wizardIfaces.value = res.data.map((iface) => ({
       ...iface,
       dns: false,
     }));
   } catch {
-    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to load interfaces', life: 3000 });
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to load interfaces',
+      life: 3000,
+    });
   } finally {
     wizardIfaceLoading.value = false;
   }
@@ -853,7 +1387,12 @@ async function wizardSaveInterfaces() {
     });
     wizardStep.value = 2;
   } catch {
-    toast.add({ severity: 'error', summary: 'Error', detail: 'Failed to save interface config', life: 3000 });
+    toast.add({
+      severity: 'error',
+      summary: 'Error',
+      detail: 'Failed to save interface config',
+      life: 3000,
+    });
   } finally {
     wizardIfaceSaving.value = false;
   }
@@ -863,20 +1402,50 @@ const wizardCidrError = computed(() => {
   // Runs the reserved-range rule too, which this used to skip. 10.0.0.0/7 was
   // caught inline by the supernet dialog and eaten as a server 400 here
   // (duplicate-logic audit #54).
-  return cidrValidationError(wizardNet.value.cidr, { supernet: true });
+  return networkValidationError(wizardNet.value.cidr, {
+    supernet: true,
+    ipv6: ipv6Supported.value,
+  });
 });
 
 const wizardAutoName = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
-  if (!cidr || !isValidCidr(cidr)) return '';
-  try { return applyNameTemplate(props.nameTemplate, normalizeCidr(cidr)); }
-  catch { return ''; }
+  if (!cidr || !isValidNetwork(cidr)) return '';
+  try {
+    return networkNameFromTemplate(props.nameTemplate, normalizeNetwork(cidr));
+  } catch {
+    return '';
+  }
 });
 
 const wizardPrefixLength = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
-  if (cidr && isValidCidr(cidr)) return parseCidr(cidr).prefix;
+  if (cidr && isValidNetwork(cidr)) return parseNetwork(cidr).prefix;
   return 32;
+});
+const wizardFamily = computed(() => cidrFamily((wizardNet.value.cidr || '').trim()) || 4);
+const wizardDhcpV6ModeOptions = computed(() =>
+  dhcpV6ModeOptionsFor(dhcpV6ModesFor(wizardPrefixLength.value)),
+);
+// A DHCP block on an IPv6 network means a mode; the pool exists only for stateful.
+const wizardShowsDhcp = computed(
+  () =>
+    wizardNet.value.create_dhcp_scope &&
+    (wizardFamily.value === 6 || wizardPrefixLength.value <= 29),
+);
+const wizardShowsPool = computed(
+  () => wizardFamily.value !== 6 || wizardNet.value.dhcp_v6_mode === 'stateful',
+);
+watch([wizardFamily, wizardDhcpV6ModeOptions], ([family, options]) => {
+  if (family !== 6) {
+    wizardNet.value.dhcp_v6_mode = null;
+    return;
+  }
+  // A prefix shorter than /64 has no DHCPv6 mode, so no scope to create.
+  if (!options.length) wizardNet.value.create_dhcp_scope = false;
+  if (!options.some((option) => option.value === wizardNet.value.dhcp_v6_mode)) {
+    wizardNet.value.dhcp_v6_mode = options[0]?.value ?? null;
+  }
 });
 
 // True when the wizard CIDR is outside the auto-fill sweet spot, either too
@@ -889,8 +1458,9 @@ const wizardDhcpRiskySize = computed(() => {
 
 const wizardDhcpDefaults = computed(() => {
   const cidr = (wizardNet.value.cidr || '').trim();
-  if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
-  const p = parseCidr(cidr);
+  // IPv4 only: an IPv6 stateful pool is sized by the server when none is typed.
+  if (!cidr || !isValidNetwork(cidr) || cidrFamily(cidr) !== 4) return { start: '', end: '' };
+  const p = parseNetwork(cidr);
   // Use the effective gateway (handles 'custom' and 'none') so the default
   // DHCP range correctly excludes a user-typed gateway address too.
   const gw = wizardEffectiveGateway(cidr);
@@ -898,22 +1468,25 @@ const wizardDhcpDefaults = computed(() => {
 });
 
 const wizardDhcpScopeError = computed(() => {
-  if (!wizardNet.value.create_dhcp_scope || wizardPrefixLength.value > 29) return null;
+  if (!wizardShowsDhcp.value || !wizardShowsPool.value) return null;
   const cidr = (wizardNet.value.cidr || '').trim();
-  if (!cidr || !isValidCidr(cidr)) return null;
+  if (!cidr || !isValidNetwork(cidr)) return null;
 
   const startIp = (wizardNet.value.dhcp_start_ip || wizardDhcpDefaults.value.start || '').trim();
   const endIp = (wizardNet.value.dhcp_end_ip || wizardDhcpDefaults.value.end || '').trim();
-  return dhcpPoolError(startIp, endIp, cidr, { label: 'DHCP Scope' });
+  return dhcpPoolErrorForNetwork(startIp, endIp, cidr, { label: 'DHCP Scope' });
 });
 
-watch(() => wizardNet.value.gateway_position, () => {
-  if (wizardNet.value.create_dhcp_scope) {
-    const d = wizardDhcpDefaults.value;
-    wizardNet.value.dhcp_start_ip = d.start || '';
-    wizardNet.value.dhcp_end_ip = d.end || '';
-  }
-});
+watch(
+  () => wizardNet.value.gateway_position,
+  () => {
+    if (wizardNet.value.create_dhcp_scope) {
+      const d = wizardDhcpDefaults.value;
+      wizardNet.value.dhcp_start_ip = d.start || '';
+      wizardNet.value.dhcp_end_ip = d.end || '';
+    }
+  },
+);
 
 // Wizard gateway: mirror the Edit-dialog sync. Position → address (First/Last/None
 // auto-fills; Custom leaves editable). Address → position (user-typed value flips
@@ -930,30 +1503,39 @@ function wizardEffectiveGateway(cidr) {
   if (pos === 'custom') return (wizardNet.value.gateway_address || '').trim() || null;
   return gatewayIpFromPosition(cidr, pos) || null;
 }
-watch(() => wizardNet.value.gateway_position, (pos) => {
-  if (pos === 'custom') return;
-  const cidr = (wizardNet.value.cidr || '').trim();
-  if (pos === 'none') {
-    if (wizardNet.value.gateway_address !== '') wizardNet.value.gateway_address = '';
-    return;
-  }
-  if (!cidr || !isValidCidr(cidr)) return;
-  const target = gatewayIpFromPosition(cidr, pos) || '';
-  if (wizardNet.value.gateway_address !== target) wizardNet.value.gateway_address = target;
-});
-watch(() => wizardNet.value.gateway_address, (addr) => {
-  const inferred = inferGatewayPosition(wizardNet.value.cidr, addr);
-  if (wizardNet.value.gateway_position !== inferred) wizardNet.value.gateway_position = inferred;
-});
-watch(() => wizardNet.value.cidr, (cidr) => {
-  const pos = wizardNet.value.gateway_position;
-  if (pos === 'first' || pos === 'last') {
-    if (cidr && isValidCidr(cidr)) {
-      const target = gatewayIpFromPosition(cidr, pos) || '';
-      if (wizardNet.value.gateway_address !== target) wizardNet.value.gateway_address = target;
+watch(
+  () => wizardNet.value.gateway_position,
+  (pos) => {
+    if (pos === 'custom') return;
+    const cidr = (wizardNet.value.cidr || '').trim();
+    if (pos === 'none') {
+      if (wizardNet.value.gateway_address !== '') wizardNet.value.gateway_address = '';
+      return;
     }
-  }
-});
+    if (!cidr || !isValidNetwork(cidr)) return;
+    const target = gatewayIpFromPosition(cidr, pos) || '';
+    if (wizardNet.value.gateway_address !== target) wizardNet.value.gateway_address = target;
+  },
+);
+watch(
+  () => wizardNet.value.gateway_address,
+  (addr) => {
+    const inferred = inferGatewayPosition(wizardNet.value.cidr, addr);
+    if (wizardNet.value.gateway_position !== inferred) wizardNet.value.gateway_position = inferred;
+  },
+);
+watch(
+  () => wizardNet.value.cidr,
+  (cidr) => {
+    const pos = wizardNet.value.gateway_position;
+    if (pos === 'first' || pos === 'last') {
+      if (cidr && isValidNetwork(cidr)) {
+        const target = gatewayIpFromPosition(cidr, pos) || '';
+        if (wizardNet.value.gateway_address !== target) wizardNet.value.gateway_address = target;
+      }
+    }
+  },
+);
 
 // Auto-populate DHCP Start/End IPs when "Create DHCP scope" is toggled on. Mirrors
 // the Edit dialog. Only fills blank fields so the user's own input is never overwritten.
@@ -962,7 +1544,7 @@ function applyWizardDhcpDefaults() {
   const d = wizardDhcpDefaults.value;
   if (!d.start || !d.end) return;
   if (!wizardNet.value.dhcp_start_ip) wizardNet.value.dhcp_start_ip = d.start;
-  if (!wizardNet.value.dhcp_end_ip)   wizardNet.value.dhcp_end_ip   = d.end;
+  if (!wizardNet.value.dhcp_end_ip) wizardNet.value.dhcp_end_ip = d.end;
 }
 watch(() => wizardNet.value.create_dhcp_scope, applyWizardDhcpDefaults);
 // Also fire when the CIDR arrives AFTER the checkbox was already ticked, e.g.
@@ -971,9 +1553,17 @@ watch(() => wizardNet.value.cidr, applyWizardDhcpDefaults);
 
 function searchWizardVlans(event) {
   // Reuse the existing vlan search but scoped, wizard has no folder yet so search all
-  api.get('/vlans/search', { params: { q: event.query } }).then(res => {
-    vlanSuggestions.value = res.data.map(v => ({ ...v, display: `VLAN ${v.vlan_id} — ${v.name}` }));
-  }).catch(() => { vlanSuggestions.value = []; });
+  api
+    .get('/vlans/search', { params: { q: event.query } })
+    .then((res) => {
+      vlanSuggestions.value = res.data.map((v) => ({
+        ...v,
+        display: `VLAN ${v.vlan_id} — ${v.name}`,
+      }));
+    })
+    .catch(() => {
+      vlanSuggestions.value = [];
+    });
 }
 
 function onWizardVlanSelect(event) {
@@ -997,13 +1587,18 @@ async function createVlan(form, onSuccess) {
     toast.add({ severity: 'success', summary: 'VLAN created', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 function createVlanFromWizard() {
   return createVlan(wizardNewVlanForm, (created) => {
     wizardNet.value.vlan_id = created.vlan_id;
-    wizardVlanSelection.value = { ...created, display: `VLAN ${created.vlan_id} — ${created.name}` };
+    wizardVlanSelection.value = {
+      ...created,
+      display: `VLAN ${created.vlan_id} — ${created.name}`,
+    };
     wizardCreatedVlanId.value = created.id;
     showWizardCreateVlan.value = false;
     wizardNewVlanForm.value = { vlan_id: null, name: '' };
@@ -1014,14 +1609,21 @@ function createVlanFromWizard() {
 async function wizardSkip() {
   // Mark wizard as completed and close
   try {
-    await store.updateSetting('setup_wizard_completed', '1');
-  } catch { /* best effort */ }
+    await store.updateSetting('setup_wizard_completed', 'true');
+  } catch {
+    /* best effort */
+  }
   showWizard.value = false;
 }
 
 async function wizardCreateAndContinue() {
   if (wizardDhcpScopeError.value) {
-    toast.add({ severity: 'error', summary: 'Invalid DHCP scope', detail: wizardDhcpScopeError.value, life: 5000 });
+    toast.add({
+      severity: 'error',
+      summary: 'Invalid DHCP scope',
+      detail: wizardDhcpScopeError.value,
+      life: 5000,
+    });
     return;
   }
   if (!wizardNet.value.domain_name && !domainWarningShown.value) {
@@ -1045,7 +1647,11 @@ async function wizardCreateAndContinue() {
       create_dhcp_scope: wizardNet.value.create_dhcp_scope,
       create_reverse_dns: wizardNet.value.create_reverse_dns,
     };
-    if (payload.create_dhcp_scope) {
+    if (wizardFamily.value === 6) {
+      payload.gateway_address = undefined;
+      if (payload.create_dhcp_scope) payload.dhcp_v6_mode = wizardNet.value.dhcp_v6_mode;
+    }
+    if (payload.create_dhcp_scope && wizardShowsPool.value) {
       payload.dhcp_start_ip = wizardNet.value.dhcp_start_ip || wizardDhcpDefaults.value.start;
       payload.dhcp_end_ip = wizardNet.value.dhcp_end_ip || wizardDhcpDefaults.value.end;
     }
@@ -1057,14 +1663,18 @@ async function wizardCreateAndContinue() {
     wizardStep.value = 3;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function wizardFinish() {
   wizardCreatedVlanId.value = null;
   try {
-    await store.updateSetting('setup_wizard_completed', '1');
-  } catch { /* best effort */ }
+    await store.updateSetting('setup_wizard_completed', 'true');
+  } catch {
+    /* best effort */
+  }
   showWizard.value = false;
   emit('network-created');
 }
@@ -1080,14 +1690,23 @@ const wizardCreatedSubnetId = ref(null);
 // wizard's template already binds, so no template changed.
 // See REVIEW.md, duplicate-logic audit #47.
 const {
-  tab: piholeTab, url: piholeUrl, password: piholePassword,
-  probeStatus: piholeProbeStatus, probeError: piholeProbeError,
+  tab: piholeTab,
+  url: piholeUrl,
+  password: piholePassword,
+  probeStatus: piholeProbeStatus,
+  probeError: piholeProbeError,
   needsPassword: piholeNeedsPassword,
-  fetching: piholeFetching, parsing: piholeParsing, importing: piholeImporting,
-  preview: piholePreview, importResults: piholeImportResults,
-  fileContent: piholeFileContent, fileInput: piholeFileInput,
-  fetchConfig: fetchPiholeConfig, onFileSelect: onPiholeFileSelect,
-  parseFile: parsePiholeFile, executeImport: executePiholeImport,
+  fetching: piholeFetching,
+  parsing: piholeParsing,
+  importing: piholeImporting,
+  preview: piholePreview,
+  importResults: piholeImportResults,
+  fileContent: piholeFileContent,
+  fileInput: piholeFileInput,
+  fetchConfig: fetchPiholeConfig,
+  onFileSelect: onPiholeFileSelect,
+  parseFile: parsePiholeFile,
+  executeImport: executePiholeImport,
   resetState: resetPiholeImportState,
 } = usePiholeImport({
   toast,
@@ -1105,16 +1724,27 @@ function resetPiholeState() {
 async function onWizardClose() {
   // Clean up eagerly-created resources if user cancelled
   if (wizardCreatedVlanId.value) {
-    try { await api.delete(`/vlans/${wizardCreatedVlanId.value}`); } catch { /* best effort */ }
+    try {
+      await api.delete(`/vlans/${wizardCreatedVlanId.value}`);
+    } catch {
+      /* best effort */
+    }
   }
   // Reset wizard state
   wizardStep.value = 1;
   wizardIfaces.value = [];
   wizardNet.value = {
-    cidr: '', name: '', description: '', vlan_id: null,
-    gateway_position: 'first', gateway_address: '', domain_name: '',
-    create_dhcp_scope: false, create_reverse_dns: false,
-    dhcp_start_ip: '', dhcp_end_ip: '',
+    cidr: '',
+    name: '',
+    description: '',
+    vlan_id: null,
+    gateway_position: 'first',
+    gateway_address: '',
+    domain_name: '',
+    create_dhcp_scope: false,
+    create_reverse_dns: false,
+    dhcp_start_ip: '',
+    dhcp_end_ip: '',
   };
   domainWarningShown.value = false;
   wizardVlanSelection.value = null;
@@ -1126,8 +1756,12 @@ async function openWizard() {
   await onWizardClose(); // reset and finish any resource cleanup before reopening
   try {
     const settings = await store.getSettings();
-    wizardNet.value.gateway_position = normalizeGatewayPositionDefault(settings.default_gateway_position);
-  } catch { /* best effort, keep the server default */ }
+    wizardNet.value.gateway_position = normalizeGatewayPositionDefault(
+      settings.default_gateway_position,
+    );
+  } catch {
+    /* best effort, keep the server default */
+  }
   showWizard.value = true;
   loadWizardInterfaces();
 }
@@ -1154,7 +1788,9 @@ async function saveFolder() {
     folderCreateFromEdit.value = false;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function executeDeleteFolder() {
@@ -1166,21 +1802,36 @@ async function executeDeleteFolder() {
     emit('folder-deleted', deletingFolder.value.id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 // ── Create Network dialog ──
 const showSubnetDialog = ref(false);
 const quickAddMode = ref(false);
 const supernetForm = ref({ cidr: '', name: '', folder_id: null });
+let supernetFormBaseline = '';
+const supernetDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(supernetForm.value) !== supernetFormBaseline,
+  close: () => {
+    showSubnetDialog.value = false;
+  },
+  busy: saving,
+});
+function showSupernetEditor() {
+  supernetFormBaseline = JSON.stringify(supernetForm.value);
+  supernetDiscard.reset();
+  showSubnetDialog.value = true;
+}
 const folderOptions = computed(() => store.folders);
 // Exclude the virtual "Ungrouped" folder (id === null) from the Select so users
 // pick "None (ungrouped)" via the showClear button rather than a duplicate row.
 const selectableFolderOptions = computed(() =>
   store.folders
-    .filter(f => f.id !== null && f.id !== undefined)
+    .filter((f) => f.id !== null && f.id !== undefined)
     .slice()
-    .sort((a, b) => (a.name || '').localeCompare(b.name || ''))
+    .sort((a, b) => (a.name || '').localeCompare(b.name || '')),
 );
 
 // Track whether the folder-create dialog was opened from inside the Edit Network
@@ -1190,18 +1841,24 @@ function openCreateFolderFromEdit() {
   folderCreateFromEdit.value = true;
   editingFolder.value = null;
   folderForm.value = { name: '', description: '' };
-  showFolderDialog.value = true;
+  showFolderEditor();
 }
 
 const supernetValidationError = computed(() => {
-  return cidrValidationError(supernetForm.value.cidr, { supernet: true });
+  return networkValidationError(supernetForm.value.cidr, {
+    supernet: true,
+    ipv6: ipv6Supported.value,
+  });
 });
 
 const supernetAutoName = computed(() => {
   const cidr = supernetForm.value.cidr.trim();
-  if (!cidr || !isValidCidr(cidr)) return '';
-  try { return applyNameTemplate(props.nameTemplate, normalizeCidr(cidr)); }
-  catch { return ''; }
+  if (!cidr || !isValidNetwork(cidr)) return '';
+  try {
+    return networkNameFromTemplate(props.nameTemplate, normalizeNetwork(cidr));
+  } catch {
+    return '';
+  }
 });
 
 async function createSupernet() {
@@ -1213,16 +1870,23 @@ async function createSupernet() {
       folder_id: supernetForm.value.folder_id || undefined,
     });
     showSubnetDialog.value = false;
-    supernetForm.value = { cidr: '', name: '', folder_id: store.folders[0]?.id || null };
+    supernetForm.value = { cidr: '', name: '', folder_id: null };
     toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
     emit('network-created');
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 // ── Divide dialog ──
 const showDivide = ref(false);
+// The network the divide dialog works on: the one it was opened for, which
+// the parent's selected node can differ from (a menu on one network while
+// another, or a deleted one, is still selected).
+const divideNodeOverride = ref(null);
+const divideNode = computed(() => divideNodeOverride.value || props.selectedNode);
 const divideMode = ref('equal');
 const divideModeOptions = [
   { label: 'Equal Division', value: 'equal' },
@@ -1237,84 +1901,129 @@ const carveCidr = computed(() => `${carveNetwork.value}/${carvePrefix.value}`);
 const carveValidationError = computed(() => {
   const cidr = carveCidr.value;
   if (!carveNetwork.value) return 'Enter a network address';
-  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
-  if (!props.selectedNode) return null;
-  const parentCidr = props.selectedNode.data.cidr;
-  const normalized = normalizeCidr(cidr);
-  const parentParsed = parseCidr(parentCidr);
-  const childParsed = parseCidr(normalized);
+  if (!isValidNetwork(cidr)) return 'Invalid CIDR notation';
+  if (!divideNode.value) return null;
+  const parentCidr = divideNode.value.data.cidr;
+  const normalized = normalizeNetwork(cidr);
+  const parentParsed = parseNetwork(parentCidr);
+  const childParsed = parseNetwork(normalized);
+  if (childParsed.family !== parentParsed.family) return `Not within ${parentCidr}`;
   if (childParsed.prefix <= parentParsed.prefix) return 'Must have a longer prefix than parent';
-  if (!isSubnetOf(normalized, parentCidr)) return `Not within ${parentCidr}`;
+  if (!isNetworkWithin(normalized, parentCidr)) return `Not within ${parentCidr}`;
   return null;
 });
 
 const carvePreview = computed(() => {
   const cidr = carveCidr.value;
-  if (!carveNetwork.value || !props.selectedNode || carveValidationError.value) return null;
-  try { return subtractCidr(props.selectedNode.data.cidr, normalizeCidr(cidr)); }
-  catch { return null; }
+  if (!carveNetwork.value || !divideNode.value || carveValidationError.value) return null;
+  try {
+    return subtractNetwork(divideNode.value.data.cidr, normalizeNetwork(cidr));
+  } catch {
+    return null;
+  }
 });
 
 const maxDivideSteps = computed(() => {
-  if (!props.selectedNode) return 1;
-  return Math.min(32 - props.selectedNode.data.prefix_length, 8);
+  if (!divideNode.value) return 1;
+  const bound = maxPrefixFor(divideNode.value.data.cidr) - divideNode.value.data.prefix_length;
+  return Math.max(1, Math.min(bound, 8));
 });
 
 const maxDivideCount = computed(() => Math.pow(2, maxDivideSteps.value));
 
 const divideTargetPrefix = computed(() => {
-  if (!props.selectedNode) return 32;
-  return props.selectedNode.data.prefix_length + divideSteps.value;
+  if (!divideNode.value) return 32;
+  return divideNode.value.data.prefix_length + divideSteps.value;
 });
 
 const dividePreviewSubnets = computed(() => {
-  if (!props.selectedNode) return [];
-  const parentCidr = props.selectedNode.data.cidr;
-  const targetPrefix = props.selectedNode.data.prefix_length + divideSteps.value;
-  if (targetPrefix > 32) return [];
-  return calculateSubnets(parentCidr, targetPrefix);
+  if (!divideNode.value) return [];
+  const parentCidr = divideNode.value.data.cidr;
+  const targetPrefix = divideNode.value.data.prefix_length + divideSteps.value;
+  if (targetPrefix > maxPrefixFor(parentCidr)) return [];
+  // The shared helper returns parsed networks and throws on an impossible
+  // split; the preview wants the CIDR strings and an empty list.
+  try {
+    return splitNetwork(parentCidr, targetPrefix, 65536).map(
+      (child) => `${child.network}/${child.prefix}`,
+    );
+  } catch {
+    return [];
+  }
 });
 
 const gatewayPolicyOptions = [
   { label: 'First allocatable', value: 'first' },
   { label: 'Last allocatable', value: 'last' },
   { label: 'Custom', value: 'custom' },
-  { label: 'No gateway', value: 'none' }
+  { label: 'No gateway', value: 'none' },
 ];
 const divideGatewayPolicies = ref({});
+const divideState = () =>
+  JSON.stringify({
+    mode: divideMode.value,
+    steps: divideSteps.value,
+    count: divideCount.value,
+    carveNetwork: carveNetwork.value,
+    carvePrefix: carvePrefix.value,
+    gateways: divideGatewayPolicies.value,
+  });
+let divideBaseline = '';
+const divideDiscard = useDiscardGuard({
+  isDirty: () => divideState() !== divideBaseline,
+  close: () => {
+    showDivide.value = false;
+  },
+  busy: saving,
+});
 const serverDividePreview = ref(null);
 const dividePreviewLoading = ref(false);
 const dividePreviewError = ref(null);
+const divideStaleNotice = ref('');
+// The reviewed plan's identity travels with every execute so the server runs
+// exactly what was shown (section 8.2 step 5).
+const reviewedDividePlan = () => ({
+  plan_token: serverDividePreview.value?.plan?.dependency_token || undefined,
+  plan_id: serverDividePreview.value?.plan?.plan_id || undefined,
+});
 let dividePreviewRequest = 0;
-const divideResultCidrs = computed(() => divideMode.value === 'equal'
-  ? dividePreviewSubnets.value
-  : (carvePreview.value ? [normalizeCidr(carveCidr.value), ...carvePreview.value] : []));
+const divideResultCidrs = computed(() =>
+  divideMode.value === 'equal'
+    ? dividePreviewSubnets.value
+    : carvePreview.value
+      ? [normalizeNetwork(carveCidr.value), ...carvePreview.value]
+      : [],
+);
 
-watch(divideResultCidrs, (cidrs) => {
-  const parent = props.selectedNode?.data;
-  if (parent?.gateway_policy !== 'custom') return;
-  const next = {};
-  for (const cidr of cidrs) {
-    const existing = divideGatewayPolicies.value[cidr];
-    if (existing) next[cidr] = existing;
-    else if (parent.gateway_address && isIpInSubnet(parent.gateway_address, cidr)) {
-      next[cidr] = { policy: 'custom', address: parent.gateway_address };
-    } else next[cidr] = { policy: 'none', address: null };
-  }
-  divideGatewayPolicies.value = next;
-}, { immediate: true });
+watch(
+  divideResultCidrs,
+  (cidrs) => {
+    const parent = divideNode.value?.data;
+    if (parent?.gateway_policy !== 'custom') return;
+    const next = {};
+    for (const cidr of cidrs) {
+      const existing = divideGatewayPolicies.value[cidr];
+      next[cidr] = existing || divideGatewayDefault(parent, cidr);
+    }
+    divideGatewayPolicies.value = next;
+  },
+  { immediate: true },
+);
 
 function divideTargetGateways() {
-  if (props.selectedNode?.data.gateway_policy !== 'custom') return undefined;
-  return divideResultCidrs.value.map(cidr => ({ cidr, ...divideGatewayPolicies.value[cidr] }));
+  if (divideNode.value?.data.gateway_policy !== 'custom') return undefined;
+  return divideResultCidrs.value.map((cidr) => ({ cidr, ...divideGatewayPolicies.value[cidr] }));
 }
 
 const authoritativeDivideTargets = computed(() => serverDividePreview.value?.plan?.targets || []);
-const divideAddsDefaultScopes = computed(() => authoritativeDivideTargets.value
-  .some(target => target.scopes?.some(scope => scope.origin === 'default')));
+const divideAddsDefaultScopes = computed(() =>
+  authoritativeDivideTargets.value.some((target) =>
+    target.scopes?.some((scope) => scope.origin === 'default'),
+  ),
+);
 
 async function refreshDividePreview() {
-  if (!showDivide.value || !props.selectedNode?.data?.id) return;
+  if (!showDivide.value || !divideNode.value?.data?.id) return;
   if (divideMode.value === 'carve' && (carveValidationError.value || !carveNetwork.value)) {
     serverDividePreview.value = null;
     return;
@@ -1322,12 +2031,13 @@ async function refreshDividePreview() {
   const requestId = ++dividePreviewRequest;
   dividePreviewLoading.value = true;
   dividePreviewError.value = null;
+  divideStaleNotice.value = '';
   try {
-    const preview = await store.previewDivide(props.selectedNode.data.id, {
+    const preview = await store.previewDivide(divideNode.value.data.id, {
       ...(divideMode.value === 'equal'
         ? { new_prefix: divideTargetPrefix.value }
-        : { cidr: normalizeCidr(carveCidr.value) }),
-      target_gateways: divideTargetGateways()
+        : { cidr: normalizeNetwork(carveCidr.value) }),
+      target_gateways: divideTargetGateways(),
     });
     if (requestId === dividePreviewRequest) serverDividePreview.value = preview;
   } catch (err) {
@@ -1343,10 +2053,12 @@ async function refreshDividePreview() {
 watch(
   [showDivide, divideMode, divideTargetPrefix, carveCidr, divideGatewayPolicies],
   refreshDividePreview,
-  { deep: true }
+  { deep: true },
 );
 
-watch(divideSteps, (steps) => { divideCount.value = Math.pow(2, steps); });
+watch(divideSteps, (steps) => {
+  divideCount.value = Math.pow(2, steps);
+});
 
 function onDivideCountInput(val) {
   if (!val || val < 2) return;
@@ -1359,7 +2071,7 @@ function onDivideCountInput(val) {
 // Destructive divide conflicts are accepted by exact record identity.
 const showLossyConfirm = ref(false);
 const lossyIps = ref([]);
-const pendingLossyDivide = ref(null);  // { mode: 'equal'|'carve', params, nodeId }
+const pendingLossyDivide = ref(null); // { mode: 'equal'|'carve', params, nodeId }
 
 function lossyReasonLabel(row) {
   if (row.reason === 'network') return `becomes network of ${row.child_cidr}`;
@@ -1375,23 +2087,25 @@ function lossyCarriesLabel(carries) {
 }
 
 async function executeDivide() {
-  const nodeId = props.selectedNode.data.id;
-  const isAllocated = props.selectedNode.data.status === 'allocated';
+  const nodeId = divideNode.value.data.id;
+  const isAllocated = divideNode.value.data.status === 'allocated';
   const params = {
     new_prefix: divideTargetPrefix.value,
     force: isAllocated,
-    target_gateways: divideTargetGateways()
+    target_gateways: divideTargetGateways(),
+    ...reviewedDividePlan(),
   };
   await runDivide(nodeId, 'equal', params);
 }
 
 async function executeCarve() {
-  const nodeId = props.selectedNode.data.id;
-  const isAllocated = props.selectedNode.data.status === 'allocated';
+  const nodeId = divideNode.value.data.id;
+  const isAllocated = divideNode.value.data.status === 'allocated';
   const params = {
-    cidr: normalizeCidr(carveCidr.value),
+    cidr: normalizeNetwork(carveCidr.value),
     force: isAllocated,
-    target_gateways: divideTargetGateways()
+    target_gateways: divideTargetGateways(),
+    ...reviewedDividePlan(),
   };
   await runDivide(nodeId, 'carve', params);
 }
@@ -1406,14 +2120,13 @@ function surfacePoolAdjustments(resp) {
     const primaryPool = a.pool_now
       ? `${a.pool_now.start_ip}–${a.pool_now.end_ip}`
       : 'empty (whole pool was the gateway)';
-    const extraPools = (a.additional_pools || [])
-      .map(pool => `${pool.start_ip}–${pool.end_ip}`);
+    const extraPools = (a.additional_pools || []).map((pool) => `${pool.start_ip}–${pool.end_ip}`);
     const poolAfter = [primaryPool, ...extraPools].join(', ');
     toast.add({
       severity: 'warn',
       summary: 'DHCP pool adjusted for gateway',
       detail: `The default gateway ${a.gateway} for ${a.child_cidr} conflicted with a DHCP pool and was removed from the pool (${poolBefore} → ${poolAfter}).`,
-      life: 9000
+      life: 9000,
     });
   }
 }
@@ -1426,38 +2139,61 @@ function surfaceLossyCleanup(resp) {
   if (!c || !c.ips || c.ips.length === 0) return;
   const r = c.removed || {};
   const parts = [];
-  if (r.reservations) parts.push(`${r.reservations} DHCP Reservation${r.reservations === 1 ? '' : 's'}`);
-  if (r.dns_records)  parts.push(`${r.dns_records} DNS A record${r.dns_records === 1 ? '' : 's'}`);
-  if (r.leases)       parts.push(`${r.leases} DHCP lease${r.leases === 1 ? '' : 's'}`);
+  if (r.reservations)
+    parts.push(`${r.reservations} DHCP Reservation${r.reservations === 1 ? '' : 's'}`);
+  if (r.dns_records) parts.push(`${r.dns_records} DNS A record${r.dns_records === 1 ? '' : 's'}`);
+  if (r.leases) parts.push(`${r.leases} DHCP lease${r.leases === 1 ? '' : 's'}`);
   if (r.ip_addresses) parts.push(`${r.ip_addresses} IP record${r.ip_addresses === 1 ? '' : 's'}`);
   if (parts.length === 0) return;
-  const ipList = c.ips.slice(0, 5).join(', ') + (c.ips.length > 5 ? `, +${c.ips.length - 5} more` : '');
+  const ipList =
+    c.ips.slice(0, 5).join(', ') + (c.ips.length > 5 ? `, +${c.ips.length - 5} more` : '');
   toast.add({
     severity: 'warn',
     summary: 'Removed lossy host data',
     detail: `Deleted ${parts.join(', ')} on ${ipList}. Any active DHCP leases on these IPs will rebind to a valid address at next renewal.`,
-    life: 10000
+    life: 10000,
   });
+}
+
+// A 409 stale_plan means the topology moved since the preview. The server's
+// current plan replaces the displayed one, earlier confirmations are dropped
+// and the operator reviews again; the new token is never submitted for them.
+function acceptStalePlan(body) {
+  if (!(body?.stale_plan && body.plan)) return false;
+  serverDividePreview.value = { ...serverDividePreview.value, plan: body.plan };
+  pendingLossyDivide.value = null;
+  lossyIps.value = [];
+  showLossyConfirm.value = false;
+  divideStaleNotice.value =
+    'The transformation plan changed on the server. Review the updated preview, then confirm again.';
+  return true;
 }
 
 // Shared handler for both divide modes, intercepts the lossy-IP 409 and
 // opens the confirm dialog instead of showing an opaque toast.
 async function runDivide(nodeId, mode, params) {
   saving.value = true;
+  divideStaleNotice.value = '';
   try {
     const resp = await store.divideSubnet(nodeId, params);
     showDivide.value = false;
     toast.add({
       severity: 'success',
       summary: mode === 'equal' ? 'Network divided' : 'Network created',
-      life: 3000
+      life: 3000,
     });
     surfacePoolAdjustments(resp);
     surfaceLossyCleanup(resp);
     emit('network-divided', nodeId);
   } catch (err) {
     const body = err?.response?.data;
-    if (err?.response?.status === 409 && body?.requires_conflict_resolutions && Array.isArray(body.lossy)) {
+    if (err?.response?.status === 409 && acceptStalePlan(body)) {
+      /* reviewed above */
+    } else if (
+      err?.response?.status === 409 &&
+      body?.requires_conflict_resolutions &&
+      Array.isArray(body.lossy)
+    ) {
       // Surface the exact IPs; let the user confirm or cancel.
       lossyIps.value = body.lossy;
       pendingLossyDivide.value = { mode, params, nodeId };
@@ -1465,18 +2201,23 @@ async function runDivide(nodeId, mode, params) {
     } else {
       toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
     }
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 async function confirmLossyDivide() {
   const p = pendingLossyDivide.value;
-  if (!p) { showLossyConfirm.value = false; return; }
+  if (!p) {
+    showLossyConfirm.value = false;
+    return;
+  }
   saving.value = true;
   try {
-    const conflict_resolutions = lossyIps.value.map(row => ({
+    const conflict_resolutions = lossyIps.value.map((row) => ({
       carries: row.carries,
       record_id: row.record_id,
-      action: 'delete'
+      action: 'delete',
     }));
     const resp = await store.divideSubnet(p.nodeId, { ...p.params, conflict_resolutions });
     showLossyConfirm.value = false;
@@ -1486,14 +2227,20 @@ async function confirmLossyDivide() {
     toast.add({
       severity: 'success',
       summary: p.mode === 'equal' ? 'Network divided' : 'Network created',
-      life: 3000
+      life: 3000,
     });
     surfacePoolAdjustments(resp);
     surfaceLossyCleanup(resp);
     emit('network-divided', p.nodeId);
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+    if (err?.response?.status === 409 && acceptStalePlan(err.response.data)) {
+      /* reviewed above */
+    } else {
+      toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+    }
+  } finally {
+    saving.value = false;
+  }
 }
 
 function cancelLossyDivide() {
@@ -1505,15 +2252,106 @@ function cancelLossyDivide() {
 // ── Unified Configure / Edit dialog ──
 const showNetworkDialog = ref(false);
 const networkDialogMode = ref('edit'); // 'create', 'configure', or 'edit'
-const networkForm = ref({ name: '', description: '', vlan_id: null, gateway_address: '', domain_name: '', create_dhcp_scope: false, create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '', scan_enabled: null });
+const networkForm = ref({
+  name: '',
+  description: '',
+  vlan_id: null,
+  gateway_address: '',
+  domain_name: '',
+  create_dhcp_scope: false,
+  create_reverse_dns: false,
+  dhcp_start_ip: '',
+  dhcp_end_ip: '',
+  dhcp_v6_mode: null,
+  scan_enabled: null,
+});
 // Capture the row that opened this dialog. Some callers, such as the folder
 // table, open it for a row without selecting that row in the parent view.
 // Save must therefore not depend on the unrelated selectedNode prop.
 const activeNetworkData = ref(null);
-const dialogNetworkData = computed(() => activeNetworkData.value || props.selectedNode?.data || null);
+const dialogNetworkData = computed(
+  () => activeNetworkData.value || props.selectedNode?.data || null,
+);
 const resolvedGlobalScanEnabled = ref(true); // fetched from settings when dialog opens
-const resolvedOrgScanEnabled = resolvedGlobalScanEnabled; // backward compat for template refs
 const dropTargetFolderIdForConfigure = ref(null);
+const networkSaveError = ref('');
+const networkState = () =>
+  JSON.stringify({ form: networkForm.value, gateway: gatewayPosition.value });
+let networkFormBaseline = '';
+const networkDiscard = useDiscardGuard({
+  isDirty: () => networkState() !== networkFormBaseline,
+  close: () => {
+    showNetworkDialog.value = false;
+  },
+  busy: saving,
+});
+function showNetworkEditor() {
+  networkFormBaseline = networkState();
+  networkDiscard.reset();
+  networkSaveError.value = '';
+  showNetworkDialog.value = true;
+}
+const configurationPreview = ref(null);
+const configurationPreviewError = ref('');
+let configurationPreviewRequest = 0;
+let configurationPreviewTimer = null;
+
+function scheduleConfigurationPreview() {
+  clearTimeout(configurationPreviewTimer);
+  configurationPreviewTimer = setTimeout(loadConfigurationPreview, 180);
+}
+
+async function loadConfigurationPreview() {
+  if (!showNetworkDialog.value) return;
+  const cidr =
+    networkDialogMode.value === 'create'
+      ? networkForm.value.cidr?.trim()
+      : dialogNetworkData.value?.cidr;
+  // An IPv6 CIDR is refused inline while the switch is off; asking the server
+  // for defaults would only echo the same refusal.
+  if (!cidr || !isValidNetwork(cidr) || (cidrFamily(cidr) === 6 && !ipv6Supported.value)) {
+    configurationPreview.value = null;
+    configurationPreviewError.value = '';
+    return;
+  }
+  const request = ++configurationPreviewRequest;
+  configurationPreviewError.value = '';
+  try {
+    const { data } = await api.post('/subnets/configuration-preview', {
+      cidr,
+      gateway_policy: gatewayPosition.value,
+      ...(gatewayPosition.value === 'custom' && networkForm.value.gateway_address
+        ? { gateway_address: networkForm.value.gateway_address }
+        : {}),
+    });
+    if (request !== configurationPreviewRequest) return;
+    configurationPreview.value = data;
+    // Server defaults landing in an untouched form are not the operator's
+    // edits; move the baseline with them (after the watchers that react to
+    // the new gateway have run) so Cancel stays silent.
+    const untouched = networkState() === networkFormBaseline;
+    if (gatewayPosition.value !== 'custom') {
+      networkForm.value.gateway_address = data.gateway_address || '';
+    }
+    if (
+      networkForm.value.create_dhcp_scope &&
+      !networkForm.value.dhcp_start_ip &&
+      !networkForm.value.dhcp_end_ip &&
+      data.default_dhcp_pool
+    ) {
+      networkForm.value.dhcp_start_ip = data.default_dhcp_pool.start_ip;
+      networkForm.value.dhcp_end_ip = data.default_dhcp_pool.end_ip;
+    }
+    if (untouched) {
+      await nextTick();
+      networkFormBaseline = networkState();
+    }
+  } catch (error) {
+    if (request !== configurationPreviewRequest) return;
+    configurationPreview.value = null;
+    configurationPreviewError.value = `Could not load server defaults: ${apiError(error)}`;
+  }
+}
 
 // Gateway-position watchers + placeholder (live here because they reference
 // networkForm, declaring them earlier would hit a TDZ on the `networkForm`
@@ -1525,31 +2363,25 @@ const gatewayPlaceholder = computed(() => {
 });
 // Position → address (when user picks first/last/none, compute and set).
 watch(gatewayPosition, (pos) => {
-  if (pos === 'custom') return;
-  const cidr = (networkForm.value.cidr || '').trim();
   if (pos === 'none') {
     if (networkForm.value.gateway_address !== '') networkForm.value.gateway_address = '';
-    return;
   }
-  if (!cidr || !isValidCidr(cidr)) return;
-  const target = gatewayIpFromPosition(cidr, pos) || '';
-  if (networkForm.value.gateway_address !== target) networkForm.value.gateway_address = target;
+  scheduleConfigurationPreview();
 });
 // Address → position (user types a custom IP → toggle reflects state).
-watch(() => networkForm.value.gateway_address, (addr) => {
-  const inferred = inferGatewayPosition(networkForm.value.cidr, addr);
-  if (gatewayPosition.value !== inferred) gatewayPosition.value = inferred;
-});
+watch(
+  () => networkForm.value.gateway_address,
+  (addr) => {
+    const inferred = inferGatewayPosition(networkForm.value.cidr, addr);
+    if (gatewayPosition.value !== inferred) gatewayPosition.value = inferred;
+    else if (gatewayPosition.value === 'custom') scheduleConfigurationPreview();
+  },
+);
 // CIDR changes in create mode: re-apply first/last position if set.
-watch(() => networkForm.value.cidr, (cidr) => {
-  const pos = gatewayPosition.value;
-  if (pos === 'first' || pos === 'last') {
-    if (cidr && isValidCidr(cidr)) {
-      const target = gatewayIpFromPosition(cidr, pos) || '';
-      if (networkForm.value.gateway_address !== target) networkForm.value.gateway_address = target;
-    }
-  }
-});
+watch(
+  () => networkForm.value.cidr,
+  () => scheduleConfigurationPreview(),
+);
 
 const networkDialogHeader = computed(() => {
   if (networkDialogMode.value === 'create') return 'Add Network';
@@ -1559,27 +2391,54 @@ const networkDialogHeader = computed(() => {
 
 const createCidrError = computed(() => {
   if (networkDialogMode.value !== 'create') return null;
-  const cidr = (networkForm.value.cidr || '').trim();
-  if (!cidr) return null;
-  if (!isValidCidr(cidr)) return 'Invalid CIDR notation';
-  return null;
+  return networkValidationError(networkForm.value.cidr, { ipv6: ipv6Supported.value });
 });
 
 const createAutoName = computed(() => {
   if (networkDialogMode.value !== 'create') return '';
-  const cidr = (networkForm.value.cidr || '').trim();
-  if (!cidr || !isValidCidr(cidr)) return '';
-  try { return applyNameTemplate(props.nameTemplate, normalizeCidr(cidr)); }
-  catch { return ''; }
+  return configurationPreview.value?.suggested_name || '';
 });
 
 const effectivePrefixLength = computed(() => {
   if (networkDialogMode.value === 'create') {
     const cidr = (networkForm.value.cidr || '').trim();
-    if (cidr && isValidCidr(cidr)) return parseCidr(cidr).prefix;
+    if (cidr && isValidNetwork(cidr)) return parseNetwork(cidr).prefix;
     return 32;
   }
   return activeNetworkData.value?.prefix_length ?? props.selectedNode?.data?.prefix_length ?? 32;
+});
+
+// The family of the network this dialog is about: from the typed CIDR while
+// creating, from the row otherwise. Drives the gateway and DHCP sections.
+const dialogAddressFamily = computed(() => {
+  if (networkDialogMode.value === 'create') {
+    return cidrFamily((networkForm.value.cidr || '').trim()) || 4;
+  }
+  const data = activeNetworkData.value || props.selectedNode?.data;
+  return Number(data?.address_family || cidrFamily(data?.cidr || '') || 4);
+});
+// The server's preview names the modes a prefix allows; before it answers
+// the same rule is applied here.
+const dhcpV6ModeOptions = computed(() =>
+  dhcpV6ModeOptionsFor(
+    configurationPreview.value?.dhcp_v6_modes || dhcpV6ModesFor(effectivePrefixLength.value),
+  ),
+);
+const dialogShowsDhcpPool = computed(
+  () => dialogAddressFamily.value !== 6 || networkForm.value.dhcp_v6_mode === 'stateful',
+);
+watch([dialogAddressFamily, dhcpV6ModeOptions], ([family, options]) => {
+  if (family !== 6) {
+    if (networkForm.value.dhcp_v6_mode !== null) networkForm.value.dhcp_v6_mode = null;
+    return;
+  }
+  // A prefix shorter than /64 has no DHCPv6 mode, so no scope to create.
+  if (!options.length && networkForm.value.create_dhcp_scope) {
+    networkForm.value.create_dhcp_scope = false;
+  }
+  if (!options.some((option) => option.value === networkForm.value.dhcp_v6_mode)) {
+    networkForm.value.dhcp_v6_mode = options[0]?.value ?? null;
+  }
 });
 
 // Mirror of wizardDhcpRiskySize for the Edit/Create Network dialog. See
@@ -1591,14 +2450,8 @@ const editDhcpRiskySize = computed(() => {
 });
 
 const dhcpDefaults = computed(() => {
-  if (networkDialogMode.value === 'create') {
-    const cidr = (networkForm.value.cidr || '').trim();
-    if (!cidr || !isValidCidr(cidr)) return { start: '', end: '' };
-    return dhcpRangeDefaults(parseCidr(cidr), networkForm.value.gateway_address || null);
-  }
-  const d = activeNetworkData.value || props.selectedNode?.data;
-  if (!d) return { start: '', end: '' };
-  return dhcpRangeDefaults(parseCidr(d.cidr), networkForm.value.gateway_address || null);
+  const pool = configurationPreview.value?.default_dhcp_pool;
+  return pool ? { start: pool.start_ip, end: pool.end_ip } : { start: '', end: '' };
 });
 
 watch(showNetworkDialog, async (val) => {
@@ -1608,16 +2461,24 @@ watch(showNetworkDialog, async (val) => {
     try {
       const settings = await store.getSettings();
       resolvedGlobalScanEnabled.value = settings.default_scan_enabled !== '0';
-    } catch { /* best effort, keep default true */ }
+    } catch {
+      /* best effort, keep default true */
+    }
+    scheduleConfigurationPreview();
+  } else {
+    scheduleConfigurationPreview();
   }
 });
-watch(() => networkForm.value.create_dhcp_scope, (checked) => {
-  if (checked && !networkForm.value.dhcp_start_ip && !networkForm.value.dhcp_end_ip) {
-    const d = dhcpDefaults.value;
-    if (d.start) networkForm.value.dhcp_start_ip = d.start;
-    if (d.end) networkForm.value.dhcp_end_ip = d.end;
-  }
-});
+watch(
+  () => networkForm.value.create_dhcp_scope,
+  (checked) => {
+    if (checked && !networkForm.value.dhcp_start_ip && !networkForm.value.dhcp_end_ip) {
+      const d = dhcpDefaults.value;
+      if (d.start) networkForm.value.dhcp_start_ip = d.start;
+      if (d.end) networkForm.value.dhcp_end_ip = d.end;
+    }
+  },
+);
 const editVlanSelection = ref(null);
 const vlanSuggestions = ref([]);
 const showVlanWarning = ref(false);
@@ -1629,9 +2490,9 @@ const newVlanNameManual = ref(false);
 // ── Domain (forward DNS zone) AutoComplete state ──
 // Allows the user to pick an existing forward zone as the network's domain_name,
 // free-text a new value, or create a zone inline via the "+" button.
-const editDomainSelection = ref(null);   // string or zone object
+const editDomainSelection = ref(null); // string or zone object
 const domainSuggestions = ref([]);
-const forwardZones = ref([]);            // cached forward zones for suggestions
+const forwardZones = ref([]); // cached forward zones for suggestions
 const showCreateDomainFromEdit = ref(false);
 const newDomainForm = ref({ name: '' });
 const savingDomain = ref(false);
@@ -1643,17 +2504,22 @@ async function loadForwardZones() {
     if (!dnsStore.zones?.length) await dnsStore.fetchZones();
     // Alphabetical: shortest path for a user skimming a long zone list.
     forwardZones.value = dnsStore.zones
-      .filter(z => z.type === 'forward')
+      .filter((z) => z.type === 'forward')
       .slice()
       .sort((a, b) => (a.name || '').localeCompare(b.name || ''));
-  } catch { /* non-fatal, field still works as free-text */ }
+  } catch {
+    /* non-fatal, field still works as free-text */
+  }
 }
 
 function searchDomains(event) {
   const q = (event.query || '').toLowerCase().trim();
-  if (!q) { domainSuggestions.value = forwardZones.value.slice(0, 50); return; }
+  if (!q) {
+    domainSuggestions.value = forwardZones.value.slice(0, 50);
+    return;
+  }
   domainSuggestions.value = forwardZones.value
-    .filter(z => z.name.toLowerCase().includes(q))
+    .filter((z) => z.name.toLowerCase().includes(q))
     .slice(0, 50);
 }
 
@@ -1683,14 +2549,19 @@ async function createDomainFromEdit() {
     const { useDnsStore } = await import('../stores/dns.js');
     const dnsStore = useDnsStore();
     const created = await dnsStore.createZone({ name, type: 'forward' });
-    forwardZones.value = dnsStore.zones.filter(z => z.type === 'forward');
+    forwardZones.value = dnsStore.zones.filter((z) => z.type === 'forward');
     networkForm.value.domain_name = created?.name || name;
     editDomainSelection.value = created || { name };
     toast.add({ severity: 'success', summary: 'Zone created', detail: name, life: 3000 });
     showCreateDomainFromEdit.value = false;
     newDomainForm.value = { name: '' };
   } catch (err) {
-    toast.add({ severity: 'error', summary: 'Zone create failed', detail: apiError(err), life: 5000 });
+    toast.add({
+      severity: 'error',
+      summary: 'Zone create failed',
+      detail: apiError(err),
+      life: 5000,
+    });
   } finally {
     savingDomain.value = false;
   }
@@ -1705,7 +2576,10 @@ function onNewVlanIdInput(val) {
 async function searchVlans(event) {
   try {
     const res = await api.get('/vlans/search', { params: { q: event.query } });
-    vlanSuggestions.value = res.data.map(v => ({ ...v, display: `VLAN ${v.vlan_id} — ${v.name}` }));
+    vlanSuggestions.value = res.data.map((v) => ({
+      ...v,
+      display: `VLAN ${v.vlan_id} — ${v.name}`,
+    }));
   } catch (err) {
     vlanSuggestions.value = [];
     const detail = apiError(err);
@@ -1763,14 +2637,20 @@ function createVlanFromEdit() {
 function applyTemplateToEdit() {
   const defaultTemplate = '%1.%2.%3.%4/%bitmask';
   if (!props.nameTemplate || props.nameTemplate === defaultTemplate) {
-    toast.add({ severity: 'warn', summary: 'No custom template', detail: 'Configure a name template in System settings first', life: 4000 });
+    toast.add({
+      severity: 'warn',
+      summary: 'No custom template',
+      detail: 'Configure a name template in System settings first',
+      life: 4000,
+    });
     return;
   }
-  const cidr = networkDialogMode.value === 'create'
-    ? networkForm.value.cidr
-    : activeNetworkData.value?.cidr || props.selectedNode?.data?.cidr;
-  if (cidr && isValidCidr(cidr)) {
-    networkForm.value.name = applyNameTemplate(props.nameTemplate, cidr);
+  const cidr =
+    networkDialogMode.value === 'create'
+      ? networkForm.value.cidr
+      : activeNetworkData.value?.cidr || props.selectedNode?.data?.cidr;
+  if (cidr && isValidNetwork(cidr)) {
+    networkForm.value.name = configurationPreview.value?.suggested_name || '';
   }
 }
 
@@ -1781,42 +2661,63 @@ function applyTemplateToEdit() {
 function surfaceVlanWarning(resp) {
   const w = resp?.vlan_warning;
   if (!w || !Array.isArray(w.peers) || w.peers.length === 0) return;
-  const peerList = w.peers.slice(0, 3).map(p => p.cidr).join(', ')
-    + (w.peers.length > 3 ? `, +${w.peers.length - 3} more` : '');
+  const peerList =
+    w.peers
+      .slice(0, 3)
+      .map((p) => p.cidr)
+      .join(', ') + (w.peers.length > 3 ? `, +${w.peers.length - 3} more` : '');
   toast.add({
     severity: 'warn',
     summary: `VLAN ${w.vlan_id} is already in use`,
     detail: `Also assigned to ${peerList}. Same VLAN on different networks is occasionally intentional but usually a misconfiguration.`,
-    life: 8000
+    life: 8000,
   });
+}
+
+// The DHCP part of a configure payload by family: IPv4 sends a pool (typed
+// or the server default), IPv6 sends the mode and a pool only for stateful,
+// and never a gateway.
+function shapeDhcpPayload(payload) {
+  if (dialogAddressFamily.value === 6) {
+    payload.gateway_address = '';
+    if (!payload.create_dhcp_scope) delete payload.dhcp_v6_mode;
+    if (payload.create_dhcp_scope && payload.dhcp_v6_mode !== 'stateful') {
+      payload.dhcp_start_ip = '';
+      payload.dhcp_end_ip = '';
+      return;
+    }
+  } else {
+    delete payload.dhcp_v6_mode;
+  }
+  if (payload.create_dhcp_scope) {
+    payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
+    payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
+  }
 }
 
 async function executeNetworkSave() {
   saving.value = true;
+  networkSaveError.value = '';
   try {
     if (networkDialogMode.value === 'create') {
-      // Create the supernet first, then configure it
+      // Address space only: a new network stays unallocated until the
+      // operator allocates it.
       const cidr = networkForm.value.cidr.trim();
       const created = await store.createSupernet({
         cidr,
         name: networkForm.value.name || undefined,
         folder_id: networkForm.value.folder_id || undefined,
         vlan_id: networkForm.value.vlan_id || undefined,
+        description: networkForm.value.description || undefined,
       });
       surfaceVlanWarning(created);
-      // Now configure it with full options
-      const payload = { ...networkForm.value };
-      payload.name = payload.name || createAutoName.value || cidr;
-      delete payload.cidr;
-      delete payload.folder_id;
-      if (payload.create_dhcp_scope) {
-        payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
-        payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
-      }
-      const configured = await store.configureSubnet(created.id, payload);
-      surfaceVlanWarning(configured);
       showNetworkDialog.value = false;
-      toast.add({ severity: 'success', summary: 'Network created', life: 3000 });
+      toast.add({
+        severity: 'success',
+        summary: 'Network created',
+        detail: `${created.cidr || cidr} is unallocated. Allocate it to give it a gateway, DNS and DHCP.`,
+        life: 4000,
+      });
       emit('network-created');
     } else if (networkDialogMode.value === 'configure') {
       const id = activeNetworkData.value?.id ?? props.selectedNode?.data?.id;
@@ -1825,11 +2726,7 @@ async function executeNetworkSave() {
       if (dropTargetFolderIdForConfigure.value) {
         payload.folder_id = dropTargetFolderIdForConfigure.value;
       }
-      // Use user-specified or default DHCP range
-      if (payload.create_dhcp_scope) {
-        payload.dhcp_start_ip = payload.dhcp_start_ip || dhcpDefaults.value.start;
-        payload.dhcp_end_ip = payload.dhcp_end_ip || dhcpDefaults.value.end;
-      }
+      shapeDhcpPayload(payload);
       const configured = await store.configureSubnet(id, payload);
       surfaceVlanWarning(configured);
       showNetworkDialog.value = false;
@@ -1841,6 +2738,7 @@ async function executeNetworkSave() {
       const editPayload = { ...networkForm.value };
       delete editPayload.create_dhcp_scope;
       delete editPayload.create_reverse_dns;
+      delete editPayload.dhcp_v6_mode;
       const updated = await store.updateSubnet(id, editPayload);
       surfaceVlanWarning(updated);
       showNetworkDialog.value = false;
@@ -1848,8 +2746,23 @@ async function executeNetworkSave() {
       emit('network-updated', id);
     }
   } catch (err) {
+    networkSaveError.value = apiError(err);
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
+}
+
+// The server decides what a delete did (N-10): an allocated node is
+// deallocated, an unallocated root is deleted with its subtree, a nonroot
+// parent loses its descendants. Report the response, not the menu label.
+const DELETE_OUTCOMES = {
+  deallocated: 'Network deallocated',
+  deleted: 'Address space deleted',
+  children_deleted: 'Descendant networks deleted',
+};
+function deleteOutcome(result, fallback) {
+  return DELETE_OUTCOMES[result?.action] || fallback;
 }
 
 // ── Delete dialog ──
@@ -1860,13 +2773,19 @@ async function executeDelete() {
   try {
     const id = dialogNetworkData.value?.id;
     if (!id) throw new Error('No network selected for deletion');
-    await store.deleteSubnet(id);
+    const result = await store.deleteSubnet(id);
     showDelete.value = false;
-    toast.add({ severity: 'success', summary: 'Network deleted', life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: deleteOutcome(result, 'Network deleted'),
+      life: 3000,
+    });
     emit('network-deleted', id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 // ── Deallocate dialog ──
@@ -1877,34 +2796,46 @@ async function executeDeallocate() {
   try {
     const id = dialogNetworkData.value?.id;
     if (!id) throw new Error('No network selected for deallocation');
-    await store.deleteSubnet(id);
+    const result = await store.deleteSubnet(id);
     showDeallocate.value = false;
-    toast.add({ severity: 'success', summary: 'Network deallocated', life: 3000 });
+    toast.add({
+      severity: 'success',
+      summary: deleteOutcome(result, 'Network deallocated'),
+      life: 3000,
+    });
     emit('network-deleted', id);
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 // ── Merge dialog ──
 const showMerge = ref(false);
 const mergePreview = ref(null);
 const mergeError = ref(null);
+// The networks the open Merge dialog previewed, from the caller or the
+// classic view's selection. Merge sends exactly these, never a selection
+// that may have changed (or, in the workspace, was never set) since.
+const mergingIds = ref([]);
 
 async function executeMerge() {
   saving.value = true;
   try {
     await store.mergeSubnets(
-      props.mergeSelectedIds,
+      mergingIds.value,
       mergePreview.value?.plan?.dependency_token || null,
-      mergePreview.value?.plan?.plan_id || null
+      mergePreview.value?.plan?.plan_id || null,
     );
     showMerge.value = false;
     toast.add({ severity: 'success', summary: 'Networks merged', life: 3000 });
     emit('networks-merged');
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 // ── Group Allocate dialog ──
@@ -1912,34 +2843,85 @@ const showGroupConfigure = ref(false);
 const groupDropIds = ref([]);
 const groupDropFolderId = ref(null);
 
+// The networks the group dialog allocates, each with its id, CIDR and name.
+const groupNetworks = computed(() =>
+  groupDropIds.value
+    .map((id) => groupNetworkData.value.get(Number(id)) || findSubnetInTree(id))
+    .filter(Boolean),
+);
+const groupNetworkData = ref(new Map());
+
+// A network still named by its CIDR takes the name template; one the operator
+// named keeps that name.
+async function allocationName(network) {
+  if (network.name && network.name !== network.cidr) return network.name;
+  try {
+    const res = await api.post('/subnets/configuration-preview', { cidr: network.cidr });
+    return res.data?.suggested_name || network.cidr;
+  } catch {
+    return networkNameFromTemplate(props.nameTemplate, network.cidr);
+  }
+}
+
 async function executeGroupConfigure() {
   saving.value = true;
-  const count = groupDropIds.value.length;
+  const failed = [];
+  const failedIds = new Set();
+  let allocated = 0;
   try {
-    for (const id of groupDropIds.value) {
-      const subnet = findSubnetInTree(id);
-      if (!subnet) continue;
-      const autoName = applyNameTemplate(props.nameTemplate, subnet.cidr);
-      await store.configureSubnet(id, {
-        name: autoName, description: '', vlan_id: null,
-        gateway_address: '', create_dhcp_scope: false,
-        create_reverse_dns: false, dhcp_start_ip: '', dhcp_end_ip: '',
-        folder_id: groupDropFolderId.value,
-      }, { refresh: false });
+    for (const network of groupNetworks.value) {
+      try {
+        await store.configureSubnet(
+          network.id,
+          {
+            name: await allocationName(network),
+            description: network.description || '',
+            vlan_id: network.vlan_id ?? null,
+            gateway_address: '',
+            create_dhcp_scope: false,
+            create_reverse_dns: false,
+            dhcp_start_ip: '',
+            dhcp_end_ip: '',
+            ...(groupDropFolderId.value == null ? {} : { folder_id: groupDropFolderId.value }),
+          },
+          { refresh: false },
+        );
+        allocated += 1;
+      } catch (err) {
+        failed.push(`${network.cidr}: ${apiError(err)}`);
+        failedIds.add(network.id);
+      }
     }
     await store.fetchTree();
+    if (allocated) {
+      toast.add({
+        severity: 'success',
+        summary: `${allocated} network${allocated === 1 ? '' : 's'} allocated`,
+        life: 3000,
+      });
+      emit('group-configured');
+    }
+    if (failed.length) {
+      toast.add({
+        severity: 'error',
+        summary: `${failed.length} network${failed.length === 1 ? '' : 's'} not allocated`,
+        detail: failed.join('; '),
+        life: 8000,
+      });
+      // Keep the dialog on the ones that are left.
+      groupDropIds.value = [...failedIds];
+      return;
+    }
     showGroupConfigure.value = false;
     groupDropIds.value = [];
     groupDropFolderId.value = null;
-    toast.add({ severity: 'success', summary: `${count} networks allocated`, life: 3000 });
-    emit('group-configured');
-  } catch (err) {
-    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 function findSubnetInTree(id, nodes) {
-  for (const f of (nodes || store.folders)) {
+  for (const f of nodes || store.folders) {
     if (nodes) {
       if (f.id === id) return f;
       if (f.children) {
@@ -1964,20 +2946,22 @@ async function executeApplyTemplate(ids) {
     toast.add({ severity: 'success', summary: 'Template applied', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
-  } finally { saving.value = false; }
+  } finally {
+    saving.value = false;
+  }
 }
 
 // ── Exposed methods ──
 function openCreateFolder() {
   editingFolder.value = null;
   folderForm.value = { name: '', description: '' };
-  showFolderDialog.value = true;
+  showFolderEditor();
 }
 
 function openEditFolder(folder) {
   editingFolder.value = folder;
   folderForm.value = { name: folder.name, description: folder.description || '' };
-  showFolderDialog.value = true;
+  showFolderEditor();
 }
 
 function openDeleteFolder(folder) {
@@ -1987,14 +2971,14 @@ function openDeleteFolder(folder) {
 
 function openSubnetDialog(folderId) {
   quickAddMode.value = false;
-  supernetForm.value = { cidr: '', name: '', folder_id: folderId || store.folders[0]?.id || null };
-  showSubnetDialog.value = true;
+  supernetForm.value = { cidr: '', name: '', folder_id: folderId || null };
+  showSupernetEditor();
 }
 
 function openQuickAddNetwork() {
   quickAddMode.value = true;
   supernetForm.value = { cidr: '', name: '', folder_id: null };
-  showSubnetDialog.value = true;
+  showSupernetEditor();
 }
 
 async function openCreateNetwork(folderId) {
@@ -2007,7 +2991,7 @@ async function openCreateNetwork(folderId) {
     vlan_id: null,
     gateway_address: '',
     domain_name: '',
-    folder_id: folderId || store.folders[0]?.id || null,
+    folder_id: folderId || null,
     create_dhcp_scope: false,
     create_reverse_dns: false,
     dhcp_start_ip: '',
@@ -2017,21 +3001,30 @@ async function openCreateNetwork(folderId) {
   editDomainSelection.value = null;
   // Load before showing the dialog so a fast CIDR entry cannot race the saved
   // default and accidentally retain the local fallback.
-  gatewayPosition.value = 'first';
   loadForwardZones();
+  await applyNetworkDefaults();
+  showNetworkEditor();
+}
+
+// The New Network Defaults (Settings > General) a network takes when it is
+// created or allocated: the gateway position and the scanning default.
+async function applyNetworkDefaults() {
+  gatewayPosition.value = 'first';
   try {
     const settings = await store.getSettings();
     resolvedGlobalScanEnabled.value = settings.default_scan_enabled !== '0';
     gatewayPosition.value = normalizeGatewayPositionDefault(settings.default_gateway_position);
-  } catch { /* best effort, keep the server defaults */ }
-  showNetworkDialog.value = true;
+  } catch {
+    /* best effort, keep the server defaults */
+  }
 }
 
 function openDivide(node) {
+  divideNodeOverride.value = node || null;
   divideMode.value = 'equal';
   divideSteps.value = 1;
   divideCount.value = 2;
-  const d = (node || props.selectedNode)?.data;
+  const d = divideNode.value?.data;
   if (d) {
     carveNetwork.value = d.network_address || d.cidr.split('/')[0];
     carvePrefix.value = d.prefix_length + 1;
@@ -2041,21 +3034,31 @@ function openDivide(node) {
   }
   serverDividePreview.value = null;
   dividePreviewError.value = null;
+  divideStaleNotice.value = '';
+  divideBaseline = divideState();
+  divideDiscard.reset();
   showDivide.value = true;
 }
 
 function openConfigure(node, folderId) {
-  openEdit(node, folderId);
+  return openEdit(node, folderId);
 }
 
-function openEdit(node, folderId) {
+async function openEdit(node, folderId) {
   const d = (node || props.selectedNode)?.data;
   if (!d) return;
   activeNetworkData.value = d;
   const isUnconfigured = d.status === 'unallocated';
   networkDialogMode.value = isUnconfigured ? 'configure' : 'edit';
 
-  const autoName = isUnconfigured ? applyNameTemplate(props.nameTemplate, d.cidr) : null;
+  let autoName = null;
+  if (isUnconfigured) {
+    try {
+      autoName = networkNameFromTemplate(props.nameTemplate, d.cidr);
+    } catch {
+      autoName = null;
+    }
+  }
   networkForm.value = {
     cidr: d.cidr || '',
     name: d.name || autoName || '',
@@ -2068,10 +3071,13 @@ function openEdit(node, folderId) {
     create_reverse_dns: false,
     dhcp_start_ip: '',
     dhcp_end_ip: '',
+    dhcp_v6_mode: null,
     scan_enabled: d.scan_enabled === null || d.scan_enabled === undefined ? null : !!d.scan_enabled,
   };
-  // Seed the SelectButton from the stored address so it reflects reality on open.
-  gatewayPosition.value = inferGatewayPosition(d.cidr, d.gateway_address);
+  // Seed the SelectButton from the stored address so it reflects reality on
+  // open. An unallocated network has none yet: it takes the default.
+  if (isUnconfigured && !d.gateway_address) await applyNetworkDefaults();
+  else gatewayPosition.value = inferGatewayPosition(d.cidr, d.gateway_address);
   // Seed the domain autocomplete + load zones for suggestions.
   editDomainSelection.value = d.domain_name || null;
   loadForwardZones();
@@ -2080,19 +3086,40 @@ function openEdit(node, folderId) {
 
   // Load VLAN display if one is set
   if (d.vlan_id) {
-    api.get('/vlans/search', { params: { q: String(d.vlan_id) } }).then(res => {
-      const match = res.data.find(v => v.vlan_id === d.vlan_id);
-      if (match) editVlanSelection.value = { ...match, display: `VLAN ${match.vlan_id} — ${match.name}` };
-      else editVlanSelection.value = `VLAN ${d.vlan_id}`;
-    }).catch((err) => {
-      editVlanSelection.value = `VLAN ${d.vlan_id}`;
-      const detail = apiError(err);
-      toast.add({ severity: 'error', summary: 'VLAN lookup failed', detail, life: 5000 });
-    });
+    api
+      .get('/vlans/search', { params: { q: String(d.vlan_id) } })
+      .then((res) => {
+        const match = res.data.find((v) => v.vlan_id === d.vlan_id);
+        if (match)
+          editVlanSelection.value = { ...match, display: `VLAN ${match.vlan_id} — ${match.name}` };
+        else editVlanSelection.value = `VLAN ${d.vlan_id}`;
+      })
+      .catch((err) => {
+        editVlanSelection.value = `VLAN ${d.vlan_id}`;
+        const detail = apiError(err);
+        toast.add({ severity: 'error', summary: 'VLAN lookup failed', detail, life: 5000 });
+      });
   } else {
     editVlanSelection.value = null;
   }
-  showNetworkDialog.value = true;
+  showNetworkEditor();
+}
+
+// What deleting or deallocating the network removes, disables and keeps. Null
+// while loading; the dialog renders the list once it lands. A reservation
+// anywhere in the subtree blocks the action, the server refuses it too.
+const deallocationPreview = ref(null);
+const deallocationPreviewError = ref('');
+const deallocationBlocked = computed(() => (deallocationPreview.value?.reservations || 0) > 0);
+
+async function loadDeallocationPreview(id) {
+  deallocationPreview.value = null;
+  deallocationPreviewError.value = '';
+  try {
+    deallocationPreview.value = await store.previewDeallocation(id);
+  } catch (err) {
+    deallocationPreviewError.value = apiError(err);
+  }
 }
 
 function openDelete(node) {
@@ -2100,6 +3127,7 @@ function openDelete(node) {
   if (!d) return;
   activeNetworkData.value = d;
   showDelete.value = true;
+  if (d.status === 'allocated' || d.child_count > 0) loadDeallocationPreview(d.id);
 }
 
 function openDeallocate(node) {
@@ -2107,11 +3135,13 @@ function openDeallocate(node) {
   if (!d) return;
   activeNetworkData.value = d;
   showDeallocate.value = true;
+  loadDeallocationPreview(d.id);
 }
 
 async function openMergeConfirm(ids) {
-  const mergeIds = ids || props.mergeSelectedIds;
+  const mergeIds = [...(ids || props.mergeSelectedIds || [])];
   if (mergeIds.length < 2) return;
+  mergingIds.value = mergeIds;
   mergeError.value = null;
   mergePreview.value = null;
   try {
@@ -2124,21 +3154,44 @@ async function openMergeConfirm(ids) {
   }
 }
 
-function openGroupConfigure(leafIds, folderId) {
-  groupDropIds.value = leafIds;
-  groupDropFolderId.value = folderId;
+// `networks` are ids (the classic tree's drop) or network rows (a workspace
+// selection); a row brings its own CIDR and name.
+function openGroupConfigure(networks, folderId = null) {
+  const rows = (networks || []).filter((item) => typeof item === 'object');
+  groupNetworkData.value = new Map(rows.map((row) => [Number(row.id), row]));
+  groupDropIds.value = (networks || []).map((item) =>
+    Number(typeof item === 'object' ? item.id : item),
+  );
+  groupDropFolderId.value = folderId ?? null;
   showGroupConfigure.value = true;
 }
 
 defineExpose({
-  openWizard, openCreateFolder, openEditFolder, openDeleteFolder,
-  openSubnetDialog, openQuickAddNetwork, openCreateNetwork, openDivide, openConfigure,
-  openEdit, openDelete, openDeallocate, openMergeConfirm,
-  openGroupConfigure, executeApplyTemplate,
+  openWizard,
+  openCreateFolder,
+  openEditFolder,
+  openDeleteFolder,
+  openSubnetDialog,
+  openQuickAddNetwork,
+  openCreateNetwork,
+  openDivide,
+  openConfigure,
+  openEdit,
+  openDelete,
+  openDeallocate,
+  openMergeConfirm,
+  openGroupConfigure,
+  executeApplyTemplate,
 });
 </script>
 
 <style scoped>
+.group-allocate-list {
+  max-height: 10rem;
+  overflow: auto;
+  margin: 0.5rem 0;
+  padding-left: 1.25rem;
+}
 .form-grid {
   display: flex;
   flex-direction: column;
@@ -2176,26 +3229,22 @@ defineExpose({
 .field label {
   font-size: 0.8rem;
   font-weight: 600;
-  color: var(--p-text-muted-color);
-}
-.field-error {
-  color: var(--p-red-500);
-  font-size: 0.75rem;
+  color: var(--cid-text-muted-color);
 }
 .warn-text {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-size: 0.85rem;
 }
 .merge-result-cidr {
   font-size: 1.3rem;
   font-weight: 700;
   font-family: monospace;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   margin: 0.5rem 0;
 }
 .merge-info {
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin-bottom: 0.5rem;
 }
 .toggle-label {
@@ -2209,25 +3258,24 @@ defineExpose({
   gap: 0.25rem;
   align-items: center;
 }
-.gateway-row {
-  margin-bottom: 4px;
-}
 /* Wizard DNS listen-port plain <input>: match PrimeVue input styling so it
    sits alongside sibling InputTexts without looking out of place. */
 .port-input-plain {
   font-size: var(--app-fs-base);
   font-family: inherit;
   padding: 0.5rem 0.75rem;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
-  background: var(--p-surface-card);
-  color: var(--p-text-color);
+  background: var(--cid-surface-card);
+  color: var(--cid-text-color);
   outline: none;
-  transition: border-color 0.15s, box-shadow 0.15s;
+  transition:
+    border-color 0.15s,
+    box-shadow 0.15s;
 }
 .port-input-plain:focus {
-  border-color: var(--p-primary-color);
-  box-shadow: 0 0 0 1px var(--p-primary-color);
+  border-color: var(--cid-primary-color);
+  box-shadow: 0 0 0 1px var(--cid-primary-color);
 }
 .divide-mode-toggle {
   margin-bottom: 0.75rem;
@@ -2254,13 +3302,13 @@ defineExpose({
 }
 .divide-count-label {
   font-size: 0.8rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   white-space: nowrap;
 }
 .divide-preview {
   margin-top: 0.75rem;
   padding: 0.5rem 0.75rem;
-  background: color-mix(in srgb, var(--p-primary-color) 8%, transparent);
+  background: color-mix(in srgb, var(--cid-primary-color) 8%, transparent);
   border-radius: 6px;
   max-height: 200px;
   overflow-y: auto;
@@ -2270,8 +3318,8 @@ defineExpose({
   font-size: 0.8rem;
 }
 .divide-preview-warn {
-  background: color-mix(in srgb, var(--p-red-500) 10%, transparent);
-  color: var(--p-red-500);
+  background: color-mix(in srgb, var(--cid-red-500) 10%, transparent);
+  color: var(--cid-red-500);
 }
 .remainder-list {
   list-style: none;
@@ -2284,7 +3332,7 @@ defineExpose({
   padding: 0.15rem 0;
 }
 .carved-highlight {
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
   font-weight: 600;
 }
 .carve-cidr-row {
@@ -2305,9 +3353,6 @@ defineExpose({
 .mt-3 {
   margin-top: 0.75rem;
 }
-.w-full {
-  width: 100%;
-}
 
 /* Wizard styles */
 .wizard-steps {
@@ -2317,7 +3362,7 @@ defineExpose({
   gap: 0;
   margin-bottom: 1.25rem;
   padding-bottom: 1rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 .wizard-step {
   display: flex;
@@ -2333,40 +3378,40 @@ defineExpose({
   border-radius: 50%;
   font-size: 0.75rem;
   font-weight: 700;
-  background: var(--p-surface-200);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-200);
+  color: var(--cid-text-muted-color);
   transition: all 0.2s;
 }
 .step-label {
   font-size: 0.8rem;
   font-weight: 500;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   transition: color 0.2s;
 }
 .wizard-step.active .step-num {
-  background: var(--p-primary-color);
-  color: var(--p-surface-0);
+  background: var(--cid-primary-color);
+  color: var(--cid-surface-0);
 }
 .wizard-step.active .step-label {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-weight: 600;
 }
 .wizard-step.done .step-num {
-  background: color-mix(in srgb, var(--p-primary-color) 20%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 20%, transparent);
+  color: var(--cid-primary-color);
 }
 .wizard-step.done .step-label {
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .wizard-step-line {
   width: 3rem;
   height: 2px;
-  background: var(--p-surface-200);
+  background: var(--cid-surface-200);
   margin: 0 0.5rem;
   transition: background 0.2s;
 }
 .wizard-step-line.done {
-  background: var(--p-primary-color);
+  background: var(--cid-primary-color);
 }
 .wizard-footer {
   display: flex;
@@ -2385,20 +3430,20 @@ defineExpose({
   text-align: left;
   font-weight: 600;
   font-size: 0.8rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   padding: 0.4rem 0.5rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
 .wizard-iface-table td {
   padding: 0.5rem;
-  border-bottom: 1px solid var(--p-surface-50);
+  border-bottom: 1px solid var(--cid-surface-50);
 }
 .wizard-iface-table .iface-name {
   font-weight: 600;
   font-family: var(--font-mono, monospace);
 }
 .wizard-iface-table .muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 /* Pi-hole import styles */
@@ -2406,22 +3451,22 @@ defineExpose({
   min-height: 12rem;
 }
 .pihole-reachable {
-  border-color: var(--p-green-500) !important;
-  box-shadow: 0 0 0 1px var(--p-green-500);
+  border-color: var(--cid-green-500) !important;
+  box-shadow: 0 0 0 1px var(--cid-green-500);
 }
 .pihole-unreachable {
-  border-color: var(--p-red-500) !important;
-  box-shadow: 0 0 0 1px var(--p-red-500);
+  border-color: var(--cid-red-500) !important;
+  box-shadow: 0 0 0 1px var(--cid-red-500);
 }
 .field-warn {
-  color: var(--p-orange-500);
+  color: var(--cid-orange-500);
 }
 .pihole-preview {
   margin-top: 1rem;
   padding: 0.75rem;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 6px;
-  background: var(--p-surface-50);
+  background: var(--cid-surface-50);
 }
 .pihole-preview h4 {
   margin: 0 0 0.5rem;
@@ -2440,83 +3485,33 @@ defineExpose({
 .preview-count {
   font-size: 1.4rem;
   font-weight: 700;
-  color: var(--p-primary-color);
+  color: var(--cid-primary-color);
 }
 .preview-label {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 .pihole-results {
   margin-top: 1rem;
 }
 
 /* Scan toggle button group */
-.scan-toggle-group {
-  display: inline-flex;
-  border-radius: 4px;
-  overflow: hidden;
-  border: 1px solid var(--p-surface-border);
-}
-.scan-toggle-btn {
-  padding: 0.3rem 0.75rem;
-  font-size: 0.8rem;
-  font-weight: 500;
-  border: none;
-  cursor: pointer;
-  background: var(--p-surface-ground);
-  color: var(--p-text-muted-color);
-  transition: background 0.15s, color 0.15s;
-}
-.scan-toggle-btn + .scan-toggle-btn {
-  border-left: 1px solid var(--p-surface-border);
-}
-.scan-toggle-btn:hover {
-  background: var(--p-surface-200);
-}
-.p-dark .scan-toggle-btn:hover {
-  background: var(--p-surface-700);
-}
-/* Active states */
-.scan-inherit.active {
-  background: var(--p-surface-300);
-  color: var(--p-text-color);
-}
-.p-dark .scan-inherit.active {
-  background: var(--p-surface-600);
-}
-.scan-enabled.active {
-  background: color-mix(in srgb, var(--p-green-500) 25%, transparent);
-  color: var(--p-green-500);
-}
-.scan-disabled.active {
-  background: color-mix(in srgb, var(--p-blue-500) 25%, transparent);
-  color: var(--p-blue-500);
-}
-/* Resolved (inherited) indicator, subtle highlight */
-.scan-enabled.resolved {
-  background: color-mix(in srgb, var(--p-green-500) 10%, transparent);
-  color: var(--p-green-500);
-  opacity: 0.7;
-}
-.scan-disabled.resolved {
-  background: color-mix(in srgb, var(--p-blue-500) 10%, transparent);
-  color: var(--p-blue-500);
-  opacity: 0.7;
-}
 
 /* Lossy-divide confirmation list */
 .lossy-list {
   margin-top: 1rem;
   max-height: 18rem;
   overflow-y: auto;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 4px;
 }
 .lossy-row {
   padding: 0.5rem 0.75rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
 }
-.lossy-row:last-child { border-bottom: 0; }
+.lossy-row:last-child {
+  border-bottom: 0;
+}
 .lossy-primary {
   display: flex;
   align-items: baseline;
@@ -2529,7 +3524,7 @@ defineExpose({
   font-weight: 600;
 }
 .lossy-reason {
-  color: var(--p-surface-content-muted, var(--p-text-muted-color));
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
 }
 .lossy-meta {
@@ -2537,8 +3532,13 @@ defineExpose({
   gap: 0.4rem;
   margin-top: 0.2rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-surface-content-muted, var(--p-text-muted-color));
+  color: var(--cid-text-muted-color);
 }
-.lossy-meta code { font-family: var(--font-mono, monospace); }
-.lossy-carries { text-transform: uppercase; letter-spacing: 0.06em; }
+.lossy-meta code {
+  font-family: var(--font-mono, monospace);
+}
+.lossy-carries {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
 </style>

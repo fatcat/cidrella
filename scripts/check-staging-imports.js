@@ -46,9 +46,7 @@ function walkJs(dir, acc) {
 // risks removing a real import (none live inside strings/comments), and the
 // `[^:]` guard before `//` keeps `http://` intact.
 function stripComments(src) {
-  return src
-    .replace(/\/\*[\s\S]*?\*\//g, '')
-    .replace(/(^|[^:])\/\/[^\n]*/g, '$1');
+  return src.replace(/\/\*[\s\S]*?\*\//g, '').replace(/(^|[^:])\/\/[^\n]*/g, '$1');
 }
 
 // Static `import ... from 'x'` / `export ... from 'x'` only. The `[^'"`;]` run
@@ -58,9 +56,19 @@ const SPEC_RE = /\b(?:import|export)\b[^'"`;]*?\bfrom\s*['"]([^'"]+)['"]/g;
 
 function resolvesTo(fromFile, spec) {
   const base = path.resolve(path.dirname(fromFile), spec);
-  const candidates = [base, `${base}.js`, `${base}.mjs`, `${base}.json`, path.join(base, 'index.js')];
+  const candidates = [
+    base,
+    `${base}.js`,
+    `${base}.mjs`,
+    `${base}.json`,
+    path.join(base, 'index.js'),
+  ];
   return candidates.some((c) => {
-    try { return fs.statSync(c).isFile(); } catch { return false; }
+    try {
+      return fs.statSync(c).isFile();
+    } catch {
+      return false;
+    }
   });
 }
 
@@ -79,7 +87,9 @@ for (const file of files) {
 }
 
 if (missing.length > 0) {
-  console.error(`  ERROR: ${missing.length} relative import(s) in the staged server tree do not resolve:`);
+  console.error(
+    `  ERROR: ${missing.length} relative import(s) in the staged server tree do not resolve:`,
+  );
   for (const x of missing) console.error(`    server/${x.importer}  →  ${x.spec}`);
   console.error('  A source file is missing from the tarball. Check .buildignore exclusions');
   console.error('  (anchor dev-only patterns with a leading "/") and confirm the file is');
@@ -87,4 +97,6 @@ if (missing.length > 0) {
   process.exit(1);
 }
 
-console.log(`  Import completeness OK (${files.length} server JS files, all relative imports resolve)`);
+console.log(
+  `  Import completeness OK (${files.length} server JS files, all relative imports resolve)`,
+);

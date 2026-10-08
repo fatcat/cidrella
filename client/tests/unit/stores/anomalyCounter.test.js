@@ -32,7 +32,9 @@ describe('anomaly counter is single-sourced', () => {
     // enough. Previously each maintained its own copy.
     const store = useAnomalyStore();
     return (async () => {
-      get.mockResolvedValue({ data: { unacknowledged_active: 7, total_active: 7, acknowledged_through_id: 3 } });
+      get.mockResolvedValue({
+        data: { unacknowledged_active: 7, total_active: 7, acknowledged_through_id: 3 },
+      });
       await store.fetchSummary();
       expect(store.summary.unacknowledged_active).toBe(7);
 

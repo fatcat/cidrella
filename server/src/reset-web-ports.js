@@ -15,13 +15,13 @@ try {
   const before = {
     https_port: readSetting(db, 'https_port'),
     http_port: readSetting(db, 'http_port'),
-    http_redirect_enabled: readSetting(db, 'http_redirect_enabled')
+    http_redirect_enabled: readSetting(db, 'http_redirect_enabled'),
   };
 
   upsertSettings(db, [
     ['https_port', ''],
     ['http_port', ''],
-    ['http_redirect_enabled', 'true']
+    ['http_redirect_enabled', 'true'],
   ]);
 
   console.log(`CIDRella web port settings reset in ${dbPath}`);

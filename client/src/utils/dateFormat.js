@@ -43,8 +43,14 @@ export function formatDateTime(dateStr) {
   try {
     const d = new Date(dateStr + (hasTZ(dateStr) ? '' : 'Z'));
     if (isNaN(d)) return '—';
-    return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...hourOption() });
-  } catch { return String(dateStr); }
+    return (
+      d.toLocaleDateString() +
+      ' ' +
+      d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...hourOption() })
+    );
+  } catch {
+    return String(dateStr);
+  }
 }
 
 /** Date only */
@@ -54,7 +60,9 @@ export function formatDateOnly(dateStr) {
     const d = new Date(dateStr + (hasTZ(dateStr) ? '' : 'Z'));
     if (isNaN(d)) return '—';
     return d.toLocaleDateString();
-  } catch { return String(dateStr); }
+  } catch {
+    return String(dateStr);
+  }
 }
 
 /** Time only (HH:MM) */
@@ -64,7 +72,9 @@ export function formatTimeOnly(dateStr) {
     const d = new Date(dateStr + (hasTZ(dateStr) ? '' : 'Z'));
     if (isNaN(d)) return '—';
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...hourOption() });
-  } catch { return String(dateStr); }
+  } catch {
+    return String(dateStr);
+  }
 }
 
 /** Time with seconds (HH:MM:SS), for debug panel */
@@ -72,7 +82,12 @@ export function formatTimeWithSeconds(date) {
   if (!date) return '—';
   const d = date instanceof Date ? date : new Date(date);
   if (isNaN(d)) return '—';
-  return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit', ...hourOption() });
+  return d.toLocaleTimeString([], {
+    hour: '2-digit',
+    minute: '2-digit',
+    second: '2-digit',
+    ...hourOption(),
+  });
 }
 
 /** Short date + time for scan display (e.g. "Mar 5 - 14:30") */
@@ -93,6 +108,9 @@ export function formatEpoch(epoch, range) {
   if (isIntradayRange(range)) {
     return d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...opts });
   }
-  return d.toLocaleDateString([], { month: 'short', day: 'numeric' }) + ' ' +
-         d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...opts });
+  return (
+    d.toLocaleDateString([], { month: 'short', day: 'numeric' }) +
+    ' ' +
+    d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', ...opts })
+  );
 }

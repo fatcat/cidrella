@@ -1,10 +1,10 @@
-import { isValidIpv4 } from './ip.js';
+import { isValidAddress } from './ip.js';
 
 const MANAGED_DNS_SOURCE_LABELS = Object.freeze({
   dns: 'Managed by forward DNS record',
   dhcp: 'Managed by DHCP lease',
   reservation: 'Managed by DHCP Reservation',
-  placeholder: 'Generated reverse DNS placeholder'
+  placeholder: 'Generated reverse DNS placeholder',
 });
 
 export function managedDnsRecordMenuItem(record) {
@@ -14,7 +14,7 @@ export function managedDnsRecordMenuItem(record) {
   return {
     label,
     icon: 'pi pi-lock',
-    disabled: true
+    disabled: true,
   };
 }
 
@@ -38,7 +38,7 @@ export function probeNowMenuItem(command) {
   return {
     label: 'Probe Now',
     icon: 'pi pi-wifi',
-    command
+    command,
   };
 }
 
@@ -47,24 +47,27 @@ export function scanToggleMenuItem(ipAddress, scanningEnabled, command) {
   return {
     label: `${enabled ? 'Disable' : 'Enable'} scanning of ${ipAddress}`,
     icon: enabled ? 'pi pi-eye-slash' : 'pi pi-eye',
-    command: () => command(!enabled)
+    command: () => command(!enabled),
   };
 }
 
 export function dnsRecordProbeIp(record, ptrIp = null) {
   const type = record?.record_type;
-  const candidate = type === 'A'
-    ? (record.ip_address || record.value)
-    : (type === 'PTR' ? ptrIp : null);
+  const candidate =
+    type === 'A' || type === 'AAAA'
+      ? record.ip_address || record.value
+      : type === 'PTR'
+        ? ptrIp
+        : null;
 
-  return isValidIpv4(candidate) ? candidate : null;
+  return isValidAddress(candidate) ? candidate : null;
 }
 
 export function addCnameMenuItem(record, command) {
-  if (record?.record_type !== 'A') return null;
+  if (record?.record_type !== 'A' && record?.record_type !== 'AAAA') return null;
   return {
     label: 'Add CNAME',
     icon: 'pi pi-plus',
-    command
+    command,
   };
 }

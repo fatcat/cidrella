@@ -1,7 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
-import { DHCP_DEFAULT_NTP_SERVERS, FALLBACK_SECONDARY_DNS } from '../../../src/config/defaults.js';
+import { DHCP_DEFAULT_NTP_SERVERS } from '../../../src/config/defaults.js';
+import { FALLBACK_SECONDARY_DNS } from '../../../src/utils/dhcp-network-options.js';
 
 const { default: operationsRouter } = await import('../../../src/routes/operations.js');
 const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');

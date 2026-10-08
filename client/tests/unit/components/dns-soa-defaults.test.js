@@ -23,10 +23,7 @@ const REPO = path.resolve(ROOT, '..');
  * the property is "no second copy of these numbers exists in the client", which
  * a behavioural test cannot express.
  */
-const CLIENT_FILES = [
-  'src/views/DNS.vue',
-  'src/components/DnsPanel.vue',
-];
+const CLIENT_FILES = ['src/views/DNS.vue', 'src/components/DnsPanel.vue'];
 
 const SOA_KEYS = ['soa_refresh', 'soa_retry', 'soa_expire', 'soa_minimum_ttl'];
 
@@ -55,7 +52,7 @@ describe('#38: the client holds no copy of the server SOA defaults', () => {
   it('the guard actually catches a reintroduced literal', () => {
     // Proves the regex is not vacuous. This is the shape that was removed.
     const sample = 'soa_refresh: 3600, soa_retry: 900, soa_expire: 604800, soa_minimum_ttl: 900';
-    const hits = SOA_KEYS.filter(k => new RegExp(`${k}\\s*(?::|\\?\\?)\\s*\\d+`).test(sample));
+    const hits = SOA_KEYS.filter((k) => new RegExp(`${k}\\s*(?::|\\?\\?)\\s*\\d+`).test(sample));
     expect(hits).toEqual(SOA_KEYS);
   });
 });

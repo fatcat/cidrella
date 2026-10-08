@@ -1,0 +1,3094 @@
+<template>
+  <div
+    class="workspace"
+    data-track="networks-workspace"
+    :style="{ '--workspace-font-bump': fontBumpStyle }"
+  >
+    <section
+      class="workspace-frame"
+      :class="{
+        'details-open': selectedRow,
+        'grid-open': activeView === 'addresses' && effectivePresentation !== 'table',
+      }"
+    >
+      <ResourceExplorer
+        v-model:query="resourceQuery"
+        :context-kind="contextKind"
+        :folders="filteredFolders"
+        :expanded-folders="expandedFolders"
+        :selected-folder-id="selectedFolder?.id ?? null"
+        :selected-network-id="selectedNetwork?.id ?? null"
+        :network-count="allNetworks.length"
+        :unallocated-count="unallocatedNetworks.length"
+        :zone-count="dnsZones.length"
+        :scope-count="dhcpScopes.length"
+        :loading="loading"
+        :can-create="canAnyCreate"
+        :can-manage-folders="can('subnets:write')"
+        :can-manage-defaults="can('subnets:write')"
+        :can-move-networks="can('subnets:write')"
+        :selected-rows="selectedRows"
+        @select-estate="selectEstate"
+        @select-unallocated="selectUnallocated"
+        @select-folder="selectFolder"
+        @select-network="selectNetwork"
+        @select-unallocated-network="selectUnallocatedNetwork"
+        @toggle-folder="toggleFolder"
+        @folder-menu="openFolderMenu"
+        @network-menu="openNetworkMenu"
+        @move-network="moveNetworkToFolder"
+        @toggle-network="toggleExplorerNetwork"
+        @range-network="rangeExplorerNetwork"
+        @action="runContextAction"
+      />
+
+      <section class="work-surface" aria-label="Work surface" :aria-busy="loadingContext">
+        <div v-if="loadError" class="workspace-error" role="alert">
+          <i class="pi pi-exclamation-circle" />
+          <span><strong>Could not load workspace data</strong>{{ loadError }}</span>
+          <button @click="loadWorkspace">Retry</button>
+        </div>
+        <WorkspaceContextHeader
+          :context-kind="contextKind"
+          :context-icon="contextIcon"
+          :context-title="contextTitle"
+          :context-subtitle="contextSubtitle"
+          :selected-folder="selectedFolder"
+          :selected-network="selectedNetwork"
+          :stats="contextStats"
+          :can-scan="contextKind === 'network' && can('subnets:write')"
+          :has-actions="actionMenuItems.length > 0"
+          :can-create="canAnyCreate"
+          :views="availableViews"
+          :active-view="activeView"
+          :show-summary="showViewSummary"
+          :view-meta="viewMeta"
+          :summary-zones="summaryZones"
+          :summary-scopes="summaryScopes"
+          :selected-zone="selectedZoneFilter"
+          :selected-reverse-network="reverseNetworkFilter"
+          :selected-scope="selectedScopeFilter"
+          :address-overview="addressOverview"
+          @select-estate="selectEstate"
+          @select-folder="selectFolderById"
+          @switch-view="switchView"
+          @open-menu="toggleMenu"
+          @filter-zone="filterToZone"
+          @filter-reverse-network="filterToReverseNetwork"
+          @filter-scope="filterToScope"
+          @zone-menu="(zone, invoker, event) => openLinkedMenu('zone', zone, invoker, event)"
+          @scope-menu="(scope, invoker, event) => openLinkedMenu('scope', scope, invoker, event)"
+          @action="runContextAction"
+        />
+        <section class="table-card" :class="{ 'is-loading': loadingContext }">
+          <!-- Loading sits over the table as a popover and dims what is under
+               it, instead of pushing the toolbar down with a bar. -->
+          <div
+            v-if="loadingContext"
+            class="loading-overlay"
+            role="status"
+            aria-live="polite"
+            data-track="workspace-loading"
+          >
+            <div class="loading-popover">
+              <i class="pi pi-spin pi-spinner" /> Loading live data…
+            </div>
+          </div>
+          <div v-if="visibleResourceError && !loadingContext" class="workspace-error" role="alert">
+            <i class="pi pi-exclamation-circle" />
+            <span><strong>Could not load this inventory</strong>{{ visibleResourceError }}</span>
+            <button @click="retryVisibleResource">Retry</button>
+          </div>
+          <WorkspaceToolbar
+            v-model:table-query="tableQuery"
+            v-model:filters="filters"
+            v-model:show-available="showAvailable"
+            v-model:show-domain-names="showDomainNames"
+            v-model:presentation="addressPresentation"
+            :allow-grid="!isV6Network"
+            :active-view="activeView"
+            :context-kind="contextKind"
+            :view-meta="viewMeta"
+            :filter-columns="filterColumns"
+            :facets="facets"
+            :facets-loading="facetsLoading"
+            :column-table-name="columnTableName"
+            :column-catalog="columnCatalog"
+            :columns="columns"
+            :can-create="canCreateCurrent"
+            :filter-chips="activeFilterChips"
+            @update:visible-columns="setVisibleColumns"
+            @reset-columns="resetVisibleColumns"
+            @clear-filter="clearFilter"
+            @clear-filters="clearFilters"
+            @filter-open="loadFilterFacets"
+            @add="runViewAdd"
+          />
+
+          <AddressGrid
+            v-if="activeView === 'addresses' && effectivePresentation !== 'table'"
+            :cells="gridCells"
+            :density="effectivePresentation === 'compact-grid' ? 'compact' : 'spacious'"
+            :selected-rows="selectedRows"
+            @open="openGridCell"
+            @toggle="toggleRow"
+            @range-toggle="
+              selectRange(
+                $event,
+                gridCells.map((cell) => cell.row.id),
+              )
+            "
+            @drag-select="selectGridDrag"
+            @clear-selection="selectedRows = []"
+            @row-menu="openRowMenu"
+          />
+          <WorkspaceTable
+            v-else
+            :columns="columns"
+            :rows="pagedRows"
+            :show-checkboxes="['addresses', 'networks', 'dns'].includes(activeView)"
+            :selected-row-id="selectedRow?.id ?? null"
+            :selected-rows="selectedRows"
+            :sort-key="sortKey"
+            :sort-order="sortOrder"
+            :draggable-rows="activeView === 'networks' && can('subnets:write')"
+            @sort="sortBy"
+            @select="selectRow"
+            @toggle-row="toggleRow"
+            @range-row="
+              selectRange(
+                $event,
+                pagedRows.map((row) => row.id),
+              )
+            "
+            @toggle-all="toggleAllRows"
+            @row-menu="openRowMenu"
+            @row-dragstart="startNetworkDrag"
+          />
+          <footer class="table-footer">
+            <span>{{ resultCountLabel }}</span>
+            <!-- The same paginator the current interface's tables use. Server
+                 paged views page through the API; the aggregate lists page the
+                 loaded rows in the browser. -->
+            <Paginator
+              v-if="!gridMode || paginatorTotal > addressPageSize"
+              :first="(activePage - 1) * addressPageSize"
+              :rows="addressPageSize"
+              :total-records="paginatorTotal"
+              :rows-per-page-options="gridMode ? undefined : PAGE_SIZES"
+              data-track="workspace-paginator"
+              @page="onPaginatorPage"
+            />
+          </footer>
+        </section>
+      </section>
+
+      <WorkspaceDetailsHost
+        :row="selectedRow"
+        :row-view="selectedRowView"
+        :row-context="selectedRowContext"
+        :can-write="can('subnets:write')"
+        :network="selectedNetwork"
+        :dns="selectedAddressDns"
+        :dhcp-count="selectedAddressDhcpCount"
+        :title="detailTitle"
+        :heading="detailHeading"
+        :subheading="detailSubheading"
+        :icon="detailIcon"
+        :items="detailItems"
+        :related="relatedResources"
+        :actions="rowMenuItems"
+        :dns-action="addressDnsAction"
+        @close="clearDetail"
+        @navigate="openRelatedResource"
+        @changed="refreshAfterMutation('address', $event)"
+        @action="runRowAction"
+      />
+      <ApplyStatusBanner
+        ref="applyStatus"
+        :can-read="can('analytics:read')"
+        :can-dns-write="can('dns:write')"
+        :can-dhcp-write="can('dhcp:write')"
+        :is-admin="user?.role === 'admin'"
+        @changed="refreshAfterMutation('apply', $event)"
+      />
+    </section>
+
+    <ConfirmDialog
+      :visible="dnsBulkDelete != null"
+      header="Delete DNS records?"
+      confirm-label="Delete"
+      confirm-track="workspace-dns-bulk-delete-confirm"
+      cancel-track="workspace-dns-bulk-delete-cancel"
+      @update:visible="(visible) => !visible && (dnsBulkDelete = null)"
+      @confirm="continueDnsBulkDelete"
+    >
+      <p v-if="dnsBulkDelete">
+        Delete {{ countOf(dnsBulkDelete.manual, 'DNS record') }}? An address a deleted A or AAAA
+        record named is freed, and its reverse (PTR) record goes with it.
+        <template v-if="dnsBulkDelete.count > dnsBulkDelete.manual">
+          {{ countOf(dnsBulkDelete.count - dnsBulkDelete.manual, 'generated record') }} in the
+          selection stay; they follow their DNS or DHCP source.
+        </template>
+      </p>
+    </ConfirmDialog>
+    <ConfirmDialog
+      :visible="allocateOnMove != null"
+      header="Allocate network?"
+      severity="warn"
+      confirm-label="Continue"
+      confirm-icon="pi pi-arrow-right"
+      confirm-track="workspace-move-allocate-confirm"
+      cancel-track="workspace-move-allocate-cancel"
+      @update:visible="(visible) => !visible && (allocateOnMove = null)"
+      @confirm="continueAllocateOnMove"
+    >
+      <p v-if="allocateOnMove">
+        Moving <strong>{{ allocateOnMove.network.cidr }}</strong> into
+        {{ allocateOnMove.folder ? allocateOnMove.folder.name : 'a folder' }} allocates it. The
+        network form opens next; saving it makes {{ allocateOnMove.network.cidr }} a configured
+        network whose addresses can be named in DNS and served by DHCP. Nothing changes until you
+        save.
+      </p>
+    </ConfirmDialog>
+    <BulkActionDialog
+      v-if="selectedNetwork.id"
+      v-model:visible="bulkActionVisible"
+      :subnet-id="selectedNetwork.id"
+      :runs="selectionRuns"
+      :mode="bulkActionMode"
+      @complete="handleBulkComplete"
+      @partial="handleBulkPartial"
+    />
+    <BulkRangeTypeDialog
+      v-if="selectedNetwork.id"
+      v-model:visible="bulkRangeVisible"
+      :subnet-id="selectedNetwork.id"
+      :selected-runs="selectionRuns"
+      :range-types="rangeTypes"
+      @saved="handleRangeTypeSaved"
+    />
+    <IpReservationEditor
+      v-if="selectedNetwork.id && reservationTarget"
+      v-model:visible="reservationEditorVisible"
+      :subnet-id="selectedNetwork.id"
+      :address="reservationTarget.address"
+      :mode="reservationEditorMode"
+      @saved="handleReservationSaved"
+    />
+    <RangeEditor
+      v-if="selectedNetwork.id"
+      v-model:visible="rangeEditorVisible"
+      :subnet-id="selectedNetwork.id"
+      :range="rangeEditorTarget"
+      :range-types="rangeTypes"
+      @type-created="addRangeTypes($event)"
+      @saved="handleRangeChanged('Network range saved')"
+      @deleted="handleRangeChanged('Network range deleted', { deleted: true })"
+    />
+    <AddressScanDialog
+      v-if="selectedNetwork.id && scanTarget"
+      v-model:visible="scanDialogVisible"
+      :subnet-id="selectedNetwork.id"
+      :address="scanTarget.address"
+      :current-override="scanTarget.raw?.scan_enabled"
+      :mode="scanDialogMode"
+      @changed="refreshAfterMutation('address', $event)"
+    />
+    <FolderManagerDialog
+      v-model:visible="folderManagerVisible"
+      :folders="folders"
+      @create="openFolderDialog('create')"
+      @edit="openFolderDialog('edit', $event)"
+      @delete="openFolderDialog('delete', $event)"
+    />
+    <NetworkDialogs
+      v-if="networkDialogsMounted"
+      ref="networkDialogs"
+      :selected-node="networkDialogNode"
+      :folders="folders"
+      @folder-created="refreshAfterMutation('network')"
+      @folder-updated="refreshAfterMutation('network')"
+      @folder-deleted="refreshAfterMutation('network')"
+      @network-created="refreshAfterMutation('network')"
+      @network-configured="refreshAfterMutation('network')"
+      @network-updated="refreshAfterMutation('network')"
+      @network-divided="refreshAfterMutation('network')"
+      @network-deleted="refreshAfterMutation('network')"
+      @networks-merged="refreshAfterMutation('network')"
+      @group-configured="refreshAfterMutation('network')"
+    />
+    <div v-if="protocolDialogsMounted" class="protocol-dialog-providers">
+      <DnsPanel ref="dnsDialogs" dialogs-only @changed="refreshAfterMutation('dns', $event)" />
+      <DhcpPanel ref="dhcpDialogs" dialogs-only @changed="refreshAfterMutation('dhcp', $event)" />
+    </div>
+
+    <div v-if="openMenuName" class="menu-scrim" @click="closeMenu" />
+    <div
+      v-if="openMenuName === 'create'"
+      class="floating-menu create-menu"
+      :style="menuStyle"
+      role="menu"
+      @keydown="handleMenuKeydown"
+    >
+      <span>CREATE RESOURCE</span>
+      <button
+        v-for="item in createMenuItems"
+        :key="item.id"
+        role="menuitem"
+        @click="runMenuAction(item)"
+      >
+        <i :class="item.icon" /><span
+          ><strong>{{ item.label }}</strong
+          ><small>{{ item.note }}</small></span
+        >
+      </button>
+    </div>
+    <div
+      v-if="openMenuName === 'actions'"
+      class="floating-menu actions-menu"
+      :style="menuStyle"
+      role="menu"
+      @keydown="handleMenuKeydown"
+    >
+      <span>{{ actionMenuTitle }}</span>
+      <button
+        v-for="item in actionMenuItems"
+        :key="item.id"
+        role="menuitem"
+        :class="{ danger: item.danger, unavailable: !item.available }"
+        :aria-disabled="item.available ? undefined : 'true'"
+        @click="item.available && runMenuAction(item)"
+      >
+        <i :class="item.icon" /><span
+          ><strong>{{ item.label }}</strong
+          ><small>{{ item.available ? item.note : item.reason }}</small></span
+        >
+      </button>
+    </div>
+    <div
+      v-if="openMenuName === 'row'"
+      class="floating-menu row-menu"
+      :style="menuStyle"
+      role="menu"
+      @keydown="handleMenuKeydown"
+    >
+      <span>{{ rowMenuTitle }}</span>
+      <template v-for="item in rowMenuItems" :key="item.id">
+        <hr v-if="item.separatorBefore" class="menu-separator" role="separator" />
+        <button
+          v-if="item.toggle"
+          role="menuitemcheckbox"
+          class="menu-toggle"
+          :aria-checked="item.toggle === 'mixed' ? 'mixed' : String(item.toggle === 'on')"
+          :title="item.toggle === 'mixed' ? 'On for some of the selection' : ''"
+          @click="runRowAction(item)"
+        >
+          <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
+          <span class="menu-switch" :class="item.toggle" aria-hidden="true" />
+        </button>
+        <button
+          v-else
+          role="menuitem"
+          :class="{ danger: item.danger, unavailable: !item.available }"
+          :aria-disabled="item.available ? undefined : 'true'"
+          :title="item.available ? undefined : item.reason"
+          @click="item.available && runRowAction(item)"
+        >
+          <i class="pi pi-angle-right" /><strong>{{ item.label }}</strong>
+        </button>
+      </template>
+    </div>
+
+    <Transition name="notice">
+      <div v-if="notice" class="prototype-notice" role="status" aria-live="polite">
+        <i class="pi pi-info-circle" /><span><strong>Workspace</strong>{{ notice }}</span>
+        <button v-if="noticeRetry" type="button" @click="retryNoticeRefresh">Retry</button>
+      </div>
+    </Transition>
+  </div>
+</template>
+
+<script setup>
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { useRouter } from 'vue-router';
+import { useAutoRefresh } from '../../composables/useAutoRefresh.js';
+import { usePermissions } from '../../composables/usePermissions.js';
+import { useWorkspaceFontBump } from '../../composables/useWorkspaceUi.js';
+import { useSubnetStore } from '../../stores/subnets.js';
+import NetworkDialogs from '../../components/NetworkDialogs.vue';
+import DnsPanel from '../../components/DnsPanel.vue';
+import DhcpPanel from '../../components/DhcpPanel.vue';
+import Paginator from '../../ui/Paginator.js';
+import { apiError, countOf, formatNumber } from '../../utils/format.js';
+import { loadJson, saveJson } from '../../utils/storage.js';
+import { reverseZoneSortKey } from '../../utils/reverseZone.js';
+import AddressGrid from './AddressGrid.vue';
+import ApplyStatusBanner from './ApplyStatusBanner.vue';
+import ResourceExplorer from './ResourceExplorer.vue';
+import WorkspaceContextHeader from './WorkspaceContextHeader.vue';
+import WorkspaceDetailsHost from './WorkspaceDetailsHost.vue';
+import WorkspaceTable from './WorkspaceTable.vue';
+import WorkspaceToolbar from './WorkspaceToolbar.vue';
+import ConfirmDialog from '../../components/ConfirmDialog.vue';
+import BulkActionDialog from './dialogs/BulkActionDialog.vue';
+import BulkRangeTypeDialog from './dialogs/BulkRangeTypeDialog.vue';
+import IpReservationEditor from './dialogs/IpReservationEditor.vue';
+import RangeEditor from './dialogs/RangeEditor.vue';
+import AddressScanDialog from './dialogs/AddressScanDialog.vue';
+import FolderManagerDialog from './dialogs/FolderManagerDialog.vue';
+import { UNGROUPED_FOLDER, useWorkspaceContext } from './composables/useWorkspaceContext.js';
+import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
+import { contiguousAddressRuns, identityAddress } from './composables/useWorkspaceSelection.js';
+import { useRangeActions } from './composables/useRangeActions.js';
+import { useWorkspaceActions } from './composables/useWorkspaceActions.js';
+import {
+  NETWORK_DRAG_TYPE,
+  dnsSelectionTarget,
+  menuActions,
+  scanningOn,
+  targetForRow,
+} from './workspace-actions.js';
+import {
+  defaultWorkspaceColumnKeys,
+  filterValueLabel,
+  restoreWorkspaceColumnKeys,
+  workspaceColumnCatalog,
+} from './workspace-columns.js';
+import {
+  buildExplorerFolders,
+  gridKind,
+  mapAddressRows,
+  addressCountLabel,
+  dnsRecordSummary,
+  mapDhcpScopeRows,
+  mapDhcpRows,
+  inZoneFileForm,
+  mapDnsRows,
+  mapDnsZoneRows,
+  mapNetworkRows,
+  mapRangeRows,
+  sumScopeAddresses,
+  formatAddressCount,
+  compareCellValues,
+  flattenAllocatable,
+} from '../networks-workspace-data.js';
+import { DHCP_V6_MODE_LABELS } from '../../utils/ip.js';
+import { ZONE_WIDE_NETWORK } from '@shared/ip-columns.js';
+
+const networkViews = [
+  { key: 'addresses', label: 'Addresses', icon: 'pi pi-list' },
+  { key: 'dns', label: 'DNS', icon: 'pi pi-globe' },
+  { key: 'dhcp', label: 'DHCP', icon: 'pi pi-server' },
+  { key: 'ranges', label: 'Ranges', icon: 'pi pi-clone' },
+];
+const aggregateViews = [
+  { key: 'networks', label: 'Networks', icon: 'pi pi-sitemap' },
+  { key: 'dns', label: 'DNS', icon: 'pi pi-globe' },
+  { key: 'dhcp', label: 'DHCP', icon: 'pi pi-server' },
+];
+
+const folders = ref([]);
+const unallocatedFolders = ref([]);
+const dnsZones = ref([]);
+const allDnsRows = ref([]);
+const networkDnsRowsData = ref([]);
+const dhcpScopes = ref([]);
+const allDhcpRows = ref([]);
+const addressRows = ref([]);
+const networkDhcpRows = ref([]);
+const rangeRows = ref([]);
+const matchedNetworkIds = ref(null);
+// What the explorer search matches ({ networks, zones, scopes } of id Sets,
+// from loadSearchMatches), or null with no search. The zone and scope cards
+// show only these; the whole lists stay whole for everything else.
+const searchMatches = ref(null);
+// The zone and scope lists have been read: before that no choice is judged.
+let listsLoaded = false;
+const matchesSearch = (kind, item) => {
+  const ids = searchMatches.value?.[kind];
+  return !ids || ids.has(Number(item.id));
+};
+const resourceQuery = ref('');
+const tableQuery = ref('');
+const selectedNetwork = ref({
+  id: null,
+  folder: 'Infrastructure',
+  name: 'Loading networks…',
+  cidr: '',
+  vlan: null,
+  domain: null,
+  status: 'allocated',
+  total_addresses: 0,
+  used_count: 0,
+  used: 0,
+});
+const selectedFolder = ref(null);
+const contextKind = ref('estate');
+const activeView = ref('networks');
+const expandedFolders = ref(new Set());
+const addressPresentation = ref('table');
+// An IPv6 network is shown as a table whatever the saved presentation says:
+// its address space cannot be enumerated, so a grid would draw scattered
+// rows as if they were contiguous. The saved choice is kept for the next
+// IPv4 network.
+const isV6Network = computed(
+  () =>
+    contextKind.value === 'network' &&
+    Number(
+      selectedNetwork.value?.address_family ?? selectedNetwork.value?.raw?.address_family ?? 4,
+    ) === 6,
+);
+const effectivePresentation = computed(() =>
+  isV6Network.value ? 'table' : addressPresentation.value,
+);
+// The grid draws the whole network at once, up to a /20; the table keeps
+// its 32 to 512 rows a page. A /19 or larger pages the grid in /20 chunks.
+// Measured 2026-09-22: a /20 draws in 200 ms and answers a click in 250 ms,
+// a /22 in 60 and 85. Only the address read uses this size; the DNS and
+// DHCP reads on the same page keep the table's.
+const GRID_PAGE_SIZE = 4096;
+const gridMode = computed(
+  () => activeView.value === 'addresses' && effectivePresentation.value !== 'table',
+);
+const addressPageSize = computed(() => (gridMode.value ? GRID_PAGE_SIZE : pageSize.value));
+const addressSparse = ref(false);
+// Show available is a preference, kept per browser like the zone side below.
+const SHOW_AVAILABLE_KEY = 'cidrella_workspace_show_available';
+const showAvailable = ref(loadJson(SHOW_AVAILABLE_KEY, true) !== false);
+// Off, the DNS table writes names as a zone file does: @, relative names, and
+// absolute ones with a trailing dot.
+const SHOW_DOMAIN_NAMES_KEY = 'cidrella_workspace_show_domain_names';
+const showDomainNames = ref(loadJson(SHOW_DOMAIN_NAMES_KEY, true) !== false);
+// { column: [value, ...] }. The three IP tables filter on the server, over
+// every row; the other lists (networks, zones, scopes, ranges) are loaded
+// whole and filter here.
+const filters = ref({});
+const facets = ref(null);
+const facetsLoading = ref(false);
+const facetKinds = ref(null);
+// Details identity (W-06). The panel is pinned to a resource, not to a page
+// row: `detailIdentity` says what is open, `detailFallback` is the last row
+// read for it, and `selectedRow` prefers the live page row when the same
+// resource is on the current page. Paging, filtering or a refresh that drops
+// the row from the page keeps the panel open; resolveDetail() re-reads the
+// resource and only closes the panel when the server says it is gone.
+const detailIdentity = ref(null);
+const detailFallback = ref(null);
+const selectedRows = ref([]);
+const bulkActionVisible = ref(false);
+const bulkActionMode = ref('reserve');
+const bulkRangeVisible = ref(false);
+const rangeTypes = ref([]);
+const reservationEditorVisible = ref(false);
+const reservationEditorMode = ref('reserve');
+const reservationTarget = ref(null);
+const rangeEditorVisible = ref(false);
+const rangeEditorTarget = ref(null);
+const scanDialogVisible = ref(false);
+const scanDialogMode = ref('policy');
+const scanTarget = ref(null);
+const networkDialogs = ref(null);
+const networkDialogsMounted = ref(false);
+const protocolDialogsMounted = ref(false);
+const dnsDialogs = ref(null);
+const dhcpDialogs = ref(null);
+const applyStatus = ref(null);
+const folderManagerVisible = ref(false);
+const selectedZoneFilter = ref(null);
+// Every reverse zone of one network at once, the heading of that network in
+// the reverse zone picker. Excludes selectedZoneFilter: one or the other.
+const reverseNetworkFilter = ref(null);
+const selectedScopeFilter = ref(null);
+const openMenuName = ref(null);
+const notice = ref('');
+const noticeRetry = ref(null);
+const loading = ref(true);
+const loadingContext = ref(false);
+const loadError = ref('');
+const currentPage = ref(1);
+const PAGE_SIZES = [32, 64, 128, 256, 512];
+const pageSize = ref(256);
+const totalPages = ref(1);
+const addressTotal = ref(0);
+const addressFilteredTotal = ref(0);
+const dnsTotal = ref(0);
+const dhcpTotal = ref(0);
+const sortKey = ref(null);
+const sortOrder = ref(1);
+// Small-text size is set from the header's user menu (useWorkspaceUi).
+const { styleValue: fontBumpStyle } = useWorkspaceFontBump();
+let noticeTimer = null;
+let searchTimer = null;
+let contextRequest = 0;
+let aggregateRequest = 0;
+let restoringRoute = false;
+let pendingRouteWrites = 0;
+let backgroundRefreshRunning = false;
+let menuInvoker = null;
+
+const { can, user, refreshCapabilities } = usePermissions();
+const router = useRouter();
+const { listRangeTypes } = useRangeActions();
+const subnetStore = useSubnetStore();
+async function handleForbidden() {
+  await refreshCapabilities();
+  showLiveNotice(
+    'Your access changed. Permissions were refreshed and other workspace data was preserved.',
+  );
+}
+const workspaceResources = useWorkspaceResources({ can, onForbidden: handleForbidden });
+const { state: routeState, navigate: navigateWorkspace } = useWorkspaceContext({
+  storageKey: `cidrella_workspace_v1_${user.value?.username || 'anonymous'}`,
+});
+resourceQuery.value = routeState.value.q;
+tableQuery.value = routeState.value.tableQ;
+// The route already names the context before any data arrives. Seed the kind
+// and view from it so the first paint shows the right tab set; without this
+// the page opened as the estate ("Networks" and its siblings) and swapped to
+// the network tabs half a second later once the tree had loaded. The full
+// restore still runs after the load, when the network itself is known.
+{
+  const initial = routeState.value;
+  if (
+    initial.context === 'network' ||
+    initial.context === 'folder' ||
+    initial.context === 'unallocated'
+  ) {
+    contextKind.value = initial.context;
+  }
+  const views = initial.context === 'network' ? networkViews : aggregateViews;
+  if (views.some((view) => view.key === initial.view)) activeView.value = initial.view;
+  else if (initial.context === 'network') activeView.value = 'addresses';
+}
+
+const viewDefinitions = {
+  networks: {
+    search: 'Search network, CIDR, folder, VLAN, or domain…',
+    addLabel: 'Allocate network',
+  },
+  addresses: {
+    search: 'Search IP, hostname, MAC, type…',
+  },
+  dns: {
+    search: 'Search name, zone, record type, or value…',
+    addLabel: 'Add record',
+  },
+  dhcp: {
+    search: 'Search IP, MAC, hostname, network, or lease…',
+  },
+  ranges: {
+    search: 'Search range, type, or description…',
+    addLabel: 'Add range',
+  },
+};
+
+const visibleColumnKeys = ref({});
+// DNS and DHCP are the same record and address tables at every level; the
+// zones and scopes are the pickers above them.
+const columnKind = computed(() => activeView.value);
+const columnStorageKey = computed(
+  () =>
+    `cidrella_workspace_columns_v1_${user.value?.username || 'anonymous'}_${contextKind.value}_${columnKind.value}`,
+);
+const columnCatalog = computed(() =>
+  workspaceColumnCatalog(columnKind.value).map((column) => ({
+    ...column,
+    label: column.label || column.header,
+    className:
+      column.className ||
+      (['ip_address', 'mac_address', 'value', 'dns_hostname'].includes(column.key) ? 'mono' : ''),
+  })),
+);
+const columnTableName = computed(() => {
+  const label =
+    [...networkViews, ...aggregateViews].find((view) => view.key === activeView.value)?.label ||
+    activeView.value;
+  return `${contextKind.value === 'estate' ? 'All Allocated Networks' : contextTitle.value} ${label}`;
+});
+
+const canAnyCreate = computed(() => createMenuItems.value.length > 0);
+const canCreateCurrent = computed(() => viewAddAction.value?.available === true);
+
+// What the explorer and the unallocated table match a search against. The
+// server's network search covers allocated networks only.
+const networkTextMatches = (network, query) =>
+  `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query);
+const filteredFolders = computed(() => {
+  const query = resourceQuery.value.trim().toLowerCase();
+  const source = contextKind.value === 'unallocated' ? unallocatedFolders.value : folders.value;
+  if (!query) return source;
+  const filterNodes = (nodes) =>
+    nodes.flatMap((network) => {
+      const children = filterNodes(network.children || []);
+      const matches =
+        searchMatches.value?.networks?.has(Number(network.id)) ||
+        networkTextMatches(network, query);
+      return matches || children.length ? [{ ...network, children }] : [];
+    });
+  return source
+    .map((folder) => ({
+      ...folder,
+      networks: folder.name.toLowerCase().includes(query)
+        ? folder.networks
+        : filterNodes(folder.networks),
+    }))
+    .filter((folder) => folder.name.toLowerCase().includes(query) || folder.networks.length);
+});
+
+const allNetworks = computed(() => folders.value.flatMap((folder) => folder.networks));
+// Every unallocated leaf network, the address space ready to allocate.
+const unallocatedNetworks = computed(() =>
+  unallocatedFolders.value.flatMap((folder) => flattenAllocatable(folder.networks)),
+);
+const scopedNetworks = computed(() => {
+  if (contextKind.value === 'network')
+    return selectedNetwork.value.id ? [selectedNetwork.value] : [];
+  if (contextKind.value === 'folder') return selectedFolder.value?.networks || [];
+  if (contextKind.value === 'unallocated') return unallocatedNetworks.value;
+  return allNetworks.value;
+});
+const scopedNetworkIds = computed(
+  () => new Set(scopedNetworks.value.map((network) => Number(network.id))),
+);
+const dnsZoneNetworkIds = computed(() => {
+  return new Map(
+    dnsZones.value.map((zone) => [
+      Number(zone.id),
+      new Set((zone.related_subnet_ids || []).map(Number)),
+    ]),
+  );
+});
+const dnsZoneNetworkLabels = computed(
+  () =>
+    new Map(
+      dnsZones.value.map((zone) => {
+        const names = [...(dnsZoneNetworkIds.value.get(Number(zone.id)) || [])]
+          .map((id) => allNetworks.value.find((network) => Number(network.id) === id)?.name)
+          .filter(Boolean);
+        return [
+          Number(zone.id),
+          names.length > 2 ? `${names.length} networks` : names.join(', ') || 'Unlinked',
+        ];
+      }),
+    ),
+);
+// A disabled reverse zone that no allocated network uses is what deallocating
+// a network leaves behind; it is not part of the allocated estate. An enabled
+// one stands for address space kept outside IPAM and stays.
+function inAllocatedEstate(zone) {
+  return (
+    zone.type !== 'reverse' ||
+    Number(zone.enabled) === 1 ||
+    zone.enabled === true ||
+    (dnsZoneNetworkIds.value.get(Number(zone.id))?.size || 0) > 0
+  );
+}
+const scopedZones = computed(() =>
+  contextKind.value === 'estate'
+    ? dnsZones.value.filter(inAllocatedEstate)
+    : dnsZones.value.filter((zone) =>
+        [...(dnsZoneNetworkIds.value.get(Number(zone.id)) || [])].some((id) =>
+          scopedNetworkIds.value.has(id),
+        ),
+      ),
+);
+const scopedScopes = computed(() =>
+  contextKind.value === 'estate'
+    ? dhcpScopes.value
+    : dhcpScopes.value.filter((scope) => scopedNetworkIds.value.has(Number(scope.subnet_id))),
+);
+const scopedDhcpRows = computed(() =>
+  contextKind.value === 'estate'
+    ? allDhcpRows.value
+    : allDhcpRows.value.filter((row) => scopedNetworkIds.value.has(Number(row.raw.subnet_id))),
+);
+const networkInventoryRows = computed(() => mapNetworkRows(scopedNetworks.value));
+
+const contextTitle = computed(() => {
+  if (contextKind.value === 'estate') return 'All Allocated Networks';
+  if (contextKind.value === 'unallocated') return 'All Unallocated Networks';
+  if (contextKind.value === 'folder') return selectedFolder.value?.name || 'Folder';
+  return selectedNetwork.value.name;
+});
+const contextSubtitle = computed(() => {
+  if (contextKind.value === 'network')
+    return [
+      selectedNetwork.value.cidr,
+      selectedNetwork.value.vlan != null ? `VLAN ${selectedNetwork.value.vlan}` : null,
+      selectedNetwork.value.domain,
+    ]
+      .filter(Boolean)
+      .join(' · ');
+  if (contextKind.value === 'folder')
+    return `${countOf(scopedNetworks.value.length, 'managed network')} in this folder`;
+  if (contextKind.value === 'unallocated')
+    return `${countOf(scopedNetworks.value.length, 'available network')} ready to allocate`;
+  return `${countOf(allNetworks.value.length, 'managed network')} across all folders`;
+});
+const contextIcon = computed(() =>
+  contextKind.value === 'estate'
+    ? 'pi pi-building'
+    : contextKind.value === 'folder'
+      ? 'pi pi-folder'
+      : contextKind.value === 'unallocated'
+        ? 'pi pi-inbox'
+        : 'pi pi-sitemap',
+);
+const linkedZones = computed(() =>
+  dnsZones.value.filter((zone) =>
+    dnsZoneNetworkIds.value.get(Number(zone.id))?.has(Number(selectedNetwork.value.id)),
+  ),
+);
+// Which linked zone the DNS view opens, both when the DNS tab is chosen and
+// when the operator moves to another network: the side (forward or reverse)
+// of the zone they last chose, or every record of the network when they last
+// cleared the zone. Forward until they choose otherwise, since that is the
+// zone an admin nearly always wants. Remembered per browser, so it also holds
+// across reloads.
+const DNS_ZONE_SIDE_KEY = 'cidrella_workspace_dns_zone_side';
+const dnsZoneSide = ref(
+  ['forward', 'reverse', ''].includes(loadJson(DNS_ZONE_SIDE_KEY, 'forward'))
+    ? loadJson(DNS_ZONE_SIDE_KEY, 'forward')
+    : 'forward',
+);
+function rememberDnsZoneSide(zone) {
+  dnsZoneSide.value = !zone ? '' : zone.type === 'reverse' ? 'reverse' : 'forward';
+  saveJson(DNS_ZONE_SIDE_KEY, dnsZoneSide.value);
+}
+// The zone the DNS table opens on when the context changes: the one already
+// chosen if the new context still has it, else the first zone of the side the
+// operator last chose (forward zones by name, reverse ones in address order),
+// else the first of the other side, so a network with only a reverse zone
+// still opens on it. Never the mixed list, where every PTR of every zone
+// sorts first.
+function dnsZoneForContext(previous) {
+  const inScope = summaryZones.value;
+  if (previous && inScope.some((zone) => Number(zone.id) === Number(previous.id))) {
+    return inScope.find((zone) => Number(zone.id) === Number(previous.id));
+  }
+  const firstOf = (side) => {
+    const key = (zone) => (side === 'reverse' ? reverseZoneSortKey(zone.name) : zone.name);
+    return inScope
+      .filter((zone) => zone.type === side)
+      .sort((a, b) => key(a).localeCompare(key(b)))[0];
+  };
+  const [side, other] =
+    dnsZoneSide.value === 'reverse' ? ['reverse', 'forward'] : ['forward', 'reverse'];
+  return firstOf(side) || firstOf(other) || null;
+}
+// Keeps the DNS and DHCP choices among the cards on screen, which a search or
+// a change of context can take away: a reverse-zone network choice needs the
+// picker (two or more of its reverse zones shown), the DNS view always has a
+// zone chosen when any is shown, and a scope choice needs its card. True when
+// a choice changed, so the caller writes the route before it reads the table.
+function reconcileSearchChoices() {
+  if (!listsLoaded) return false;
+  const before = [
+    selectedZoneFilter.value?.id,
+    reverseNetworkFilter.value?.id,
+    selectedScopeFilter.value?.id,
+  ];
+  const network = reverseNetworkFilter.value;
+  if (network) {
+    const reverse = summaryZones.value.filter((zone) => zone.type === 'reverse');
+    const serves = reverse.some((zone) =>
+      dnsZoneNetworkIds.value.get(Number(zone.id))?.has(Number(network.id)),
+    );
+    if (reverse.length < 2 || !serves) reverseNetworkFilter.value = null;
+  }
+  if (activeView.value === 'dns' && !reverseNetworkFilter.value)
+    selectedZoneFilter.value = dnsZoneForContext(selectedZoneFilter.value);
+  const scope = selectedScopeFilter.value;
+  if (scope && !summaryScopes.value.some((entry) => Number(entry.id) === Number(scope.id)))
+    selectedScopeFilter.value = null;
+  const after = [
+    selectedZoneFilter.value?.id,
+    reverseNetworkFilter.value?.id,
+    selectedScopeFilter.value?.id,
+  ];
+  return before.some((id, index) => Number(id || 0) !== Number(after[index] || 0));
+}
+// Reads what the explorer search matches. A read overtaken by a newer search
+// is dropped, not applied.
+async function refreshSearchMatches() {
+  const query = resourceQuery.value.trim();
+  if (!query) {
+    searchMatches.value = null;
+    return;
+  }
+  const matches = await workspaceResources.loadSearchMatches(query);
+  if (query === resourceQuery.value.trim()) searchMatches.value = matches;
+}
+const networkDnsRows = computed(() => networkDnsRowsData.value);
+const networkScopes = computed(() =>
+  dhcpScopes.value.filter((scope) => Number(scope.subnet_id) === Number(selectedNetwork.value.id)),
+);
+const summaryZones = computed(() =>
+  (contextKind.value === 'network' ? linkedZones.value : scopedZones.value).filter((zone) =>
+    matchesSearch('zones', zone),
+  ),
+);
+const summaryScopes = computed(() =>
+  (contextKind.value === 'network' ? networkScopes.value : scopedScopes.value).filter((scope) =>
+    matchesSearch('scopes', scope),
+  ),
+);
+const scopedActiveLeaseCount = computed(
+  () => scopedDhcpRows.value.filter((row) => row.leaseStatus === 'active').length,
+);
+// Unallocated space has no DNS or DHCP of its own and only one table, its
+// networks, so it offers no tabs to switch between.
+const availableViews = computed(() =>
+  contextKind.value === 'unallocated'
+    ? []
+    : contextKind.value === 'network'
+      ? networkViews.map((view) => ({
+          ...view,
+          count: String(
+            view.key === 'addresses'
+              ? addressTotal.value
+              : view.key === 'dns'
+                ? workspaceResources.resources.dnsTotal.data
+                : view.key === 'dhcp'
+                  ? workspaceResources.resources.dhcpTotal.data
+                  : rangeRows.value.length,
+          ),
+        }))
+      : aggregateViews.map((view) => ({
+          ...view,
+          count: String(
+            view.key === 'networks'
+              ? scopedNetworks.value.length
+              : view.key === 'dns'
+                ? scopedZones.value.length
+                : scopedScopes.value.length,
+          ),
+        })),
+);
+// "1 managed networks" reads as a bug even when the number is right. Every
+// count in this view is a plain English noun, so the "s" rule is enough.
+function mapWorkspaceDnsRows(records) {
+  const zonesById = new Map(dnsZones.value.map((zone) => [Number(zone.id), zone]));
+  const grouped = new Map();
+  for (const sourceRecord of records || []) {
+    const relatedNames = (sourceRecord.related_subnet_ids || [])
+      .map((id) => allNetworks.value.find((network) => Number(network.id) === Number(id))?.name)
+      .filter(Boolean);
+    const record = {
+      ...sourceRecord,
+      subnet_name:
+        (sourceRecord.zone_wide && ZONE_WIDE_NETWORK) ||
+        sourceRecord.subnet_name ||
+        relatedNames.join(', ') ||
+        null,
+    };
+    const zone = zonesById.get(Number(record.zone_id)) || {
+      id: record.zone_id,
+      name: record.zone_name || 'Unknown zone',
+      type: record.zone_type,
+      soa_minimum_ttl: record.zone_soa_minimum_ttl ?? null,
+    };
+    const entry = grouped.get(Number(zone.id)) || { zone, records: [] };
+    entry.records.push(record);
+    grouped.set(Number(zone.id), entry);
+  }
+  return mapDnsRows([...grouped.values()]);
+}
+
+function workspaceQueryState() {
+  return {
+    context: contextKind.value === 'estate' ? 'all' : contextKind.value,
+    folder: contextKind.value === 'folder' ? (selectedFolder.value?.id ?? UNGROUPED_FOLDER) : null,
+    network: contextKind.value === 'network' ? selectedNetwork.value.id : null,
+    view: activeView.value,
+    zone: selectedZoneFilter.value?.id || null,
+    // Handed over in its query name, like the filters below: navigate merges
+    // this into the query, and a state name would not replace the query's.
+    rzones: reverseNetworkFilter.value?.id || undefined,
+    scope: selectedScopeFilter.value?.id || null,
+    ip:
+      selectedRowView.value === 'addresses' && selectedRowContext.value === 'network'
+        ? selectedRow.value?.address || null
+        : null,
+    presentation:
+      addressPresentation.value === 'compact-grid' ? 'compact' : addressPresentation.value,
+    q: resourceQuery.value,
+    tableQ: tableQuery.value,
+    page: currentPage.value,
+    pageSize: pageSize.value,
+    filters: Object.keys(filters.value).length ? JSON.stringify(filters.value) : undefined,
+    sort: sortKey.value || undefined,
+    order: sortKey.value && sortOrder.value === -1 ? 'desc' : undefined,
+  };
+}
+
+async function updateWorkspaceRoute({ replace = false } = {}) {
+  if (restoringRoute) return Promise.resolve();
+  restoringRoute = true;
+  try {
+    pendingRouteWrites += 1;
+    await navigateWorkspace(workspaceQueryState(), { replace });
+  } finally {
+    restoringRoute = false;
+  }
+}
+
+async function restorePinnedAddress(ip) {
+  await loadNetworkContext();
+  if (!ip || contextKind.value !== 'network') return;
+  const detail = await workspaceResources.loadAddressDetail(selectedNetwork.value.id, ip);
+  if (!detail) {
+    loadError.value = 'The requested address no longer exists.';
+    return;
+  }
+  pinDetail(mapAddressRows([detail])[0], { view: 'addresses', context: 'network' });
+}
+
+function restoreContextFromRoute(availableNetworks) {
+  restoringRoute = true;
+  const state = routeState.value;
+  let repairedRoute = false;
+  resourceQuery.value = state.q;
+  tableQuery.value = state.tableQ;
+  pageSize.value = PAGE_SIZES.includes(state.pageSize) ? state.pageSize : 256;
+  currentPage.value = state.page;
+  filters.value = { ...state.filters };
+  sortKey.value = state.sort;
+  sortOrder.value = state.order === 'desc' ? -1 : 1;
+  addressPresentation.value =
+    state.presentation === 'compact' ? 'compact-grid' : state.presentation;
+  if (state.context === 'network') {
+    const network = availableNetworks.find((item) => Number(item.id) === Number(state.network));
+    if (network) {
+      selectedNetwork.value = network;
+      selectedFolder.value =
+        folders.value.find((folder) => Number(folder.id) === Number(network.folderId)) || null;
+      contextKind.value = 'network';
+      activeView.value = networkViews.some((view) => view.key === state.view)
+        ? state.view
+        : 'addresses';
+    } else {
+      contextKind.value = 'estate';
+      activeView.value = 'networks';
+      loadError.value = 'The requested network no longer exists.';
+      repairedRoute = true;
+    }
+  } else if (state.context === 'folder') {
+    const folder = folders.value.find((item) => (item.id ?? UNGROUPED_FOLDER) === state.folder);
+    if (folder) {
+      selectedFolder.value = folder;
+      contextKind.value = 'folder';
+      activeView.value = aggregateViews.some((view) => view.key === state.view)
+        ? state.view
+        : 'networks';
+    } else {
+      contextKind.value = 'estate';
+      activeView.value = 'networks';
+      loadError.value = 'The requested folder no longer exists.';
+      repairedRoute = true;
+    }
+  } else if (state.context === 'unallocated') {
+    contextKind.value = 'unallocated';
+    activeView.value = 'networks';
+  } else {
+    contextKind.value = 'estate';
+    activeView.value = aggregateViews.some((view) => view.key === state.view)
+      ? state.view
+      : 'networks';
+  }
+  // A link that asks for a view this context does not have lands on another.
+  // Its filters were meant for the view it asked for, and the one it got may
+  // have no control that shows them, so they are dropped with the view.
+  if (activeView.value !== state.view) {
+    clearFilters();
+    repairedRoute = true;
+  }
+  selectedZoneFilter.value = state.zone
+    ? dnsZones.value.find((zone) => Number(zone.id) === Number(state.zone)) || null
+    : null;
+  reverseNetworkFilter.value =
+    !selectedZoneFilter.value && state.reverseNetwork
+      ? allNetworks.value.find((network) => Number(network.id) === state.reverseNetwork) || null
+      : null;
+  selectedScopeFilter.value = state.scope
+    ? dhcpScopes.value.find((scope) => Number(scope.id) === Number(state.scope)) || null
+    : null;
+  if (state.zone && !selectedZoneFilter.value) {
+    loadError.value = 'The requested DNS zone no longer exists.';
+    repairedRoute = true;
+  }
+  if (state.scope && !selectedScopeFilter.value) {
+    loadError.value = 'The requested DHCP scope no longer exists.';
+    repairedRoute = true;
+  }
+  restoringRoute = false;
+  if (repairedRoute) void updateWorkspaceRoute({ replace: true });
+  if (contextKind.value === 'network') restorePinnedAddress(state.ip);
+}
+
+const viewMeta = computed(() => {
+  const base = viewDefinitions[activeView.value];
+  if (contextKind.value !== 'network') {
+    if (activeView.value === 'networks')
+      // Nothing to say here that the tab badge does not already say, so the
+      // whole band is hidden for this one.
+      return { ...base, title: '' };
+    if (activeView.value === 'dns')
+      return {
+        ...base,
+        title:
+          selectedZoneFilter.value?.name ||
+          (reverseNetworkFilter.value && `${reverseNetworkFilter.value.name} reverse zones`) ||
+          `${countOf(dnsTotal.value, 'record')} in ${countOf(scopedZones.value.length, 'zone')}`,
+      };
+    if (activeView.value === 'dhcp')
+      return {
+        ...base,
+        title: selectedScopeFilter.value
+          ? `${selectedScopeFilter.value.start_ip} – ${selectedScopeFilter.value.end_ip}`
+          : `${countOf(dhcpTotal.value, 'address', 'addresses')} in ${countOf(scopedScopes.value.length, 'scope')}`,
+      };
+  }
+  if (activeView.value === 'addresses')
+    return { ...base, title: `${formatNumber(addressTotal.value)} managed addresses` };
+  if (activeView.value === 'dns')
+    return {
+      ...base,
+      title:
+        selectedZoneFilter.value?.name ||
+        selectedNetwork.value.domain ||
+        `${networkDnsRows.value.length} linked records`,
+    };
+  if (activeView.value === 'dhcp')
+    return {
+      ...base,
+      title: selectedScopeFilter.value
+        ? `${selectedScopeFilter.value.start_ip} – ${selectedScopeFilter.value.end_ip}`
+        : networkScopes.value.length === 1
+          ? `${selectedNetwork.value.name} scope`
+          : `${networkScopes.value.length} scopes for ${selectedNetwork.value.name}`,
+    };
+  return { ...base, title: countOf(rangeRows.value.length, 'managed range') };
+});
+const columns = computed(() => {
+  const stored =
+    visibleColumnKeys.value[columnStorageKey.value] ?? loadJson(columnStorageKey.value, null);
+  const keys = restoreWorkspaceColumnKeys(columnKind.value, stored);
+  const byKey = new Map(columnCatalog.value.map((column) => [column.key, column]));
+  return keys.map((key) => byKey.get(key)).filter(Boolean);
+});
+const serverPagedView = computed(() => ['addresses', 'dns', 'dhcp'].includes(activeView.value));
+const visibleResourceError = computed(() => {
+  if (activeView.value === 'addresses') return workspaceResources.resources.addresses.error;
+  if (activeView.value === 'dns') return workspaceResources.resources.dns.error;
+  if (activeView.value === 'dhcp') return workspaceResources.resources.dhcp.error;
+  if (activeView.value === 'networks') return workspaceResources.resources.networks.error;
+  return '';
+});
+const currentRows = computed(() => {
+  let rows;
+  if (activeView.value === 'networks') rows = networkInventoryRows.value;
+  else if (activeView.value === 'addresses') rows = addressRows.value;
+  else if (activeView.value === 'dns')
+    rows = contextKind.value === 'network' ? networkDnsRows.value : allDnsRows.value;
+  else if (activeView.value === 'dhcp')
+    rows = contextKind.value === 'network' ? networkDhcpRows.value : allDhcpRows.value;
+  else rows = rangeRows.value;
+  if (activeView.value === 'dns' && selectedZoneFilter.value)
+    rows = rows.filter((row) => Number(row.raw.zone_id) === Number(selectedZoneFilter.value.id));
+  if (activeView.value === 'dns' && !showDomainNames.value) rows = inZoneFileForm(rows);
+  if (activeView.value === 'dns' && reverseNetworkFilter.value)
+    rows = rows.filter(
+      (row) =>
+        row.raw.zone_type === 'reverse' &&
+        (row.raw.related_subnet_ids || []).map(Number).includes(reverseNetworkFilter.value.id),
+    );
+  if (activeView.value === 'dhcp' && selectedScopeFilter.value)
+    rows = rows.filter(
+      (row) =>
+        Number(row.raw.scope_id || row.raw.dhcp_scope_id) === Number(selectedScopeFilter.value.id),
+    );
+  // The IP tables arrive sorted by the server, over every row, not the page.
+  if (!sortKey.value || isIpTable.value) return rows;
+  return [...rows].sort(
+    (a, b) => compareCellValues(a[sortKey.value], b[sortKey.value]) * sortOrder.value,
+  );
+});
+const IP_TABLE_KINDS = new Set(['addresses', 'dns', 'dhcp']);
+const isIpTable = computed(() => IP_TABLE_KINDS.has(columnKind.value));
+
+// The columns the Filter menu offers. On an IP table the server says which
+// columns filter by value and which by text; the other lists offer every
+// column by value.
+const filterColumns = computed(() =>
+  columnCatalog.value
+    .map((column) => ({
+      key: column.key,
+      header: column.header,
+      kind: isIpTable.value ? facetKinds.value?.[column.key] : 'enum',
+    }))
+    .filter((column) => column.kind === 'enum' || column.kind === 'text'),
+);
+
+// A value as a whole-list row carries it, for the lists filtered here.
+function localValue(row, key) {
+  const value = key in row ? row[key] : row.raw?.[key];
+  return value === undefined || value === '' ? null : value;
+}
+function localFacets(rows) {
+  const counts = {};
+  for (const column of columnCatalog.value) {
+    const map = new Map();
+    for (const row of rows) {
+      const others = Object.entries(filters.value).every(
+        ([key, values]) => key === column.key || values.includes(localValue(row, key)),
+      );
+      if (!others) continue;
+      const value = localValue(row, column.key);
+      map.set(value, (map.get(value) || 0) + 1);
+    }
+    counts[column.key] = [...map.entries()]
+      .map(([value, count]) => ({ value, count }))
+      .sort((a, b) => b.count - a.count || String(a.value).localeCompare(String(b.value)));
+  }
+  return counts;
+}
+
+// Counted when the Filter menu opens, over the whole result: the server's
+// facets for an IP table, the loaded list for the others.
+async function loadFilterFacets() {
+  if (!isIpTable.value) {
+    facets.value = localFacets(currentRows.value);
+    return;
+  }
+  facetsLoading.value = true;
+  try {
+    const response = await workspaceResources.loadFacets(activeView.value, {
+      ...tableRequestParams(),
+      subnetId: contextKind.value === 'network' ? selectedNetwork.value.id : null,
+    });
+    if (response) {
+      facets.value = response.facets || {};
+      facetKinds.value = response.filter_kinds || facetKinds.value;
+    }
+  } finally {
+    facetsLoading.value = false;
+  }
+}
+
+const activeFilterChips = computed(() =>
+  Object.entries(filters.value).map(([key, values]) => {
+    const header = columnCatalog.value.find((column) => column.key === key)?.header || key;
+    const kind = filterColumns.value.find((column) => column.key === key)?.kind;
+    const shown = values.map((value) => filterValueLabel(key, value)).join(', ');
+    return { key, label: kind === 'text' ? `${header} contains ${shown}` : `${header}: ${shown}` };
+  }),
+);
+const actionMenuTitle = computed(() =>
+  activeView.value === 'dns'
+    ? 'DNS ACTIONS'
+    : activeView.value === 'dhcp'
+      ? 'DHCP ACTIONS'
+      : contextKind.value === 'folder'
+        ? 'FOLDER ACTIONS'
+        : 'NETWORK ACTIONS',
+);
+const SELECTION_NOUNS = {
+  'address-selection': ['address', 'addresses'],
+  'network-selection': ['network', 'networks'],
+  'dns-selection': ['record', 'records'],
+};
+const rowMenuTitle = computed(() => {
+  const kind = menuTarget.value?.kind;
+  if (SELECTION_NOUNS[kind]) {
+    return `${countOf(menuTarget.value.count, ...SELECTION_NOUNS[kind]).toUpperCase()} SELECTED`;
+  }
+  return kind === 'folder'
+    ? 'FOLDER ACTIONS'
+    : kind === 'network'
+      ? 'NETWORK ACTIONS'
+      : `${activeView.value.toUpperCase()} ACTIONS`;
+});
+
+function buildUnallocatedFolders(sourceFolders) {
+  const mapNode = (network, folder) => {
+    const sourceChildren = network.children || [];
+    const children = sourceChildren.map((child) => mapNode(child, folder)).filter(Boolean);
+    const allocatable = network.status === 'unallocated' && sourceChildren.length === 0;
+    if (!allocatable && !children.length) return null;
+    return {
+      ...network,
+      name: network.name || network.cidr,
+      folder: folder.name,
+      folderId: folder.id,
+      vlan: network.vlan_id,
+      domain: network.domain_name || null,
+      gateway: network.gateway_address || null,
+      used: 0,
+      state: allocatable ? 'unallocated' : 'container',
+      allocatable,
+      children,
+    };
+  };
+  return (sourceFolders || [])
+    .map((folder) => ({
+      id: folder.id,
+      name: folder.name,
+      networks: (folder.subnets || []).map((network) => mapNode(network, folder)).filter(Boolean),
+    }))
+    .filter((folder) => folder.networks.length);
+}
+
+function preserveEmptyFolders(allocated, sourceFolders) {
+  const byId = new Map(allocated.map((folder) => [Number(folder.id), folder]));
+  return (sourceFolders || []).map(
+    (folder) =>
+      byId.get(Number(folder.id)) || {
+        id: folder.id,
+        name: folder.name,
+        description: folder.description || '',
+        networks: [],
+      },
+  );
+}
+
+const contextStats = computed(() =>
+  contextKind.value === 'network'
+    ? [
+        // A percent needs a total, which the server sends whenever the prefix
+        // fits a JavaScript number: every IPv4 network and an IPv6 one
+        // longer than about /75. A /64 gets the count instead.
+        !Number.isFinite(workspaceResources.resources.summary.data?.total_addresses ?? NaN)
+          ? {
+              label: 'ASSIGNED',
+              value: formatNumber(workspaceResources.resources.summary.data?.assigned_count || 0),
+              note: 'addresses with an allocation',
+              tone: 'neutral',
+            }
+          : {
+              label: 'UTILIZATION',
+              value: `${Math.round(((workspaceResources.resources.summary.data?.assigned_count || 0) / Math.max(1, workspaceResources.resources.summary.data?.total_addresses || 0)) * 100)}%`,
+              note: `${formatNumber(workspaceResources.resources.summary.data?.assigned_count || 0)} assigned`,
+              tone: 'neutral',
+            },
+        {
+          label: 'ONLINE NOW',
+          value: formatNumber(workspaceResources.resources.summary.data?.online_count || 0),
+          note: 'across this network',
+          tone: 'good',
+          dot: true,
+        },
+        {
+          label: 'DNS',
+          value: `${workspaceResources.resources.dnsTotal.data} records`,
+          note: `${linkedZones.value.length} linked zones`,
+          tone: 'neutral',
+          view: 'dns',
+        },
+        {
+          label: isV6Network.value ? 'DHCPV6' : 'DHCP POOL',
+          value: isV6Network.value
+            ? dhcpV6ModeLabel(networkScopes.value)
+            : formatAddressCount(sumScopeAddresses(networkScopes.value)),
+          note: `${networkScopes.value.filter((scope) => scope.enabled).length} active scopes`,
+          tone: 'good',
+          dot: true,
+          view: 'dhcp',
+        },
+        {
+          label: 'ATTENTION',
+          value: `${workspaceResources.resources.summary.data?.rogue_count || 0} rogue`,
+          note: 'currently detected',
+          tone: 'warning',
+          dot: true,
+        },
+      ]
+    : [
+        {
+          label: 'POOL ADDRESSES',
+          value: formatAddressCount(sumScopeAddresses(scopedScopes.value)),
+          note: `across ${countOf(scopedScopes.value.length, 'DHCP scope')}`,
+          tone: 'good',
+          dot: true,
+        },
+        {
+          label: 'ACTIVE LEASES',
+          value: formatNumber(scopedActiveLeaseCount.value),
+          tone: 'neutral',
+        },
+        {
+          label: 'ATTENTION',
+          value: scopedNetworks.value.filter((network) => network.state === 'warning').length,
+          note: 'high-utilization networks',
+          tone: 'warning',
+          dot: true,
+        },
+      ],
+);
+
+// The right half of the band carries real content on these views (the address
+// breakdown, the zone and scope filter cards, the range legend). On the
+// all-networks view it carries nothing, and with the eyebrow and description
+// gone there is no left half either, so the band hides rather than sitting
+// there as an empty strip.
+const viewsWithAside = ['addresses', 'dns', 'dhcp', 'ranges'];
+const showViewSummary = computed(
+  () => Boolean(viewMeta.value.title) || viewsWithAside.includes(activeView.value),
+);
+
+// Network-scoped, and every figure is one the server already owns.
+//
+// This used to count addressRows, which is the loaded page, so it read
+// "Assigned 1" while the UTILIZATION tile above read "3 assigned" and its
+// three numbers summed to the page size under a heading saying 1,024.
+//
+// "Available" is deliberately gone rather than network-scoped. There is no
+// exact source for it: ip_display_status is not a column, it folds
+// allocation_state together with dynamic-pool membership and the rogue/online
+// promotion, and pool membership is decided in routes/subnets.js while the
+// rest of the rule lives in models/ip-view.js. Deriving it here as
+// total - assigned - pool would double-subtract every active lease, which is
+// an address that is both assigned and inside the pool range. Per AGENTS.md
+// the client must not reconstruct that, so the third figure is now
+// "Unassigned", the exact complement of the server's own used_count. It
+// overlaps the pool on purpose: these three do not partition the space and
+// are not presented as if they do.
+// The mode of the first enabled DHCPv6 scope, for the context tile.
+function dhcpV6ModeLabel(scopes) {
+  const scope = scopes.find((item) => item.enabled) || scopes[0];
+  const mode = scope?.raw?.v6_mode || scope?.v6_mode;
+  return mode ? DHCP_V6_MODE_LABELS[mode] || mode : 'None';
+}
+
+const addressOverview = computed(() => {
+  if (isV6Network.value) return null;
+  const total = Math.max(1, addressTotal.value);
+  const assigned = Number(workspaceResources.resources.summary.data?.assigned_count) || 0;
+  const pool = Number(sumScopeAddresses(networkScopes.value));
+  const unassigned = Math.max(0, total - assigned);
+  const pct = (n) => `${Math.round((n / total) * 100)}%`;
+  return {
+    assigned,
+    pool,
+    unassigned,
+    assignedPercent: pct(assigned),
+    poolPercent: pct(pool),
+    unassignedPercent: pct(unassigned),
+  };
+});
+
+const selectedRow = computed(() => {
+  const identity = detailIdentity.value;
+  if (!identity) return null;
+  const onPage =
+    identity.view === activeView.value
+      ? currentRows.value.find((row) => row.id === identity.id)
+      : null;
+  return onPage || detailFallback.value;
+});
+const selectedRowView = computed(() => detailIdentity.value?.view ?? 'addresses');
+const selectedRowContext = computed(() => detailIdentity.value?.context ?? 'network');
+
+function identityForRow(row, view, context) {
+  const kind = String(row.id).split(':')[0];
+  return {
+    id: row.id,
+    kind,
+    view,
+    context,
+    subnetId: context === 'network' ? selectedNetwork.value.id : (row.raw?.subnet_id ?? null),
+    address: row.address || null,
+    zoneId: row.raw?.zone_id ?? (kind === 'zone' ? row.raw?.id : null) ?? null,
+    scopeId: row.raw?.scope_id ?? row.raw?.dhcp_scope_id ?? null,
+    name: row.name || null,
+    recordId: kind === 'dns' ? row.raw?.id : null,
+  };
+}
+function pinDetail(row, { view = activeView.value, context = contextKind.value } = {}) {
+  detailIdentity.value = identityForRow(row, view, context);
+  detailFallback.value = row;
+  // Under 1024px the panel renders after the work surface (W-07); bring it
+  // into view so a row tap does not appear to do nothing.
+  if (globalThis.matchMedia?.('(max-width: 1023px)').matches) {
+    nextTick(() => {
+      document
+        .querySelector('.workspace-address-panel, .details-panel')
+        ?.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    });
+  }
+}
+function clearDetail() {
+  detailIdentity.value = null;
+  detailFallback.value = null;
+  workspaceResources.invalidate('detail');
+}
+// A press anywhere outside the open details panel closes it. Presses on
+// things that open details themselves (table rows, grid cells) fall through
+// to their own handlers so the panel swaps content without closing and
+// reopening, and layered UI (dialogs, menus, popovers, toasts) is not
+// "outside" the page.
+const DETAIL_KEEP_SELECTORS = [
+  '.workspace-address-panel',
+  '.details-panel',
+  'tbody tr',
+  '.address-grid-view button',
+  '.compact-grid-view button',
+  '[role="dialog"]',
+  '.floating-menu',
+  '.menu-scrim',
+  '.p-popover',
+  '.p-overlay',
+  '[data-pc-section="overlay"]',
+  '.p-toast',
+].join(', ');
+function handleDetailOutsidePress(event) {
+  if (!detailIdentity.value) return;
+  const target = event.target;
+  if (!(target instanceof Element) || target.closest(DETAIL_KEEP_SELECTORS)) return;
+  clearDetail();
+  void updateWorkspaceRoute();
+}
+// Re-reads the pinned resource after the page it came from was replaced.
+// `request` is the caller's context generation; a resolve that finishes after
+// a newer load started is dropped along with the load it belonged to.
+async function resolveDetail(request, isCurrent) {
+  const identity = detailIdentity.value;
+  if (!identity) return;
+  if (identity.view === activeView.value) {
+    const onPage = currentRows.value.find((row) => row.id === identity.id);
+    if (onPage) {
+      detailFallback.value = onPage;
+      return;
+    }
+  }
+  let fresh = null;
+  let known = true;
+  if (identity.kind === 'address' && identity.subnetId) {
+    const detail = await workspaceResources.loadAddressDetail(identity.subnetId, identity.address);
+    if (!isCurrent(request)) return;
+    fresh = detail ? mapAddressRows([detail])[0] : null;
+  } else if (identity.kind === 'dns') {
+    const detail = await workspaceResources.loadDnsRecordDetail({
+      zoneId: identity.zoneId,
+      subnetId: identity.context === 'network' ? identity.subnetId : undefined,
+      name: identity.name === '@' ? undefined : identity.name,
+      recordId: identity.recordId,
+    });
+    if (!isCurrent(request)) return;
+    fresh = detail ? mapWorkspaceDnsRows([detail])[0] : null;
+  } else if (identity.kind === 'dhcp') {
+    const detail = await workspaceResources.loadDhcpAddressDetail({
+      subnetId: identity.context === 'network' ? identity.subnetId : undefined,
+      scopeId: identity.context === 'network' ? undefined : identity.scopeId,
+      ip: identity.address,
+    });
+    if (!isCurrent(request)) return;
+    fresh = detail ? mapDhcpRows([detail])[0] : null;
+  } else if (identity.kind === 'zone') {
+    const zone = dnsZones.value.find((item) => `zone:${item.id}` === identity.id);
+    fresh = zone ? mapDnsZoneRows([zone], dnsZoneNetworkLabels.value)[0] : null;
+  } else if (identity.kind === 'scope') {
+    const scope = dhcpScopes.value.find((item) => `scope:${item.id}` === identity.id);
+    fresh = scope ? mapDhcpScopeRows([scope])[0] : null;
+  } else if (identity.kind === 'network') {
+    const network = allNetworks.value.find((item) => `network:${item.id}` === identity.id);
+    fresh = network ? mapNetworkRows([network])[0] : null;
+    // Unallocated leaves are not in allNetworks; keep the pinned copy.
+    if (!network && identity.context === 'unallocated') known = false;
+  } else if (identity.kind === 'range') {
+    fresh = rangeRows.value.find((row) => row.id === identity.id) || null;
+  } else {
+    known = false;
+  }
+  if (!known) return;
+  if (fresh) detailFallback.value = fresh;
+  else {
+    clearDetail();
+    showLiveNotice('The selected resource is no longer available.');
+  }
+}
+const filteredRows = computed(() => {
+  const globalQuery = resourceQuery.value.trim().toLowerCase();
+  const localQueries =
+    activeView.value === 'ranges'
+      ? [globalQuery, tableQuery.value.trim().toLowerCase()].filter(Boolean)
+      : [];
+  return currentRows.value.filter((row) => {
+    if (!showAvailable.value && (row.status === 'available' || row.leaseStatus === 'available'))
+      return false;
+    // The IP tables arrive filtered by the server; the whole lists filter here.
+    if (
+      !isIpTable.value &&
+      !Object.entries(filters.value).every(([key, values]) => values.includes(localValue(row, key)))
+    )
+      return false;
+    const tableText = tableQuery.value.trim().toLowerCase();
+    if ((globalQuery || tableText) && activeView.value === 'networks') {
+      const matches =
+        contextKind.value === 'unallocated'
+          ? [globalQuery, tableText]
+              .filter(Boolean)
+              .every((query) => networkTextMatches(row.raw, query))
+          : matchedNetworkIds.value?.has(Number(row.raw.id));
+      if (!matches) return false;
+    }
+    return localQueries.every((query) =>
+      Object.entries(row).some(
+        ([key, value]) =>
+          key !== 'raw' &&
+          String(value ?? '')
+            .toLowerCase()
+            .includes(query),
+      ),
+    );
+  });
+});
+const selectedAddressRows = computed(() => {
+  const selected = new Set(selectedRows.value);
+  return addressRows.value.filter((row) => selected.has(row.id));
+});
+const selectionRuns = computed(() => contiguousAddressRuns(selectedRows.value));
+const selectedAllocationStates = computed(() =>
+  selectedAddressRows.value.map((row) => row.raw?.allocation_state),
+);
+
+const detailTitle = computed(() => {
+  if (selectedRowView.value === 'networks') return 'Network';
+  if (selectedRowView.value === 'dns')
+    return selectedRowContext.value === 'network' ? 'DNS record' : 'DNS zone';
+  if (selectedRowView.value === 'dhcp')
+    return selectedRowContext.value === 'network' ? 'DHCP address' : 'DHCP scope';
+  return selectedRowView.value === 'ranges' ? 'Managed range' : 'IP address';
+});
+const detailHeading = computed(
+  () =>
+    selectedRow.value?.address || selectedRow.value?.name || selectedRow.value?.range || 'Resource',
+);
+const detailSubheading = computed(
+  () =>
+    selectedRow.value?.hostname ||
+    selectedRow.value?.value ||
+    selectedRow.value?.description ||
+    contextTitle.value,
+);
+const detailIcon = computed(() =>
+  selectedRowView.value === 'dns'
+    ? 'pi pi-globe'
+    : selectedRowView.value === 'dhcp'
+      ? 'pi pi-server'
+      : selectedRowView.value === 'ranges'
+        ? 'pi pi-clone'
+        : 'pi pi-desktop',
+);
+const detailItems = computed(() =>
+  Object.entries(selectedRow.value || {})
+    .filter(([key]) => !['id', 'online', 'enabled', 'raw'].includes(key))
+    .slice(0, 8)
+    .map(([key, value]) => ({
+      label: key.replace(/([A-Z])/g, ' $1').replace(/^./, (char) => char.toUpperCase()),
+      value,
+    })),
+);
+// The address a pinned row is about, whichever protocol view it came from.
+const pinnedAddress = computed(
+  () =>
+    selectedRow.value?.raw?.ip_address ||
+    selectedRow.value?.address ||
+    (selectedRowView.value === 'dns' ? selectedRow.value?.value : null) ||
+    null,
+);
+// Rows that reference an address. For the pinned address they come from an
+// exact-address read of both protocol inventories (the loaded page is only
+// one page of them); other addresses fall back to the loaded page. Generated
+// PTR placeholders and bare pool addresses are not "something to show".
+const pinnedRelated = ref({ address: null, dns: [], dhcp: [] });
+function meaningfulDnsRow(row) {
+  return row.raw?.dns_source !== 'placeholder';
+}
+function meaningfulDhcpRow(row) {
+  return Boolean(row.raw?.dhcp_assignment_type);
+}
+function relatedRowsFor(view, address) {
+  if (!address) return [];
+  const fetched = pinnedRelated.value.address === address ? pinnedRelated.value : null;
+  if (view === 'dns')
+    return (
+      fetched?.dns ||
+      networkDnsRows.value.filter((row) => row.value === address || row.raw?.ip_address === address)
+    ).filter(meaningfulDnsRow);
+  if (view === 'dhcp')
+    return (fetched?.dhcp || networkDhcpRows.value.filter((row) => row.address === address)).filter(
+      meaningfulDhcpRow,
+    );
+  return [];
+}
+async function loadPinnedRelated() {
+  const address = pinnedAddress.value;
+  const networkId = selectedNetwork.value?.id;
+  if (!address || !networkId || selectedRowContext.value !== 'network') {
+    pinnedRelated.value = { address: null, dns: [], dhcp: [] };
+    return;
+  }
+  const [dns, dhcp] = await Promise.all([
+    workspaceResources.loadRelatedDns(networkId, address),
+    workspaceResources.loadRelatedDhcp(networkId, address),
+  ]);
+  // A newer pin replaced this one while the reads were in flight.
+  if (pinnedAddress.value !== address) return;
+  pinnedRelated.value = {
+    address,
+    dns: mapWorkspaceDnsRows(dns || []),
+    dhcp: mapDhcpRows(dhcp || []),
+  };
+}
+watch([pinnedAddress, () => selectedNetwork.value?.id], () => {
+  void loadPinnedRelated();
+});
+// Related resources open inside the details panel, never by switching the
+// main view. Entries without a row are resolved against the pinned address
+// when clicked; sibling protocol rows for the same address carry their row.
+const relatedResources = computed(() => {
+  if (selectedRowContext.value !== 'network') return [];
+  const address = pinnedAddress.value;
+  const dnsRows = relatedRowsFor('dns', address);
+  const dhcpRows = relatedRowsFor('dhcp', address);
+  const dnsEntry = dnsRows.length
+    ? {
+        view: 'dns',
+        label: 'DNS records',
+        note: dnsRecordSummary(dnsRows).note,
+        icon: 'pi pi-globe',
+      }
+    : null;
+  const dhcpEntry = dhcpRows.length
+    ? {
+        view: 'dhcp',
+        label: 'DHCP identity',
+        note: `${countOf(dhcpRows.length, 'related row')}`,
+        icon: 'pi pi-server',
+      }
+    : null;
+  if (selectedRowView.value === 'addresses') return [dnsEntry, dhcpEntry].filter(Boolean);
+  const siblings = (selectedRowView.value === 'dns' ? dnsRows : dhcpRows)
+    .filter((row) => row.id !== selectedRow.value?.id)
+    .map((row) => ({
+      key: row.id,
+      view: selectedRowView.value,
+      row,
+      label: row.name || row.hostname || row.address,
+      note:
+        selectedRowView.value === 'dns'
+          ? `${row.type || row.recordType || 'DNS'} record for the same address`
+          : `${row.assignment || 'DHCP'} row for the same address`,
+      icon: selectedRowView.value === 'dns' ? 'pi pi-globe' : 'pi pi-server',
+    }));
+  return [
+    address
+      ? {
+          view: 'addresses',
+          label: 'Canonical IP record',
+          note: 'Allocation and liveness details',
+          icon: 'pi pi-list',
+        }
+      : null,
+    ...siblings,
+    selectedRowView.value === 'dns' ? dhcpEntry : dnsEntry,
+  ].filter(Boolean);
+});
+const selectedAddressDns = computed(() =>
+  dnsRecordSummary(relatedRowsFor('dns', selectedRow.value?.address)),
+);
+const selectedAddressDhcpCount = computed(
+  () => relatedRowsFor('dhcp', selectedRow.value?.address).length,
+);
+const networkDialogNode = computed(() => {
+  const network =
+    selectedRowView.value === 'networks' ? selectedRow.value?.raw : selectedNetwork.value;
+  return network?.id ? { key: `subnet-${network.id}`, data: network } : null;
+});
+
+// Action registry targets (W-05). Every menu, quick action and toolbar button
+// resolves to a registry entry plus one of these targets, and the invocation
+// goes through useWorkspaceActions with that same target. Nothing dispatches
+// on a label.
+const selectedRowTarget = computed(() => targetForRow(selectedRow.value));
+const networkTarget = computed(() =>
+  selectedRowTarget.value?.kind === 'network'
+    ? selectedRowTarget.value
+    : workspaceActions.currentNetworkTarget(),
+);
+const workspaceTarget = computed(() => {
+  const rowTarget = selectedRowTarget.value;
+  const zone =
+    rowTarget?.kind === 'dns-zone'
+      ? rowTarget.raw
+      : rowTarget?.kind === 'dns-record'
+        ? dnsZones.value.find((item) => Number(item.id) === Number(rowTarget.zone_id)) || null
+        : selectedZoneFilter.value;
+  const scope =
+    rowTarget?.kind === 'dhcp-scope'
+      ? rowTarget.raw
+      : rowTarget?.kind === 'dhcp-address'
+        ? dhcpScopes.value.find((item) => Number(item.id) === Number(rowTarget.scope_id)) || null
+        : selectedScopeFilter.value;
+  return { kind: 'workspace', zone, scope };
+});
+const isNetworkId = (id) => String(id).startsWith('network:');
+const selectionTarget = computed(() => {
+  // Checked networks, from the Networks table or the explorer (which can
+  // check them from any view), or checked addresses. The two never mix.
+  const networkPicks = selectedRows.value.length > 0 && selectedRows.value.every(isNetworkId);
+  if (activeView.value === 'dns') {
+    const selected = new Set(selectedRows.value);
+    return dnsSelectionTarget(
+      allDnsRows.value.filter((row) => selected.has(row.id)).map((row) => row.raw),
+    );
+  }
+  if (activeView.value === 'networks' || networkPicks) {
+    const ids = selectedRows.value
+      .filter(isNetworkId)
+      .map((id) => Number(String(id).slice('network:'.length)));
+    const known = [...allNetworks.value, ...unallocatedNetworks.value];
+    // What the merge rules and bulk allocation need to know about each
+    // checked network.
+    const networks = ids
+      .map((id) => known.find((network) => Number(network.id) === id))
+      .filter(Boolean)
+      .map((network) => ({
+        id: Number(network.id),
+        cidr: network.cidr,
+        name: network.name,
+        description: network.description,
+        vlan_id: network.vlan_id,
+        status: network.status,
+        parent_id: network.parent_id ?? null,
+        hasChildren: Boolean(network.children?.length),
+      }));
+    return { kind: 'network-selection', ids, count: ids.length, networks };
+  }
+  const rows = selectedAddressRows.value;
+  return {
+    kind: 'address-selection',
+    count: rows.length,
+    allocationStates: selectedAllocationStates.value,
+    addresses: selectedRows.value.map(identityAddress).filter(Boolean),
+    runs: selectionRuns.value,
+    inScope: rows.some((row) => row.status === 'DHCP Scope' || row.raw?.in_dynamic_pool),
+    scanOverrides: rows.filter((row) => row.raw?.scan_enabled != null).length,
+    scanningOn: rows.filter((row) => scanningOn(row.raw)).length,
+  };
+});
+// The folder context and explorer folder rows are action targets of their
+// own; Ungrouped (id null) is the server's bucket, not a folder.
+const folderTarget = computed(() =>
+  contextKind.value === 'folder' && selectedFolder.value
+    ? {
+        kind: 'folder',
+        id: selectedFolder.value.id,
+        name: selectedFolder.value.name,
+        raw: selectedFolder.value,
+      }
+    : null,
+);
+// A row menu opened from the explorer (a folder or a network row) targets
+// that resource rather than the pinned details row.
+const menuTarget = ref(null);
+const withTarget = (items, target) => items.map((item) => ({ ...item, target }));
+const createMenuItems = computed(() =>
+  withTarget(
+    menuActions({ menu: 'create', target: workspaceTarget.value, can }),
+    workspaceTarget.value,
+  ),
+);
+const actionMenuItems = computed(() => {
+  const target = ['dns', 'dhcp'].includes(activeView.value)
+    ? workspaceTarget.value
+    : networkTarget.value || folderTarget.value;
+  if (!target) return [];
+  return withTarget(menuActions({ menu: 'actions', target, view: activeView.value, can }), target);
+});
+const rowMenuItems = computed(() => {
+  const target = menuTarget.value || selectedRowTarget.value;
+  if (!target) return [];
+  return withTarget(menuActions({ menu: 'row', target, view: activeView.value, can }), target);
+});
+// The address panel's Create DNS entry: the pinned address's own row-menu
+// item, so the panel and the menu offer it under the same rule.
+const addressDnsAction = computed(() => {
+  const target = selectedRowTarget.value;
+  if (target?.kind !== 'address') return null;
+  return (
+    withTarget(menuActions({ menu: 'row', target, can }), target).find(
+      (item) => item.id === 'dns.record.create-for-address',
+    ) || null
+  );
+});
+// Addresses and DHCP have no toolbar button: reservations come from the row
+// menu and the Create menu.
+// Networks has none: Create network is in the header's Create menu, the
+// Actions menu and a folder's row menu.
+const VIEW_ADD_ACTIONS = {
+  dns: ['dns.record.create', workspaceTarget],
+  ranges: ['range.create', networkTarget],
+};
+const viewAddAction = computed(() => {
+  const [id, targetRef] = VIEW_ADD_ACTIONS[activeView.value] || [];
+  if (!id || !targetRef.value) return null;
+  return {
+    id,
+    target: targetRef.value,
+    ...workspaceActions.registry.availability(id, targetRef.value),
+  };
+});
+function runMenuAction(item) {
+  closeMenu();
+  return workspaceActions.invoke(item.id, item.target);
+}
+function runRowAction(item) {
+  closeMenu();
+  return workspaceActions.invoke(item.id, item.target || selectedRowTarget.value);
+}
+function runContextAction(actionId) {
+  const target = actionId === 'network.scan' ? networkTarget.value : workspaceTarget.value;
+  return workspaceActions.invoke(actionId, target);
+}
+function runViewAdd() {
+  const action = viewAddAction.value;
+  if (!action) return;
+  return workspaceActions.invoke(action.id, action.target);
+}
+
+const gridCells = computed(() =>
+  addressRows.value.map((row) => ({
+    ip: row.address,
+    last: row.address.includes(':')
+      ? row.address.split(':').at(-1) || '0'
+      : row.address.split('.').at(-1),
+    kind: gridKind(row),
+    rangeColor: row.rangeColor,
+    label: row.type || row.status || 'Available',
+    row,
+  })),
+);
+
+// Aggregate lists (networks, zones, scopes) are paged in the browser with
+// the same paginator the API-paged views use.
+const clientPage = ref(1);
+const activePage = computed(() => (serverPagedView.value ? currentPage.value : clientPage.value));
+const paginatorTotal = computed(() =>
+  serverPagedView.value ? rowTotal.value : filteredRows.value.length,
+);
+const pagedRows = computed(() => {
+  if (serverPagedView.value) return filteredRows.value;
+  const start = (clientPage.value - 1) * pageSize.value;
+  return filteredRows.value.slice(start, start + pageSize.value);
+});
+watch([filteredRows, pageSize], () => {
+  const pages = Math.max(1, Math.ceil(filteredRows.value.length / pageSize.value));
+  if (clientPage.value > pages) clientPage.value = pages;
+});
+async function onPaginatorPage({ page, rows }) {
+  if (!gridMode.value && rows !== pageSize.value) {
+    clientPage.value = 1;
+    pageSize.value = rows;
+    return;
+  }
+  if (serverPagedView.value) await changePage(page + 1);
+  else clientPage.value = page + 1;
+}
+const rowTotal = computed(() => {
+  if (activeView.value === 'addresses') return addressFilteredTotal.value;
+  if (activeView.value === 'dns') return dnsTotal.value;
+  if (activeView.value === 'dhcp') return dhcpTotal.value;
+  return currentRows.value.length;
+});
+
+const resultCountLabel = computed(() => {
+  if (activeView.value === 'addresses' && contextKind.value === 'network') {
+    return addressCountLabel({
+      shown: filteredRows.value.length,
+      matching: addressFilteredTotal.value,
+      total: addressTotal.value,
+      sparse: addressSparse.value,
+      paged: !gridMode.value || addressFilteredTotal.value > addressPageSize.value,
+    });
+  }
+  return `Showing ${filteredRows.value.length} of ${rowTotal.value}`;
+});
+
+function toggleFolder(id) {
+  const next = new Set(expandedFolders.value);
+  if (next.has(id)) next.delete(id);
+  else next.add(id);
+  expandedFolders.value = next;
+}
+async function selectNetwork(network) {
+  const previous = [selectedZoneFilter.value, reverseNetworkFilter.value];
+  selectedNetwork.value = network;
+  selectedFolder.value =
+    folders.value.find((folder) => Number(folder.id) === Number(network.folderId)) || null;
+  contextKind.value = 'network';
+  if (!networkViews.some((view) => view.key === activeView.value)) activeView.value = 'addresses';
+  currentPage.value = 1;
+  sortKey.value = null;
+  // On the DNS view the operator's last zone choice and record filters carry
+  // over to the next network instead of resetting to the mixed record list.
+  if (activeView.value !== 'dns') clearFilters();
+  selectedZoneFilter.value = null;
+  reverseNetworkFilter.value = null;
+  selectedScopeFilter.value = null;
+  carryDnsChoice(...previous);
+  clearDetail();
+  tableQuery.value = '';
+  await updateWorkspaceRoute();
+  await loadNetworkContext();
+}
+function selectUnallocatedNetwork(network) {
+  pinDetail(mapNetworkRows([network])[0], { view: 'networks', context: 'unallocated' });
+}
+function resetContextNavigation() {
+  currentPage.value = 1;
+  clientPage.value = 1;
+  sortKey.value = null;
+  clearFilters();
+  selectedZoneFilter.value = null;
+  reverseNetworkFilter.value = null;
+  selectedScopeFilter.value = null;
+  clearDetail();
+  selectedRows.value = [];
+  tableQuery.value = '';
+}
+// On the DNS view the zone choice carries into the new context when it can
+// (see dnsZoneForContext); a network-wide reverse choice carries when that
+// network is in the new context.
+function carryDnsChoice(previousZone, previousReverseNetwork) {
+  if (activeView.value !== 'dns') return;
+  if (
+    previousReverseNetwork &&
+    scopedNetworks.value.some((network) => Number(network.id) === previousReverseNetwork.id)
+  ) {
+    reverseNetworkFilter.value = previousReverseNetwork;
+    return;
+  }
+  selectedZoneFilter.value = dnsZoneForContext(previousZone);
+}
+// All Allocated Networks is home: whichever table was open, it shows every
+// allocated network, with no search, filter or zone choice left over.
+//
+// It and selectFolder re-read the table for the new context themselves.
+// Neither watcher does it: the filters one returns while this route write is
+// in flight, and the route one skips the workspace's own writes.
+async function selectEstate() {
+  contextKind.value = 'estate';
+  selectedFolder.value = null;
+  activeView.value = 'networks';
+  resetContextNavigation();
+  resourceQuery.value = '';
+  searchMatches.value = null;
+  matchedNetworkIds.value = null;
+  await updateWorkspaceRoute();
+  await refreshAggregateTable();
+}
+async function selectFolder(folder) {
+  const previous = [selectedZoneFilter.value, reverseNetworkFilter.value];
+  contextKind.value = 'folder';
+  // The unallocated explorer lists its own copy of each folder, holding the
+  // unallocated networks; the folder context is always the allocated one.
+  selectedFolder.value = folders.value.find(
+    (entry) => (entry.id ?? null) === (folder.id ?? null),
+  ) || {
+    ...folder,
+    networks: [],
+  };
+  if (!expandedFolders.value.has(folder.id)) toggleFolder(folder.id);
+  if (!aggregateViews.some((view) => view.key === activeView.value)) activeView.value = 'networks';
+  resetContextNavigation();
+  carryDnsChoice(...previous);
+  await updateWorkspaceRoute();
+  await refreshAggregateTable();
+}
+function selectUnallocated() {
+  contextKind.value = 'unallocated';
+  selectedFolder.value = null;
+  activeView.value = 'networks';
+  resetContextNavigation();
+  updateWorkspaceRoute();
+}
+function selectFolderById(folderId) {
+  const folder = folders.value.find((item) => Number(item.id) === Number(folderId));
+  if (folder) selectFolder(folder);
+}
+async function switchView(view) {
+  activeView.value = view;
+  currentPage.value = 1;
+  sortKey.value = null;
+  clearFilters();
+  // The DNS tab opens on the zone side the operator last chose, not on the
+  // mixed record list, which sorts every PTR record ahead of the forward ones.
+  selectedZoneFilter.value = view === 'dns' ? dnsZoneForContext(null) : null;
+  reverseNetworkFilter.value = null;
+  selectedScopeFilter.value = null;
+  clearDetail();
+  selectedRows.value = [];
+  tableQuery.value = '';
+  await updateWorkspaceRoute();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
+}
+// A related resource replaces what the details panel shows; the main view,
+// its tab and its filters stay put. `resource` is a related entry (or a bare
+// view name from the address panel, with the address's stable identity).
+async function openRelatedResource(resource, identity = null) {
+  const target = typeof resource === 'string' ? { view: resource } : resource;
+  if (target.row) {
+    pinDetail(target.row, { view: target.view, context: 'network' });
+    await updateWorkspaceRoute();
+    return;
+  }
+  const address = identity?.ip_address || pinnedAddress.value;
+  if (target.view === 'addresses') {
+    await openCanonicalAddress(address);
+    return;
+  }
+  const rows = relatedRowsFor(target.view, address);
+  if (!rows.length) {
+    showLiveNotice(
+      `No ${target.view === 'dns' ? 'DNS records' : 'DHCP rows'} reference ${address || 'this address'}.`,
+    );
+    return;
+  }
+  pinDetail(rows[0], { view: target.view, context: 'network' });
+  await updateWorkspaceRoute();
+}
+// Floating menus open where they were asked for: at the pointer for a
+// right-click, under the button or row otherwise, and never off screen.
+const menuAnchor = ref(null);
+const menuStyle = computed(() =>
+  menuAnchor.value
+    ? { top: `${menuAnchor.value.top}px`, left: `${menuAnchor.value.left}px`, right: 'auto' }
+    : null,
+);
+function placeMenu(invoker, event = null) {
+  if (event && Number.isFinite(event.clientX) && (event.clientX || event.clientY)) {
+    menuAnchor.value = { top: event.clientY, left: event.clientX };
+  } else if (invoker?.getBoundingClientRect) {
+    const rect = invoker.getBoundingClientRect();
+    menuAnchor.value = { top: rect.bottom + 4, left: rect.left };
+  } else {
+    menuAnchor.value = null;
+  }
+  nextTick(clampMenu);
+}
+function clampMenu() {
+  const menu = document.querySelector('.floating-menu');
+  if (!menu || !menuAnchor.value) return;
+  const { width, height } = menu.getBoundingClientRect();
+  const margin = 8;
+  const maxLeft = Math.max(margin, globalThis.innerWidth - margin - width);
+  const maxTop = Math.max(margin, globalThis.innerHeight - margin - height);
+  menuAnchor.value = {
+    top: Math.min(menuAnchor.value.top, maxTop),
+    left: Math.min(menuAnchor.value.left, maxLeft),
+  };
+}
+function toggleMenu(name, invoker = null, event = null) {
+  if (invoker) menuInvoker = invoker;
+  const opening = openMenuName.value !== name;
+  openMenuName.value = opening ? name : null;
+  if (opening) placeMenu(invoker, event);
+}
+function closeMenu() {
+  openMenuName.value = null;
+  menuTarget.value = null;
+  menuAnchor.value = null;
+  menuInvoker?.focus();
+}
+function openTargetMenu(target, invoker = null, event = null) {
+  menuTarget.value = target;
+  if (invoker) menuInvoker = invoker;
+  openMenuName.value = 'row';
+  placeMenu(invoker, event);
+}
+// A linked zone or scope card in the context header opens the same menu its
+// inventory row would: edit, delete, and the rest.
+function openLinkedMenu(kind, item, invoker = null, event = null) {
+  openTargetMenu(targetForRow({ id: `${kind}:${item.id}`, raw: item }), invoker, event);
+}
+// N-08: a network dragged from the table or the explorer and dropped on an
+// explorer folder moves there through the same PUT the row menu's editor
+// uses, then the network refresh contract runs. Ungrouped is folder_id null.
+function startNetworkDrag(row, event) {
+  const target = targetForRow(row);
+  if (target?.kind !== 'network' || !event.dataTransfer) return;
+  event.dataTransfer.setData(NETWORK_DRAG_TYPE, String(target.id));
+  event.dataTransfer.setData('text/plain', row.cidr || '');
+  event.dataTransfer.effectAllowed = 'move';
+}
+// Deleting checked DNS records asks first, with the count it will delete.
+const dnsBulkDelete = ref(null);
+function confirmDnsBulkDelete(target) {
+  dnsBulkDelete.value = target;
+}
+async function continueDnsBulkDelete() {
+  const target = dnsBulkDelete.value;
+  dnsBulkDelete.value = null;
+  if (target) await workspaceActions.bulkRecords(target, 'delete');
+}
+// Moving an unallocated network into a folder allocates it: the confirmation
+// says so, then the allocation form opens with the folder as its target.
+const allocateOnMove = ref(null);
+function confirmAllocateOnMove(network, folder = null) {
+  allocateOnMove.value = { network, folder };
+}
+async function continueAllocateOnMove() {
+  const pending = allocateOnMove.value;
+  allocateOnMove.value = null;
+  if (pending) await workspaceActions.openAllocation(pending.network, pending.folder?.id ?? null);
+}
+async function moveNetworkToFolder({ networkId, folder }) {
+  const network = allNetworks.value.find((entry) => Number(entry.id) === Number(networkId));
+  if (!network) {
+    const unallocated = unallocatedNetworks.value.find(
+      (entry) => Number(entry.id) === Number(networkId),
+    );
+    if (unallocated) confirmAllocateOnMove(unallocated, folder);
+    return;
+  }
+  const folderId = folder.id ?? null;
+  if ((network.folderId ?? null) === folderId) return;
+  try {
+    await subnetStore.updateSubnet(network.id, { folder_id: folderId });
+  } catch (error) {
+    showLiveNotice(`Could not move ${network.cidr} to ${folder.name}: ${apiError(error)}`);
+    return;
+  }
+  await refreshAfterMutation('network', `${network.cidr} moved to ${folder.name}`);
+}
+function openFolderMenu(folder, invoker = null, event = null) {
+  openTargetMenu({ kind: 'folder', id: folder.id, name: folder.name, raw: folder }, invoker, event);
+}
+// Right-clicking one of several checked networks targets them all, as in
+// the table.
+function openNetworkMenu(network, invoker = null, event = null) {
+  const onSelection =
+    selectedRows.value.length > 1 && selectedRows.value.includes(`network:${network.id}`);
+  openTargetMenu(
+    onSelection ? selectionTarget.value : targetForRow(mapNetworkRows([network])[0]),
+    invoker,
+    event,
+  );
+}
+// The explorer checks networks for the same selection the Networks table
+// uses. Checking a network there replaces a selection of addresses.
+function keepNetworkSelectionOnly() {
+  if (!selectedRows.value.every(isNetworkId)) selectedRows.value = [];
+}
+function toggleExplorerNetwork(id) {
+  keepNetworkSelectionOnly();
+  toggleRow(id);
+}
+function rangeExplorerNetwork(id, visibleIds) {
+  keepNetworkSelectionOnly();
+  selectRange({ id }, visibleIds);
+}
+function handleWorkspaceKeydown(event) {
+  if (event.key !== 'Escape' || !openMenuName.value) return;
+  event.preventDefault();
+  closeMenu();
+}
+// A menu's items: plain actions and the switch items (Liveness scan).
+const MENU_ITEMS = '[role="menuitem"], [role="menuitemcheckbox"]';
+// Arrow keys walk the open menu; focus lands on the first item when a menu
+// opens (see the openMenuName watcher) and goes back to the invoker on close.
+function handleMenuKeydown(event) {
+  const items = [...event.currentTarget.querySelectorAll(MENU_ITEMS)];
+  if (!items.length) return;
+  const current = items.indexOf(document.activeElement);
+  let next = null;
+  if (event.key === 'ArrowDown') next = (current + 1) % items.length;
+  else if (event.key === 'ArrowUp') next = (current - 1 + items.length) % items.length;
+  else if (event.key === 'Home') next = 0;
+  else if (event.key === 'End') next = items.length - 1;
+  if (next == null) return;
+  event.preventDefault();
+  items[next].focus();
+}
+watch(openMenuName, async (name) => {
+  if (!name) return;
+  await nextTick();
+  document.querySelector(`.floating-menu.${name}-menu`)?.querySelector(MENU_ITEMS)?.focus();
+});
+
+async function openFolderDialog(mode, folder = null) {
+  folderManagerVisible.value = false;
+  if (!networkDialogsMounted.value) {
+    networkDialogsMounted.value = true;
+    await nextTick();
+  }
+  if (mode === 'edit') networkDialogs.value.openEditFolder(folder);
+  else if (mode === 'delete') networkDialogs.value.openDeleteFolder(folder);
+  else networkDialogs.value.openCreateFolder();
+}
+
+// Types the range editor made. Merged by id: the editor refetches the list
+// on every open, so a type can arrive twice.
+function addRangeTypes(types) {
+  const byId = new Map(rangeTypes.value.map((type) => [type.id, type]));
+  for (const type of types) byId.set(type.id, type);
+  rangeTypes.value = [...byId.values()];
+}
+
+async function openRangeEditor(range) {
+  if (!selectedNetwork.value.id || !can('subnets:write')) return;
+  try {
+    const result = await listRangeTypes();
+    rangeTypes.value = Array.isArray(result) ? result : result?.range_types || [];
+    rangeEditorTarget.value = range ? { ...range } : null;
+    rangeEditorVisible.value = true;
+  } catch (error) {
+    showLiveNotice(`Could not load Network Range Types: ${apiError(error)}`);
+  }
+}
+// A row menu targets the row without pinning it: right-click and the row
+// button must not open the details panel (operator's rule). Right-clicking
+// one of several checked rows targets the whole selection, as a file
+// manager does, so a dragged range can be tagged from the menu.
+function openRowMenu(row, invoker = null, event = null) {
+  const onSelection = selectedRows.value.length > 1 && selectedRows.value.includes(row.id);
+  openTargetMenu(onSelection ? selectionTarget.value : targetForRow(row), invoker, event);
+}
+function selectRow(row) {
+  pinDetail(row);
+  updateWorkspaceRoute();
+}
+
+async function openCanonicalAddress(address = selectedRow.value?.address) {
+  if (!address || !selectedNetwork.value.id) {
+    showLiveNotice('This protocol row is not linked to a canonical IP address.');
+    return;
+  }
+  const detail = await workspaceResources.loadAddressDetail(selectedNetwork.value.id, address);
+  if (!detail) {
+    showLiveNotice(
+      workspaceResources.resources.detail.error || 'Could not load canonical IP details.',
+    );
+    return;
+  }
+  pinDetail(mapAddressRows([detail])[0], { view: 'addresses', context: 'network' });
+  await updateWorkspaceRoute();
+}
+function showLiveNotice(message) {
+  notice.value = message;
+  noticeRetry.value = null;
+  clearTimeout(noticeTimer);
+  noticeTimer = setTimeout(() => {
+    notice.value = '';
+  }, 3200);
+}
+async function retryNoticeRefresh() {
+  const retry = noticeRetry.value;
+  if (!retry) return;
+  noticeRetry.value = null;
+  await retry();
+}
+function clearFilter(key) {
+  const next = { ...filters.value };
+  delete next[key];
+  filters.value = next;
+}
+function clearFilters() {
+  filters.value = {};
+}
+// The row a Shift pick runs from: the last one checked on its own.
+let selectionAnchor = null;
+function toggleRow(id) {
+  const checking = !selectedRows.value.includes(id);
+  selectedRows.value = checking
+    ? [...selectedRows.value, id]
+    : selectedRows.value.filter((rowId) => rowId !== id);
+  if (checking) selectionAnchor = id;
+}
+function toggleAllRows(selectAll) {
+  selectedRows.value = selectAll ? filteredRows.value.map((row) => row.id) : [];
+}
+function openGridCell(cell) {
+  selectRow(cell.row);
+}
+// Shift pick in the grid or the table: every row on screen from the anchor
+// to this one joins the selection.
+function selectRange(row, visibleIds) {
+  const anchorId = selectedRows.value.includes(selectionAnchor)
+    ? selectionAnchor
+    : selectedRows.value.at(-1);
+  const start = visibleIds.indexOf(anchorId);
+  const end = visibleIds.indexOf(row.id);
+  if (start < 0 || end < 0) {
+    toggleRow(row.id);
+    return;
+  }
+  selectedRows.value = [
+    ...new Set([
+      ...selectedRows.value,
+      ...visibleIds.slice(Math.min(start, end), Math.max(start, end) + 1),
+    ]),
+  ];
+}
+function selectGridDrag({ ids, additive }) {
+  selectedRows.value = additive ? [...new Set([...selectedRows.value, ...ids])] : ids;
+}
+async function openBulkRangeType() {
+  if (!selectedRows.value.length || !can('subnets:write')) return;
+  try {
+    const result = await listRangeTypes();
+    rangeTypes.value = Array.isArray(result) ? result : result?.range_types || [];
+    bulkRangeVisible.value = true;
+  } catch (error) {
+    showLiveNotice(`Could not load Network Range Types: ${apiError(error)}`);
+  }
+}
+const workspaceActions = useWorkspaceActions({
+  can,
+  router,
+  state: {
+    selectedRow,
+    selectedNetwork,
+    selectedFolder,
+    selectedRows,
+    selectedZoneFilter,
+    selectedScopeFilter,
+    dnsZones,
+    dhcpScopes,
+    allNetworks,
+    filters,
+    currentPage,
+    activeView,
+    contextKind,
+  },
+  dialogs: {
+    networkDialogs,
+    networkDialogsMounted,
+    dnsDialogs,
+    dhcpDialogs,
+    protocolDialogsMounted,
+    folderManagerVisible,
+    reservationTarget,
+    reservationEditorMode,
+    reservationEditorVisible,
+    scanTarget,
+    scanDialogMode,
+    scanDialogVisible,
+    bulkActionMode,
+    bulkActionVisible,
+  },
+  selectNetwork,
+  updateWorkspaceRoute,
+  loadNetworkContext,
+  refreshAggregateTable,
+  showLiveNotice,
+  openCanonicalAddress,
+  openRangeEditor,
+  openBulkRangeType,
+  confirmAllocateOnMove,
+  confirmDnsBulkDelete,
+  refreshAfterMutation,
+  rememberDnsZoneSide,
+});
+async function handleBulkComplete(ledger) {
+  bulkActionVisible.value = false;
+  selectedRows.value = [];
+  await refreshAfterMutation(
+    'address',
+    `${ledger.updated} address${ledger.updated === 1 ? '' : 'es'} updated; ${ledger.skipped} skipped`,
+  );
+}
+async function handleReservationSaved(result) {
+  await refreshAfterMutation('address', result.message);
+}
+async function handleRangeChanged(message, { deleted = false } = {}) {
+  rangeEditorVisible.value = false;
+  // A deleted range would otherwise close the panel with its own "no longer
+  // available" notice on top of the save message.
+  if (deleted) clearDetail();
+  await refreshAfterMutation('range', message);
+}
+function handleBulkPartial(ledger) {
+  showLiveNotice(
+    `${ledger.updated} updated and ${ledger.skipped} skipped. ${ledger.remaining.length} run(s) remain after the failure.`,
+  );
+}
+async function handleRangeTypeSaved() {
+  bulkRangeVisible.value = false;
+  selectedRows.value = [];
+  await refreshAfterMutation('address', 'Network Range Type updated');
+}
+function setVisibleColumns(nextColumns) {
+  const keys = restoreWorkspaceColumnKeys(
+    columnKind.value,
+    nextColumns.map((column) => column.key),
+  );
+  visibleColumnKeys.value = { ...visibleColumnKeys.value, [columnStorageKey.value]: keys };
+  saveJson(columnStorageKey.value, keys);
+}
+function resetVisibleColumns() {
+  const keys = defaultWorkspaceColumnKeys(columnKind.value);
+  visibleColumnKeys.value = { ...visibleColumnKeys.value, [columnStorageKey.value]: keys };
+  saveJson(columnStorageKey.value, keys);
+}
+// Every reverse zone of one network: the network's heading in the picker.
+async function filterToReverseNetwork(network) {
+  if (Number(reverseNetworkFilter.value?.id) === Number(network.id)) return;
+  reverseNetworkFilter.value = allNetworks.value.find(
+    (entry) => Number(entry.id) === Number(network.id),
+  ) || {
+    id: Number(network.id),
+    name: network.name || network.cidr,
+    cidr: network.cidr,
+  };
+  selectedZoneFilter.value = null;
+  selectedScopeFilter.value = null;
+  rememberDnsZoneSide({ type: 'reverse' });
+  tableQuery.value = '';
+  currentPage.value = 1;
+  await updateWorkspaceRoute();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
+}
+// Choosing the zone that is already chosen keeps it. Clearing it would drop
+// the table to the mixed record list, where every PTR sorts ahead of the
+// forward records and a second click on a forward zone looked like a jump to
+// a reverse one.
+async function filterToZone(zone) {
+  if (Number(selectedZoneFilter.value?.id) === Number(zone.id)) return;
+  selectedZoneFilter.value = zone;
+  reverseNetworkFilter.value = null;
+  rememberDnsZoneSide(selectedZoneFilter.value);
+  selectedScopeFilter.value = null;
+  tableQuery.value = '';
+  // A new zone is a new list; the page of the last one may be past its end.
+  currentPage.value = 1;
+  await updateWorkspaceRoute();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
+}
+async function filterToScope(scope) {
+  selectedScopeFilter.value = selectedScopeFilter.value?.id === scope.id ? null : scope;
+  selectedZoneFilter.value = null;
+  reverseNetworkFilter.value = null;
+  tableQuery.value = '';
+  currentPage.value = 1;
+  await updateWorkspaceRoute();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
+}
+
+// The folder a read is filtered to. Ungrouped has no id; the server takes
+// `ungrouped` for the networks in no folder, where leaving the filter off
+// would read the whole estate.
+function folderParam() {
+  return selectedFolder.value?.id ?? UNGROUPED_FOLDER;
+}
+// A network's reverse zones: its records in reverse zones, by network.
+function reverseNetworkParams() {
+  return reverseNetworkFilter.value
+    ? { subnet_id: reverseNetworkFilter.value.id, zone_type: 'reverse' }
+    : {};
+}
+// The on-screen IP table's request: its search, column filters and sort.
+function columnParams() {
+  const out = {};
+  if (Object.keys(filters.value).length) out.filters = JSON.stringify(filters.value);
+  if (sortKey.value && columnCatalog.value.some((column) => column.key === sortKey.value)) {
+    out.sort_column = sortKey.value;
+  }
+  return out;
+}
+function tableRequestParams() {
+  const order = sortOrder.value === 1 ? 'asc' : 'desc';
+  const q = resourceQuery.value.trim() || undefined;
+  const tableQ = tableQuery.value.trim() || undefined;
+  if (activeView.value === 'addresses') {
+    return { search: q, table_search: tableQ, sortOrder: order, ...columnParams() };
+  }
+  const place =
+    contextKind.value === 'network'
+      ? { subnet_id: selectedNetwork.value.id }
+      : contextKind.value === 'folder'
+        ? { folder_id: folderParam() }
+        : {};
+  return {
+    ...place,
+    q,
+    table_q: tableQ,
+    sort_order: order,
+    ...(activeView.value === 'dns'
+      ? { zone_id: selectedZoneFilter.value?.id || undefined, ...reverseNetworkParams() }
+      : { scope_id: selectedScopeFilter.value?.id || undefined }),
+    ...columnParams(),
+  };
+}
+
+// `silent` is the auto-refresh: the rows update in place under the reader
+// with no "Loading live data" popover dimming the table once a minute.
+async function loadNetworkContext({ silent = false } = {}) {
+  if (!selectedNetwork.value.id) return;
+  const request = ++contextRequest;
+  if (reconcileSearchChoices()) await updateWorkspaceRoute({ replace: true });
+  if (!silent) loadingContext.value = true;
+  loadError.value = '';
+  try {
+    // Every table of the network loads for the tab badges and the details
+    // panel; only the one on screen carries the search, filters and sort.
+    const onScreen = (view) => (activeView.value === view ? tableRequestParams() : {});
+    const params = {
+      page: activeView.value === 'addresses' ? currentPage.value : 1,
+      pageSize: addressPageSize.value,
+      showAvailable: showAvailable.value ? 'true' : 'false',
+      ...onScreen('addresses'),
+    };
+    const protocolParams = {
+      subnet_id: selectedNetwork.value.id,
+      page: currentPage.value,
+      page_size: pageSize.value,
+    };
+    const [detail, dns, dhcp] = await Promise.all([
+      workspaceResources.loadAddresses(selectedNetwork.value.id, params),
+      workspaceResources.loadDns({ ...protocolParams, ...onScreen('dns') }),
+      workspaceResources.loadDhcp({ ...protocolParams, ...onScreen('dhcp') }),
+      workspaceResources.loadSummary(selectedNetwork.value.id),
+      workspaceResources.loadDnsTotal({ subnet_id: selectedNetwork.value.id }),
+      workspaceResources.loadDhcpTotal({ subnet_id: selectedNetwork.value.id }),
+    ]);
+    if (request !== contextRequest) return;
+    if (!detail && ['addresses', 'ranges'].includes(activeView.value))
+      throw new Error(workspaceResources.resources.addresses.error || 'Address data unavailable');
+    if (detail) addressRows.value = mapAddressRows(detail.items);
+    if (detail) rangeRows.value = mapRangeRows(detail.ranges, networkScopes.value);
+    addressFilteredTotal.value = detail?.filteredTotal || 0;
+    addressSparse.value = detail?.sparse === true;
+    // A sparse network has no total; its count is the addresses it holds
+    // an allocation for, which the summary already knows.
+    addressTotal.value = addressSparse.value
+      ? Number(workspaceResources.resources.summary.data?.assigned_count ?? detail?.total ?? 0)
+      : Number(workspaceResources.resources.summary.data?.total_addresses ?? detail?.total ?? 0);
+    if (activeView.value === 'addresses') {
+      totalPages.value = detail?.totalPages || 1;
+      currentPage.value = detail?.page || 1;
+    }
+    if (dns) {
+      networkDnsRowsData.value = mapWorkspaceDnsRows(dns.items);
+      dnsTotal.value = dns.total;
+      if (activeView.value === 'dns')
+        totalPages.value = Math.max(1, Math.ceil(dns.total / pageSize.value));
+    }
+    if (dhcp) {
+      networkDhcpRows.value = mapDhcpRows(dhcp.items);
+      dhcpTotal.value = dhcp.total;
+      if (activeView.value === 'dhcp')
+        totalPages.value = Math.max(1, Math.ceil(dhcp.total / pageSize.value));
+    }
+    await resolveDetail(request, (generation) => generation === contextRequest);
+  } catch (error) {
+    if (request === contextRequest) loadError.value = apiError(error);
+  } finally {
+    if (request === contextRequest && !silent) loadingContext.value = false;
+  }
+}
+
+async function revalidateWorkspaceContext() {
+  let message = '';
+  if (contextKind.value === 'folder') {
+    const folder = folders.value.find(
+      (item) => Number(item.id) === Number(selectedFolder.value?.id),
+    );
+    if (!folder) {
+      contextKind.value = 'estate';
+      selectedFolder.value = null;
+      activeView.value = 'networks';
+      message = 'The selected folder no longer exists. Showing All Allocated Networks.';
+    } else selectedFolder.value = folder;
+  }
+  if (contextKind.value === 'network') {
+    const network = allNetworks.value.find(
+      (item) => Number(item.id) === Number(selectedNetwork.value?.id),
+    );
+    if (!network) {
+      const folder = folders.value.find(
+        (item) => Number(item.id) === Number(selectedFolder.value?.id),
+      );
+      contextKind.value = folder ? 'folder' : 'estate';
+      selectedFolder.value = folder || null;
+      activeView.value = 'networks';
+      clearDetail();
+      message = `The selected network no longer exists. Showing ${folder?.name || 'All Allocated Networks'}.`;
+    } else selectedNetwork.value = network;
+  }
+  if (
+    selectedZoneFilter.value &&
+    !dnsZones.value.some((zone) => Number(zone.id) === Number(selectedZoneFilter.value.id))
+  ) {
+    selectedZoneFilter.value = null;
+    clearDetail();
+    message = 'The selected DNS zone no longer exists. Showing the zone inventory.';
+  }
+  if (
+    selectedScopeFilter.value &&
+    !dhcpScopes.value.some((scope) => Number(scope.id) === Number(selectedScopeFilter.value.id))
+  ) {
+    selectedScopeFilter.value = null;
+    clearDetail();
+    message = 'The selected DHCP scope no longer exists. Showing the scope inventory.';
+  }
+  if (message) {
+    showLiveNotice(message);
+    await updateWorkspaceRoute({ replace: true });
+  }
+}
+
+async function loadWorkspace() {
+  loading.value = true;
+  loadingContext.value = true;
+  loadError.value = '';
+  try {
+    const query = resourceQuery.value.trim();
+    const [tree, networks, zones, dns, scopes, dhcp, matches] = await Promise.all([
+      workspaceResources.loadTree(),
+      workspaceResources.loadNetworks({
+        q: query || undefined,
+        table_q: tableQuery.value.trim() || undefined,
+      }),
+      workspaceResources.loadZones(),
+      workspaceResources.loadDns({ q: query || undefined, page_size: 256 }),
+      workspaceResources.loadScopes(),
+      workspaceResources.loadDhcp({ q: query || undefined, page_size: 256 }),
+      query ? workspaceResources.loadSearchMatches(query) : null,
+    ]);
+    if (!tree)
+      throw new Error(workspaceResources.resources.tree.error || 'Network tree unavailable');
+    folders.value = preserveEmptyFolders(buildExplorerFolders(tree.folders), tree.folders);
+    unallocatedFolders.value = buildUnallocatedFolders(tree.folders);
+    dnsZones.value = zones || [];
+    dhcpScopes.value = scopes || [];
+    searchMatches.value = matches;
+    listsLoaded = true;
+    allDhcpRows.value = mapDhcpRows(dhcp?.items || []);
+    allDnsRows.value = mapWorkspaceDnsRows(dns?.items || []);
+    expandedFolders.value = new Set(
+      [...folders.value, ...unallocatedFolders.value].map((folder) => folder.id),
+    );
+    const availableNetworks = folders.value.flatMap((folder) => folder.networks);
+    const priorSelection = availableNetworks.find(
+      (network) => Number(network.id) === Number(selectedNetwork.value.id),
+    );
+    if (priorSelection || availableNetworks[0]) {
+      selectedNetwork.value = priorSelection || availableNetworks[0];
+      selectedFolder.value =
+        folders.value.find(
+          (folder) => Number(folder.id) === Number(selectedNetwork.value.folderId),
+        ) || null;
+    }
+    matchedNetworkIds.value =
+      resourceQuery.value.trim() || tableQuery.value.trim()
+        ? new Set((networks?.items || []).map((network) => Number(network.id)))
+        : null;
+    restoreContextFromRoute(availableNetworks);
+    // The first reads above are the whole estate; the restored context, zone,
+    // scope and table search read the table the way every later visit does.
+    if (contextKind.value !== 'network') await refreshAggregateTable();
+    loadingContext.value = false;
+  } catch (error) {
+    loadError.value = apiError(error);
+    loadingContext.value = false;
+  } finally {
+    loading.value = false;
+  }
+}
+
+async function changePage(page) {
+  if (!serverPagedView.value || page < 1 || page > totalPages.value) return;
+  currentPage.value = page;
+  selectedRows.value = [];
+  await updateWorkspaceRoute();
+  if (contextKind.value === 'network') await loadNetworkContext();
+  else await refreshAggregateTable();
+}
+
+async function sortBy(key) {
+  sortOrder.value = sortKey.value === key ? sortOrder.value * -1 : 1;
+  sortKey.value = key;
+  if (serverPagedView.value) currentPage.value = 1;
+  await updateWorkspaceRoute({ replace: true });
+  if (serverPagedView.value) {
+    currentPage.value = 1;
+    if (contextKind.value === 'network') await loadNetworkContext();
+    else await refreshAggregateTable();
+  }
+}
+
+async function refreshAggregateTable() {
+  const request = ++aggregateRequest;
+  if (reconcileSearchChoices()) await updateWorkspaceRoute({ replace: true });
+  const params = {
+    folder_id: contextKind.value === 'folder' ? folderParam() : undefined,
+    q: resourceQuery.value.trim() || undefined,
+    table_q: tableQuery.value.trim() || undefined,
+    page: currentPage.value,
+    page_size: pageSize.value,
+  };
+  if (activeView.value === 'dns') {
+    const dns = await workspaceResources.loadDns({
+      ...params,
+      ...(isIpTable.value ? tableRequestParams() : {}),
+      zone_id: selectedZoneFilter.value?.id || undefined,
+      ...reverseNetworkParams(),
+    });
+    if (dns) {
+      allDnsRows.value = mapWorkspaceDnsRows(dns.items);
+      dnsTotal.value = dns.total;
+      totalPages.value = Math.max(1, Math.ceil(dns.total / pageSize.value));
+    }
+  } else if (activeView.value === 'dhcp') {
+    const dhcp = await workspaceResources.loadDhcp({
+      ...params,
+      ...(isIpTable.value ? tableRequestParams() : {}),
+      scope_id: selectedScopeFilter.value?.id || undefined,
+    });
+    if (dhcp) {
+      allDhcpRows.value = mapDhcpRows(dhcp.items);
+      dhcpTotal.value = dhcp.total;
+      totalPages.value = Math.max(1, Math.ceil(dhcp.total / pageSize.value));
+    }
+  } else {
+    const networks = await workspaceResources.loadNetworks(params);
+    // A read overtaken by a newer one comes back null; the newer one applies.
+    if (!params.q && !params.table_q) matchedNetworkIds.value = null;
+    else if (networks)
+      matchedNetworkIds.value = new Set(networks.items.map((network) => Number(network.id)));
+  }
+  if (request === aggregateRequest)
+    await resolveDetail(request, (generation) => generation === aggregateRequest);
+}
+
+function retryVisibleResource() {
+  if (contextKind.value === 'network') return loadNetworkContext();
+  return refreshAggregateTable();
+}
+
+// Section 7 mutation and refresh contract. Every write lands in
+// refreshAfterMutation with the kind of resource it touched; the table says
+// which shared reads that kind makes stale. The visible context (address
+// page, DNS/DHCP rows, summary, pinned details) is always re-read afterwards,
+// the old interface's subnet cache is dropped so the two UIs cannot disagree
+// after a save, and the header stats listener is told. `refresh` is the
+// auto-refresh plan: everything shared, no cache or status side effects.
+const MUTATION_REFRESH = {
+  network: { tree: true, networks: true, zones: true, scopes: true, applyStatus: true },
+  address: { tree: true, scopes: true },
+  range: { scopes: true },
+  dns: { tree: true, zones: true, applyStatus: true },
+  dhcp: { tree: true, scopes: true, applyStatus: true },
+  apply: { tree: true, zones: true, scopes: true },
+  refresh: { tree: true, zones: true, scopes: true },
+};
+
+async function reloadSharedReads(kind) {
+  const plan = MUTATION_REFRESH[kind];
+  const [tree, zones, scopes] = await Promise.all([
+    plan.tree ? workspaceResources.loadTree() : null,
+    plan.zones ? workspaceResources.loadZones() : null,
+    plan.scopes ? workspaceResources.loadScopes() : null,
+    // A write can change what the search matches (a new record's zone).
+    refreshSearchMatches(),
+  ]);
+  if (plan.tree && !tree)
+    throw new Error(workspaceResources.resources.tree.error || 'Network tree unavailable');
+  if (tree) {
+    folders.value = preserveEmptyFolders(buildExplorerFolders(tree.folders), tree.folders);
+    unallocatedFolders.value = buildUnallocatedFolders(tree.folders);
+    // Merged or deleted networks leave the selection; the rest stays checked.
+    const known = new Set(allNetworks.value.map((network) => `network:${network.id}`));
+    selectedRows.value = selectedRows.value.filter(
+      (id) => !String(id).startsWith('network:') || known.has(id),
+    );
+  }
+  if (zones) dnsZones.value = zones;
+  if (scopes) dhcpScopes.value = scopes;
+  await revalidateWorkspaceContext();
+  if (contextKind.value === 'network') await loadNetworkContext({ silent: kind === 'refresh' });
+  else await refreshAggregateTable();
+  if (plan.applyStatus) await applyStatus.value?.refresh();
+}
+
+async function refreshAfterMutation(kind, message = '') {
+  if (kind !== 'apply') {
+    subnetStore.invalidateDetailCache(
+      ['address', 'range'].includes(kind) ? selectedNetwork.value.id : undefined,
+    );
+    globalThis.window?.dispatchEvent(new Event('ipam:stats-changed'));
+  }
+  if (message) showLiveNotice(message);
+  const saved = message ? `${message}. ` : '';
+  try {
+    await reloadSharedReads(kind);
+    await loadPinnedRelated();
+  } catch (error) {
+    clearTimeout(noticeTimer);
+    notice.value = `${saved}Saved; refresh failed: ${apiError(error)}`;
+    const retry = async () => {
+      try {
+        await reloadSharedReads(kind);
+        showLiveNotice('Live data refreshed.');
+      } catch (retryError) {
+        clearTimeout(noticeTimer);
+        notice.value = `Saved; refresh still failed: ${apiError(retryError)}`;
+        noticeRetry.value = retry;
+      }
+    };
+    noticeRetry.value = retry;
+  }
+}
+
+async function refreshCurrentContext() {
+  if (backgroundRefreshRunning || loading.value || loadingContext.value) return;
+  backgroundRefreshRunning = true;
+  try {
+    await reloadSharedReads('refresh');
+  } catch {
+    // Auto-refresh is silent; the next tick tries again and the visible
+    // resource keeps its own error and retry control.
+  } finally {
+    backgroundRefreshRunning = false;
+  }
+}
+
+watch(showDomainNames, () => saveJson(SHOW_DOMAIN_NAMES_KEY, showDomainNames.value));
+watch(showAvailable, () => {
+  saveJson(SHOW_AVAILABLE_KEY, showAvailable.value);
+  if (activeView.value !== 'addresses' || contextKind.value !== 'network') return;
+  currentPage.value = 1;
+  loadNetworkContext();
+});
+
+watch(tableQuery, () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(() => {
+    currentPage.value = 1;
+    updateWorkspaceRoute({ replace: true });
+    if (contextKind.value === 'network') loadNetworkContext();
+    else refreshAggregateTable();
+  }, 300);
+});
+
+watch(resourceQuery, () => {
+  clearTimeout(searchTimer);
+  searchTimer = setTimeout(async () => {
+    currentPage.value = 1;
+    updateWorkspaceRoute({ replace: true });
+    // The cards the table's choices come from follow the search, so the
+    // matches land before the table is read.
+    await refreshSearchMatches();
+    if (contextKind.value === 'network') loadNetworkContext();
+    else refreshAggregateTable();
+  }, 300);
+});
+
+watch(
+  filters,
+  () => {
+    if (restoringRoute) return;
+    clearTimeout(searchTimer);
+    searchTimer = setTimeout(() => {
+      currentPage.value = 1;
+      updateWorkspaceRoute({ replace: true });
+      if (contextKind.value === 'network') loadNetworkContext();
+      else refreshAggregateTable();
+      // Counts the Filter menu already showed follow the new filters.
+      if (facets.value) loadFilterFacets();
+    }, 100);
+  },
+  // Synchronous, so a route restore (which sets restoringRoute around its
+  // writes) is seen as one: restoring the filters is not changing them, and
+  // must not send a restored page back to page one.
+  { deep: true, flush: 'sync' },
+);
+// Counts belong to one table in one place; anywhere else they are recounted.
+watch([activeView, contextKind, () => selectedNetwork.value?.id, columnKind], () => {
+  facets.value = null;
+});
+
+// Like the filters watcher, synchronous so a route restore is not a change:
+// the restored page stays.
+watch(
+  pageSize,
+  () => {
+    if (restoringRoute) return;
+    currentPage.value = 1;
+    selectedRows.value = [];
+    updateWorkspaceRoute({ replace: true });
+    if (contextKind.value === 'network') loadNetworkContext();
+    else refreshAggregateTable();
+  },
+  { flush: 'sync' },
+);
+
+watch(addressPresentation, () => updateWorkspaceRoute({ replace: true }));
+// Table and grid read different page sizes, so a switch between them
+// starts at page one and loads that presentation's page.
+watch(
+  effectivePresentation,
+  (next, previous) => {
+    if (restoringRoute || (next === 'table') === (previous === 'table')) return;
+    if (contextKind.value !== 'network' || activeView.value !== 'addresses') return;
+    currentPage.value = 1;
+    loadNetworkContext();
+  },
+  { flush: 'sync' },
+);
+
+watch(
+  routeState,
+  () => {
+    if (pendingRouteWrites) {
+      pendingRouteWrites -= 1;
+      return;
+    }
+    if (!loading.value) {
+      restoreContextFromRoute(allNetworks.value);
+      if (contextKind.value === 'network') {
+        if (!routeState.value.ip) loadNetworkContext();
+      } else {
+        refreshAggregateTable();
+      }
+    }
+  },
+  { deep: true },
+);
+
+useAutoRefresh(refreshCurrentContext);
+onMounted(() => {
+  loadWorkspace();
+  globalThis.window?.addEventListener('keydown', handleWorkspaceKeydown);
+  globalThis.document?.addEventListener('pointerdown', handleDetailOutsidePress);
+});
+onUnmounted(() => {
+  globalThis.window?.removeEventListener('keydown', handleWorkspaceKeydown);
+  globalThis.document?.removeEventListener('pointerdown', handleDetailOutsidePress);
+  clearTimeout(searchTimer);
+  clearTimeout(noticeTimer);
+  workspaceResources.invalidate(
+    'tree',
+    'networks',
+    'zones',
+    'dns',
+    'dnsTotal',
+    'scopes',
+    'dhcp',
+    'dhcpTotal',
+    'addresses',
+    'summary',
+    'detail',
+  );
+});
+</script>
+
+<style scoped src="./workspace.css"></style>

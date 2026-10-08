@@ -10,16 +10,21 @@
  * probing it, a host that answers every scan would flap offline between scans.
  * Keeping one definition here is what prevents that.
  *
- * This module deliberately imports nothing but config defaults, so both the
- * scheduler (which pulls in the scanner) and the IP model can use it without
- * creating an import cycle.
+ * Most of the decision is SQL (scannerCoveredSql). The two gates SQL cannot
+ * express, a public network and the IPv6 switch, are isAutomaticScanAllowed
+ * below, and every caller of the SQL applies it too.
+ *
+ * This module deliberately imports nothing but config defaults and the pure
+ * address helpers, so both the scheduler (which pulls in the scanner) and the
+ * IP model can use it without creating an import cycle.
  */
 
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
+import { isGloballyRoutableCidr } from './ip.js';
 
 const INTERVAL_MS = {
   '': null,
-  'off': null,
+  off: null,
   '5m': 5 * 60 * 1000,
   '15m': 15 * 60 * 1000,
   '30m': 30 * 60 * 1000,
@@ -33,7 +38,7 @@ const INTERVAL_MS = {
 // below introduces no injection surface, but assert the shape anyway: this
 // module builds SQL strings and a future key with a quote in it should fail
 // loudly here rather than silently produce a broken predicate.
-const SCANNING_INTERVAL_KEYS = Object.keys(INTERVAL_MS).filter(k => INTERVAL_MS[k] !== null);
+const SCANNING_INTERVAL_KEYS = Object.keys(INTERVAL_MS).filter((k) => INTERVAL_MS[k] !== null);
 for (const k of SCANNING_INTERVAL_KEYS) {
   if (!/^[0-9a-z]+$/.test(k)) throw new Error(`unsafe scan-interval key: ${k}`);
 }
@@ -119,12 +124,37 @@ export function effectiveIntervalSql(alias = 's') {
  *
  * `subnetAlias` is the `subnets` alias, `ipAlias` the `ip_addresses` alias.
  */
+/**
+ * Whether a network is small enough to scan. IPv4 networks are swept, so
+ * their address count is capped. IPv6 networks are never swept (one
+ * multicast probe and a neighbor-table read), so size does not apply and
+ * their total_addresses is null anyway.
+ */
+export function scanSizeSql(subnetAlias = 's') {
+  return `(${subnetAlias}.address_family = 6 OR ${subnetAlias}.total_addresses <= ${MAX_SCAN_SIZE})`;
+}
+
+/**
+ * The per-network gates scannerCoveredSql cannot express. A publicly routable
+ * network is swept only when scanning is switched on for it by name, never by
+ * inheritance, and an IPv6 network only while IPv6 support is on. `subnet`
+ * needs cidr, scan_enabled (the network's own override) and address_family.
+ *
+ * The scheduler once had this rule and the sweep did not, so a public network
+ * scanned once stayed "online" forever: nothing scanned it again and nothing
+ * was allowed to age it out.
+ */
+export function isAutomaticScanAllowed(subnet, { ipv6 }) {
+  if (subnet.address_family === 6 && !ipv6) return false;
+  return subnet.scan_enabled === 1 || !isGloballyRoutableCidr(subnet.cidr);
+}
+
 export function scannerCoveredSql(subnetAlias = 's', ipAlias = 'ip') {
   const interval = effectiveIntervalSql(subnetAlias);
-  const named = SCANNING_INTERVAL_KEYS.map(k => `'${k}'`).join(', ');
+  const named = SCANNING_INTERVAL_KEYS.map((k) => `'${k}'`).join(', ');
   return `(
     ${subnetAlias}.status = 'allocated'
-    AND ${subnetAlias}.total_addresses <= ${MAX_SCAN_SIZE}
+    AND ${scanSizeSql(subnetAlias)}
     AND ${scanEnabledSql(subnetAlias)}
     AND ${interval} IS NOT NULL
     AND (
@@ -139,5 +169,17 @@ export function scannerCoveredSql(subnetAlias = 's', ipAlias = 'ip') {
       )
     )
     AND (${ipAlias}.scan_enabled IS NULL OR ${ipAlias}.scan_enabled != 0)
+    AND ${ipv6ProbedSql(subnetAlias, ipAlias)}
   )`;
+}
+
+/**
+ * An IPv6 network is never swept: the scan echoes the addresses it knows,
+ * every online row among them (utils/scanner.js startScan), except the
+ * network's anycast address, so that one is left to the stale sweep. (A
+ * link-local row always carries the interface it is echoed on; the schema
+ * requires it.) IPv4 rows pass unchanged.
+ */
+function ipv6ProbedSql(subnetAlias, ipAlias) {
+  return `(${subnetAlias}.address_family != 6 OR ${ipAlias}.allocation_state != 'system')`;
 }

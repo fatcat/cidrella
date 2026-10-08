@@ -3,6 +3,8 @@ import { lookupFingerprintBatch } from './device-fingerprint.js';
 import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
 import { addressFamily, canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import { resolveScanningEnabled } from '../utils/scan-coverage.js';
+import { addressToBig, bigToAddress, isTopologyAddress, parseNetwork } from '../utils/ip.js';
+import { isLeaseActive } from '../utils/lease-sql.js';
 
 export const ADDRESS_TYPE = {
   STATIC_DNS: 'static DNS',
@@ -11,13 +13,24 @@ export const ADDRESS_TYPE = {
   SYSTEM: 'system',
   GATEWAY: 'gateway',
   RESERVED: 'IP Reservation',
+  DNS_HOLD: 'disabled DNS',
   SLAAC: 'SLAAC',
   QUARANTINED: 'quarantined',
-  ROGUE: 'rogue'
+  ROGUE: 'rogue',
 };
 
 function truthy(value) {
   return value === true || value === 1 || value === '1';
+}
+
+// The dnsmasq lease behind an address, as the Lease column reads it in every
+// table: active, expired, or none. Whether the address is free for DHCP to
+// hand out is the status's job, not the lease's.
+export const LEASE_STATE = Object.freeze({ ACTIVE: 'active', EXPIRED: 'expired' });
+
+export function leaseState(expiresAt) {
+  if (!expiresAt) return null;
+  return isLeaseActive(expiresAt) ? LEASE_STATE.ACTIVE : LEASE_STATE.EXPIRED;
 }
 
 export function computeIpView(row) {
@@ -26,9 +39,10 @@ export function computeIpView(row) {
   const allocationState = row.allocation_state || ALLOCATION_STATE.UNASSIGNED;
 
   let addressType = null;
-  const inDynamicPool = truthy(row.in_dynamic_pool)
-    || row.range_type_name === 'DHCP Scope'
-    || row.range_type_name === 'DHCP Pool';
+  const inDynamicPool =
+    truthy(row.in_dynamic_pool) ||
+    row.range_type_name === 'DHCP Scope' ||
+    row.range_type_name === 'DHCP Pool';
   let displayStatus = displayStatusFor({ allocationState, inDynamicPool });
   let statusSeverity = 'secondary';
   let tooltip = null;
@@ -40,6 +54,14 @@ export function computeIpView(row) {
   } else if (allocationState === ALLOCATION_STATE.QUARANTINED) {
     addressType = ADDRESS_TYPE.QUARANTINED;
     tooltip = row.allocation_conflict_reason || 'Conflicting allocation claims';
+  } else if (
+    allocationState === ALLOCATION_STATE.RESERVED &&
+    row.allocation_source_type === 'dns'
+  ) {
+    // ADR 004: held by a manual record that exists but is not served.
+    addressType = ADDRESS_TYPE.DNS_HOLD;
+    tooltip =
+      'Held by a disabled DNS record. Enable it to publish the name, or delete it to free the address';
   } else if (allocationState === ALLOCATION_STATE.RESERVED) {
     addressType = ADDRESS_TYPE.RESERVED;
     tooltip = row.reservation_note || null;
@@ -66,13 +88,13 @@ export function computeIpView(row) {
   return {
     allocation_state: allocationState,
     address_conflict: allocationState !== ALLOCATION_STATE.UNASSIGNED && isRogue,
-    address_conflict_reason: allocationState !== ALLOCATION_STATE.UNASSIGNED && isRogue
-      ? (row.rogue_reason || null)
-      : null,
+    address_conflict_reason:
+      allocationState !== ALLOCATION_STATE.UNASSIGNED && isRogue ? row.rogue_reason || null : null,
     ip_display_status: displayStatus,
     ip_status_severity: statusSeverity,
     address_type: addressType,
-    address_type_tooltip: tooltip
+    address_type_tooltip: tooltip,
+    dhcp_lease_state: leaseState(row.dhcp_expires_at),
   };
 }
 
@@ -83,7 +105,51 @@ export function buildIpAggregate(row) {
     ip_address: canonical || row.ip_address,
     address_family: row.address_family ?? addressFamily(row.ip_address),
     address_sort_key: row.address_sort_key ?? sortKey(row.ip_address),
-    ...computeIpView(row)
+    ...computeIpView(row),
+  };
+}
+
+/**
+ * Build the canonical read-only row for an address with no persisted IP
+ * identity. Topology remains authoritative for protected addresses, while
+ * range membership is projected as an independent fact.
+ */
+export function buildVirtualSubnetIpRow(subnet, ip, functionalRange = null) {
+  const parsedSubnet = parseNetwork(subnet.cidr);
+  // `ip` is an address string, or a numeric offset value for callers walking
+  // an IPv4 prefix. Either way the row is spelled in the subnet's family.
+  const value =
+    typeof ip === 'bigint' ? ip : typeof ip === 'number' ? BigInt(ip) : addressToBig(ip).value;
+  const ipAddress = bigToAddress(value, parsedSubnet.family);
+  const gatewayValue = subnet.gateway_address ? addressToBig(subnet.gateway_address).value : null;
+
+  let allocationState = ALLOCATION_STATE.UNASSIGNED;
+  if (gatewayValue === value) {
+    allocationState = ALLOCATION_STATE.GATEWAY;
+  } else if (isTopologyAddress(parsedSubnet, value)) {
+    allocationState = ALLOCATION_STATE.SYSTEM;
+  }
+
+  return {
+    ip_address: ipAddress,
+    subnet_id: subnet.id,
+    allocation_state: allocationState,
+    allocation_source_type: allocationState === ALLOCATION_STATE.UNASSIGNED ? null : 'topology',
+    allocation_source_id:
+      allocationState === ALLOCATION_STATE.UNASSIGNED ? null : String(subnet.id),
+    hostname: null,
+    mac_address: null,
+    is_online: 0,
+    last_seen_at: null,
+    last_seen_mac: null,
+    is_rogue: 0,
+    rogue_reason: null,
+    has_dhcp_reservation: 0,
+    has_static_dns: 0,
+    dhcp_expires_at: null,
+    range_type_id: functionalRange?.range_type_id || null,
+    range_type_name: functionalRange?.range_type_name || null,
+    range_type_color: functionalRange?.range_type_color || null,
   };
 }
 
@@ -95,21 +161,19 @@ export function applyIpView(row) {
 }
 
 function identityKey(row) {
-  return JSON.stringify([
-    row.subnet_id,
-    row.ip_address,
-    row.interface_id ?? null
-  ]);
+  return JSON.stringify([row.subnet_id, row.ip_address, row.interface_id ?? null]);
 }
 
 export function getIpStateMap(db, rows) {
-  const addresses = [...new Set((rows || []).map(r => r.ip_address).filter(Boolean))];
+  const addresses = [...new Set((rows || []).map((r) => r.ip_address).filter(Boolean))];
   const map = new Map();
   const CHUNK_SIZE = 900;
   for (let i = 0; i < addresses.length; i += CHUNK_SIZE) {
     const chunk = addresses.slice(i, i + CHUNK_SIZE);
     if (!chunk.length) continue;
-    const stateRows = db.prepare(`
+    const stateRows = db
+      .prepare(
+        `
       SELECT subnet_id, ip_address, hostname, mac_address, last_seen_mac,
              is_online, is_rogue, rogue_reason, detection_source,
              last_seen_at, last_scanned_at, reservation_note, scan_enabled,
@@ -118,7 +182,9 @@ export function getIpStateMap(db, rows) {
              valid_until, dhcp_version
         FROM ip_addresses
        WHERE ip_address IN (${chunk.map(() => '?').join(',')})
-    `).all(...chunk);
+    `,
+      )
+      .all(...chunk);
     for (const row of stateRows) {
       map.set(identityKey(row), row);
     }
@@ -130,20 +196,28 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
   if (!rows?.length) return rows || [];
 
   const stateMap = fillFromIpAddress ? getIpStateMap(db, rows) : new Map();
-  const subnetIds = [...new Set(rows.map(row => row.subnet_id).filter(id => id !== null && id !== undefined))];
+  const subnetIds = [
+    ...new Set(rows.map((row) => row.subnet_id).filter((id) => id !== null && id !== undefined)),
+  ];
   const subnetScanMap = new Map();
   const networkRangeTypesBySubnet = new Map();
   const CHUNK_SIZE = 900;
   for (let i = 0; i < subnetIds.length; i += CHUNK_SIZE) {
     const chunk = subnetIds.slice(i, i + CHUNK_SIZE);
-    const subnetRows = db.prepare(`
+    const subnetRows = db
+      .prepare(
+        `
       SELECT id, scan_enabled
         FROM subnets
        WHERE id IN (${chunk.map(() => '?').join(',')})
-    `).all(...chunk);
+    `,
+      )
+      .all(...chunk);
     for (const subnet of subnetRows) subnetScanMap.set(subnet.id, subnet.scan_enabled);
 
-    const networkRangeRows = db.prepare(`
+    const networkRangeRows = db
+      .prepare(
+        `
       SELECT r.id, r.subnet_id, r.start_ip, r.end_ip,
              rt.id as range_type_id, rt.name, rt.color
         FROM ranges r
@@ -151,19 +225,21 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
        WHERE r.subnet_id IN (${chunk.map(() => '?').join(',')})
          AND rt.is_system = 0
        ORDER BY r.start_ip
-    `).all(...chunk);
+    `,
+      )
+      .all(...chunk);
     for (const range of networkRangeRows) {
       const start = parseIp(range.start_ip);
       const end = parseIp(range.end_ip);
-      if (!start || !end || start.bits !== 32 || end.bits !== 32) continue;
+      if (!start || !end || start.bits !== end.bits) continue;
       const subnetRanges = networkRangeTypesBySubnet.get(range.subnet_id) || [];
-      subnetRanges.push({ ...range, start: start.value, end: end.value });
+      subnetRanges.push({ ...range, start: start.value, end: end.value, bits: start.bits });
       networkRangeTypesBySubnet.set(range.subnet_id, subnetRanges);
     }
   }
-  const globalScanDefault = db.prepare(
-    "SELECT value FROM settings WHERE key = 'default_scan_enabled'"
-  ).get()?.value;
+  const globalScanDefault = db
+    .prepare("SELECT value FROM settings WHERE key = 'default_scan_enabled'")
+    .get()?.value;
 
   for (const row of rows) {
     const state = stateMap.get(identityKey(row));
@@ -196,9 +272,13 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
     row.network_range_type = null;
     row.network_range_type_color = null;
     const parsedAddress = parseIp(row.ip_address);
-    if (parsedAddress?.bits === 32) {
-      const matchingRange = (networkRangeTypesBySubnet.get(row.subnet_id) || [])
-        .find(range => parsedAddress.value >= range.start && parsedAddress.value <= range.end);
+    if (parsedAddress) {
+      const matchingRange = (networkRangeTypesBySubnet.get(row.subnet_id) || []).find(
+        (range) =>
+          range.bits === parsedAddress.bits &&
+          parsedAddress.value >= range.start &&
+          parsedAddress.value <= range.end,
+      );
       if (matchingRange) {
         row.network_range_type_id = matchingRange.range_type_id;
         row.network_range_type = matchingRange.name;
@@ -206,19 +286,24 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
       }
     }
 
-    row.scanning_enabled = row.subnet_id === null || row.subnet_id === undefined
-      ? false
-      : resolveScanningEnabled(row.scan_enabled, subnetScanMap.get(row.subnet_id), globalScanDefault);
+    row.scanning_enabled =
+      row.subnet_id === null || row.subnet_id === undefined
+        ? false
+        : resolveScanningEnabled(
+            row.scan_enabled,
+            subnetScanMap.get(row.subnet_id),
+            globalScanDefault,
+          );
 
     applyIpView(row);
   }
 
-  const allMacs = [...new Set(rows.map(r => r.mac_address || r.last_seen_mac).filter(Boolean))];
+  const allMacs = [...new Set(rows.map((r) => r.mac_address || r.last_seen_mac).filter(Boolean))];
   const vendorMap = lookupVendorBatch(allMacs);
   const fpMap = lookupFingerprintBatch(db, allMacs);
   for (const row of rows) {
     const mac = row.mac_address || row.last_seen_mac;
-    row.vendor = mac ? (vendorMap.get(mac) || null) : null;
+    row.vendor = mac ? vendorMap.get(mac) || null : null;
     const fp = mac ? fpMap.get(mac) : null;
     row.device_type = fp?.device_type || null;
     row.os_family = fp?.os_family || null;

@@ -29,7 +29,8 @@ vi.mock('../../../src/stores/dns.js', () => ({
   useDnsStore: () => ({ zones, fetchZones, createZone }),
 }));
 
-const { usePiholeImport } = await import('../../../src/composables/usePiholeImport.js');
+const { usePiholeImport, piholeImportSummary } =
+  await import('../../../src/composables/usePiholeImport.js');
 
 const toast = { add: vi.fn() };
 
@@ -50,11 +51,18 @@ const toast = { add: vi.fn() };
 const mounted = [];
 function inSetup(fn) {
   let result;
-  mounted.push(mount({ setup() { result = fn(); return () => null; } }));
+  mounted.push(
+    mount({
+      setup() {
+        result = fn();
+        return () => null;
+      },
+    }),
+  );
   return result;
 }
 afterEach(() => {
-  mounted.splice(0).forEach(wrapper => wrapper.unmount());
+  mounted.splice(0).forEach((wrapper) => wrapper.unmount());
 });
 
 beforeEach(() => {
@@ -181,7 +189,7 @@ describe('teardown', () => {
       wrapper.unmount();
       expect(
         clearSpy.mock.calls.map(([id]) => id),
-        'unmount should clear the debounce timer specifically'
+        'unmount should clear the debounce timer specifically',
       ).toContain(debounceId);
 
       // And the probe must not fire after the component is gone.
@@ -193,5 +201,31 @@ describe('teardown', () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe('piholeImportSummary', () => {
+  const counts = (created = 0, updated = 0) => ({ created, updated, skipped: 0, failed: 0 });
+
+  it('names A, CNAME and DHCP results, and AAAA only when there were any', () => {
+    expect(
+      piholeImportSummary({
+        a: counts(2, 1),
+        aaaa: counts(),
+        cname: counts(1),
+        dhcp: { created: 3, noSubnet: 0, ipv6: 0 },
+      }),
+    ).toBe('Import complete: 2 A created, 1 updated; 1 CNAME created; 3 DHCP created');
+    expect(
+      piholeImportSummary({
+        a: counts(1),
+        aaaa: counts(2),
+        cname: counts(),
+        dhcp: { created: 0, noSubnet: 1, ipv6: 2 },
+      }),
+    ).toBe(
+      'Import complete: 1 A created; 2 AAAA created; 0 CNAME created; 0 DHCP created ' +
+        '(1 DHCP skipped: no matching subnet; 2 IPv6 DHCP skipped: a DHCPv6 reservation needs a DUID)',
+    );
   });
 });

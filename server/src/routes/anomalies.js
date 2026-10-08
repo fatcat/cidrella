@@ -2,9 +2,21 @@ import { Router } from 'express';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
-import { isValidIpv4 } from '../utils/ip.js';
+import { isValidAddress } from '../utils/ip.js';
+import { canonicalizeIp } from '../utils/address.js';
 import { MAC_RE } from '../utils/mac.js';
 import { enrichWithHostnames } from '../utils/hostnames.js';
+import {
+  queryClientWindowEvidence,
+  queryClientWindowSummary,
+  queryClientWindowDomains,
+  queryClientNewDomains,
+} from '../db/duckdb.js';
+import {
+  SIGNAL_EVIDENCE,
+  hasSignalEvidence,
+  rankDomainsForSignal,
+} from '../utils/anomaly-evidence.js';
 import { DEFAULTS } from '../config/defaults.js';
 import * as Anomaly from '../models/anomaly.js';
 import * as Setting from '../models/setting.js';
@@ -29,37 +41,60 @@ router.get('/active', requirePerm('analytics:read'), (req, res) => {
   sql += ` ORDER BY scored_at DESC LIMIT ? OFFSET ?`;
   params.push(limit, offset);
 
-  const rows = db.prepare(sql).all(...params).map(parseScoreRow);
+  const rows = db
+    .prepare(sql)
+    .all(...params)
+    .map(parseScoreRow);
   res.json(enrichWithHostnames(rows));
 });
 
 // GET /api/anomalies/summary: dashboard summary
 router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
-  const acknowledgedThroughId = Math.max(0, parseInt(getSetting('anomaly_acknowledged_score_id'), 10) || 0);
+  const acknowledgedThroughId = Math.max(
+    0,
+    parseInt(getSetting('anomaly_acknowledged_score_id'), 10) || 0,
+  );
 
-  const active = db.prepare(
-    `SELECT severity, COUNT(*) as count FROM anomaly_scores
+  // Devices, not windows. One noisy device can flag every hour of a night,
+  // and the bell used to say "12 anomalies" for what is one device to act on.
+  // by_severity keeps counting windows, since a device spans severities.
+  // Identity is null on rows scored before migration 060; the IP stands in.
+  const DEVICE = 'COALESCE(identity, client_ip)';
+  const active = db
+    .prepare(
+      `SELECT severity, COUNT(*) as count FROM anomaly_scores
      WHERE is_anomaly = 1 AND resolved = 0
-     GROUP BY severity`
-  ).all();
+     GROUP BY severity`,
+    )
+    .all();
 
-  const totalActive = active.reduce((sum, r) => sum + r.count, 0);
-  const unacknowledgedActive = db.prepare(
-    `SELECT COUNT(*) as count FROM anomaly_scores
-     WHERE is_anomaly = 1 AND resolved = 0 AND id > ?`
-  ).get(acknowledgedThroughId)?.count || 0;
+  const activeWindows = active.reduce((sum, r) => sum + r.count, 0);
+  const totalActive =
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT ${DEVICE}) as count FROM anomaly_scores
+     WHERE is_anomaly = 1 AND resolved = 0`,
+      )
+      .get()?.count || 0;
+  const unacknowledgedActive =
+    db
+      .prepare(
+        `SELECT COUNT(DISTINCT ${DEVICE}) as count FROM anomaly_scores
+     WHERE is_anomaly = 1 AND resolved = 0 AND id > ?`,
+      )
+      .get(acknowledgedThroughId)?.count || 0;
   const bySeverity = {};
   for (const r of active) {
     bySeverity[r.severity || 'unknown'] = r.count;
   }
 
-  const clientsMonitored = db.prepare(
-    `SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'active'`
-  ).get()?.count || 0;
-  const clientsLearning = db.prepare(
-    `SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'learning'`
-  ).get()?.count || 0;
+  const clientsMonitored =
+    db.prepare(`SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'active'`).get()
+      ?.count || 0;
+  const clientsLearning =
+    db.prepare(`SELECT COUNT(*) as count FROM anomaly_models WHERE status = 'learning'`).get()
+      ?.count || 0;
 
   const enabled = getSetting('anomaly_detection_enabled') === 'true';
 
@@ -77,7 +112,9 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
   try {
     const raw = getSetting('anomaly_daemon_status');
     if (raw) daemon = JSON.parse(raw);
-  } catch { /* ignore parse errors */ }
+  } catch {
+    /* ignore parse errors */
+  }
 
   if (daemon) {
     if (!enabled) {
@@ -88,8 +125,8 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
       // or pre-fix status snapshots.
       const heartbeats = [daemon.last_seen, daemon.last_score, daemon.last_train]
         .filter(Boolean)
-        .map(s => Date.parse(s))
-        .filter(n => Number.isFinite(n));
+        .map((s) => Date.parse(s))
+        .filter((n) => Number.isFinite(n));
 
       if (heartbeats.length === 0) {
         daemon.stale = true;
@@ -102,9 +139,8 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
         // for the "ok" window so a misconfigured interval=1min doesn't flap).
         const scoringMin = parseInt(getSetting('anomaly_scoring_interval_min'), 10);
         const defaultScoringMin = parseInt(DEFAULTS.anomaly_scoring_interval_min, 10) || 15;
-        const scoringSec = Number.isFinite(scoringMin) && scoringMin > 0
-          ? scoringMin * 60
-          : defaultScoringMin * 60;
+        const scoringSec =
+          Number.isFinite(scoringMin) && scoringMin > 0 ? scoringMin * 60 : defaultScoringMin * 60;
         const thresholdSec = Math.max(300, scoringSec * 2);
 
         daemon.heartbeat_age_sec = ageSec;
@@ -119,6 +155,7 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
     enabled,
     total_active: totalActive,
     unacknowledged_active: unacknowledgedActive,
+    active_windows: activeWindows,
     acknowledged_through_id: acknowledgedThroughId,
     by_severity: bySeverity,
     clients_monitored: clientsMonitored,
@@ -132,9 +169,9 @@ router.get('/summary', requirePerm('analytics:read'), (req, res) => {
 // seen so older rows never contribute to the notification count again.
 router.post('/acknowledge', requirePerm('analytics:write'), (req, res) => {
   const db = getDb();
-  const maxId = db.prepare(
-    `SELECT COALESCE(MAX(id), 0) as id FROM anomaly_scores WHERE is_anomaly = 1`
-  ).get()?.id || 0;
+  const maxId =
+    db.prepare(`SELECT COALESCE(MAX(id), 0) as id FROM anomaly_scores WHERE is_anomaly = 1`).get()
+      ?.id || 0;
 
   Setting.upsertSetting(db, 'anomaly_acknowledged_score_id', String(maxId));
   audit(req.user.id, 'anomaly_counter_acknowledged', 'anomaly_scores', null, { through_id: maxId });
@@ -156,15 +193,20 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const days = Math.min(Math.max(parseInt(req.query.days, 10) || 7, 1), 30);
 
-  const events = db.prepare(
-    `SELECT * FROM anomaly_scores
+  const events = db
+    .prepare(
+      `SELECT * FROM anomaly_scores
      WHERE is_anomaly = 1 AND window_start >= datetime('now', '-' || ? || ' days')
-     ORDER BY client_ip, window_start`
-  ).all(days).map(parseScoreRow);
+     ORDER BY client_ip, window_start`,
+    )
+    .all(days)
+    .map(parseScoreRow);
 
-  const learning = db.prepare(
-    `SELECT identity, client_ip, status, training_rows, trained_at FROM anomaly_models WHERE status = 'learning'`
-  ).all();
+  const learning = db
+    .prepare(
+      `SELECT identity, client_ip, status, training_rows, trained_at FROM anomaly_models WHERE status = 'learning'`,
+    )
+    .all();
 
   res.json({
     events: enrichWithHostnames(events),
@@ -172,45 +214,194 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
   });
 });
 
+// GET /api/anomalies/map: one row per device with a trained model, carrying its
+// latest scored window. This is the triage map's data: every monitored device
+// gets a dot, flagged or not, so "within baseline" is visible as a cloud rather
+// than an absence. threat_score is NULL for windows scored before the column
+// existed; the sidecar fills it on its next cycle.
+router.get('/map', requirePerm('analytics:read'), (req, res) => {
+  const db = getDb();
+  const rows = db
+    .prepare(
+      `SELECT m.identity, COALESCE(s.client_ip, m.client_ip) AS client_ip, m.training_rows,
+              s.window_start, s.window_end, s.anomaly_score, s.threat_score, s.severity,
+              s.is_anomaly, s.resolved,
+              (SELECT COUNT(*) FROM anomaly_scores f
+                WHERE f.identity = m.identity AND f.is_anomaly = 1
+                  AND f.window_start >= datetime('now', '-1 day')) AS flagged_24h
+         FROM anomaly_models m
+         LEFT JOIN anomaly_scores s ON s.id = (
+           SELECT x.id FROM anomaly_scores x
+            WHERE x.identity = m.identity
+            ORDER BY x.window_start DESC LIMIT 1)
+        WHERE m.status = 'active'
+        ORDER BY s.anomaly_score ASC`,
+    )
+    .all();
+  res.json(enrichWithHostnames(rows));
+});
+
 const FULL_MAC_RE = new RegExp(`^${MAC_RE.source}$`, 'i');
+
+// anomaly_scores.window_start is whatever wrote the row. The scoring sidecar
+// writes Python's datetime.isoformat(), so '2026-09-07T02:00:00+00:00', while
+// anything written through SQLite's own datetime() is '2026-09-07 02:00:00'.
+// Both mean UTC. DuckDB's TIMESTAMP cast will not accept the offset suffix, so
+// window bounds are canonicalized before they reach a query.
+function windowToUtcMs(value) {
+  const raw = String(value || '').trim();
+  if (!raw) return NaN;
+  const withT = raw.replace(' ', 'T');
+  // A space-separated SQLite timestamp carries no zone and is UTC by
+  // convention, so say so explicitly rather than letting Date.parse read it
+  // as local time.
+  const zoned = /([zZ]|[+-]\d{2}:?\d{2})$/.test(withT) ? withT : `${withT}Z`;
+  return Date.parse(zoned);
+}
+
+function windowToDuckTimestamp(value) {
+  const ms = windowToUtcMs(value);
+  if (!Number.isFinite(ms)) return String(value);
+  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+}
 
 // An anomaly identity is either a MAC (survives an IP renewal) or, when
 // CIDRella has no DHCP lease for the client, the client's IP itself.
 function isValidIdentity(identity) {
-  return FULL_MAC_RE.test(identity) || isValidIpv4(identity);
+  return FULL_MAC_RE.test(identity) || isValidAddress(identity);
+}
+
+// The stored form of an identity: MACs as given, addresses canonical.
+function canonicalIdentity(identity) {
+  return FULL_MAC_RE.test(identity) ? identity : canonicalizeIp(identity) || identity;
 }
 
 // GET /api/anomalies/client/:identity: anomaly history for a client
 router.get('/client/:identity', requirePerm('analytics:read'), (req, res) => {
-  const { identity } = req.params;
-  if (!isValidIdentity(identity)) {
+  const identity = canonicalIdentity(req.params.identity);
+  if (!isValidIdentity(req.params.identity)) {
     return res.status(400).json({ error: 'Invalid identity' });
   }
 
   const db = getDb();
   const limit = Math.min(parseInt(req.query.limit, 10) || 100, 500);
 
-  const rows = db.prepare(
-    `SELECT * FROM anomaly_scores
+  const rows = db
+    .prepare(
+      `SELECT * FROM anomaly_scores
      WHERE identity = ?
      ORDER BY window_start DESC
-     LIMIT ?`
-  ).all(identity, limit);
+     LIMIT ?`,
+    )
+    .all(identity, limit);
   res.json(rows.map(parseScoreRow));
 });
 
 // GET /api/anomalies/client/:identity/model: model metadata
 router.get('/client/:identity/model', requirePerm('analytics:read'), (req, res) => {
-  const { identity } = req.params;
-  if (!isValidIdentity(identity)) {
+  const identity = canonicalIdentity(req.params.identity);
+  if (!isValidIdentity(req.params.identity)) {
     return res.status(400).json({ error: 'Invalid identity' });
   }
 
   const db = getDb();
-  const row = db.prepare(
-    `SELECT * FROM anomaly_models WHERE identity = ?`
-  ).get(identity);
+  const row = db.prepare(`SELECT * FROM anomaly_models WHERE identity = ?`).get(identity);
   res.json(row || null);
+});
+
+// The window an evidence request is about: the one named by window_start, or
+// the most recent flagged one.
+function findScoredWindow(db, identity, windowStart) {
+  return windowStart
+    ? db
+        .prepare(
+          `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
+         FROM anomaly_scores WHERE identity = ? AND window_start = ?`,
+        )
+        .get(identity, windowStart)
+    : db
+        .prepare(
+          `SELECT client_ip, window_start, window_end, anomaly_score, severity, is_anomaly
+         FROM anomaly_scores WHERE identity = ? AND is_anomaly = 1
+        ORDER BY window_start DESC LIMIT 1`,
+        )
+        .get(identity);
+}
+function noWindowError(windowStart) {
+  return windowStart
+    ? 'No scored window found for that identity and window_start'
+    : 'No flagged window found for that identity';
+}
+
+// GET /api/anomalies/client/:identity/evidence: the DNS traffic behind a
+// scored window. Without ?window_start it answers for the most recent flagged
+// window, which is what a detail view opens on.
+//
+// The client IP comes from the score row, never from a fresh DHCP lookup. An
+// identity is a MAC wherever CIDRella had a lease at scoring time (migration
+// 060), dhcp_leases only holds the CURRENT lease, and dns_queries is keyed by
+// IP. So the score row's client_ip is the only historically accurate
+// MAC-to-IP mapping for that window. Resolving the MAC's lease today would
+// pull the traffic of whatever holds that address now.
+router.get('/client/:identity/evidence', requirePerm('analytics:read'), async (req, res) => {
+  const identity = canonicalIdentity(req.params.identity);
+  if (!isValidIdentity(req.params.identity)) {
+    return res.status(400).json({ error: 'Invalid identity' });
+  }
+
+  const db = getDb();
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 50, 1), 200);
+  const { window_start: windowStart } = req.query;
+
+  const scored = findScoredWindow(db, identity, windowStart);
+  if (!scored) return res.status(404).json({ error: noWindowError(windowStart) });
+
+  // Analytics data is pruned on its own retention clock (default 7 days),
+  // while anomaly scores are kept for 30. A window older than the analytics
+  // retention still has a score and no traffic left to show. Report that as a
+  // distinct state: a pruned window and a client that was simply quiet both
+  // return zero rows, and they mean opposite things to whoever is triaging.
+  const retentionDays = Math.max(
+    1,
+    Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7),
+  );
+  const windowEndMs = windowToUtcMs(scored.window_end);
+  const withinRetention = Number.isFinite(windowEndMs)
+    ? Date.now() - windowEndMs < retentionDays * 86400000
+    : true;
+
+  const startTs = windowToDuckTimestamp(scored.window_start);
+  const endTs = windowToDuckTimestamp(scored.window_end);
+
+  try {
+    const [rows, summary] = await Promise.all([
+      queryClientWindowEvidence(scored.client_ip, startTs, endTs, limit),
+      queryClientWindowSummary(scored.client_ip, startTs, endTs),
+    ]);
+
+    res.json({
+      identity,
+      client_ip: scored.client_ip,
+      window_start: scored.window_start,
+      window_end: scored.window_end,
+      anomaly_score: scored.anomaly_score,
+      severity: scored.severity,
+      is_anomaly: scored.is_anomaly,
+      retention_days: retentionDays,
+      window_within_retention: withinRetention,
+      evidence_available: rows.length > 0,
+      truncated: rows.length === limit,
+      summary: summary || {
+        total_queries: 0,
+        distinct_domains: 0,
+        nxdomain_count: 0,
+        blocked_count: 0,
+      },
+      rows,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // DELETE /api/anomalies/:id: delete an anomaly score
@@ -230,6 +421,55 @@ router.delete('/:id', requirePerm('dns:write'), (req, res) => {
 });
 
 // POST /api/anomalies/:id/dismiss: mark anomaly as resolved (kept for backwards compat)
+// GET /api/anomalies/client/:identity/evidence/signal?feature=<name>: the
+// names in the flagged window that back one contributing factor, ranked by
+// that factor's own measure (entropy for the entropy signal, length for the
+// length signal, and so on). The plain evidence list is top-by-count, which
+// is exactly the list a DGA hour of once-each names never appears on.
+router.get('/client/:identity/evidence/signal', requirePerm('analytics:read'), async (req, res) => {
+  const identity = canonicalIdentity(req.params.identity);
+  if (!isValidIdentity(req.params.identity)) {
+    return res.status(400).json({ error: 'Invalid identity' });
+  }
+  const feature = String(req.query.feature || '');
+  if (!hasSignalEvidence(feature)) {
+    return res.status(400).json({ error: 'No name-level evidence for that feature' });
+  }
+  const limit = Math.min(Math.max(parseInt(req.query.limit, 10) || 8, 1), 50);
+  const { window_start: windowStart } = req.query;
+
+  const db = getDb();
+  const scored = findScoredWindow(db, identity, windowStart);
+  if (!scored) return res.status(404).json({ error: noWindowError(windowStart) });
+
+  const startTs = windowToDuckTimestamp(scored.window_start);
+  const endTs = windowToDuckTimestamp(scored.window_end);
+  try {
+    let ranked;
+    if (SIGNAL_EVIDENCE[feature].external) {
+      const lookback = Math.max(
+        1,
+        Math.min(30, parseInt(getSetting('analytics_retention_days'), 10) || 7),
+      );
+      const rows = await queryClientNewDomains(scored.client_ip, startTs, endTs, lookback, limit);
+      ranked = rankDomainsForSignal(feature, rows, limit);
+    } else {
+      const rows = await queryClientWindowDomains(scored.client_ip, startTs, endTs);
+      ranked = rankDomainsForSignal(feature, rows, limit);
+    }
+    res.json({
+      identity,
+      client_ip: scored.client_ip,
+      window_start: scored.window_start,
+      window_end: scored.window_end,
+      limit,
+      ...ranked,
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id, 10);
@@ -245,44 +485,50 @@ router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// ─── Whitelist CRUD ─────────────────────────────────────
+// ─── Allowlist CRUD ─────────────────────────────────────
 
-// GET /api/anomalies/whitelist: list whitelisted clients
-router.get('/whitelist', requirePerm('analytics:read'), (req, res) => {
+// GET /api/anomalies/allowlist: list allowlisted clients
+// The list was called a whitelist until v0.5.0. The old path stays as an
+// alias for one release so a client bundle cached from before the rename
+// keeps working across the upgrade.
+router.get(['/allowlist', '/whitelist'], requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
-  const rows = db.prepare('SELECT * FROM anomaly_whitelist ORDER BY whitelisted_at DESC').all();
+  const rows = db.prepare('SELECT * FROM anomaly_allowlist ORDER BY allowlisted_at DESC').all();
   res.json(enrichWithHostnames(rows));
 });
 
-// POST /api/anomalies/whitelist: whitelist a client IP
-router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
+// POST /api/anomalies/allowlist: allowlist a client IP
+router.post(['/allowlist', '/whitelist'], requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const { client_ip, reason } = req.body;
 
   if (!client_ip) return res.status(400).json({ error: 'client_ip is required' });
-  if (!isValidIpv4(client_ip)) return res.status(400).json({ error: 'Invalid IP address' });
+  if (!isValidAddress(client_ip)) return res.status(400).json({ error: 'Invalid IP address' });
+  const clientIp = canonicalizeIp(client_ip);
 
-  const identity = Anomaly.resolveIdentity(db, client_ip);
-  const existing = db.prepare('SELECT id FROM anomaly_whitelist WHERE identity = ?').get(identity);
-  if (existing) return res.status(409).json({ error: 'Already whitelisted' });
+  const identity = Anomaly.resolveIdentity(db, clientIp);
+  const existing = db.prepare('SELECT id FROM anomaly_allowlist WHERE identity = ?').get(identity);
+  if (existing) return res.status(409).json({ error: 'Already allowlisted' });
 
-  const id = Anomaly.addWhitelistEntry(db, client_ip, reason);
+  const id = Anomaly.addAllowlistEntry(db, clientIp, reason);
 
-  audit(req.user.id, 'anomaly_whitelist_add', 'anomaly_whitelist', id, { client_ip, reason });
+  audit(req.user.id, 'anomaly_allowlist_add', 'anomaly_allowlist', id, { client_ip, reason });
   res.status(201).json({ id, ok: true });
 });
 
-// DELETE /api/anomalies/whitelist/:id: remove from whitelist
-router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
+// DELETE /api/anomalies/allowlist/:id: remove from allowlist
+router.delete(['/allowlist/:id', '/whitelist/:id'], requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const id = parseInt(req.params.id, 10);
   if (isNaN(id)) return res.status(400).json({ error: 'Invalid ID' });
 
-  const entry = db.prepare('SELECT * FROM anomaly_whitelist WHERE id = ?').get(id);
+  const entry = db.prepare('SELECT * FROM anomaly_allowlist WHERE id = ?').get(id);
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
-  Anomaly.deleteWhitelistEntry(db, id);
-  audit(req.user.id, 'anomaly_whitelist_remove', 'anomaly_whitelist', id, { client_ip: entry.client_ip });
+  Anomaly.deleteAllowlistEntry(db, id);
+  audit(req.user.id, 'anomaly_allowlist_remove', 'anomaly_allowlist', id, {
+    client_ip: entry.client_ip,
+  });
   res.json({ ok: true });
 });
 
@@ -318,14 +564,24 @@ router.put('/settings', requireRole('admin'), (req, res) => {
       const val = String(req.body[key]);
 
       if (key === 'anomaly_detection_enabled' && !['true', 'false'].includes(val)) {
-        return res.status(400).json({ error: 'anomaly_detection_enabled must be a boolean (true or false)' });
+        return res
+          .status(400)
+          .json({ error: 'anomaly_detection_enabled must be a boolean (true or false)' });
       }
       if (key === 'anomaly_sensitivity' && !validSensitivities.includes(val)) {
-        return res.status(400).json({ error: `anomaly_sensitivity must be one of: ${validSensitivities.join(', ')}` });
+        return res
+          .status(400)
+          .json({ error: `anomaly_sensitivity must be one of: ${validSensitivities.join(', ')}` });
       }
 
-      if (['anomaly_scoring_interval_min', 'anomaly_training_interval_hours',
-           'anomaly_min_training_hours', 'anomaly_retention_days'].includes(key)) {
+      if (
+        [
+          'anomaly_scoring_interval_min',
+          'anomaly_training_interval_hours',
+          'anomaly_min_training_hours',
+          'anomaly_retention_days',
+        ].includes(key)
+      ) {
         const n = parseInt(val, 10);
         if (isNaN(n) || n < 1) {
           return res.status(400).json({ error: `${key} must be a positive integer` });

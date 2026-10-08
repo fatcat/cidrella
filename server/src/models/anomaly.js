@@ -3,10 +3,14 @@ export function deleteScore(db, id) {
 }
 
 export function dismissScore(db, id) {
-  return db.prepare(`
+  return db
+    .prepare(
+      `
     UPDATE anomaly_scores SET resolved = 1, resolved_at = datetime('now')
     WHERE id = ? AND resolved = 0
-  `).run(id);
+  `,
+    )
+    .run(id);
 }
 
 // Resolve a client IP to the anomaly-detection identity it's scored under:
@@ -17,17 +21,20 @@ export function dismissScore(db, id) {
 // the MAC under a column alias, to keep CodeQL's `mac.?addr` private-data
 // heuristic from flagging every daemon log line that names the device; the
 // column, this function, and the API field are all still `identity`.)
+// IPv4 only in effect: a DHCPv6 lease has no MAC and a SLAAC host no lease, so
+// an IPv6 client is its address (docs/ARCHITECTURE.md, the known limitation
+// under the IPv6 paragraph).
 export function resolveIdentity(db, clientIp) {
   const row = db.prepare('SELECT mac_address FROM dhcp_leases WHERE ip_address = ?').get(clientIp);
   return row?.mac_address || clientIp;
 }
 
-export function addWhitelistEntry(db, clientIp, reason) {
+export function addAllowlistEntry(db, clientIp, reason) {
   return db.transaction(() => {
     const identity = resolveIdentity(db, clientIp);
-    const result = db.prepare(
-      'INSERT INTO anomaly_whitelist (identity, client_ip, reason) VALUES (?, ?, ?)'
-    ).run(identity, clientIp, reason || null);
+    const result = db
+      .prepare('INSERT INTO anomaly_allowlist (identity, client_ip, reason) VALUES (?, ?, ?)')
+      .run(identity, clientIp, reason || null);
 
     db.prepare('DELETE FROM anomaly_models WHERE identity = ?').run(identity);
     db.prepare('DELETE FROM anomaly_scores WHERE identity = ?').run(identity);
@@ -35,6 +42,6 @@ export function addWhitelistEntry(db, clientIp, reason) {
   })();
 }
 
-export function deleteWhitelistEntry(db, id) {
-  return db.prepare('DELETE FROM anomaly_whitelist WHERE id = ?').run(id);
+export function deleteAllowlistEntry(db, id) {
+  return db.prepare('DELETE FROM anomaly_allowlist WHERE id = ?').run(id);
 }

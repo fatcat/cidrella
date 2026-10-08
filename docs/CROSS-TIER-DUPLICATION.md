@@ -47,8 +47,11 @@ to be resolvable by Vite, staged into the release tarball, and known to
 wrong in a way that only shows up in a built artifact.
 
 **Applies to**: the `server/src/utils/ip.js` and `client/src/utils/ip.js` pair
-(#3), which is the strongest candidate in the codebase: 12 shared exports, pure
-arithmetic, five already divergent. Nothing else currently clears the bar.
+(#3), which was the strongest candidate in the codebase: 12 shared exports, pure
+arithmetic, five already divergent. **Done 2026-09-17**: the shared body is
+`server/src/utils/cidr.js`, both `ip.js` modules re-export it, and
+`client/tests/unit/utils/ip-shared.test.js` fails if the client grows a local
+copy again. Nothing else currently clears the bar.
 
 **Before doing it**, settle the semantics rather than picking a side at random.
 The client copy is not simply a stale server copy: `calculateSubnets` returns

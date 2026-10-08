@@ -27,7 +27,7 @@ function parseDf(target) {
       total: parseInt(parts[1], 10) || 0,
       used: parseInt(parts[2], 10) || 0,
       available: parseInt(parts[3], 10) || 0,
-      percent: parseInt(parts[4], 10) || 0
+      percent: parseInt(parts[4], 10) || 0,
     };
   }
   return { total: 0, used: 0, available: 0, percent: 0 };
@@ -45,7 +45,9 @@ function getSystemMemory() {
     if (match) {
       availableMem = Number(match[1]) * 1024;
     }
-  } catch { /* non-Linux or unreadable procfs; os.freemem() is the fallback */ }
+  } catch {
+    /* non-Linux or unreadable procfs; os.freemem() is the fallback */
+  }
 
   const freeMem = os.freemem();
   const usedMem = Math.max(0, totalMem - availableMem);
@@ -128,9 +130,16 @@ router.get('/deep', requireLocalhost, async (req, res) => {
     checks.ping = { ok: true };
   } catch (err) {
     const detail = `${err.message || ''}\n${err.stderr?.toString?.() || ''}`;
-    const missingCapability = /CAP_NET_RAW|Operation not permitted|missing cap_net_raw/i.test(detail);
+    const missingCapability = /CAP_NET_RAW|Operation not permitted|missing cap_net_raw/i.test(
+      detail,
+    );
     checks.ping = missingCapability
-      ? { ok: false, warning: 'ICMP ping requires CAP_NET_RAW; active scans may rely on ARP/passive liveness only.', error: err.message }
+      ? {
+          ok: false,
+          warning:
+            'ICMP ping requires CAP_NET_RAW; active scans may rely on ARP/passive liveness only.',
+          error: err.message,
+        }
       : { ok: false, error: err.message };
     if (!missingCapability) allOk = false;
   }
@@ -142,7 +151,10 @@ router.get('/deep', requireLocalhost, async (req, res) => {
     const warning = getCapabilityWarning(caps);
     checks.capabilities = { ok: !warning, warning: warning || null, ...caps };
   } catch (err) {
-    checks.capabilities = { ok: false, warning: `Unable to inspect process capabilities: ${err.message}` };
+    checks.capabilities = {
+      ok: false,
+      warning: `Unable to inspect process capabilities: ${err.message}`,
+    };
   }
 
   const status = allOk ? 'ok' : 'error';
@@ -168,8 +180,14 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   // Disk usage for data directory
   const dataDir = process.env.DATA_DIR || '/data';
   let disk = { total: 0, used: 0, available: 0, percent: 0 };
-  try { disk = parseDf(dataDir); } catch {
-    try { disk = parseDf('/'); } catch { /* ignore */ }
+  try {
+    disk = parseDf(dataDir);
+  } catch {
+    try {
+      disk = parseDf('/');
+    } catch {
+      /* ignore */
+    }
   }
 
   // Services
@@ -186,7 +204,11 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   // yellow warning state (red is reserved for an actual service-down condition).
   const rogueProbe = getProbeState();
   let rogueUnacknowledged = 0;
-  try { rogueUnacknowledged = countUnacknowledged(db); } catch { /* table may not exist yet */ }
+  try {
+    rogueUnacknowledged = countUnacknowledged(db);
+  } catch {
+    /* table may not exist yet */
+  }
 
   // Uptime
   const systemUptime = os.uptime();
@@ -195,14 +217,20 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   // DB stats
   const stats = {};
   try {
-    stats.subnets = db.prepare("SELECT COUNT(*) as c FROM subnets WHERE status = 'allocated'").get().c;
+    stats.subnets = db
+      .prepare("SELECT COUNT(*) as c FROM subnets WHERE status = 'allocated'")
+      .get().c;
     stats.dns_zones = db.prepare('SELECT COUNT(*) as c FROM dns_zones').get().c;
     stats.dns_records = db.prepare('SELECT COUNT(*) as c FROM dns_records').get().c;
-    stats.dhcp_scopes = db.prepare('SELECT COUNT(*) as c FROM dhcp_scopes WHERE enabled = 1').get().c;
+    stats.dhcp_scopes = db
+      .prepare('SELECT COUNT(*) as c FROM dhcp_scopes WHERE enabled = 1')
+      .get().c;
     stats.dhcp_leases = db.prepare('SELECT COUNT(*) as c FROM dhcp_leases').get().c;
     stats.dhcp_reservations = db.prepare('SELECT COUNT(*) as c FROM dhcp_reservations').get().c;
     stats.audit_entries = db.prepare('SELECT COUNT(*) as c FROM audit_log').get().c;
-  } catch { /* tables may not exist yet */ }
+  } catch {
+    /* tables may not exist yet */
+  }
 
   res.json({
     version: APP_VERSION,
@@ -227,7 +255,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
     },
     ipLifecycle: getIpLifecycleDiagnostics(db),
     stats,
-    timestamp: new Date().toISOString()
+    timestamp: new Date().toISOString(),
   });
 });
 

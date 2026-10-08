@@ -195,7 +195,7 @@ export NPM_CONFIG_CACHE
 # cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
 # through to /usr/bin/node. Bumping this version requires a release + testerella
 # validation, not a hot swap.
-BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.20.0}"
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.21.0}"
 NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
@@ -531,7 +531,7 @@ run_release_health_check() {
 
 refresh_ntp_defaults() {
   if [ "$DRY_RUN" = true ]; then
-    echo "[DRY RUN] Would check baked DHCP NTP defaults and refresh stale values from pool.ntp.org."
+    echo "[DRY RUN] Would check baked DHCP NTP defaults and refresh stale values from pool.ntp.org (IPv4) and 2.pool.ntp.org (IPv6)."
     return 0
   fi
 
@@ -548,11 +548,36 @@ refresh_ntp_defaults() {
   fi
   if [ "$rc" -ne 0 ]; then
     echo ""
-    echo "WARNING: Could not refresh DHCP NTP defaults from pool.ntp.org."
+    echo "WARNING: Could not refresh DHCP NTP defaults from pool.ntp.org and 2.pool.ntp.org."
     if ! confirm_yn "Proceed with the existing baked NTP defaults?" "n"; then
       echo "Build stopped so DHCP NTP defaults can be refreshed."
       exit 1
     fi
+  fi
+}
+
+check_dns_providers() {
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would query every encrypted DNS preset address over DoT and DoH."
+    return 0
+  fi
+
+  echo "Checking encrypted DNS presets..."
+  set +e
+  node "$PROJECT_DIR/scripts/check-dns-providers.js"
+  local rc=$?
+  set -e
+  if [ "$rc" -eq 3 ]; then
+    echo ""
+    echo "WARNING: this host could not reach the presets over DoT or DoH (see above), so they were not fully checked."
+    if ! confirm_yn "Proceed without checking the encrypted DNS presets?" "n"; then
+      echo "Build stopped so the encrypted DNS presets can be checked."
+      exit 1
+    fi
+  elif [ "$rc" -ne 0 ]; then
+    echo ""
+    echo "Build stopped: fix the encrypted DNS presets named above, commit, and rerun."
+    exit 1
   fi
 }
 
@@ -645,6 +670,7 @@ fi
 
 run_release_health_check
 refresh_ntp_defaults
+check_dns_providers
 
 # Check minisign is installed (needed for all modes)
 if ! command -v minisign &>/dev/null; then

@@ -1,15 +1,66 @@
 /**
- * Client-side IP utilities for instant subnet preview calculations.
+ * Client-side IP utilities.
+ *
+ * The CIDR arithmetic itself comes from the server's cidr.js through the
+ * @shared alias, so both tiers run one body (duplicate-logic audit #3). What
+ * stays here is client-only: netmask text, DHCP pool defaults, gateway
+ * position helpers and the form-level error messages built on top of them.
  */
+import {
+  ipToLong,
+  longToIp,
+  parseCidr,
+  normalizeCidr,
+  validateSupernet,
+  isValidIpv4,
+  isValidCidr,
+  isValidNetwork,
+  normalizeNetwork,
+  parseNetwork,
+  validateNetworkBounds,
+  addressToBig,
+  addressInRange,
+  isValidAddress,
+  networkContains,
+} from '@shared/cidr.js';
+import { addressFamily } from '@shared/address.js';
 
-export function ipToLong(ip) {
-  const parts = ip.split('.').map(Number);
-  return ((parts[0] << 24) | (parts[1] << 16) | (parts[2] << 8) | parts[3]) >>> 0;
-}
-
-export function longToIp(long) {
-  return [(long >>> 24) & 255, (long >>> 16) & 255, (long >>> 8) & 255, long & 255].join('.');
-}
+export {
+  ipToLong,
+  longToIp,
+  parseCidr,
+  isIpInSubnet,
+  normalizeCidr,
+  RESERVED_RANGES,
+  validateSupernet,
+  applyNameTemplate,
+  canMergeCidrs,
+  calculateSubnets,
+  isValidIpv4,
+  isValidCidr,
+  isSubnetOf,
+  cidrsOverlap,
+  subtractCidr,
+  addressToBig,
+  bigToAddress,
+  parseNetwork,
+  isValidNetwork,
+  normalizeNetwork,
+  networkContains,
+  networksOverlap,
+  isNetworkWithin,
+  subtractNetwork,
+  splitNetwork,
+  mergeNetworks,
+  networkNameFromTemplate,
+  validateNetworkBounds,
+  isValidAddress,
+  dhcpV6ModesFor,
+  dhcpV6ModeError,
+  addressInRange,
+} from '@shared/cidr.js';
+export { sortKey, addressFamily, isValidIp, isValidIpv6, canonicalizeIp } from '@shared/address.js';
+export { isValidDomain } from '@shared/ip.js';
 
 /**
  * Dotted-quad netmask for a prefix length.
@@ -24,162 +75,22 @@ export function netmaskFor(prefix) {
   // Explicit shape check rather than leaning on Number(): Number('') and
   // Number(null) are both 0, which is a legal prefix, so coercion alone would
   // turn "no prefix at all" into a valid /0.
-  const p = typeof prefix === 'number'
-    ? prefix
-    : (typeof prefix === 'string' && /^\d+$/.test(prefix.trim()) ? parseInt(prefix, 10) : NaN);
+  const p =
+    typeof prefix === 'number'
+      ? prefix
+      : typeof prefix === 'string' && /^\d+$/.test(prefix.trim())
+        ? parseInt(prefix, 10)
+        : NaN;
   if (!Number.isInteger(p) || p < 0 || p > 32) return null;
-  const m = p === 0 ? 0 : (0xFFFFFFFF << (32 - p)) >>> 0;
+  const m = p === 0 ? 0 : (0xffffffff << (32 - p)) >>> 0;
   return longToIp(m);
-}
-
-export function parseCidr(cidr) {
-  const match = cidr.match(/^(\d+\.\d+\.\d+\.\d+)\/(\d+)$/);
-  if (!match) throw new Error(`Invalid CIDR: ${cidr}`);
-
-  const prefix = parseInt(match[2], 10);
-  if (prefix < 0 || prefix > 32) throw new Error(`Invalid prefix: ${prefix}`);
-
-  const ipLong = ipToLong(match[1]);
-  const mask = prefix === 0 ? 0 : (0xFFFFFFFF << (32 - prefix)) >>> 0;
-  const network = (ipLong & mask) >>> 0;
-  const broadcast = (network | ~mask) >>> 0;
-
-  return {
-    network: longToIp(network),
-    broadcast: longToIp(broadcast),
-    firstUsable: longToIp(network + 1),
-    lastUsable: longToIp(broadcast - 1),
-    prefix,
-    networkLong: network,
-    broadcastLong: broadcast,
-    totalAddresses: broadcast - network + 1
-  };
-}
-
-export function normalizeCidr(cidr) {
-  const p = parseCidr(cidr);
-  return `${p.network}/${p.prefix}`;
-}
-
-export function isValidCidr(cidr) {
-  try { parseCidr(cidr); return true; } catch { return false; }
-}
-
-const IPV4_RE = /^(\d{1,3}\.){3}\d{1,3}$/;
-
-export function isValidIpv4(ip) {
-  return typeof ip === 'string'
-    && IPV4_RE.test(ip)
-    && ip.split('.').every(o => {
-      const n = Number(o);
-      return Number.isInteger(n) && n >= 0 && n <= 255;
-    });
-}
-
-export function isSubnetOf(childCidr, parentCidr) {
-  const child = parseCidr(childCidr);
-  const parent = parseCidr(parentCidr);
-  return child.networkLong >= parent.networkLong &&
-         child.broadcastLong <= parent.broadcastLong &&
-         child.prefix > parent.prefix;
-}
-
-export function isIpInSubnet(ip, cidr) {
-  if (!isValidIpv4(ip)) return false;
-  const parsed = parseCidr(cidr);
-  const value = ipToLong(ip);
-  return value >= parsed.networkLong && value <= parsed.broadcastLong;
-}
-
-function cidrsOverlap(cidrA, cidrB) {
-  const a = parseCidr(cidrA);
-  const b = parseCidr(cidrB);
-  return a.networkLong <= b.broadcastLong && b.networkLong <= a.broadcastLong;
-}
-
-export const RESERVED_RANGES = [
-  { cidr: '10.0.0.0/8',      name: 'RFC1918 Class A' },
-  { cidr: '172.16.0.0/12',   name: 'RFC1918 Class B' },
-  { cidr: '192.168.0.0/16',  name: 'RFC1918 Class C' },
-  { cidr: '100.64.0.0/10',   name: 'CGNAT (RFC6598)' },
-  { cidr: '169.254.0.0/16',  name: 'Link-Local (RFC3927)' },
-  { cidr: '127.0.0.0/8',     name: 'Loopback (RFC1122)' },
-  { cidr: '224.0.0.0/4',     name: 'Multicast (RFC5771)' },
-  { cidr: '240.0.0.0/4',     name: 'Reserved (RFC1112)' },
-];
-
-export function validateSupernet(cidr) {
-  const parsed = parseCidr(cidr);
-  for (const reserved of RESERVED_RANGES) {
-    const res = parseCidr(reserved.cidr);
-    if (cidrsOverlap(cidr, reserved.cidr)) {
-      if (parsed.networkLong >= res.networkLong && parsed.broadcastLong <= res.broadcastLong) {
-        return { valid: true };
-      }
-      return {
-        valid: false,
-        error: `${cidr} extends beyond ${reserved.name} (${reserved.cidr})`
-      };
-    }
-  }
-  return { valid: true };
-}
-
-export function applyNameTemplate(template, cidr) {
-  const parsed = parseCidr(cidr);
-  const octets = parsed.network.split('.');
-  return template
-    .replace(/%1/g, octets[0])
-    .replace(/%2/g, octets[1])
-    .replace(/%3/g, octets[2])
-    .replace(/%4/g, octets[3])
-    .replace(/%bitmask/g, String(parsed.prefix));
-}
-
-export function calculateSubnets(cidr, newPrefix) {
-  const parent = parseCidr(cidr);
-  if (newPrefix <= parent.prefix || newPrefix > 32) return [];
-  const count = 2 ** (newPrefix - parent.prefix);
-  if (!Number.isSafeInteger(count) || count > 256) return [];
-  const subnetSize = 2 ** (32 - newPrefix);
-  const results = [];
-  for (let i = 0; i < count; i++) {
-    const netLong = (parent.networkLong + i * subnetSize) >>> 0;
-    results.push(`${longToIp(netLong)}/${newPrefix}`);
-  }
-  return results;
-}
-
-export function canMergeCidrs(cidrs) {
-  if (cidrs.length < 2) return { valid: false, error: 'Need at least 2 networks to merge' };
-
-  const parsed = cidrs.map(c => parseCidr(c)).sort((a, b) => a.networkLong - b.networkLong);
-
-  for (let i = 1; i < parsed.length; i++) {
-    if (parsed[i].networkLong !== parsed[i - 1].broadcastLong + 1) {
-      return { valid: false, error: 'Networks must be contiguous' };
-    }
-  }
-  const total = parsed.reduce((sum, subnet) => sum + subnet.totalAddresses, 0);
-  const exponent = Math.log2(total);
-  if (!Number.isInteger(exponent)) {
-    return { valid: false, error: 'Network union size must be a power of 2' };
-  }
-  const newPrefix = 32 - exponent;
-  if (parsed[0].networkLong % total !== 0
-      || parsed.at(-1).broadcastLong !== parsed[0].networkLong + total - 1) {
-    return { valid: false, error: 'Networks do not align to a valid CIDR boundary' };
-  }
-
-  const mergedCidr = `${parsed[0].network}/${newPrefix}`;
-  return { valid: true, merged_cidr: mergedCidr };
 }
 
 export function nearestPow2(n) {
   if (n <= 1) return 1;
   const lower = Math.pow(2, Math.floor(Math.log2(n)));
   const upper = lower * 2;
-  return (n - lower) <= (upper - n) ? lower : upper;
+  return n - lower <= upper - n ? lower : upper;
 }
 
 // Auto-fill bounds for DHCP Start/End IP. Subnets outside this range either
@@ -187,6 +98,7 @@ export function nearestPow2(n) {
 // host when CIDRella's per-IP tables populate (prefix < 16). For those, the
 // UI surfaces a warning and the user enters Start/End manually.
 export const DHCP_DEFAULT_MIN_PREFIX = 16;
+
 export const DHCP_DEFAULT_MAX_PREFIX = 29;
 
 export function dhcpRangeDefaults(p, gw) {
@@ -220,7 +132,8 @@ export function dhcpRangeDefaults(p, gw) {
 
 export function gatewayIpFromPosition(cidr, position) {
   if (!position || position === 'none') return null;
-  const p = parseCidr(cidr);
+  // Either family: the usable bounds are what a gateway position names.
+  const p = parseNetwork(cidr);
   return position === 'last' ? p.lastUsable : p.firstUsable;
 }
 
@@ -228,36 +141,22 @@ export function normalizeGatewayPositionDefault(value) {
   return value === 'last' ? 'last' : 'first';
 }
 
-export function subtractCidr(parentCidr, childCidr) {
-  const parent = parseCidr(parentCidr);
-  const child = parseCidr(childCidr);
+// Where a network's gateway sits: the choices every gateway field offers.
+export const GATEWAY_POSITION_OPTIONS = Object.freeze([
+  { label: 'First IP', value: 'first' },
+  { label: 'Last IP', value: 'last' },
+  { label: 'None', value: 'none' },
+  { label: 'Custom', value: 'custom' },
+]);
 
-  if (child.networkLong < parent.networkLong || child.broadcastLong > parent.broadcastLong) {
-    throw new Error('Child CIDR is not within parent');
-  }
-  if (child.prefix <= parent.prefix) {
-    throw new Error('Child prefix must be longer than parent prefix');
-  }
-
-  const remainder = [];
-  let currentNet = parent.networkLong;
-  let currentPrefix = parent.prefix;
-
-  while (currentPrefix < child.prefix) {
-    const nextPrefix = currentPrefix + 1;
-    const halfSize = 1 << (32 - nextPrefix);
-    const midpoint = (currentNet + halfSize) >>> 0;
-
-    if (child.networkLong >= midpoint) {
-      remainder.push(`${longToIp(currentNet)}/${nextPrefix}`);
-      currentNet = midpoint;
-    } else {
-      remainder.push(`${longToIp(midpoint)}/${nextPrefix}`);
-    }
-    currentPrefix = nextPrefix;
-  }
-
-  return remainder;
+/** The position a gateway address is at in its network: first, last, custom or none. */
+export function inferGatewayPosition(cidr, address) {
+  const addr = (address || '').trim();
+  if (!addr) return 'none';
+  if (!cidr || !isValidNetwork(cidr)) return 'custom';
+  if (addr === gatewayIpFromPosition(cidr, 'first')) return 'first';
+  if (addr === gatewayIpFromPosition(cidr, 'last')) return 'last';
+  return 'custom';
 }
 
 /**
@@ -320,4 +219,119 @@ export function cidrValidationError(cidr, { supernet = false } = {}) {
   if (!supernet) return null;
   const result = validateSupernet(normalizeCidr(value));
   return result.valid ? null : result.error;
+}
+
+// ── IPv6-aware siblings ──
+//
+// The helpers above keep their IPv4 contracts (tests pin their messages and
+// the identity of the shared functions). Family-generic entry points live
+// here and are what the workspace calls once the IPv6 switch is on.
+
+/** The message the server sends for an IPv6 request while the switch is off. */
+export const IPV6_DISABLED_MESSAGE =
+  'IPv6 support is disabled. Enable it under Settings > General > Interfaces.';
+
+/** The prefix bound for a CIDR's family: 32 or 128. 32 for anything unparseable. */
+export function maxPrefixFor(cidr) {
+  try {
+    return parseNetwork(cidr).bits;
+  } catch {
+    return 32;
+  }
+}
+
+/** The address family of a CIDR: 4, 6, or null. */
+export function cidrFamily(cidr) {
+  try {
+    return parseNetwork(cidr).family;
+  } catch {
+    return null;
+  }
+}
+
+export const DHCP_V6_MODE_LABELS = Object.freeze({
+  slaac: 'SLAAC',
+  stateless: 'Stateless DHCPv6',
+  stateful: 'Stateful DHCPv6',
+});
+
+/**
+ * Validate a CIDR of either family. Same contract as cidrValidationError,
+ * plus: an IPv6 CIDR is refused with the server's own message while the IPv6
+ * switch (`ipv6`) is off, so the operator sees why before the round trip.
+ */
+export function networkValidationError(cidr, { supernet = false, ipv6 = false } = {}) {
+  const value = (cidr || '').trim();
+  if (!value) return null;
+  if (!isValidNetwork(value)) return 'Invalid CIDR notation';
+  const normalized = normalizeNetwork(value);
+  if (parseNetwork(normalized).family === 6 && !ipv6) return IPV6_DISABLED_MESSAGE;
+  if (!supernet) return null;
+  const result = validateNetworkBounds(normalized);
+  return result.valid ? null : result.error;
+}
+
+/**
+ * dhcpPoolError for either family. IPv4 input is handed to dhcpPoolError
+ * unchanged, so its messages stay word for word; IPv6 gets the same checks
+ * in BigInt.
+ */
+export function dhcpPoolErrorForNetwork(startIp, endIp, subnetCidr, { label = '' } = {}) {
+  const family = subnetCidr ? cidrFamily(subnetCidr) : addressFamily((startIp || '').trim());
+  if (family !== 6) return dhcpPoolError(startIp, endIp, subnetCidr, { label });
+
+  const S = label ? `${label} Start IP` : 'Start IP';
+  const E = label ? `${label} End IP` : 'End IP';
+  const start = (startIp || '').trim();
+  const end = (endIp || '').trim();
+  if (!start || !end) return `${S} and ${E} are required`;
+  if (addressFamily(start) !== 6) return `${S} must be a valid IPv6 address`;
+  if (addressFamily(end) !== 6) return `${E} must be a valid IPv6 address`;
+  const startBig = addressToBig(start).value;
+  const endBig = addressToBig(end).value;
+  if (startBig > endBig) return `${S} must be less than or equal to ${E}`;
+  if (!subnetCidr || !isValidNetwork(subnetCidr)) return null;
+  const parsed = parseNetwork(subnetCidr);
+  const first = addressToBig(parsed.firstUsable).value;
+  const last = addressToBig(parsed.lastUsable).value;
+  if (startBig < first || startBig > last) {
+    return `${S} must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  if (endBig < first || endBig > last) {
+    return `${E} must be within usable range ${parsed.firstUsable} - ${parsed.lastUsable}`;
+  }
+  return null;
+}
+
+/**
+ * The DHCP scope whose pool holds `ip`, or null. Either family, and a range of
+ * the other family never matches. A SLAAC or stateless DHCPv6 scope's range is
+ * the prefix shown for reference, not a pool (the server's isAddressPoolScope),
+ * so it never matches. A malformed start or end is skipped, not thrown.
+ */
+export function dhcpPoolScopeFor(scopes, ip) {
+  if (!ip || !isValidAddress(ip)) return null;
+  for (const scope of scopes || []) {
+    if (!scope?.start_ip || !scope?.end_ip) continue;
+    if (Number(scope.address_family) === 6 && scope.v6_mode !== 'stateful') continue;
+    try {
+      if (addressInRange(ip, scope.start_ip, scope.end_ip)) return scope;
+    } catch {
+      continue;
+    }
+  }
+  return null;
+}
+
+/**
+ * The gateway a new network from dividing `parent` (a custom-gateway network)
+ * starts with: the parent's custom gateway on the one child that contains it,
+ * none on the others. Either family; containment is false across families.
+ */
+export function divideGatewayDefault(parent, cidr) {
+  const gateway = parent?.gateway_address;
+  if (gateway && isValidAddress(gateway) && networkContains(cidr, gateway)) {
+    return { policy: 'custom', address: gateway };
+  }
+  return { policy: 'none', address: null };
 }

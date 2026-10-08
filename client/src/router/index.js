@@ -1,5 +1,7 @@
 import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
+import { useFeaturesStore } from '../stores/features.js';
+import { rememberView } from '../utils/landing.js';
 
 import Login from '../views/Login.vue';
 import ChangePassword from '../views/ChangePassword.vue';
@@ -7,24 +9,33 @@ import NotFound from '../views/NotFound.vue';
 import AppLayout from '../components/AppLayout.vue';
 
 const routes = [
-  ...(import.meta.env.DEV ? [
-    {
-      path: '/dev/theme-lab',
-      name: 'ThemeLab',
-      component: () => import('../views/ThemeLab.vue'),
-      meta: { public: true }
-    }
-  ] : []),
+  ...(import.meta.env.DEV
+    ? [
+        {
+          path: '/dev/theme-lab',
+          name: 'ThemeLab',
+          component: () => import('../views/ThemeLab.vue'),
+          meta: { public: true },
+        },
+      ]
+    : []),
   {
     path: '/login',
     name: 'Login',
     component: Login,
-    meta: { public: true }
+    meta: { public: true },
   },
   {
     path: '/change-password',
     name: 'ChangePassword',
-    component: ChangePassword
+    component: ChangePassword,
+  },
+  {
+    // First-run wizard. Outside AppLayout: nothing in the shell is useful
+    // until the appliance has been told what it is.
+    path: '/setup',
+    name: 'FirstRun',
+    component: () => import('../views/FirstRun.vue'),
   },
   {
     path: '/',
@@ -32,9 +43,65 @@ const routes = [
     children: [
       { path: '', redirect: '/analytics' },
       { path: 'analytics', name: 'Analytics', component: () => import('../views/Analytics.vue') },
-      { path: 'networks', name: 'Networks', component: () => import('../views/SubnetsLayoutB.vue') },
-      { path: 'networks-preview', name: 'NetworksWorkspacePreview', component: () => import('../views/NetworksWorkspacePreview.vue') },
-      { path: 'system', name: 'System', component: () => import('../views/Settings.vue') },
+      // P10 cutover (2026-09-17): the workspaces are IP Management and
+      // Settings. Each classic view stays reachable at its own route until it
+      // is removed, and the old -preview routes keep working as aliases with
+      // their query and hash.
+      {
+        path: 'networks',
+        name: 'Networks',
+        component: () => import('../views/networks-workspace/NetworksWorkspace.vue'),
+      },
+      {
+        path: 'networks-preview',
+        name: 'NetworksPreviewAlias',
+        redirect: (to) => ({ path: '/networks', query: to.query, hash: to.hash }),
+      },
+      {
+        path: 'networks-classic',
+        name: 'NetworksClassic',
+        component: () => import('../views/SubnetsLayoutB.vue'),
+      },
+      // The triage page is the Analytics "Anomalies" section. The two old
+      // addresses of the concept land there; the classic panel keeps its own.
+      {
+        path: 'anomalies-workspace',
+        name: 'AnomaliesWorkspaceAlias',
+        redirect: (to) => ({
+          path: '/analytics',
+          query: { ...to.query, view: 'anomalies' },
+          hash: to.hash,
+        }),
+      },
+      {
+        path: 'anomalies-preview',
+        name: 'AnomaliesPreviewAlias',
+        redirect: (to) => ({
+          path: '/analytics',
+          query: { ...to.query, view: 'anomalies' },
+          hash: to.hash,
+        }),
+      },
+      {
+        path: 'anomalies-classic',
+        name: 'AnomaliesClassic',
+        component: () => import('../views/Anomalies.vue'),
+      },
+      {
+        path: 'system',
+        name: 'System',
+        component: () => import('../views/settings-workspace/SettingsWorkspace.vue'),
+      },
+      {
+        path: 'system-preview',
+        name: 'SystemPreviewAlias',
+        redirect: (to) => ({ path: '/system', query: to.query, hash: to.hash }),
+      },
+      {
+        path: 'system-classic',
+        name: 'SystemClassic',
+        component: () => import('../views/Settings.vue'),
+      },
       // Redirects for old bookmarks
       { path: 'dashboard', redirect: '/analytics' },
       { path: 'anomalies', redirect: '/analytics' },
@@ -44,19 +111,19 @@ const routes = [
       { path: 'blocklists', redirect: { path: '/system', query: { area: 'filtering' } } },
       { path: 'geoip', redirect: { path: '/system', query: { area: 'filtering', sec: 'geoip' } } },
       { path: 'range-types', redirect: { path: '/system', query: { area: 'general' } } },
-      { path: 'settings-preview', redirect: '/system' }
-    ]
+      { path: 'settings-preview', redirect: '/system' },
+    ],
   },
   {
     path: '/:pathMatch(.*)*',
     name: 'NotFound',
-    component: NotFound
-  }
+    component: NotFound,
+  },
 ];
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 });
 
 router.beforeEach(async (to) => {
@@ -67,9 +134,18 @@ router.beforeEach(async (to) => {
     return true;
   }
 
-  // Redirect unauthenticated users to login
+  // Redirect unauthenticated users to login, carrying where they were headed
+  // so the login form can finish the trip.
+  //
+  // '/' is excluded, and so is anything the router redirected there from: by
+  // the time this guard runs, '/' has already become '/analytics' via its
+  // redirect route, and passing that on would look like the user asked for
+  // analytics and would outrank the page they were actually last on. Someone
+  // who types '/analytics' themselves still gets it, because then there is no
+  // redirectedFrom.
   if (!auth.isAuthenticated) {
-    return { name: 'Login' };
+    const wantsDefault = to.fullPath === '/' || to.redirectedFrom?.fullPath === '/';
+    return wantsDefault ? { name: 'Login' } : { name: 'Login', query: { redirect: to.fullPath } };
   }
 
   // Fetch user info if not loaded
@@ -80,12 +156,34 @@ router.beforeEach(async (to) => {
     }
   }
 
+  // Feature switches, once per session. Pages hide IPv6 affordances until
+  // this has answered, so it must land before the first page renders.
+  const features = useFeaturesStore();
+  if (!features.loaded) await features.load();
+
+  // First run. The wizard's first step is the password change, so it takes
+  // precedence over the plain change-password page for the admin doing setup.
+  if (auth.setupRequired) {
+    return to.name === 'FirstRun' ? true : { name: 'FirstRun' };
+  }
+  if (to.name === 'FirstRun') {
+    return { path: '/' };
+  }
+
   // Force password change
   if (auth.mustChangePassword && to.name !== 'ChangePassword') {
     return { name: 'ChangePassword' };
   }
 
   return true;
+});
+
+// Track the last real page each user visited. A session that expires mid-task
+// then sends them back where they were rather than to the default view.
+router.afterEach((to) => {
+  const auth = useAuthStore();
+  if (!auth.isAuthenticated) return;
+  rememberView(auth.user?.username, to);
 });
 
 export default router;

@@ -1,0 +1,18 @@
+.claude
+node_modules/
+dist/
+data/
+# Source modules, not the dev DATA_DIR that data/ is for.
+!server/src/data/
+*.db
+.env
+PLAN.md
+PROMPT.md
+tmp/
+.mcp.json
+.playwright-mcp
+screenshots/
+__pycache__/
+# Local backup tarballs and integration harness output.
+/backup/
+scripts/test-harness/results/

@@ -37,6 +37,20 @@ suite, `npm run lint`, and `npm run check:db-ownership`.
 - The maintainer owns commits, tags, and pushes. Prepare changes but do not
   perform those operations unless explicitly requested.
 
+## Review findings
+
+`REVIEW.md` (tracked) is the list of known issues that are not fixed yet.
+
+- When you find an issue you are not fixing in the same change (a bug you
+  pass on the way, a review or audit finding), record it in `REVIEW.md`: an
+  ID, the severity, the file and line, what happens (input and wrong result),
+  why, and the fix you would make. Check for an existing entry first.
+- When an issue is fixed, delete its entry from `REVIEW.md` in the commit that
+  fixes it, and name its ID in the commit message. Do not strike it through or
+  mark it fixed: git history is the record of what was fixed and when.
+- If work on an entry starts and then stalls (a blocker, a measurement, a
+  rejected approach worth keeping), move it to `BACKLOG.md` with that context.
+
 ## SSH from the agent sandbox
 
 The host's `/etc/ssh/ssh_config.d/20-systemd-ssh-proxy.conf` is a valid
@@ -49,3 +63,25 @@ Do not change the host's ownership or permissions in response to this sandbox
 artifact. Bypass the sandbox-visible global SSH configuration with
 `ssh -F /dev/null` and supply the required identity and connection options
 explicitly.
+
+## IPv4 and IPv6
+
+Every feature and fix that touches addresses must handle both families.
+
+- Use the family-aware helpers: `utils/address.js` (`parseIp`,
+  `addressFamily`, `sortKey`, `canonicalizeIp`) and `utils/cidr.js`
+  (`parseNetwork`, `addressToBig`/`bigToAddress`, `networkContains`). Never
+  use a dotted-quad regex, `ipToLong`, or 32-bit arithmetic on an address that
+  could be IPv6.
+- Supporting both does not mean treating them alike. IPv6 has its own rules
+  in `docs/ARCHITECTURE.md` (Canonical IP Model, the IPv6 paragraph): no
+  broadcast, sparse address rows, PTRs only for allocated addresses, routers
+  from Router Advertisements, SLAAC modes on a /64 only, and DHCPv4 and
+  DHCPv6 option codes as separate namespaces. Follow those, don't mirror IPv4.
+- IPv6 is behind a switch (`utils/ipv6-support.js`). With it off, features
+  still work for IPv4 and refuse IPv6 input with a clear error
+  (`refuseIpv6Unless`).
+- Something inherently single-family (ARP, DHCPv4 option 42, Neighbor
+  Discovery) is fine. Say so in a comment where it is implemented.
+- Tests cover both families: an IPv4 case and an IPv6 case for the behavior
+  (`enableIpv6` in `tests/helpers/test-db.js` turns the switch on).

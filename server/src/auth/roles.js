@@ -11,28 +11,28 @@
 export const ROLES = {
   admin: {
     label: 'Administrator',
-    permissions: ['*']
+    permissions: ['*'],
   },
   dns_admin: {
     label: 'DNS Administrator',
-    permissions: ['dns:read', 'dns:write', 'subnets:read', 'system:read', 'analytics:read']
+    permissions: ['dns:read', 'dns:write', 'subnets:read', 'system:read', 'analytics:read'],
   },
   dhcp_admin: {
     label: 'DHCP Administrator',
-    permissions: ['dhcp:read', 'dhcp:write', 'subnets:read', 'system:read', 'analytics:read']
+    permissions: ['dhcp:read', 'dhcp:write', 'subnets:read', 'system:read', 'analytics:read'],
   },
   readonly_dns: {
     label: 'DNS Read-Only',
-    permissions: ['dns:read', 'subnets:read', 'system:read', 'analytics:read']
+    permissions: ['dns:read', 'subnets:read', 'system:read', 'analytics:read'],
   },
   readonly_dhcp: {
     label: 'DHCP Read-Only',
-    permissions: ['dhcp:read', 'subnets:read', 'system:read', 'analytics:read']
+    permissions: ['dhcp:read', 'subnets:read', 'system:read', 'analytics:read'],
   },
   readonly: {
     label: 'Read-Only',
-    permissions: ['dns:read', 'dhcp:read', 'subnets:read', 'system:read', 'analytics:read']
-  }
+    permissions: ['dns:read', 'dhcp:read', 'subnets:read', 'system:read', 'analytics:read'],
+  },
 };
 
 /**
@@ -55,6 +55,24 @@ export function hasPermission(role, permission) {
   if (!roleDef) return false;
   if (isSuperuser(role)) return true;
   return roleDef.permissions.includes(permission);
+}
+
+/**
+ * Return the capabilities exposed to clients for a role.
+ *
+ * Keep this projection beside the authorization table so API responses and
+ * route guards cannot drift into separate role definitions. Return a copy so
+ * callers cannot mutate the server's authority table.
+ */
+export function permissionsForRole(role) {
+  return [...(ROLES[role]?.permissions || [])];
+}
+
+export function permissionProjection(role) {
+  return {
+    permissions: permissionsForRole(role),
+    is_admin: isSuperuser(role),
+  };
 }
 
 /**

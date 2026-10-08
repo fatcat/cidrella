@@ -6,7 +6,9 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 // modules; the refresh path itself is what we are testing, for real, against
 // real SQLite.
 vi.mock('../../../src/utils/dnsmasq.js', () => ({
-  atomicWrite: vi.fn(), restartDnsmasq: vi.fn(), applyInterfaceConfig: vi.fn(),
+  atomicWrite: vi.fn(),
+  restartDnsmasq: vi.fn(),
+  applyInterfaceConfig: vi.fn(),
 }));
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
@@ -27,7 +29,9 @@ let tmpDir;
 /** A successful 200 whose body is `text`. */
 function feed(text, headers = {}) {
   return {
-    ok: true, status: 200, statusText: 'OK',
+    ok: true,
+    status: 200,
+    statusText: 'OK',
     headers: { etag: 'W/"v1"', 'last-modified': 'Mon, 20 Jul 2026 13:07:13 GMT', ...headers },
     stream: Readable.from([Buffer.from(text, 'utf-8')]),
   };
@@ -41,19 +45,28 @@ function failingFeed(prefixLines, code) {
   err.stage = 'decompressed';
   let sent = false;
   return {
-    ok: true, status: 200, statusText: 'OK', headers: {},
+    ok: true,
+    status: 200,
+    statusText: 'OK',
+    headers: {},
     stream: new Readable({
       read() {
-        if (!sent) { sent = true; this.push(Buffer.from(prefixLines.join('\n') + '\n')); return; }
+        if (!sent) {
+          sent = true;
+          this.push(Buffer.from(prefixLines.join('\n') + '\n'));
+          return;
+        }
         this.destroy(err);
       },
     }),
   };
 }
 
-const domainsFor = (slug) => getDb()
-  .prepare('SELECT domain FROM blocklist_domains WHERE category_slug = ? ORDER BY domain')
-  .pluck().all(slug);
+const domainsFor = (slug) =>
+  getDb()
+    .prepare('SELECT domain FROM blocklist_domains WHERE category_slug = ? ORDER BY domain')
+    .pluck()
+    .all(slug);
 
 beforeAll(async () => {
   const s = await setupTestDb();
@@ -65,8 +78,10 @@ afterAll(() => cleanupTestDb(tmpDir));
 beforeEach(() => {
   openPinnedOutboundStream.mockReset();
   const db = getDb();
-  db.exec("DELETE FROM blocklist_domains; DELETE FROM blocklist_stage;");
-  db.prepare("UPDATE blocklist_categories SET domain_count = 0, etag = NULL, last_modified = NULL, last_error = NULL").run();
+  db.exec('DELETE FROM blocklist_domains; DELETE FROM blocklist_stage;');
+  db.prepare(
+    'UPDATE blocklist_categories SET domain_count = 0, etag = NULL, last_modified = NULL, last_error = NULL',
+  ).run();
   setSetting('blocklist_max_feed_mb', '128');
 });
 
@@ -117,9 +132,9 @@ describe('getMaxFeedBytes', () => {
 
 describe('refreshCategory', () => {
   it('imports a feed and records validators', async () => {
-    openPinnedOutboundStream.mockResolvedValue(feed(
-      '# comment\nevil.example.com\nbad.example.com\n\nevil.example.com\n'
-    ));
+    openPinnedOutboundStream.mockResolvedValue(
+      feed('# comment\nevil.example.com\nbad.example.com\n\nevil.example.com\n'),
+    );
 
     const r = await refreshCategory(getDb(), 'malware');
 
@@ -156,8 +171,12 @@ describe('refreshCategory', () => {
     expect(r).toMatchObject({ count: 2, changed: false, notModified: true });
     expect(domainsFor('malware')).toEqual(['bad.example.com', 'evil.example.com']);
     // last_fetched_at still advances, so the scheduler does not spin on it.
-    expect(getDb().prepare("SELECT last_fetched_at FROM blocklist_categories WHERE slug='malware'").pluck().get())
-      .toBeTruthy();
+    expect(
+      getDb()
+        .prepare("SELECT last_fetched_at FROM blocklist_categories WHERE slug='malware'")
+        .pluck()
+        .get(),
+    ).toBeTruthy();
   });
 
   it('sweeps domains that left the feed, and adds the new ones', async () => {
@@ -172,11 +191,15 @@ describe('refreshCategory', () => {
   });
 
   it('leaves the live blocklist untouched when the download dies mid-stream', async () => {
-    openPinnedOutboundStream.mockResolvedValue(feed('keep-me.example.com\nalso-keep.example.com\n'));
+    openPinnedOutboundStream.mockResolvedValue(
+      feed('keep-me.example.com\nalso-keep.example.com\n'),
+    );
     await refreshCategory(getDb(), 'malware');
     const before = domainsFor('malware');
 
-    openPinnedOutboundStream.mockResolvedValue(failingFeed(['brand-new.example.com'], TOO_LARGE_CODE));
+    openPinnedOutboundStream.mockResolvedValue(
+      failingFeed(['brand-new.example.com'], TOO_LARGE_CODE),
+    );
     await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/Max Feed Size \(MB\)/);
 
     // Nothing added, nothing swept: staging absorbed the partial feed.
@@ -190,11 +213,23 @@ describe('refreshCategory', () => {
     cause.limitBytes = 5 * 1024 * 1024;
     cause.actualBytes = 51 * 1024 * 1024;
     cause.stage = 'content-length';
-    openPinnedOutboundStream.mockResolvedValue({ ok: false, status: 200, headers: {}, error: 'too big', cause });
+    openPinnedOutboundStream.mockResolvedValue({
+      ok: false,
+      status: 200,
+      headers: {},
+      error: 'too big',
+      cause,
+    });
 
-    await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/Feed is 51 MB, over the 128 MB limit/);
-    expect(getDb().prepare("SELECT last_error FROM blocklist_categories WHERE slug='malware'").pluck().get())
-      .toMatch(/Max Feed Size \(MB\)/);
+    await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(
+      /Feed is 51 MB, over the 128 MB limit/,
+    );
+    expect(
+      getDb()
+        .prepare("SELECT last_error FROM blocklist_categories WHERE slug='malware'")
+        .pluck()
+        .get(),
+    ).toMatch(/Max Feed Size \(MB\)/);
   });
 
   it('says "compressed" when the measured size was the gzip transfer size', async () => {
@@ -203,7 +238,13 @@ describe('refreshCategory', () => {
     cause.actualBytes = 16 * 1024 * 1024;
     cause.compressed = true;
     cause.stage = 'content-length';
-    openPinnedOutboundStream.mockResolvedValue({ ok: false, status: 200, headers: {}, error: 'too big', cause });
+    openPinnedOutboundStream.mockResolvedValue({
+      ok: false,
+      status: 200,
+      headers: {},
+      error: 'too big',
+      cause,
+    });
 
     await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/16 MB compressed/);
   });
@@ -213,7 +254,9 @@ describe('refreshCategory', () => {
     await refreshCategory(getDb(), 'malware');
 
     // Hosts-file format: every line fails validation.
-    openPinnedOutboundStream.mockResolvedValue(feed('0.0.0.0 evil.example.com\n0.0.0.0 bad.example.com\n'));
+    openPinnedOutboundStream.mockResolvedValue(
+      feed('0.0.0.0 evil.example.com\n0.0.0.0 bad.example.com\n'),
+    );
     await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/no valid domains/);
 
     expect(domainsFor('malware')).toEqual(['bad.example.com', 'evil.example.com']);
@@ -242,7 +285,10 @@ describe('refreshCategory', () => {
       spy.mockRestore();
     }
 
-    const lastError = getDb().prepare("SELECT last_error FROM blocklist_categories WHERE slug='malware'").pluck().get();
+    const lastError = getDb()
+      .prepare("SELECT last_error FROM blocklist_categories WHERE slug='malware'")
+      .pluck()
+      .get();
     expect(lastError).toMatch(/disk is full/);
     expect(lastError).toMatch(/still in place/);
     // And the previous list survived.
@@ -253,18 +299,30 @@ describe('refreshCategory', () => {
     openPinnedOutboundStream.mockResolvedValue(feed('evil.example.com\n'));
     await refreshCategory(getDb(), 'malware');
 
-    openPinnedOutboundStream.mockResolvedValue({ ok: false, status: 404, statusText: 'Not Found', headers: {} });
+    openPinnedOutboundStream.mockResolvedValue({
+      ok: false,
+      status: 404,
+      statusText: 'Not Found',
+      headers: {},
+    });
     await expect(refreshCategory(getDb(), 'malware')).rejects.toThrow(/404/);
 
     expect(domainsFor('malware')).toEqual(['evil.example.com']);
-    expect(getDb().prepare("SELECT last_error FROM blocklist_categories WHERE slug='malware'").pluck().get())
-      .toMatch(/404/);
+    expect(
+      getDb()
+        .prepare("SELECT last_error FROM blocklist_categories WHERE slug='malware'")
+        .pluck()
+        .get(),
+    ).toMatch(/404/);
   });
 
   it('imports across batch boundaries', async () => {
     // Larger than one BLOCKLIST_INSERT_BATCH would be too slow here; instead
     // check the staged-to-live apply loop terminates on a non-round count.
-    const many = Array.from({ length: 1001 }, (_, i) => `d${String(i).padStart(5, '0')}.example.com`);
+    const many = Array.from(
+      { length: 1001 },
+      (_, i) => `d${String(i).padStart(5, '0')}.example.com`,
+    );
     openPinnedOutboundStream.mockResolvedValue(feed(many.join('\n') + '\n'));
 
     const r = await refreshCategory(getDb(), 'malware');
@@ -274,7 +332,9 @@ describe('refreshCategory', () => {
 
   it('refuses a second refresh while one is already running', async () => {
     let release;
-    const gate = new Promise((resolve) => { release = resolve; });
+    const gate = new Promise((resolve) => {
+      release = resolve;
+    });
     openPinnedOutboundStream.mockImplementation(async () => {
       await gate;
       return feed('evil.example.com\n');

@@ -26,46 +26,77 @@ function oldIsValidHostname(name) {
 // routes/pihole.js `isValidRecordName`:
 function oldIsValidRecordName(name) {
   if (name === '@') return true;
-  return typeof name === 'string'
-    && name.length > 0
-    && name.length <= 253
-    && /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(name.replace(/\.$/, ''));
+  return (
+    typeof name === 'string' &&
+    name.length > 0 &&
+    name.length <= 253 &&
+    /^[A-Za-z0-9](?:[A-Za-z0-9._-]*[A-Za-z0-9])?$/.test(name.replace(/\.$/, ''))
+  );
 }
 
 const NAME_CASES = [
-  '@', 'www', 'mail', 'mail.eu', '_acme-challenge', '_sip._tcp',
-  'a-b', 'a_b', 'a.b.c', 'www.', 'host-1', 'x',
-  '', '.', '..', '-www', 'www-', '.www', 'www..eu', 'a b', 'a/b', 'a,b',
-  'a\nb', 'a=b', 'a'.repeat(253), 'a'.repeat(254),
-  null, undefined, 42, {}, [],
+  '@',
+  'www',
+  'mail',
+  'mail.eu',
+  '_acme-challenge',
+  '_sip._tcp',
+  'a-b',
+  'a_b',
+  'a.b.c',
+  'www.',
+  'host-1',
+  'x',
+  '',
+  '.',
+  '..',
+  '-www',
+  'www-',
+  '.www',
+  'www..eu',
+  'a b',
+  'a/b',
+  'a,b',
+  'a\nb',
+  'a=b',
+  'a'.repeat(253),
+  'a'.repeat(254),
+  null,
+  undefined,
+  42,
+  {},
+  [],
 ];
 
 describe('#20: unified isValidRecordName matches both originals', () => {
   it('agrees with routes/dns.js isValidHostname on every case', () => {
     for (const c of NAME_CASES) {
-      expect(isValidRecordName(c), `isValidRecordName(${JSON.stringify(c)})`)
-        .toBe(oldIsValidHostname(c));
+      expect(isValidRecordName(c), `isValidRecordName(${JSON.stringify(c)})`).toBe(
+        oldIsValidHostname(c),
+      );
     }
   });
 
   it('agrees with routes/pihole.js isValidRecordName on every case', () => {
     for (const c of NAME_CASES) {
-      expect(isValidRecordName(c), `isValidRecordName(${JSON.stringify(c)})`)
-        .toBe(oldIsValidRecordName(c));
+      expect(isValidRecordName(c), `isValidRecordName(${JSON.stringify(c)})`).toBe(
+        oldIsValidRecordName(c),
+      );
     }
   });
 
   it('the two originals did in fact agree, which is why one could replace both', () => {
     // If this ever fails, the merge was not a dedup and #20 was mis-filed.
     for (const c of NAME_CASES) {
-      expect(oldIsValidHostname(c), `originals disagree on ${JSON.stringify(c)}`)
-        .toBe(oldIsValidRecordName(c));
+      expect(oldIsValidHostname(c), `originals disagree on ${JSON.stringify(c)}`).toBe(
+        oldIsValidRecordName(c),
+      );
     }
   });
 
   it('covers both verdicts, so agreement is not vacuous', () => {
-    expect(NAME_CASES.some(c => isValidRecordName(c))).toBe(true);
-    expect(NAME_CASES.some(c => !isValidRecordName(c))).toBe(true);
+    expect(NAME_CASES.some((c) => isValidRecordName(c))).toBe(true);
+    expect(NAME_CASES.some((c) => !isValidRecordName(c))).toBe(true);
   });
 });
 

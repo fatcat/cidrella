@@ -37,10 +37,22 @@ defineProps({
   border: 1px solid currentColor;
   white-space: nowrap;
 }
-.sb-ok    { color: var(--cid-status-ok); }
-.sb-warn  { color: var(--cid-status-warn); }
-.sb-err   { color: var(--cid-status-err); }
-.sb-info  { color: var(--cid-status-info); }
-.sb-muted { color: var(--cid-status-muted); }
-.sb-label { color: inherit; }
+.sb-ok {
+  color: var(--cid-status-ok);
+}
+.sb-warn {
+  color: var(--cid-status-warn);
+}
+.sb-err {
+  color: var(--cid-status-err);
+}
+.sb-info {
+  color: var(--cid-status-info);
+}
+.sb-muted {
+  color: var(--cid-status-muted);
+}
+.sb-label {
+  color: inherit;
+}
 </style>

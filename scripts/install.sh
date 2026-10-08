@@ -129,7 +129,18 @@ done
 # PREFLIGHT CHECKS
 # ═══════════════════════════════════════════════════════════
 
-echo -e "\n${BOLD}═══ CIDRella Installer ═══${NC}\n"
+echo -e "\n${BOLD}=== CIDRella Installer ===${NC}\n"
+
+# Debian LXC templates ship with LANG=C. That does not break the install, but
+# UTF-8 text in logs and the console then renders as byte soup in vim and less
+# on the box. Say so once; changing the system locale is the operator's call.
+case "${LC_ALL:-${LC_CTYPE:-${LANG:-}}}" in
+  *[Uu][Tt][Ff]-8*|*[Uu][Tt][Ff]8*) ;;
+  *)
+    warn "System locale is '${LC_ALL:-${LC_CTYPE:-${LANG:-unset}}}', not UTF-8. Text viewers on this host will garble non-ASCII output."
+    warn "To fix: update-locale LANG=C.UTF-8 (takes effect on the next login)."
+    ;;
+esac
 emit_event install start "started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)" "pid=$$"
 
 # Must be root
@@ -872,7 +883,7 @@ if [ -f "$INSTALL_DIR/scripts/lib/tighten-secrets.sh" ]; then
   # shellcheck source=scripts/lib/tighten-secrets.sh
   source "$INSTALL_DIR/scripts/lib/tighten-secrets.sh"
   tighten_secrets "$DATA_DIR"
-  ok "Tightened secret file permissions (DB, certs, backups, anomaly models → 600/700)"
+  ok "Tightened secret file permissions (DB, certs, backups, anomaly models -> 600/700)"
 fi
 
 # ═══════════════════════════════════════════════════════════
@@ -917,9 +928,9 @@ else
 fi
 
 echo ""
-echo -e "${BOLD}═══════════════════════════════════════════${NC}"
+echo -e "${BOLD}===========================================${NC}"
 echo -e "${BOLD}  CIDRella v${VERSION} installed successfully!${NC}"
-echo -e "${BOLD}═══════════════════════════════════════════${NC}"
+echo -e "${BOLD}===========================================${NC}"
 echo ""
 echo -e "  ${BOLD}Web UI:${NC}      ${WEB_UI_URL}"
 echo -e "  ${BOLD}Data dir:${NC}    ${DATA_DIR}"

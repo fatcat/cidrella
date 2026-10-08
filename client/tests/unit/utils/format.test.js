@@ -9,7 +9,7 @@
  * See REVIEW.md, duplicate-logic audit #44.
  */
 import { describe, it, expect } from 'vitest';
-import { formatBytes, EMPTY_CELL } from '../../../src/utils/format.js';
+import { countOf, formatBytes, EMPTY_CELL } from '../../../src/utils/format.js';
 
 describe('formatBytes', () => {
   it('expresses sizes below a megabyte, which the HeaderBar copy could not', () => {
@@ -44,5 +44,17 @@ describe('formatBytes', () => {
 
   it('accepts a numeric string, which is what the API sends for sizes', () => {
     expect(formatBytes('2048')).toBe('2.0 KB');
+  });
+});
+
+describe('countOf', () => {
+  it('pluralizes everything except exactly one', () => {
+    expect(countOf(0, 'network')).toBe('0 networks');
+    expect(countOf(1, 'network')).toBe('1 network');
+    expect(countOf(2, 'zone')).toBe('2 zones');
+  });
+
+  it('formats the count with locale separators', () => {
+    expect(countOf(1024, 'network')).toBe(`${(1024).toLocaleString()} networks`);
   });
 });

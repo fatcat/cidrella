@@ -1,24 +1,51 @@
 <template>
-  <div class="users-page" style="display: flex; flex-direction: column; height: 100%;">
+  <div class="users-page" style="display: flex; flex-direction: column; height: 100%">
     <div class="card-header">
       <h3>Users</h3>
-      <Button label="Add User" icon="pi pi-plus" size="small" data-track="sys-add-user" @click="openCreateDialog()" />
+      <Button
+        label="Add User"
+        icon="pi pi-plus"
+        size="small"
+        data-track="sys-add-user"
+        @click="openCreateDialog()"
+      />
     </div>
-    <DataTable :value="users" :loading="loading" stripedRows size="small"
-               :paginator="users.length > 256" :rows="256"
-               :rowsPerPageOptions="[64, 128, 256, 512]"
-               @row-contextmenu="onUserRightClick" contextMenu
-               scrollable scrollHeight="flex">
+    <DataTable
+      :value="users"
+      :loading="loading"
+      stripedRows
+      size="small"
+      :paginator="users.length > 256"
+      :rows="256"
+      :rowsPerPageOptions="[64, 128, 256, 512]"
+      @row-contextmenu="onUserRightClick"
+      contextMenu
+      scrollable
+      scrollHeight="flex"
+    >
       <template #empty>
-        <EmptyState icon="pi-users" title="No users" description="Add operator accounts with scoped roles."
-                        :actions="[{ label: 'Add User', icon: 'pi-plus', dataTrack: 'sys-add-user-empty', onClick: () => openCreateDialog() }]" />
+        <EmptyState
+          icon="pi-users"
+          title="No users"
+          description="Add operator accounts with scoped roles."
+          :actions="[
+            {
+              label: 'Add User',
+              icon: 'pi-plus',
+              dataTrack: 'sys-add-user-empty',
+              onClick: () => openCreateDialog(),
+            },
+          ]"
+        />
       </template>
       <Column field="username" header="Username" sortable style="min-width: 10rem" />
       <Column header="Type" sortable sortField="kind" style="min-width: 9rem">
         <template #body="{ data }">
           <span v-if="data.kind === 'service'" class="kind-tag" data-track="sys-user-service">
             <i class="pi pi-cog"></i> service
-            <span class="token-count">{{ data.active_tokens || 0 }} token{{ data.active_tokens === 1 ? '' : 's' }}</span>
+            <span class="token-count"
+              >{{ data.active_tokens || 0 }} token{{ data.active_tokens === 1 ? '' : 's' }}</span
+            >
           </span>
           <span v-else class="kind-plain">person</span>
         </template>
@@ -38,15 +65,36 @@
       </Column>
       <Column header="Actions" style="width: 120px">
         <template #body="{ data }">
-          <div style="display: flex; gap: 0.25rem;">
-            <Button icon="pi pi-pencil" severity="info" text rounded size="small"
-              @click="openEditDialog(data)" v-tooltip.top="'Edit Role'"
-              :disabled="data.id === currentUserId" />
-            <Button icon="pi pi-key" severity="warning" text rounded size="small"
-              @click="confirmResetPassword(data)" v-tooltip.top="'Reset Password'" />
-            <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-              @click="confirmDelete(data)" v-tooltip.top="'Delete'"
-              :disabled="data.id === currentUserId" />
+          <div style="display: flex; gap: 0.25rem">
+            <Button
+              icon="pi pi-pencil"
+              severity="info"
+              text
+              rounded
+              size="small"
+              @click="openEditDialog(data)"
+              v-tooltip.top="'Edit Role'"
+              :disabled="data.id === currentUserId"
+            />
+            <Button
+              icon="pi pi-key"
+              severity="warning"
+              text
+              rounded
+              size="small"
+              @click="confirmResetPassword(data)"
+              v-tooltip.top="'Reset Password'"
+            />
+            <Button
+              icon="pi pi-trash"
+              severity="danger"
+              text
+              rounded
+              size="small"
+              @click="confirmDelete(data)"
+              v-tooltip.top="'Delete'"
+              :disabled="data.id === currentUserId"
+            />
           </div>
         </template>
       </Column>
@@ -56,7 +104,12 @@
     <ContextMenu ref="userContextMenuRef" :model="userContextMenuItems" />
 
     <!-- Create User Dialog -->
-    <Dialog v-model:visible="showCreateDialog" header="Create User" modal :style="{ width: '24rem' }">
+    <Dialog
+      v-model:visible="showCreateDialog"
+      header="Create User"
+      modal
+      :style="{ width: '24rem' }"
+    >
       <div class="form-grid">
         <div class="field">
           <label>Username *</label>
@@ -64,17 +117,32 @@
         </div>
         <div class="field">
           <label>Role *</label>
-          <Select v-model="createForm.role" :options="ROLES" optionLabel="label" optionValue="value"
-                  class="w-full" placeholder="Select role" :loading="rolesLoading" />
+          <Select
+            v-model="createForm.role"
+            :options="ROLES"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+            placeholder="Select role"
+            :loading="rolesLoading"
+          />
         </div>
         <div class="field">
           <label>Account type</label>
-          <Select v-model="createForm.kind" :options="ACCOUNT_KINDS" optionLabel="label" optionValue="value"
-                  class="w-full" data-track="sys-user-kind" />
+          <Select
+            v-model="createForm.kind"
+            :options="ACCOUNT_KINDS"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+            data-track="sys-user-kind"
+          />
           <small class="field-hint">
-            {{ createForm.kind === 'service'
-              ? 'For a machine. No password, cannot sign in, authenticates with an API token you issue after creating it.'
-              : 'For a person. Gets a one-time password and must change it at first sign-in.' }}
+            {{
+              createForm.kind === 'service'
+                ? 'For a machine. No password, cannot sign in, authenticates with an API token you issue after creating it.'
+                : 'For a person. Gets a one-time password and must change it at first sign-in.'
+            }}
           </small>
         </div>
       </div>
@@ -93,8 +161,14 @@
         </div>
         <div class="field">
           <label>Role *</label>
-          <Select v-model="editForm.role" :options="ROLES" optionLabel="label" optionValue="value"
-                  class="w-full" :loading="rolesLoading" />
+          <Select
+            v-model="editForm.role"
+            :options="ROLES"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+            :loading="rolesLoading"
+          />
         </div>
       </div>
       <template #footer>
@@ -104,26 +178,44 @@
     </Dialog>
 
     <!-- Password Reveal Dialog -->
-    <Dialog v-model:visible="showPasswordDialog" header="User Password" modal :style="{ width: '28rem' }" :closable="false">
+    <Dialog
+      v-model:visible="showPasswordDialog"
+      header="User Password"
+      modal
+      :style="{ width: '28rem' }"
+      :closable="false"
+    >
       <div class="password-reveal">
         <p class="password-warning">
-          <i class="pi pi-exclamation-triangle" style="color: var(--p-orange-500)"></i>
+          <i class="pi pi-exclamation-triangle" style="color: var(--cid-orange-500)"></i>
           This password will not be shown again. Copy it now and provide it to the user.
         </p>
         <div class="password-field">
           <InputText :modelValue="revealedPassword" class="w-full" readonly ref="passwordInput" />
-          <Button icon="pi pi-copy" severity="secondary" size="small" title="Copy" @click="copyPassword" />
+          <Button
+            icon="pi pi-copy"
+            severity="secondary"
+            size="small"
+            title="Copy"
+            @click="copyPassword"
+          />
         </div>
-        <p class="password-note">The user will be required to change this password on first login.</p>
+        <p class="password-note">
+          The user will be required to change this password on first login.
+        </p>
       </div>
       <template #footer>
-        <Button label="Done" @click="showPasswordDialog = false" />
+        <Button label="Done" @click="closePasswordReveal" />
       </template>
     </Dialog>
 
     <!-- API Tokens Dialog -->
-    <Dialog v-model:visible="showTokensDialog" :header="`API Tokens: ${tokenUser?.username || ''}`"
-            modal :style="{ width: '40rem' }">
+    <Dialog
+      v-model:visible="showTokensDialog"
+      :header="`API Tokens: ${tokenUser?.username || ''}`"
+      modal
+      :style="{ width: '40rem' }"
+    >
       <div class="tokens-panel">
         <p class="password-note">
           A token carries this account's role ({{ roleLabel(tokenUser?.role) }}) and nothing more.
@@ -136,19 +228,33 @@
           </template>
           <Column field="name" header="Name" style="min-width: 8rem" />
           <Column header="Token" style="min-width: 9rem">
-            <template #body="{ data }"><code>{{ data.prefix }}…</code></template>
+            <template #body="{ data }"
+              ><code>{{ data.prefix }}…</code></template
+            >
           </Column>
           <Column header="Expires" style="min-width: 8rem">
-            <template #body="{ data }">{{ data.expires_at ? formatDate(data.expires_at) : 'never' }}</template>
+            <template #body="{ data }">{{
+              data.expires_at ? formatDate(data.expires_at) : 'never'
+            }}</template>
           </Column>
           <Column header="Last used" style="min-width: 8rem">
-            <template #body="{ data }">{{ data.last_used_at ? formatDate(data.last_used_at) : 'never' }}</template>
+            <template #body="{ data }">{{
+              data.last_used_at ? formatDate(data.last_used_at) : 'never'
+            }}</template>
           </Column>
           <Column header="" style="width: 6rem">
             <template #body="{ data }">
               <span v-if="data.revoked_at" class="kind-plain">revoked</span>
-              <Button v-else icon="pi pi-ban" severity="danger" text size="small" title="Revoke"
-                      data-track="sys-token-revoke" @click="revokeToken(data)" />
+              <Button
+                v-else
+                icon="pi pi-ban"
+                severity="danger"
+                text
+                size="small"
+                title="Revoke"
+                data-track="sys-token-revoke"
+                @click="revokeToken(data)"
+              />
             </template>
           </Column>
         </DataTable>
@@ -156,16 +262,27 @@
         <div class="token-new">
           <div class="field">
             <label>New token name</label>
-            <InputText v-model="tokenForm.name" class="w-full" placeholder="switchmap"
-                       data-track="sys-token-name" />
+            <InputText
+              v-model="tokenForm.name"
+              class="w-full"
+              placeholder="switchmap"
+              data-track="sys-token-name"
+            />
           </div>
           <div class="field">
             <label>Expires in (days)</label>
             <InputText v-model="tokenForm.expires_in_days" class="w-full" placeholder="0" />
-            <small class="field-hint">0 means never. An unattended poller has nobody to renew it.</small>
+            <small class="field-hint"
+              >0 means never. An unattended poller has nobody to renew it.</small
+            >
           </div>
-          <Button label="Create token" icon="pi pi-plus" :loading="saving"
-                  data-track="sys-token-create" @click="createToken" />
+          <Button
+            label="Create token"
+            icon="pi pi-plus"
+            :loading="saving"
+            data-track="sys-token-create"
+            @click="createToken"
+          />
         </div>
       </div>
       <template #footer>
@@ -174,43 +291,77 @@
     </Dialog>
 
     <!-- Token Reveal Dialog -->
-    <Dialog v-model:visible="showTokenRevealDialog" header="API Token" modal
-            :style="{ width: '34rem' }" :closable="false">
+    <Dialog
+      v-model:visible="showTokenRevealDialog"
+      header="API Token"
+      modal
+      :style="{ width: '34rem' }"
+      :closable="false"
+    >
       <div class="password-reveal">
         <p class="password-warning">
-          <i class="pi pi-exclamation-triangle" style="color: var(--p-orange-500)"></i>
+          <i class="pi pi-exclamation-triangle" style="color: var(--cid-orange-500)"></i>
           This token will not be shown again. Copy it now.
         </p>
         <div class="password-field">
           <InputText :modelValue="revealedToken" class="w-full" readonly />
-          <Button icon="pi pi-copy" severity="secondary" size="small" title="Copy" @click="copyToken" />
+          <Button
+            icon="pi pi-copy"
+            severity="secondary"
+            size="small"
+            title="Copy"
+            @click="copyToken"
+          />
         </div>
-        <p class="password-note">Store it where the client reads it, not in a shell history or a ticket.</p>
+        <p class="password-note">
+          Store it where the client reads it, not in a shell history or a ticket.
+        </p>
       </div>
       <template #footer>
-        <Button label="Done" @click="showTokenRevealDialog = false" />
+        <Button label="Done" @click="closeTokenReveal" />
       </template>
     </Dialog>
 
     <!-- Reset Password Confirmation -->
-    <Dialog v-model:visible="showResetDialog" header="Reset Password" modal :style="{ width: '24rem' }">
-      <p>Reset password for <strong>{{ resettingUser?.username }}</strong>?</p>
-      <p class="text-sm muted">A new random password will be generated. The user will be required to change it on next login.</p>
+    <Dialog
+      v-model:visible="showResetDialog"
+      header="Reset Password"
+      modal
+      :style="{ width: '24rem' }"
+    >
+      <p>
+        Reset password for <strong>{{ resettingUser?.username }}</strong
+        >?
+      </p>
+      <p class="text-sm muted">
+        A new random password will be generated. The user will be required to change it on next
+        login.
+      </p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showResetDialog = false" />
-        <Button label="Reset Password" severity="warning" @click="resetPassword" :loading="saving" />
+        <Button
+          label="Reset Password"
+          severity="warning"
+          @click="resetPassword"
+          :loading="saving"
+        />
       </template>
     </Dialog>
 
     <!-- Delete User Confirmation -->
-    <Dialog v-model:visible="showDeleteDialog" header="Delete User" modal :style="{ width: '24rem' }">
-      <p>Delete user <strong>{{ deletingUser?.username }}</strong>?</p>
+    <ConfirmDialog
+      v-model:visible="showDeleteDialog"
+      header="Delete User"
+      :loading="saving"
+      data-track="dialog-user-delete"
+      @confirm="deleteUser"
+    >
+      <p>
+        Delete user <strong>{{ deletingUser?.username }}</strong
+        >?
+      </p>
       <p class="text-sm muted">This action cannot be undone.</p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteDialog = false" />
-        <Button label="Delete" severity="danger" @click="deleteUser" :loading="saving" />
-      </template>
-    </Dialog>
+    </ConfirmDialog>
 
     <Toast />
   </div>
@@ -222,6 +373,7 @@ import { formatDateOnly } from '../utils/dateFormat.js';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
+import ConfirmDialog from '../components/ConfirmDialog.vue';
 import DataTable from '../ui/DataTable.js';
 import Column from '../ui/Column.js';
 import ContextMenu from '../ui/ContextMenu.js';
@@ -243,13 +395,13 @@ const FALLBACK_ROLES = [
   { value: 'dhcp_admin', label: 'DHCP Administrator' },
   { value: 'readonly_dns', label: 'DNS Read-Only' },
   { value: 'readonly_dhcp', label: 'DHCP Read-Only' },
-  { value: 'readonly', label: 'Read-Only' }
+  { value: 'readonly', label: 'Read-Only' },
 ];
 
 const roles = ref(FALLBACK_ROLES);
 const rolesLoading = ref(false);
 const ROLES = computed(() => roles.value);
-const ROLE_LABELS = computed(() => Object.fromEntries(roles.value.map(r => [r.value, r.label])));
+const ROLE_LABELS = computed(() => Object.fromEntries(roles.value.map((r) => [r.value, r.label])));
 
 function roleLabel(role) {
   return ROLE_LABELS.value[role] || role;
@@ -263,7 +415,7 @@ const saving = ref(false);
 
 const ACCOUNT_KINDS = [
   { value: 'person', label: 'Person' },
-  { value: 'service', label: 'Service account' }
+  { value: 'service', label: 'Service account' },
 ];
 
 const showCreateDialog = ref(false);
@@ -297,13 +449,15 @@ const selectedUser = ref(null);
 const userContextMenuItems = computed(() => {
   const u = selectedUser.value;
   if (!u) return [];
-  const items = [
-    { label: 'Edit Role', icon: 'pi pi-pencil', command: () => openEditDialog(u) }
-  ];
+  const items = [{ label: 'Edit Role', icon: 'pi pi-pencil', command: () => openEditDialog(u) }];
   if (u.kind === 'service') {
     items.push({ label: 'API Tokens', icon: 'pi pi-key', command: () => openTokensDialog(u) });
   } else {
-    items.push({ label: 'Reset Password', icon: 'pi pi-key', command: () => confirmResetPassword(u) });
+    items.push({
+      label: 'Reset Password',
+      icon: 'pi pi-key',
+      command: () => confirmResetPassword(u),
+    });
   }
   if (u.id !== currentUserId) {
     items.push({ label: 'Delete User', icon: 'pi pi-trash', command: () => confirmDelete(u) });
@@ -331,10 +485,15 @@ async function loadRoles() {
   rolesLoading.value = true;
   try {
     const res = await api.get('/users/roles');
-    roles.value = res.data.map(r => ({ value: r.value, label: r.label }));
+    roles.value = res.data.map((r) => ({ value: r.value, label: r.label }));
   } catch (err) {
     roles.value = FALLBACK_ROLES;
-    toast.add({ severity: 'warn', summary: 'Roles unavailable', detail: apiError(err), life: 5000 });
+    toast.add({
+      severity: 'warn',
+      summary: 'Roles unavailable',
+      detail: apiError(err),
+      life: 5000,
+    });
   } finally {
     rolesLoading.value = false;
   }
@@ -456,7 +615,7 @@ async function createToken() {
     // omitted field and so read as "never". Validation belongs in one place.
     const res = await api.post(`/users/${tokenUser.value.id}/tokens`, {
       name: tokenForm.value.name,
-      expires_in_days: tokenForm.value.expires_in_days
+      expires_in_days: tokenForm.value.expires_in_days,
     });
     revealedToken.value = res.data.token;
     showTokenRevealDialog.value = true;
@@ -486,6 +645,17 @@ function copyToken() {
   toast.add({ severity: 'info', summary: 'Copied to clipboard', life: 2000 });
 }
 
+// One-time secrets leave memory with the dialog. Nothing restores them: the
+// server never returns a password or token a second time.
+function closePasswordReveal() {
+  showPasswordDialog.value = false;
+  revealedPassword.value = '';
+}
+function closeTokenReveal() {
+  showTokenRevealDialog.value = false;
+  revealedToken.value = '';
+}
+
 function copyPassword() {
   navigator.clipboard.writeText(revealedPassword.value);
   toast.add({ severity: 'info', summary: 'Copied to clipboard', life: 2000 });
@@ -495,8 +665,6 @@ onMounted(async () => {
   await loadRoles();
   await loadUsers();
 });
-
-
 </script>
 
 <style scoped>
@@ -507,33 +675,30 @@ onMounted(async () => {
   font-size: 0.85rem;
 }
 .kind-tag .token-count {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 0.78rem;
 }
-.kind-plain { color: var(--p-text-muted-color); }
+.kind-plain {
+  color: var(--cid-text-muted-color);
+}
 .field-hint {
   display: block;
   margin-top: 0.25rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
-.tokens-panel { display: flex; flex-direction: column; gap: 1rem; }
+.tokens-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
 .token-new {
   display: flex;
   flex-direction: column;
   gap: 0.75rem;
   padding-top: 0.75rem;
-  border-top: 1px solid var(--p-content-border-color);
+  border-top: 1px solid var(--cid-content-border-color);
 }
 
-.card-header {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  margin-bottom: 0.75rem;
-}
-.card-header h3 {
-  margin: 0;
-}
 .section-header {
   display: flex;
   justify-content: flex-end;
@@ -554,12 +719,12 @@ onMounted(async () => {
 }
 
 .badge-warn {
-  color: var(--p-orange-500);
+  color: var(--cid-orange-500);
   font-weight: 500;
 }
 
 .badge-ok {
-  color: var(--p-green-500);
+  color: var(--cid-green-500);
 }
 
 .password-reveal {
@@ -590,14 +755,6 @@ onMounted(async () => {
 .password-note {
   margin: 0;
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
-}
-
-.text-sm {
-  font-size: 0.85rem;
-}
-
-.muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 </style>

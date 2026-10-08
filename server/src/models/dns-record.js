@@ -1,14 +1,24 @@
-import { isValidDomain, isValidIpv4, longToIp, parseCidr } from '../utils/ip.js';
+import { isValidDomain, isValidAddress, longToIp, parseNetwork } from '../utils/ip.js';
+import { formatIp, parseIp, IPV4_BITS, IPV6_BITS } from '../utils/address.js';
 import { activeLeaseSql, infiniteLeaseFirstSql } from '../utils/lease-sql.js';
 import { canonicalHostnameForAllocation } from './ip-lifecycle.js';
 
 function normalizeDnsName(name) {
-  return String(name || '').trim().replace(/\.$/, '').toLowerCase();
+  return String(name || '')
+    .trim()
+    .replace(/\.$/, '')
+    .toLowerCase();
+}
+
+// A and AAAA records carry an address and drive the same PTR and lifecycle.
+function isAddressRecordType(type) {
+  return type === 'A' || type === 'AAAA';
 }
 
 function bumpZoneSerial(db, zoneId) {
-  db.prepare("UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?")
-    .run(zoneId);
+  db.prepare(
+    "UPDATE dns_zones SET soa_serial = soa_serial + 1, updated_at = datetime('now') WHERE id = ?",
+  ).run(zoneId);
 }
 
 /**
@@ -30,7 +40,9 @@ function bumpZoneSerial(db, zoneId) {
  * actually came from. See REVIEW.md, duplicate-logic audit #8.
  */
 export function normalizeRecordNameForZone(name, zoneName) {
-  const raw = String(name || '').trim().toLowerCase();
+  const raw = String(name || '')
+    .trim()
+    .toLowerCase();
   const normalized = raw.replace(/\.$/, '');
   const zone = normalizeDnsName(zoneName);
   if (normalized === '@') return '@';
@@ -45,7 +57,9 @@ export function normalizeRecordNameForZone(name, zoneName) {
 }
 
 export function fqdnForRecordName(recordName, zoneName) {
-  const raw = String(recordName || '').trim().toLowerCase();
+  const raw = String(recordName || '')
+    .trim()
+    .toLowerCase();
   const normalized = raw.replace(/\.$/, '');
   const zone = normalizeDnsName(zoneName);
   if (normalized === '@' || normalized === zone) return zoneName;
@@ -72,7 +86,7 @@ export function fqdnForRecordName(recordName, zoneName) {
 // they cannot say different things about what "a manual forward A record"
 // means. Assumes the record table is aliased `r` and the zone table `z`.
 const MANUAL_FORWARD_A_WHERE = `
-        r.type = 'A'
+        r.type IN ('A', 'AAAA')
     AND r.enabled = 1
     AND z.enabled = 1
     AND z.type = 'forward'
@@ -129,20 +143,24 @@ export function cnameTargetError(db, target, zone, extraKnownFqdns = null) {
 
   if (extraKnownFqdns && extraKnownFqdns.has(normalized)) return null;
 
-  const known = db.prepare(`
+  const known = db
+    .prepare(
+      `
     SELECT 1
     FROM dns_records r
     JOIN dns_zones z ON z.id = r.zone_id
     WHERE z.enabled = 1
       AND z.type = 'forward'
       AND r.enabled = 1
-      AND r.type IN ('A', 'CNAME')
+      AND r.type IN ('A', 'AAAA', 'CNAME')
       AND lower(CASE WHEN r.name = '@' THEN z.name ELSE r.name || '.' || z.name END) = ?
     LIMIT 1
-  `).get(normalized);
+  `,
+    )
+    .get(normalized);
 
   if (!known) {
-    return `CNAME target must already exist as an enabled A or CNAME record in ${zone.name}`;
+    return `CNAME target must already exist as an enabled A, AAAA or CNAME record in ${zone.name}`;
   }
   return null;
 }
@@ -178,10 +196,19 @@ function hostnameMatches(candidate, proposed, domainName) {
   return false;
 }
 
-export function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecordId = null, ignoreFqdns = null) {
+export function findAHostnameConflict(
+  db,
+  ip,
+  recordName,
+  zoneName,
+  excludeRecordId = null,
+  ignoreFqdns = null,
+) {
   const proposed = fqdnForRecordName(recordName, zoneName);
 
-  const reservation = db.prepare(`
+  const reservation = db
+    .prepare(
+      `
     SELECT r.hostname, s.domain_name
     FROM dhcp_reservations r
     JOIN subnets s ON s.id = r.subnet_id
@@ -191,12 +218,19 @@ export function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecor
       AND trim(r.hostname) != ''
     ORDER BY s.prefix_length DESC, r.id DESC
     LIMIT 1
-  `).get(ip);
-  if (reservation?.hostname && !hostnameMatches(reservation.hostname, proposed, reservation.domain_name)) {
+  `,
+    )
+    .get(ip);
+  if (
+    reservation?.hostname &&
+    !hostnameMatches(reservation.hostname, proposed, reservation.domain_name)
+  ) {
     return { hostname: reservation.hostname, source: 'DHCP Reservation' };
   }
 
-  const lease = db.prepare(`
+  const lease = db
+    .prepare(
+      `
     SELECT l.hostname, s.domain_name
     FROM dhcp_leases l
     JOIN subnets s ON s.id = l.subnet_id
@@ -210,18 +244,22 @@ export function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecor
       datetime(l.expires_at) DESC,
       l.id DESC
     LIMIT 1
-  `).get(ip);
+  `,
+    )
+    .get(ip);
   if (lease?.hostname && !hostnameMatches(lease.hostname, proposed, lease.domain_name)) {
     return { hostname: lease.hostname, source: 'dynamic DHCP' };
   }
 
   const excludeClause = excludeRecordId ? 'AND r.id != ?' : '';
   const params = excludeRecordId ? [ip, excludeRecordId] : [ip];
-  const existingRecords = db.prepare(`
+  const existingRecords = db
+    .prepare(
+      `
     SELECT r.name, z.name AS zone_name
     FROM dns_records r
     JOIN dns_zones z ON z.id = r.zone_id
-    WHERE r.type = 'A'
+    WHERE r.type IN ('A', 'AAAA')
       AND r.enabled = 1
       AND z.enabled = 1
       AND z.type = 'forward'
@@ -229,7 +267,9 @@ export function findAHostnameConflict(db, ip, recordName, zoneName, excludeRecor
       AND COALESCE(r.source, 'manual') = 'manual'
       ${excludeClause}
     ORDER BY lower(z.name), lower(r.name), r.id
-  `).all(...params);
+  `,
+    )
+    .all(...params);
 
   for (const record of existingRecords) {
     const hostname = fqdnForRecordName(record.name, record.zone_name);
@@ -256,15 +296,23 @@ export function staticDnsClaimSql(ipColumn) {
 
 /** Every address a manual forward A record claims, with the FQDN it claims it as. */
 export function listDnsAssignedIps(db) {
-  return db.prepare(DNS_ASSIGNED_SELECT).all().map(r => ({
-    ip_address: r.ip_address,
-    hostname: fqdnForRecordName(r.name, r.zone_name),
-  }));
+  return db
+    .prepare(DNS_ASSIGNED_SELECT)
+    .all()
+    .map((r) => ({
+      ip_address: r.ip_address,
+      hostname: fqdnForRecordName(r.name, r.zone_name),
+    }));
 }
 
 /** The set of addresses DNS claims. Cheap: bounded by operator-created records. */
 export function dnsAssignedIpSet(db) {
-  return new Set(db.prepare(DNS_ASSIGNED_SELECT).all().map(r => r.ip_address));
+  return new Set(
+    db
+      .prepare(DNS_ASSIGNED_SELECT)
+      .all()
+      .map((r) => r.ip_address),
+  );
 }
 
 /** The FQDN DNS assigns to `ip`, or null when no manual A record claims it. */
@@ -280,55 +328,94 @@ export function findReversePtrLocation(db, ip, { enabledOnly = false } = {}) {
 
   const enabledSql = enabledOnly ? 'AND enabled = 1' : '';
   for (const candidate of candidates) {
-    const zone = db.prepare(`
+    const zone = db
+      .prepare(
+        `
       SELECT id, name FROM dns_zones
       WHERE type = 'reverse' AND name = ? ${enabledSql}
-    `).get(candidate.name);
+    `,
+      )
+      .get(candidate.name);
     if (zone) return { zone, ptrName: candidate.ptrName };
   }
   return null;
 }
 
+/**
+ * Every reverse zone that could hold the PTR for `ip`, most specific first,
+ * with the record name relative to that zone. IPv4 zones sit at octet
+ * boundaries (/24, /16, /8); IPv6 zones at every nibble boundary from /124
+ * up to /4, which is what the nibble format of ip6.arpa allows.
+ */
 export function reversePtrCandidates(ip) {
-  const octets = String(ip || '').split('.');
-  if (octets.length !== 4) return [];
-  return [
-    { name: `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: octets[3] },
-    { name: `${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}` },
-    { name: `${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}.${octets[1]}` }
-  ];
+  const parsed = parseIp(String(ip || ''), { zoneId: false });
+  if (!parsed) return [];
+  if (parsed.bits === IPV4_BITS) {
+    const octets = formatIp(parsed.value, IPV4_BITS).split('.');
+    return [
+      { name: `${octets[2]}.${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: octets[3] },
+      { name: `${octets[1]}.${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}` },
+      { name: `${octets[0]}.in-addr.arpa`, ptrName: `${octets[3]}.${octets[2]}.${octets[1]}` },
+    ];
+  }
+  const nibbles = parsed.value.toString(16).padStart(32, '0').split('');
+  const candidates = [];
+  for (let zoneNibbles = 31; zoneNibbles >= 1; zoneNibbles--) {
+    candidates.push({
+      name: `${nibbles.slice(0, zoneNibbles).reverse().join('.')}.ip6.arpa`,
+      ptrName: nibbles.slice(zoneNibbles).reverse().join('.'),
+    });
+  }
+  return candidates;
 }
 
 export function ipForPtrRecord(recordName, zoneName) {
-  const zoneLabels = String(zoneName || '')
+  const zone = String(zoneName || '').toLowerCase();
+  const recordLabels = String(recordName || '')
     .toLowerCase()
+    .split('.')
+    .filter(Boolean);
+  if (/\.?ip6\.arpa\.?$/.test(zone)) {
+    const zoneLabels = zone
+      .replace(/\.?ip6\.arpa\.?$/, '')
+      .split('.')
+      .filter(Boolean);
+    const nibbles = [...recordLabels, ...zoneLabels].reverse();
+    if (nibbles.length !== 32 || !nibbles.every((n) => /^[0-9a-f]$/.test(n))) return null;
+    return formatIp(BigInt(`0x${nibbles.join('')}`), IPV6_BITS);
+  }
+  const zoneLabels = zone
     .replace(/\.?in-addr\.arpa\.?$/, '')
     .split('.')
     .filter(Boolean);
-  const recordLabels = String(recordName || '').split('.').filter(Boolean);
   const ip = [...recordLabels, ...zoneLabels].reverse().join('.');
-  return isValidIpv4(ip) ? ip : null;
+  return parseIp(ip, { zoneId: false })?.bits === IPV4_BITS && !ip.includes(':') ? ip : null;
 }
 
-export function syncPtrForARecord(db, recordName, ip, forwardZoneName, {
-  force = false,
-  source = 'dns'
-} = {}) {
+export function syncPtrForARecord(
+  db,
+  recordName,
+  ip,
+  forwardZoneName,
+  { force = false, source = 'dns' } = {},
+) {
   const match = findReversePtrLocation(db, ip, { enabledOnly: true });
   if (!match) return { updated: false };
 
   const { zone, ptrName } = match;
   const fqdn = fqdnForRecordName(recordName, forwardZoneName);
-  const existing = db.prepare(
-    "SELECT * FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?"
-  ).get(zone.id, ptrName);
+  const existing = db
+    .prepare("SELECT * FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?")
+    .get(zone.id, ptrName);
 
   if (existing) {
     if (!force && existing.value && existing.value !== ip) {
-      const bareIp = /^\d+\.\d+\.\d+\.\d+$/.test(existing.value);
+      const bareIp = isValidAddress(existing.value);
       if (!bareIp && existing.value.toLowerCase() !== fqdn.toLowerCase()) {
-        if (!existing.value.toLowerCase().endsWith('.' + forwardZoneName.toLowerCase()) &&
-            existing.value.toLowerCase() !== forwardZoneName.toLowerCase()) {
+        if (
+          !existing.value.toLowerCase().endsWith('.' + forwardZoneName.toLowerCase()) &&
+          existing.value.toLowerCase() !== forwardZoneName.toLowerCase()
+        ) {
           return { conflict: { existing: existing.value, proposed: fqdn, reverseZone: zone.name } };
         }
       }
@@ -338,13 +425,15 @@ export function syncPtrForARecord(db, recordName, ip, forwardZoneName, {
       return { updated: false };
     }
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE dns_records SET value = ?, source = ?, enabled = 1,
         updated_at = datetime('now') WHERE id = ?
-    `).run(fqdn, source, existing.id);
+    `,
+    ).run(fqdn, source, existing.id);
   } else {
     db.prepare(
-      "INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, 'PTR', ?, ?, 1)"
+      "INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, 'PTR', ?, ?, 1)",
     ).run(zone.id, ptrName, fqdn, source);
   }
 
@@ -352,31 +441,59 @@ export function syncPtrForARecord(db, recordName, ip, forwardZoneName, {
   return { updated: true };
 }
 
-export function setPtrForIp(db, ip, hostname, {
-  enabledOnly = false,
-  source = hostname ? 'manual' : 'placeholder'
-} = {}) {
+// Does any network hold this address in a state other than unassigned?
+function isAllocatedAddress(db, ip) {
+  return Boolean(
+    db
+      .prepare(
+        "SELECT 1 FROM ip_addresses WHERE ip_address = ? AND allocation_state != 'unassigned' LIMIT 1",
+      )
+      .get(ip),
+  );
+}
+
+export function setPtrForIp(
+  db,
+  ip,
+  hostname,
+  { enabledOnly = false, source = hostname ? 'manual' : 'placeholder' } = {},
+) {
   const match = findReversePtrLocation(db, ip, { enabledOnly });
   if (!match) return { updated: false };
 
-  // An address covered by managed reverse DNS always has a visible row. When
-  // no real DNS/DHCP hostname exists, its canonical IP text is the placeholder.
+  // An IPv4 address covered by managed reverse DNS always has a visible row.
+  // When no real DNS/DHCP hostname exists, its canonical IP text is the
+  // placeholder. IPv6 has PTRs only for allocated addresses (ARCHITECTURE.md,
+  // Canonical IP Model), so an IPv6 address left with no name and no
+  // allocation loses its row instead of gaining a placeholder.
   const fqdn = String(hostname || ip).trim();
-  const existing = db.prepare(
-    "SELECT id, value, source, enabled FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?"
-  ).get(match.zone.id, match.ptrName);
+  const existing = db
+    .prepare(
+      "SELECT id, value, source, enabled FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?",
+    )
+    .get(match.zone.id, match.ptrName);
+
+  const placeholder = !hostname || parseIp(fqdn, { zoneId: false }) !== null;
+  if (placeholder && parseIp(String(ip))?.bits === IPV6_BITS && !isAllocatedAddress(db, ip)) {
+    if (!existing) return { updated: false };
+    db.prepare('DELETE FROM dns_records WHERE id = ?').run(existing.id);
+    bumpZoneSerial(db, match.zone.id);
+    return { updated: true };
+  }
 
   if (existing) {
     if (existing.value === fqdn && existing.source === source && existing.enabled === 1) {
       return { updated: false };
     }
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE dns_records SET value = ?, source = ?, enabled = 1,
         updated_at = datetime('now') WHERE id = ?
-    `).run(fqdn, source, existing.id);
+    `,
+    ).run(fqdn, source, existing.id);
   } else if (fqdn) {
     db.prepare(
-      "INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, 'PTR', ?, ?, 1)"
+      "INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, ?, 'PTR', ?, ?, 1)",
     ).run(match.zone.id, match.ptrName, fqdn, source);
   } else {
     return { updated: false };
@@ -387,31 +504,44 @@ export function setPtrForIp(db, ip, hostname, {
 }
 
 /**
- * Fill and repair the generated PTR projection for managed IPv4 subnets.
+ * Fill and repair the generated PTR projection for managed subnets.
  *
  * Real names come from the protocol source selected by allocation_state. A
  * missing/empty row becomes either that name or the bare-IP placeholder. An
  * explicit non-placeholder PTR is left alone so this repair cannot erase a
  * deliberate operator override.
+ *
+ * IPv4 walks every usable address of the subnet (bounded by
+ * maxAddressesPerSubnet) so each one has a visible PTR row. IPv6 is never
+ * walked: only allocated addresses get a PTR, and there are no placeholders.
  */
-export function reconcileManagedReverseDns(db, {
-  subnetIds = null,
-  maxAddressesPerSubnet = 65536
-} = {}) {
-  const idFilter = Array.isArray(subnetIds) && subnetIds.length > 0
-    ? `AND id IN (${subnetIds.map(() => '?').join(',')})`
-    : '';
-  const subnets = db.prepare(`
+export function reconcileManagedReverseDns(
+  db,
+  { subnetIds = null, maxAddressesPerSubnet = 65536 } = {},
+) {
+  const idFilter =
+    Array.isArray(subnetIds) && subnetIds.length > 0
+      ? `AND id IN (${subnetIds.map(() => '?').join(',')})`
+      : '';
+  const subnets = db
+    .prepare(
+      `
     SELECT id, cidr, prefix_length
     FROM subnets
     WHERE status = 'allocated' AND has_reverse_dns = 1 ${idFilter}
     ORDER BY prefix_length DESC, id
-  `).all(...(idFilter ? subnetIds : []));
-  const zones = db.prepare(`
+  `,
+    )
+    .all(...(idFilter ? subnetIds : []));
+  const zones = db
+    .prepare(
+      `
     SELECT id, name FROM dns_zones
     WHERE type = 'reverse' AND enabled = 1
-  `).all();
-  const zonesByName = new Map(zones.map(zone => [zone.name, zone]));
+  `,
+    )
+    .all();
+  const zonesByName = new Map(zones.map((zone) => [zone.name, zone]));
 
   const protocolNames = new Map();
   const rememberProtocolName = (ip, source, hostname) => {
@@ -421,26 +551,31 @@ export function reconcileManagedReverseDns(db, {
       protocolNames.get(ip).set(source, hostname);
     }
   };
-  const dhcpFqdn = (hostname, domainName) => domainName
-    ? fqdnForRecordName(hostname, domainName)
-    : normalizeDnsName(hostname);
+  const dhcpFqdn = (hostname, domainName) =>
+    domainName ? fqdnForRecordName(hostname, domainName) : normalizeDnsName(hostname);
 
-  for (const record of db.prepare(`
+  for (const record of db
+    .prepare(
+      `
     SELECT r.value AS ip_address, r.name, r.source, z.name AS zone_name
     FROM dns_records r
     JOIN dns_zones z ON z.id = r.zone_id
-    WHERE r.type = 'A' AND r.enabled = 1
+    WHERE r.type IN ('A', 'AAAA') AND r.enabled = 1
       AND z.type = 'forward' AND z.enabled = 1
     ORDER BY r.id
-  `).all()) {
+  `,
+    )
+    .all()) {
     const source = ['dhcp', 'reservation'].includes(record.source) ? record.source : 'manual';
     rememberProtocolName(
       record.ip_address,
       source,
-      fqdnForRecordName(record.name, record.zone_name)
+      fqdnForRecordName(record.name, record.zone_name),
     );
   }
-  for (const reservation of db.prepare(`
+  for (const reservation of db
+    .prepare(
+      `
     SELECT r.ip_address, r.hostname,
       COALESCE(
         (SELECT ds.domain_name FROM dhcp_scopes ds
@@ -453,14 +588,18 @@ export function reconcileManagedReverseDns(db, {
     JOIN subnets s ON s.id = r.subnet_id
     WHERE r.enabled = 1 AND r.hostname IS NOT NULL AND trim(r.hostname) != ''
     ORDER BY r.id
-  `).all()) {
+  `,
+    )
+    .all()) {
     rememberProtocolName(
       reservation.ip_address,
       'reservation',
-      dhcpFqdn(reservation.hostname, reservation.domain_name)
+      dhcpFqdn(reservation.hostname, reservation.domain_name),
     );
   }
-  for (const lease of db.prepare(`
+  for (const lease of db
+    .prepare(
+      `
     SELECT l.ip_address, l.hostname,
       COALESCE(
         (SELECT ds.domain_name FROM dhcp_scopes ds
@@ -474,71 +613,91 @@ export function reconcileManagedReverseDns(db, {
     WHERE l.hostname IS NOT NULL AND trim(l.hostname) != ''
       AND ${activeLeaseSql('l')}
     ORDER BY ${infiniteLeaseFirstSql('l')}, datetime(l.expires_at) DESC, l.id DESC
-  `).all()) {
-    rememberProtocolName(
-      lease.ip_address,
-      'dhcp',
-      dhcpFqdn(lease.hostname, lease.domain_name)
-    );
+  `,
+    )
+    .all()) {
+    rememberProtocolName(lease.ip_address, 'dhcp', dhcpFqdn(lease.hostname, lease.domain_name));
   }
 
-  const allocationByIdentity = new Map(db.prepare(`
-    SELECT subnet_id, ip_address, allocation_state FROM ip_addresses
-  `).all().map(row => [`${row.subnet_id}|${row.ip_address}`, row.allocation_state]));
+  const allocationRows = db
+    .prepare('SELECT subnet_id, ip_address, allocation_state FROM ip_addresses')
+    .all();
+  const allocationByIdentity = new Map(
+    allocationRows.map((row) => [`${row.subnet_id}|${row.ip_address}`, row.allocation_state]),
+  );
+  const allocatedBySubnet = new Map();
+  for (const row of allocationRows) {
+    if (row.allocation_state === 'unassigned') continue;
+    if (!allocatedBySubnet.has(row.subnet_id)) allocatedBySubnet.set(row.subnet_id, []);
+    allocatedBySubnet.get(row.subnet_id).push(row.ip_address);
+  }
   const desired = new Map();
   const skippedSubnets = [];
 
-  for (const subnet of subnets) {
-    const parsed = parseCidr(subnet.cidr);
-    if (parsed.usableCount > maxAddressesPerSubnet) {
-      skippedSubnets.push({ subnet_id: subnet.id, cidr: subnet.cidr, addresses: parsed.usableCount });
-      continue;
-    }
-    const first = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
-    const last = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
-    for (let value = first; value <= last; value++) {
-      const ip = longToIp(value);
-      const candidate = reversePtrCandidates(ip)
-        .find(item => zonesByName.has(item.name));
-      if (!candidate) continue;
-      const zone = zonesByName.get(candidate.name);
-      const key = `${zone.id}|${candidate.ptrName}`;
-      // More-specific subnets were visited first. Do not let an overlapping
-      // parent choose a different canonical allocation source for this PTR.
-      if (desired.has(key)) continue;
+  const considerAddress = (subnet, ip) => {
+    const candidate = reversePtrCandidates(ip).find((item) => zonesByName.has(item.name));
+    if (!candidate) return;
+    const zone = zonesByName.get(candidate.name);
+    const key = `${zone.id}|${candidate.ptrName}`;
+    // More-specific subnets were visited first. Do not let an overlapping
+    // parent choose a different canonical allocation source for this PTR.
+    if (desired.has(key)) return;
 
-      const names = protocolNames.get(ip);
-      const state = allocationByIdentity.get(`${subnet.id}|${ip}`);
-      const canonical = canonicalHostnameForAllocation({
-        allocationState: state,
-        dnsHostname: names?.get('manual') || null,
-        reservationHostname: names?.get('reservation') || null,
-        leaseHostname: names?.get('dhcp') || null
-      });
-      const hostname = canonical.hostname;
-      const source = canonical.source === 'dhcp_reservation'
+    const names = protocolNames.get(ip);
+    const state = allocationByIdentity.get(`${subnet.id}|${ip}`);
+    const canonical = canonicalHostnameForAllocation({
+      allocationState: state,
+      dnsHostname: names?.get('manual') || null,
+      reservationHostname: names?.get('reservation') || null,
+      leaseHostname: names?.get('dhcp') || null,
+    });
+    const hostname = canonical.hostname;
+    const source =
+      canonical.source === 'dhcp_reservation'
         ? 'reservation'
         : canonical.source === 'dhcp_lease'
           ? 'dhcp'
           : canonical.source || 'placeholder';
 
-      desired.set(key, {
-        zoneId: zone.id,
-        ptrName: candidate.ptrName,
-        ip,
-        value: hostname || ip,
-        source
-      });
+    desired.set(key, {
+      zoneId: zone.id,
+      ptrName: candidate.ptrName,
+      ip,
+      value: hostname || ip,
+      source,
+    });
+  };
+
+  for (const subnet of subnets) {
+    const parsed = parseNetwork(subnet.cidr);
+    if (parsed.family === 6) {
+      for (const ip of allocatedBySubnet.get(subnet.id) || []) considerAddress(subnet, ip);
+      continue;
     }
+    if (parsed.usableCount > maxAddressesPerSubnet) {
+      skippedSubnets.push({
+        subnet_id: subnet.id,
+        cidr: subnet.cidr,
+        addresses: parsed.usableCount,
+      });
+      continue;
+    }
+    const first = parsed.prefix >= 31 ? parsed.networkLong : parsed.networkLong + 1;
+    const last = parsed.prefix >= 31 ? parsed.broadcastLong : parsed.broadcastLong - 1;
+    for (let value = first; value <= last; value++) considerAddress(subnet, longToIp(value));
   }
 
-  const zoneIds = [...new Set([...desired.values()].map(row => row.zoneId))];
+  const zoneIds = [...new Set([...desired.values()].map((row) => row.zoneId))];
   const existing = new Map();
   if (zoneIds.length > 0) {
-    const rows = db.prepare(`
+    const rows = db
+      .prepare(
+        `
       SELECT id, zone_id, name, value, source, enabled FROM dns_records
       WHERE type = 'PTR' AND zone_id IN (${zoneIds.map(() => '?').join(',')})
-    `).all(...zoneIds);
+    `,
+      )
+      .all(...zoneIds);
     for (const row of rows) existing.set(`${row.zone_id}|${row.name}`, row);
   }
 
@@ -570,11 +729,12 @@ export function reconcileManagedReverseDns(db, {
         continue;
       }
       const currentValue = String(current.value || '').trim();
-      const isPlaceholder = currentValue === '' || /^\d+\.\d+\.\d+\.\d+$/.test(currentValue);
+      const isPlaceholder = currentValue === '' || isValidAddress(currentValue);
       const sameValue = currentValue.toLowerCase() === row.value.toLowerCase();
-      const generatedRow = isPlaceholder
-        || ['dns', 'dhcp', 'reservation', 'placeholder'].includes(current.source)
-        || sameValue;
+      const generatedRow =
+        isPlaceholder ||
+        ['dns', 'dhcp', 'reservation', 'placeholder'].includes(current.source) ||
+        sameValue;
       if (generatedRow && (!sameValue || current.source !== row.source || current.enabled !== 1)) {
         update.run(row.value, row.source, current.id);
         updated++;
@@ -586,9 +746,30 @@ export function reconcileManagedReverseDns(db, {
       inserted,
       updated,
       unchanged: desired.size - inserted - updated,
-      skipped_subnets: skippedSubnets
+      skipped_subnets: skippedSubnets,
     };
   })();
+}
+
+/**
+ * Remove the bare-address placeholder PTR of an IPv6 address that nothing
+ * holds any more. IPv6 has PTRs only for allocated addresses, so releasing one
+ * takes its placeholder with it; a PTR naming a host is left to its owner.
+ */
+export function dropUnallocatedIpv6Ptr(db, ip) {
+  if (parseIp(String(ip), { zoneId: false })?.bits !== IPV6_BITS) return { updated: false };
+  if (isAllocatedAddress(db, ip)) return { updated: false };
+  const match = findReversePtrLocation(db, ip);
+  if (!match) return { updated: false };
+  const existing = db
+    .prepare("SELECT id, value FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?")
+    .get(match.zone.id, match.ptrName);
+  if (!existing || parseIp(String(existing.value), { zoneId: false }) === null) {
+    return { updated: false };
+  }
+  db.prepare('DELETE FROM dns_records WHERE id = ?').run(existing.id);
+  bumpZoneSerial(db, match.zone.id);
+  return { updated: true };
 }
 
 export function clearPtrForIp(db, ip) {
@@ -600,9 +781,9 @@ export function clearPtrForARecord(db, recordName, ip, forwardZoneName) {
   if (!match) return { updated: false };
 
   const fqdn = fqdnForRecordName(recordName, forwardZoneName).toLowerCase();
-  const existing = db.prepare(
-    "SELECT value FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?"
-  ).get(match.zone.id, match.ptrName);
+  const existing = db
+    .prepare("SELECT value FROM dns_records WHERE zone_id = ? AND type = 'PTR' AND name = ?")
+    .get(match.zone.id, match.ptrName);
 
   if (!existing || String(existing.value || '').toLowerCase() !== fqdn) {
     return { updated: false };
@@ -613,26 +794,30 @@ export function clearPtrForARecord(db, recordName, ip, forwardZoneName) {
 
 export function createRecord(db, zone, fields, { forcePtr = false } = {}) {
   const insert = db.transaction(() => {
-    const result = db.prepare(`
+    const result = db
+      .prepare(
+        `
       INSERT INTO dns_records (zone_id, name, type, value, priority, weight, port, ttl, enabled)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      zone.id,
-      normalizeRecordNameForZone(fields.name, zone.name),
-      fields.type,
-      fields.value,
-      fields.priority ?? null,
-      fields.weight ?? null,
-      fields.port ?? null,
-      fields.ttl ?? null,
-      fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : 1
-    );
+    `,
+      )
+      .run(
+        zone.id,
+        normalizeRecordNameForZone(fields.name, zone.name),
+        fields.type,
+        fields.value,
+        fields.priority ?? null,
+        fields.weight ?? null,
+        fields.port ?? null,
+        fields.ttl ?? null,
+        fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : 1,
+      );
 
     bumpZoneSerial(db, zone.id);
 
     let ptrResult = null;
     const enabled = fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : 1;
-    if (enabled && fields.type === 'A' && zone.type === 'forward') {
+    if (enabled && isAddressRecordType(fields.type) && zone.type === 'forward') {
       ptrResult = syncPtrForARecord(db, fields.name, fields.value, zone.name, { force: forcePtr });
       if (ptrResult?.conflict) {
         const err = new Error('PTR conflict');
@@ -644,7 +829,7 @@ export function createRecord(db, zone, fields, { forcePtr = false } = {}) {
 
     return {
       record: db.prepare('SELECT * FROM dns_records WHERE id = ?').get(result.lastInsertRowid),
-      ptrResult
+      ptrResult,
     };
   });
 
@@ -653,15 +838,19 @@ export function createRecord(db, zone, fields, { forcePtr = false } = {}) {
 
 export function updateRecord(db, zone, record, fields) {
   const update = db.transaction(() => {
-    const oldEnabledA = record.enabled !== 0 && record.type === 'A' && zone.type === 'forward';
+    const oldEnabledA =
+      record.enabled !== 0 && isAddressRecordType(record.type) && zone.type === 'forward';
     const newEnabled = fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : record.enabled;
-    const newEnabledA = newEnabled !== 0 && fields.type === 'A' && zone.type === 'forward';
+    const newEnabledA =
+      newEnabled !== 0 && isAddressRecordType(fields.type) && zone.type === 'forward';
 
-    db.prepare(`
+    db.prepare(
+      `
       UPDATE dns_records SET name = ?, type = ?, value = ?, priority = ?, weight = ?, port = ?, ttl = ?,
         enabled = ?, updated_at = datetime('now')
       WHERE id = ?
-    `).run(
+    `,
+    ).run(
       normalizeRecordNameForZone(fields.name, zone.name),
       fields.type,
       fields.value,
@@ -670,7 +859,7 @@ export function updateRecord(db, zone, record, fields) {
       fields.port,
       fields.ttl,
       newEnabled,
-      record.id
+      record.id,
     );
 
     bumpZoneSerial(db, zone.id);
@@ -693,7 +882,7 @@ export function deleteRecord(db, zone, record) {
     db.prepare('DELETE FROM dns_records WHERE id = ?').run(record.id);
     bumpZoneSerial(db, zone.id);
 
-    if (record.enabled !== 0 && record.type === 'A' && zone.type === 'forward') {
+    if (record.enabled !== 0 && isAddressRecordType(record.type) && zone.type === 'forward') {
       clearPtrForARecord(db, record.name, record.value, zone.name);
     }
   });
@@ -708,43 +897,58 @@ export function deleteDynamicDhcpRecordsByIps(db, addresses) {
     const subnetId = typeof address === 'string' ? null : address.subnet_id;
     let zoneNames = [];
     if (subnetId != null) {
-      zoneNames = db.prepare(`
+      zoneNames = db
+        .prepare(
+          `
         SELECT DISTINCT COALESCE(NULLIF(s.domain_name, ''), NULLIF(sub.domain_name, '')) AS name
         FROM subnets sub
         LEFT JOIN dhcp_scopes s ON s.subnet_id = sub.id AND s.enabled = 1
         WHERE sub.id = ?
-      `).all(subnetId).map(row => row.name).filter(Boolean);
+      `,
+        )
+        .all(subnetId)
+        .map((row) => row.name)
+        .filter(Boolean);
     }
     if (subnetId != null && zoneNames.length === 0) continue;
-    const zoneFilter = zoneNames.length > 0
-      ? `AND z.name IN (${zoneNames.map(() => '?').join(',')})`
-      : '';
-    const matches = db.prepare(`
+    const zoneFilter =
+      zoneNames.length > 0 ? `AND z.name IN (${zoneNames.map(() => '?').join(',')})` : '';
+    const matches = db
+      .prepare(
+        `
       SELECT r.*, z.name AS zone_name, z.type AS zone_type
       FROM dns_records r
       JOIN dns_zones z ON z.id = r.zone_id
-      WHERE r.type = 'A' AND r.source = 'dhcp' AND r.value = ?
+      WHERE r.type IN ('A', 'AAAA') AND r.source = 'dhcp' AND r.value = ?
         ${zoneFilter}
-    `).all(ip, ...zoneNames);
+    `,
+      )
+      .all(ip, ...zoneNames);
     for (const record of matches) recordsById.set(record.id, record);
   }
   const records = [...recordsById.values()];
 
   for (const record of records) {
     const reverse = findReversePtrLocation(db, record.value, { enabledOnly: true });
-    const ptr = reverse && db.prepare(`
+    const ptr =
+      reverse &&
+      db
+        .prepare(
+          `
       SELECT id FROM dns_records
       WHERE zone_id = ? AND type = 'PTR' AND name = ? AND lower(value) = lower(?)
-    `).get(
-      reverse.zone.id,
-      reverse.ptrName,
-      fqdnForRecordName(record.name, record.zone_name)
+    `,
+        )
+        .get(reverse.zone.id, reverse.ptrName, fqdnForRecordName(record.name, record.zone_name));
+    deleteRecord(
+      db,
+      {
+        id: record.zone_id,
+        name: record.zone_name,
+        type: record.zone_type,
+      },
+      record,
     );
-    deleteRecord(db, {
-      id: record.zone_id,
-      name: record.zone_name,
-      type: record.zone_type
-    }, record);
     if (ptr) {
       db.prepare('DELETE FROM dns_records WHERE id = ?').run(ptr.id);
       bumpZoneSerial(db, reverse.zone.id);
@@ -757,23 +961,26 @@ export function importRecords(db, zone, records) {
   const importTxn = db.transaction(() => {
     const existingExact = new Set();
     const existingByNameType = new Map();
-    for (const r of db.prepare('SELECT id, type, name, value FROM dns_records WHERE zone_id = ?').all(zone.id)) {
+    for (const r of db
+      .prepare('SELECT id, type, name, value FROM dns_records WHERE zone_id = ?')
+      .all(zone.id)) {
       existingExact.add(`${r.type}|${r.name}|${r.value}`);
       existingByNameType.set(`${r.type}|${r.name}`, { id: r.id, value: r.value });
     }
 
     const insertRecord = db.prepare(
-      'INSERT INTO dns_records (zone_id, name, type, value) VALUES (?, ?, ?, ?)'
+      'INSERT INTO dns_records (zone_id, name, type, value) VALUES (?, ?, ?, ?)',
     );
     const updateRecordValue = db.prepare(
-      "UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?"
+      "UPDATE dns_records SET value = ?, updated_at = datetime('now') WHERE id = ?",
     );
 
     const results = {
       A: { created: 0, updated: 0, skipped: 0, failed: 0 },
-      CNAME: { created: 0, updated: 0, skipped: 0, failed: 0 }
+      AAAA: { created: 0, updated: 0, skipped: 0, failed: 0 },
+      CNAME: { created: 0, updated: 0, skipped: 0, failed: 0 },
     };
-    const aRecordsToSync = [];
+    const addressRecordsToSync = [];
     let changed = false;
 
     for (const r of records) {
@@ -813,8 +1020,8 @@ export function importRecords(db, zone, records) {
           results[r.type].created++;
         }
         changed = true;
-        if (r.type === 'A') {
-          aRecordsToSync.push({ id: recordId, name, value: r.value, previousValue });
+        if (isAddressRecordType(r.type)) {
+          addressRecordsToSync.push({ id: recordId, name, value: r.value, previousValue });
         }
       } catch {
         results[r.type].failed++;
@@ -825,7 +1032,7 @@ export function importRecords(db, zone, records) {
       bumpZoneSerial(db, zone.id);
     }
 
-    return { results, aRecordsToSync, changed };
+    return { results, addressRecordsToSync, changed };
   });
 
   return importTxn();

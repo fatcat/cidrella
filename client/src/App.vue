@@ -1,5 +1,10 @@
 <template>
-  <Toast successIcon="pi pi-check" infoIcon="pi pi-info" warnIcon="pi pi-exclamation-circle" errorIcon="pi pi-ban" />
+  <Toast
+    successIcon="pi pi-check"
+    infoIcon="pi pi-info"
+    warnIcon="pi pi-exclamation-circle"
+    errorIcon="pi pi-ban"
+  />
   <router-view />
 </template>
 
@@ -14,39 +19,39 @@ body {
 }
 
 /*
- * Custom surface hierarchy variables.
- * PrimeVue v4 Aura does NOT define --p-surface-ground, --p-surface-card,
- * or --p-surface-border. We define them here using PrimeVue's numbered
- * surface palette tokens (--p-surface-0 through --p-surface-950).
+ * Semantic surface hierarchy. These four are ours: the widget library ships a
+ * numbered surface ramp but no named elevation steps, so we name them here.
+ * They build on the --cid-surface-* aliases in ui/tokens.css rather than
+ * reading vendor tokens directly, which is what keeps App.vue free of --p-*.
  *
  * Hierarchy (light): ground (gray-100) < card (white) < content (white)
  * Hierarchy (dark):  ground (zinc-950) < card (zinc-900) < content (zinc-800)
  *                    darkest → lightest, i.e. more ink = higher elevation.
  */
 :root {
-  --p-surface-ground: var(--p-surface-100);
-  --p-surface-card: var(--p-surface-0);
-  --p-surface-content: var(--p-surface-0);
-  --p-surface-border: var(--p-surface-200);
+  --cid-surface-ground: var(--cid-surface-100);
+  --cid-surface-card: var(--cid-surface-0);
+  --cid-surface-content: var(--cid-surface-0);
+  --cid-surface-border: var(--cid-surface-200);
 
   /* App type scale, dense by design. Pixel-based so they don't compound
      with browser font-size adjustments; rem-based spacing still scales. */
-  --app-fs-xs:   11px;  /* uppercase eyebrows, version tags */
-  --app-fs-sm:   12px;  /* meta strips, chips, tree sub-labels */
-  --app-fs-base: 14px;  /* body, table cells */
-  --app-fs-md:   15px;  /* h4, tree item primary */
-  --app-fs-lg:   17px;  /* h3, section titles */
-  --app-fs-xl:   20px;  /* page h2 */
-  --app-fs-2xl:  24px;  /* hero stats */
-  --app-fs-3xl:  30px;  /* KPI numerals */
+  --app-fs-xs: 11px; /* uppercase eyebrows, version tags */
+  --app-fs-sm: 12px; /* meta strips, chips, tree sub-labels */
+  --app-fs-base: 14px; /* body, table cells */
+  --app-fs-md: 15px; /* h4, tree item primary */
+  --app-fs-lg: 17px; /* h3, section titles */
+  --app-fs-xl: 20px; /* page h2 */
+  --app-fs-2xl: 24px; /* hero stats */
+  --app-fs-3xl: 30px; /* KPI numerals */
 
   /* App spacing scale, 4px rhythm. Use these as literals. */
-  --sp-1:  4px;
-  --sp-2:  8px;
-  --sp-3:  12px;
-  --sp-4:  16px;
-  --sp-6:  24px;
-  --sp-8:  32px;
+  --sp-1: 4px;
+  --sp-2: 8px;
+  --sp-3: 12px;
+  --sp-4: 16px;
+  --sp-6: 24px;
+  --sp-8: 32px;
   --sp-10: 40px;
 
   /* Semantic application colors. These intentionally sit above PrimeVue's
@@ -85,10 +90,10 @@ body {
   --cid-gauge-track: rgba(100, 116, 139, 0.18);
 }
 .p-dark {
-  --p-surface-ground: var(--p-surface-950);
-  --p-surface-card: var(--p-surface-900);
-  --p-surface-content: var(--p-surface-800);
-  --p-surface-border: var(--p-surface-700);
+  --cid-surface-ground: var(--cid-surface-950);
+  --cid-surface-card: var(--cid-surface-900);
+  --cid-surface-content: var(--cid-surface-800);
+  --cid-surface-border: var(--cid-surface-700);
 
   --cid-static-dns: #93c5fd;
   --cid-dynamic-dhcp: #86efac;
@@ -121,7 +126,7 @@ body {
   --cid-gauge-track: rgba(148, 163, 184, 0.18);
 }
 
-[data-cidrella-theme="light-one"] {
+[data-cidrella-theme='light-one'] {
   --cid-chart-1: #1d4ed8;
   --cid-chart-2: #14532d;
   --cid-chart-3: #6d28d9;
@@ -140,7 +145,7 @@ body {
   --cid-gauge-track: rgba(39, 50, 68, 0.16);
 }
 
-[data-cidrella-theme="light-tokyo-day"] {
+[data-cidrella-theme='light-tokyo-day'] {
   --cid-chart-1: #1d4ed8;
   --cid-chart-2: #166534;
   --cid-chart-3: #6d28d9;
@@ -159,7 +164,7 @@ body {
   --cid-gauge-track: rgba(51, 65, 85, 0.16);
 }
 
-[data-cidrella-theme="light-catppuccin"] {
+[data-cidrella-theme='light-catppuccin'] {
   --cid-chart-1: #1d4ed8;
   --cid-chart-2: #166534;
   --cid-chart-3: #7e22ce;
@@ -178,7 +183,7 @@ body {
   --cid-gauge-track: rgba(51, 65, 85, 0.16);
 }
 
-[data-cidrella-theme="dark-nord"] {
+[data-cidrella-theme='dark-nord'] {
   --cid-static-dns: #88c0d0;
   --cid-dynamic-dhcp: #a3be8c;
   --cid-reserved-dhcp: #b48ead;
@@ -208,7 +213,7 @@ body {
   --cid-gauge-track: rgba(194, 201, 214, 0.18);
 }
 
-[data-cidrella-theme="dark-one"] {
+[data-cidrella-theme='dark-one'] {
   --cid-static-dns: #61afef;
   --cid-dynamic-dhcp: #98c379;
   --cid-reserved-dhcp: #c678dd;
@@ -252,8 +257,9 @@ body {
   letter-spacing: 0.02em;
 }
 
-/* Compact action buttons inside DataTable rows fit the 36px row. */
-.p-datatable .p-datatable-tbody .p-button {
+/* Compact icon buttons inside DataTable rows fit the 36px row. A button with a
+   label keeps its own size, or its label is clipped to nothing. */
+.p-datatable .p-datatable-tbody .p-button.p-button-icon-only {
   width: 1.5rem !important;
   height: 1.5rem !important;
   min-width: 1.5rem !important;
@@ -262,7 +268,7 @@ body {
   font-size: 0.75rem !important;
   line-height: 1 !important;
 }
-.p-datatable .p-datatable-tbody .p-button .p-button-icon {
+.p-datatable .p-datatable-tbody .p-button-icon-only .p-button-icon {
   font-size: 0.75rem !important;
 }
 .p-datatable .action-buttons {
@@ -274,21 +280,21 @@ body {
 
 /* Uniform toast style: dark background, light text */
 .p-toast-message {
-  background: var(--p-surface-700) !important;
+  background: var(--cid-surface-700) !important;
   border: none !important;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3) !important;
 }
 .p-toast-message-text,
 .p-toast-summary,
 .p-toast-detail {
-  color: var(--p-surface-0) !important;
+  color: var(--cid-surface-0) !important;
 }
 .p-toast-close-button {
-  color: var(--p-surface-300) !important;
+  color: var(--cid-surface-300) !important;
 }
 /* Circular icon backgrounds: white icon on colored circle */
 .p-toast-message-icon {
-  color: var(--p-surface-0) !important;
+  color: var(--cid-surface-0) !important;
   width: 1.75rem !important;
   height: 1.75rem !important;
   min-width: 1.75rem !important;
@@ -312,27 +318,75 @@ body {
 }
 
 /* ── Global badge utility classes ── */
-.badge { font-size: 0.75rem; padding: 0.15rem 0.5rem; border-radius: 4px; font-weight: 600; display: inline-block; }
-.badge-sm { font-size: 0.7rem; padding: 0.1rem 0.4rem; }
+.badge {
+  font-size: 0.75rem;
+  padding: 0.15rem 0.5rem;
+  border-radius: 4px;
+  font-weight: 600;
+  display: inline-block;
+}
+.badge-sm {
+  font-size: 0.7rem;
+  padding: 0.1rem 0.4rem;
+}
 
-.badge-green   { background: color-mix(in srgb, var(--cid-status-ok) 20%, transparent);  color: var(--cid-status-ok); }
-.badge-red     { background: color-mix(in srgb, var(--cid-status-err) 20%, transparent); color: var(--cid-status-err); }
-.badge-blue    { background: color-mix(in srgb, var(--cid-status-info) 20%, transparent); color: var(--cid-status-info); }
-.badge-yellow  { background: color-mix(in srgb, var(--cid-status-warn) 20%, transparent); color: var(--cid-status-warn); }
-.badge-orange  { background: color-mix(in srgb, var(--cid-gateway) 20%, transparent); color: var(--cid-gateway); }
-.badge-indigo  { background: color-mix(in srgb, var(--cid-reserved-dhcp) 20%, transparent); color: var(--cid-reserved-dhcp); }
-.badge-purple  { background: color-mix(in srgb, var(--cid-reserved-dhcp) 20%, transparent); color: var(--cid-reserved-dhcp); }
-.badge-muted   { background: color-mix(in srgb, var(--cid-status-muted) 15%, transparent); color: var(--cid-status-muted); }
-.badge-primary { background: color-mix(in srgb, var(--p-primary-color) 20%, transparent); color: var(--p-primary-color); }
+.badge-green {
+  background: color-mix(in srgb, var(--cid-status-ok) 20%, transparent);
+  color: var(--cid-status-ok);
+}
+.badge-red {
+  background: color-mix(in srgb, var(--cid-status-err) 20%, transparent);
+  color: var(--cid-status-err);
+}
+.badge-blue {
+  background: color-mix(in srgb, var(--cid-status-info) 20%, transparent);
+  color: var(--cid-status-info);
+}
+.badge-yellow {
+  background: color-mix(in srgb, var(--cid-status-warn) 20%, transparent);
+  color: var(--cid-status-warn);
+}
+.badge-orange {
+  background: color-mix(in srgb, var(--cid-gateway) 20%, transparent);
+  color: var(--cid-gateway);
+}
+.badge-indigo {
+  background: color-mix(in srgb, var(--cid-reserved-dhcp) 20%, transparent);
+  color: var(--cid-reserved-dhcp);
+}
+.badge-purple {
+  background: color-mix(in srgb, var(--cid-reserved-dhcp) 20%, transparent);
+  color: var(--cid-reserved-dhcp);
+}
+.badge-muted {
+  background: color-mix(in srgb, var(--cid-status-muted) 15%, transparent);
+  color: var(--cid-status-muted);
+}
+.badge-primary {
+  background: color-mix(in srgb, var(--cid-primary-color) 20%, transparent);
+  color: var(--cid-primary-color);
+}
 
-.badge-green-light  { background: color-mix(in srgb, var(--cid-status-ok) 15%, transparent); color: var(--cid-status-ok); }
-.badge-red-light    { background: color-mix(in srgb, var(--cid-status-err) 15%, transparent); color: var(--cid-status-err); }
-.badge-yellow-light { background: color-mix(in srgb, var(--cid-status-warn) 15%, transparent); color: var(--cid-status-warn); }
-.badge-blue-light   { background: color-mix(in srgb, var(--cid-status-info) 15%, transparent); color: var(--cid-status-info); }
+.badge-green-light {
+  background: color-mix(in srgb, var(--cid-status-ok) 15%, transparent);
+  color: var(--cid-status-ok);
+}
+.badge-red-light {
+  background: color-mix(in srgb, var(--cid-status-err) 15%, transparent);
+  color: var(--cid-status-err);
+}
+.badge-yellow-light {
+  background: color-mix(in srgb, var(--cid-status-warn) 15%, transparent);
+  color: var(--cid-status-warn);
+}
+.badge-blue-light {
+  background: color-mix(in srgb, var(--cid-status-info) 15%, transparent);
+  color: var(--cid-status-info);
+}
 
 /* Muted cell text - for placeholders and non-highlighted dense-table text. */
 .cell-muted {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: monospace;
   font-size: var(--app-fs-base);
 }
@@ -356,13 +410,25 @@ body {
   border-radius: 4px;
   line-height: 1.4;
   white-space: nowrap;
-  background: color-mix(in srgb, var(--p-primary-color) 18%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 18%, transparent);
+  color: var(--cid-primary-color);
 }
-.taxonomy-tag.taxonomy-warn   { background: color-mix(in srgb, var(--cid-status-warn) 16%, transparent); color: var(--cid-status-warn); }
-.taxonomy-tag.taxonomy-err    { background: color-mix(in srgb, var(--cid-status-err) 16%, transparent); color: var(--cid-status-err); }
-.taxonomy-tag.taxonomy-info   { background: color-mix(in srgb, var(--cid-status-info) 16%, transparent); color: var(--cid-status-info); }
-.taxonomy-tag.taxonomy-muted  { background: color-mix(in srgb, var(--cid-status-muted) 16%, transparent); color: var(--cid-status-muted); }
+.taxonomy-tag.taxonomy-warn {
+  background: color-mix(in srgb, var(--cid-status-warn) 16%, transparent);
+  color: var(--cid-status-warn);
+}
+.taxonomy-tag.taxonomy-err {
+  background: color-mix(in srgb, var(--cid-status-err) 16%, transparent);
+  color: var(--cid-status-err);
+}
+.taxonomy-tag.taxonomy-info {
+  background: color-mix(in srgb, var(--cid-status-info) 16%, transparent);
+  color: var(--cid-status-info);
+}
+.taxonomy-tag.taxonomy-muted {
+  background: color-mix(in srgb, var(--cid-status-muted) 16%, transparent);
+  color: var(--cid-status-muted);
+}
 
 .address-type-pill {
   display: inline-flex;
@@ -406,6 +472,13 @@ body {
   background: color-mix(in srgb, var(--cid-reserved) 16%, transparent);
   color: var(--cid-reserved);
 }
+/* Held by a disabled DNS record: the static DNS color, outlined and dashed
+   because nothing answers for the name. */
+.address-type-pill.type-dns-hold {
+  background: transparent;
+  border: 1px dashed color-mix(in srgb, var(--cid-static-dns) 70%, transparent);
+  color: var(--cid-static-dns);
+}
 .address-type-pill.type-rogue {
   background: color-mix(in srgb, var(--cid-rogue) 16%, transparent);
   color: var(--cid-rogue);
@@ -425,28 +498,40 @@ body {
 }
 .status-text::before {
   content: '';
-  width: 6px; height: 6px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   flex-shrink: 0;
   background: currentColor;
 }
-.status-text.state-err    { color: var(--cid-status-err); }
-.status-text.state-warn   { color: var(--cid-status-warn); }
-.status-text.state-ok     { color: var(--cid-status-ok); }
-.status-text.state-info   { color: var(--cid-status-info); }
-.status-text.state-muted  { color: var(--cid-status-muted); }
+.status-text.state-err {
+  color: var(--cid-status-err);
+}
+.status-text.state-warn {
+  color: var(--cid-status-warn);
+}
+.status-text.state-ok {
+  color: var(--cid-status-ok);
+}
+.status-text.state-info {
+  color: var(--cid-status-info);
+}
+.status-text.state-muted {
+  color: var(--cid-status-muted);
+}
 /* "Off" variants use a ring instead of a filled dot. Shape carries meaning
    even in grayscale, addressing color-alone contrast concerns. */
 .status-text.state-muted::before {
   background: transparent;
   border: 1.5px solid currentColor;
-  width: 7px; height: 7px;
+  width: 7px;
+  height: 7px;
 }
 
 /* Shared active menubar item styling */
 .menubar-active-item {
-  background: color-mix(in srgb, var(--p-primary-color) 15%, transparent);
-  color: var(--p-primary-color);
+  background: color-mix(in srgb, var(--cid-primary-color) 15%, transparent);
+  color: var(--cid-primary-color);
   font-weight: 600;
 }
 </style>

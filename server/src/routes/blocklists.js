@@ -2,9 +2,17 @@ import { Router } from 'express';
 import { getDb, audit, getSetting } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
-import { ensureCategoryRows, refreshCategory, refreshAllEnabled, generateBlocklistConfig, SCHEDULE_HOURS } from '../utils/blocklist.js';
+import {
+  ensureCategoryRows,
+  refreshCategory,
+  refreshAllEnabled,
+  generateBlocklistConfig,
+  SCHEDULE_HOURS,
+} from '../utils/blocklist.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
-import { isValidIpv4, isValidDomain } from '../utils/ip.js';
+import { isValidIpv4, isValidDomain, isValidAddress } from '../utils/ip.js';
+import { addressFamily, canonicalizeIp } from '../utils/address.js';
+import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { isIntInRangeCoercing } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
 import * as BlocklistStore from '../models/blocklist-store.js';
@@ -18,8 +26,8 @@ router.get('/categories', requirePerm('dns:read'), (req, res) => {
 
   const rows = db.prepare('SELECT * FROM blocklist_categories ORDER BY slug').all();
   // Merge with catalog metadata
-  const result = BLOCKLIST_CATEGORIES.map(cat => {
-    const row = rows.find(r => r.slug === cat.slug) || {};
+  const result = BLOCKLIST_CATEGORIES.map((cat) => {
+    const row = rows.find((r) => r.slug === cat.slug) || {};
     return {
       slug: cat.slug,
       name: cat.name,
@@ -30,7 +38,7 @@ router.get('/categories', requirePerm('dns:read'), (req, res) => {
       last_fetched_at: row.last_fetched_at || null,
       last_error: row.last_error || null,
       source_url: row.source_url || getDefaultCategoryUrl(cat.slug),
-      is_custom_url: !!row.source_url
+      is_custom_url: !!row.source_url,
     };
   });
   res.json(result);
@@ -42,11 +50,12 @@ router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
   const { slug } = req.params;
   const { enabled } = req.body;
 
-  const cat = BLOCKLIST_CATEGORIES.find(c => c.slug === slug);
+  const cat = BLOCKLIST_CATEGORIES.find((c) => c.slug === slug);
   if (!cat) return res.status(404).json({ error: 'Unknown category' });
   // Require a real boolean. The old check accepted any truthy value, so
   // {"enabled":{...}} enabled the category and kicked off a live download.
-  if (typeof enabled !== 'boolean') return res.status(400).json({ error: 'enabled must be a boolean' });
+  if (typeof enabled !== 'boolean')
+    return res.status(400).json({ error: 'enabled must be a boolean' });
 
   ensureCategoryRows(db);
   BlocklistStore.setCategoryEnabled(db, slug, enabled);
@@ -55,7 +64,9 @@ router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
 
   // If enabling and never fetched, trigger initial download
   if (enabled) {
-    const row = db.prepare('SELECT last_fetched_at FROM blocklist_categories WHERE slug = ?').get(slug);
+    const row = db
+      .prepare('SELECT last_fetched_at FROM blocklist_categories WHERE slug = ?')
+      .get(slug);
     if (!row?.last_fetched_at) {
       try {
         const result = await refreshCategory(db, slug);
@@ -77,7 +88,7 @@ router.put('/categories/:slug/url', requirePerm('dns:write'), async (req, res) =
   const { slug } = req.params;
   const { source_url } = req.body || {};
 
-  const cat = BLOCKLIST_CATEGORIES.find(c => c.slug === slug);
+  const cat = BLOCKLIST_CATEGORIES.find((c) => c.slug === slug);
   if (!cat) return res.status(404).json({ error: 'Unknown category' });
 
   if (source_url !== undefined && source_url !== null && typeof source_url !== 'string') {
@@ -97,8 +108,15 @@ router.put('/categories/:slug/url', requirePerm('dns:write'), async (req, res) =
   }
   BlocklistStore.setCategorySourceUrl(db, slug, urlValue);
 
-  audit(req.user.id, 'update', 'blocklist_category', null, { slug, source_url: urlValue || getDefaultCategoryUrl(slug) });
-  res.json({ ok: true, source_url: urlValue || getDefaultCategoryUrl(slug), is_custom_url: !!urlValue });
+  audit(req.user.id, 'update', 'blocklist_category', null, {
+    slug,
+    source_url: urlValue || getDefaultCategoryUrl(slug),
+  });
+  res.json({
+    ok: true,
+    source_url: urlValue || getDefaultCategoryUrl(slug),
+    is_custom_url: !!urlValue,
+  });
 });
 
 // POST /api/blocklists/categories/:slug/refresh: manual refresh single category
@@ -106,13 +124,15 @@ router.post('/categories/:slug/refresh', requirePerm('dns:write'), async (req, r
   const db = getDb();
   const { slug } = req.params;
 
-  const cat = BLOCKLIST_CATEGORIES.find(c => c.slug === slug);
+  const cat = BLOCKLIST_CATEGORIES.find((c) => c.slug === slug);
   if (!cat) return res.status(404).json({ error: 'Unknown category' });
 
   try {
     await refreshCategory(db, slug);
     generateBlocklistConfig(db);
-    const row = db.prepare('SELECT domain_count, last_fetched_at FROM blocklist_categories WHERE slug = ?').get(slug);
+    const row = db
+      .prepare('SELECT domain_count, last_fetched_at FROM blocklist_categories WHERE slug = ?')
+      .get(slug);
     res.json({ ok: true, domain_count: row?.domain_count, last_fetched_at: row?.last_fetched_at });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -133,22 +153,41 @@ router.post('/refresh', requirePerm('dns:write'), async (req, res) => {
 // GET /api/blocklists/stats
 router.get('/stats', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
-  const enabledCount = db.prepare('SELECT COUNT(*) as c FROM blocklist_categories WHERE enabled = 1').get().c;
-  const totalDomains = db.prepare(`
+  const enabledCount = db
+    .prepare('SELECT COUNT(*) as c FROM blocklist_categories WHERE enabled = 1')
+    .get().c;
+  const totalDomains = db
+    .prepare(
+      `
     SELECT COUNT(DISTINCT bd.domain) as c
     FROM blocklist_domains bd
     JOIN blocklist_categories bc ON bd.category_slug = bc.slug
     WHERE bc.enabled = 1
-  `).get().c;
-  const whitelistCount = db.prepare('SELECT COUNT(*) as c FROM blocklist_whitelist').get().c;
-  const lastUpdate = db.prepare('SELECT MAX(last_fetched_at) as t FROM blocklist_categories WHERE enabled = 1').get().t;
+  `,
+    )
+    .get().c;
+  const allowlistCount = db.prepare('SELECT COUNT(*) as c FROM blocklist_allowlist').get().c;
+  const lastUpdate = db
+    .prepare('SELECT MAX(last_fetched_at) as t FROM blocklist_categories WHERE enabled = 1')
+    .get().t;
 
-  res.json({ enabled_categories: enabledCount, total_domains: totalDomains, whitelist_count: whitelistCount, last_update: lastUpdate });
+  res.json({
+    enabled_categories: enabledCount,
+    total_domains: totalDomains,
+    allowlist_count: allowlistCount,
+    last_update: lastUpdate,
+  });
 });
 
 // GET /api/blocklists/settings
 router.get('/settings', requirePerm('dns:read'), (req, res) => {
-  const keys = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule', 'blocklist_max_feed_mb'];
+  const keys = [
+    'blocklist_enabled',
+    'blocklist_redirect_ip',
+    'blocklist_redirect_ip6',
+    'blocklist_update_schedule',
+    'blocklist_max_feed_mb',
+  ];
   const settings = {};
   for (const key of keys) {
     settings[key] = getSetting(key) || '';
@@ -159,34 +198,72 @@ router.get('/settings', requirePerm('dns:read'), (req, res) => {
 // PUT /api/blocklists/settings
 router.put('/settings', requirePerm('dns:write'), (req, res) => {
   const db = getDb();
-  const allowed = ['blocklist_enabled', 'blocklist_redirect_ip', 'blocklist_update_schedule', 'blocklist_max_feed_mb'];
+  const allowed = [
+    'blocklist_enabled',
+    'blocklist_redirect_ip',
+    'blocklist_redirect_ip6',
+    'blocklist_update_schedule',
+    'blocklist_max_feed_mb',
+  ];
 
   // Settings are stored as strings, so the toggle arrives as 'true'/'false'.
   // The enum checks also reject non-string types (arrays, objects, booleans).
-  if (req.body.blocklist_enabled !== undefined && !['true', 'false'].includes(req.body.blocklist_enabled)) {
+  if (
+    req.body.blocklist_enabled !== undefined &&
+    !['true', 'false'].includes(req.body.blocklist_enabled)
+  ) {
     return res.status(400).json({ error: "blocklist_enabled must be 'true' or 'false'" });
   }
 
   const validSchedules = Object.keys(SCHEDULE_HOURS);
-  if (req.body.blocklist_update_schedule !== undefined && !validSchedules.includes(req.body.blocklist_update_schedule)) {
-    return res.status(400).json({ error: `blocklist_update_schedule must be one of: ${validSchedules.join(', ')}` });
+  if (
+    req.body.blocklist_update_schedule !== undefined &&
+    !validSchedules.includes(req.body.blocklist_update_schedule)
+  ) {
+    return res
+      .status(400)
+      .json({ error: `blocklist_update_schedule must be one of: ${validSchedules.join(', ')}` });
   }
 
   // redirect IP becomes the A-record for every blocked domain, so it must be
   // a real IPv4 (or empty = NXDOMAIN). An object persisted as "[object Object]"
   // and drove a garbage answer IP.
-  if (req.body.blocklist_redirect_ip !== undefined
-      && req.body.blocklist_redirect_ip !== ''
-      && (typeof req.body.blocklist_redirect_ip !== 'string' || !isValidIpv4(req.body.blocklist_redirect_ip))) {
-    return res.status(400).json({ error: 'blocklist_redirect_ip must be a valid IPv4 address or empty' });
+  if (
+    req.body.blocklist_redirect_ip !== undefined &&
+    req.body.blocklist_redirect_ip !== '' &&
+    (typeof req.body.blocklist_redirect_ip !== 'string' ||
+      !isValidIpv4(req.body.blocklist_redirect_ip))
+  ) {
+    return res
+      .status(400)
+      .json({ error: 'blocklist_redirect_ip must be a valid IPv4 address or empty' });
+  }
+  // The AAAA counterpart for blocked names asked over IPv6.
+  if (
+    req.body.blocklist_redirect_ip6 !== undefined &&
+    req.body.blocklist_redirect_ip6 !== '' &&
+    (typeof req.body.blocklist_redirect_ip6 !== 'string' ||
+      !isValidAddress(req.body.blocklist_redirect_ip6) ||
+      addressFamily(req.body.blocklist_redirect_ip6) !== 6)
+  ) {
+    return res
+      .status(400)
+      .json({ error: 'blocklist_redirect_ip6 must be a valid IPv6 address or empty' });
+  }
+  if (typeof req.body.blocklist_redirect_ip6 === 'string' && req.body.blocklist_redirect_ip6) {
+    // Setting a sinkhole is creating an IPv6 object; clearing it is not.
+    if (refuseIpv6Unless(res)) return;
+    req.body.blocklist_redirect_ip6 = canonicalizeIp(req.body.blocklist_redirect_ip6);
   }
 
   // Per-feed download ceiling. Coercing variant because this surface is
   // string-typed end to end (the UI posts "128", not 128). The upper bound is
   // a sanity rail, not a capability claim: a feed that big would take minutes
   // to import and gigabytes of disk.
-  if (req.body.blocklist_max_feed_mb !== undefined
-      && !isIntInRangeCoercing(req.body.blocklist_max_feed_mb, 1, 2048)) {
+  if (
+    req.body.blocklist_max_feed_mb !== undefined &&
+    !isIntInRangeCoercing(req.body.blocklist_max_feed_mb, 1, 2048)
+  ) {
     return res.status(400).json({ error: 'blocklist_max_feed_mb must be an integer 1-2048' });
   }
 
@@ -203,20 +280,24 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
   res.json({ ok: true });
 });
 
-// GET /api/blocklists/whitelist
-router.get('/whitelist', requirePerm('dns:read'), (req, res) => {
+// GET /api/blocklists/allowlist
+// The list was called a whitelist until v0.5.0. The old path stays as an
+// alias for one release so a client bundle cached from before the rename
+// keeps working across the upgrade.
+router.get(['/allowlist', '/whitelist'], requirePerm('dns:read'), (req, res) => {
   const db = getDb();
-  const items = db.prepare('SELECT * FROM blocklist_whitelist ORDER BY domain').all();
+  const items = db.prepare('SELECT * FROM blocklist_allowlist ORDER BY domain').all();
   res.json(items);
 });
 
-// POST /api/blocklists/whitelist
-router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
+// POST /api/blocklists/allowlist
+router.post(['/allowlist', '/whitelist'], requirePerm('dns:write'), (req, res) => {
   const db = getDb();
   const { domain, reason } = req.body;
   // Type guard before the string methods below: a non-string domain (number,
   // array, object) would throw on .trim()/.toLowerCase() and 500.
-  if (typeof domain !== 'string' || !domain) return res.status(400).json({ error: 'Domain is required' });
+  if (typeof domain !== 'string' || !domain)
+    return res.status(400).json({ error: 'Domain is required' });
 
   // Shape and the 253-char cap come from the shared validator. This route used
   // to inline its own regex with NO length bound at all, so a 300-character
@@ -234,26 +315,28 @@ router.post('/whitelist', requirePerm('dns:write'), (req, res) => {
   }
 
   const normalized = domain.toLowerCase().trim();
-  const existing = db.prepare('SELECT id FROM blocklist_whitelist WHERE domain = ?').get(normalized);
-  if (existing) return res.status(409).json({ error: 'Domain already whitelisted' });
+  const existing = db
+    .prepare('SELECT id FROM blocklist_allowlist WHERE domain = ?')
+    .get(normalized);
+  if (existing) return res.status(409).json({ error: 'Domain already allowlisted' });
 
-  const id = BlocklistStore.addWhitelistEntry(db, normalized, reason);
+  const id = BlocklistStore.addAllowlistEntry(db, normalized, reason);
   generateBlocklistConfig(db);
 
-  audit(req.user.id, 'create', 'blocklist_whitelist', id, { domain: normalized });
+  audit(req.user.id, 'create', 'blocklist_allowlist', id, { domain: normalized });
   res.status(201).json({ id });
 });
 
-// DELETE /api/blocklists/whitelist/:id
-router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
+// DELETE /api/blocklists/allowlist/:id
+router.delete(['/allowlist/:id', '/whitelist/:id'], requirePerm('dns:write'), (req, res) => {
   const db = getDb();
-  const entry = db.prepare('SELECT * FROM blocklist_whitelist WHERE id = ?').get(req.params.id);
-  if (!entry) return res.status(404).json({ error: 'Whitelist entry not found' });
+  const entry = db.prepare('SELECT * FROM blocklist_allowlist WHERE id = ?').get(req.params.id);
+  if (!entry) return res.status(404).json({ error: 'Allowlist entry not found' });
 
-  BlocklistStore.deleteWhitelistEntry(db, entry.id);
+  BlocklistStore.deleteAllowlistEntry(db, entry.id);
   generateBlocklistConfig(db);
 
-  audit(req.user.id, 'delete', 'blocklist_whitelist', entry.id, { domain: entry.domain });
+  audit(req.user.id, 'delete', 'blocklist_allowlist', entry.id, { domain: entry.domain });
   res.json({ ok: true });
 });
 
@@ -261,7 +344,8 @@ router.delete('/whitelist/:id', requirePerm('dns:write'), (req, res) => {
 router.get('/search', requirePerm('dns:read'), (req, res) => {
   const db = getDb();
   const { q, page = 1, limit = 50 } = req.query;
-  if (typeof q !== 'string' || q.length < 2) return res.json({ items: [], hasMore: false, page: 1, limit: 50 });
+  if (typeof q !== 'string' || q.length < 2)
+    return res.json({ items: [], hasMore: false, page: 1, limit: 50 });
 
   const pageNum = Math.max(1, parseInt(page, 10) || 1);
   const limitNum = Math.min(100, Math.max(1, parseInt(limit, 10) || 50));
@@ -286,7 +370,9 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
   // One extra row is fetched instead. Its presence is all the UI needs to
   // decide whether a Next button should be live, and it costs nothing: the scan
   // was already going to produce it or hit the end of the table.
-  const rows = db.prepare(`
+  const rows = db
+    .prepare(
+      `
     SELECT bd.domain, GROUP_CONCAT(bc.slug, ', ') as categories
     FROM blocklist_domains bd
     JOIN blocklist_categories bc ON bd.category_slug = bc.slug
@@ -294,17 +380,22 @@ router.get('/search', requirePerm('dns:read'), (req, res) => {
     GROUP BY bd.domain
     ORDER BY bd.domain
     LIMIT ? OFFSET ?
-  `).all(searchTerm, limitNum + 1, offset);
+  `,
+    )
+    .all(searchTerm, limitNum + 1, offset);
 
   const hasMore = rows.length > limitNum;
   const items = hasMore ? rows.slice(0, limitNum) : rows;
 
-  const whitelisted = new Set(
-    db.prepare('SELECT domain FROM blocklist_whitelist').all().map(r => r.domain)
+  const allowlisted = new Set(
+    db
+      .prepare('SELECT domain FROM blocklist_allowlist')
+      .all()
+      .map((r) => r.domain),
   );
 
   for (const item of items) {
-    item.whitelisted = whitelisted.has(item.domain);
+    item.allowlisted = allowlisted.has(item.domain);
   }
 
   // `hasMore` rather than a total. An exact count of matches across 2.65M rows

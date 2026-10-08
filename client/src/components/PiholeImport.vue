@@ -1,7 +1,18 @@
 <template>
-  <Dialog v-model:visible="visible" header="Import from Pi-hole" modal :style="{ width: '32rem' }" data-track="dialog-pihole-import"
-          @hide="panelRef?.resetState()">
-    <PiholeImportPanel ref="panelRef" showCancel @cancel="visible = false" @imported="$emit('imported')" />
+  <Dialog
+    v-model:visible="visible"
+    header="Import from Pi-hole"
+    modal
+    :style="{ width: '32rem' }"
+    data-track="dialog-pihole-import"
+    @hide="panelRef?.resetState()"
+  >
+    <PiholeImportPanel
+      ref="panelRef"
+      showCancel
+      @cancel="visible = false"
+      @imported="$emit('imported')"
+    />
   </Dialog>
 </template>
 

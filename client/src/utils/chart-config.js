@@ -17,8 +17,16 @@ if (typeof window !== 'undefined') {
 }
 
 export const CHART_COLORS = [
-  '#2563eb', '#16a34a', '#9333ea', '#d97706', '#dc2626',
-  '#0891b2', '#4f46e5', '#be123c', '#65a30d', '#0f766e',
+  '#2563eb',
+  '#16a34a',
+  '#9333ea',
+  '#d97706',
+  '#dc2626',
+  '#0891b2',
+  '#4f46e5',
+  '#be123c',
+  '#65a30d',
+  '#0f766e',
 ];
 
 export function cssVar(name, fallback = '') {
@@ -38,16 +46,24 @@ export function parseColor(raw) {
   const s = raw.trim();
   if (s.startsWith('#')) {
     let hex = s.slice(1);
-    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    if (hex.length === 3)
+      hex = hex
+        .split('')
+        .map((c) => c + c)
+        .join('');
     if (hex.length !== 6) return null;
-    return [parseInt(hex.slice(0, 2), 16), parseInt(hex.slice(2, 4), 16), parseInt(hex.slice(4, 6), 16)];
+    return [
+      parseInt(hex.slice(0, 2), 16),
+      parseInt(hex.slice(2, 4), 16),
+      parseInt(hex.slice(4, 6), 16),
+    ];
   }
   const m = s.match(/rgba?\(\s*([\d.]+)[\s,]+([\d.]+)[\s,]+([\d.]+)/);
   if (m) return [Number(m[1]), Number(m[2]), Number(m[3])];
   return null;
 }
 
-function withAlpha(color, alpha) {
+export function withAlpha(color, alpha) {
   const rgb = parseColor(color);
   if (!rgb) return color;
   return `rgba(${rgb[0]}, ${rgb[1]}, ${rgb[2]}, ${alpha})`;
@@ -79,7 +95,8 @@ export function readableTextColor(background) {
 
 export function chartColor(indexOrName, fallback = null) {
   if (typeof indexOrName === 'number') {
-    const index = ((indexOrName - 1) % CHART_COLORS.length + CHART_COLORS.length) % CHART_COLORS.length;
+    const index =
+      (((indexOrName - 1) % CHART_COLORS.length) + CHART_COLORS.length) % CHART_COLORS.length;
     return cssVar(`--cid-chart-${index + 1}`, fallback || CHART_COLORS[index]);
   }
   const semantic = {
@@ -93,7 +110,7 @@ export function chartColor(indexOrName, fallback = null) {
     grid: ['--cid-chart-grid', 'rgba(100, 116, 139, 0.22)'],
   };
   const [token, defaultColor] = semantic[indexOrName] || [];
-  return token ? cssVar(token, fallback || defaultColor) : (fallback || CHART_COLORS[0]);
+  return token ? cssVar(token, fallback || defaultColor) : fallback || CHART_COLORS[0];
 }
 
 export function chartFill(indexOrName, alpha = 0.15) {
@@ -134,6 +151,13 @@ export const RANGE_OPTIONS = [
   { label: 'Last 1 week', value: '1w' },
 ];
 
+// The range as a panel note reads it: "last 4 hours", "last week".
+export function rangeLabel(value) {
+  return (RANGE_OPTIONS.find((o) => o.value === value)?.label || 'Last 24 hours')
+    .replace('Last ', 'last ')
+    .replace(/ 1 (hour|week)$/, ' $1');
+}
+
 const LEGEND_LABELS = {
   usePointStyle: true,
   pointStyle: 'circle',
@@ -157,7 +181,8 @@ export function makeDoughnutOptions() {
       },
       tooltip: { enabled: true },
       datalabels: {
-        color: (ctx) => readableTextColor(ctx.dataset.backgroundColor?.[ctx.dataIndex] || '#000000'),
+        color: (ctx) =>
+          readableTextColor(ctx.dataset.backgroundColor?.[ctx.dataIndex] || '#000000'),
         font: { weight: 'bold', size: 11 },
         formatter: (value, ctx) => {
           const total = ctx.dataset.data.reduce((a, b) => a + b, 0);
@@ -197,7 +222,10 @@ export function makeLineOptions({ yLabel, tooltipCallback, stacked = false, extr
       datalabels: { display: false },
     },
     scales: {
-      x: { ticks: { maxTicksLimit: 12, maxRotation: 0, color: textColor }, grid: { display: false } },
+      x: {
+        ticks: { maxTicksLimit: 12, maxRotation: 0, color: textColor },
+        grid: { display: false },
+      },
       y: {
         title: yLabel ? { display: true, text: yLabel, color: textColor } : undefined,
         ticks: { color: textColor },
@@ -217,15 +245,19 @@ export function makeLineOptions({ yLabel, tooltipCallback, stacked = false, extr
  * @param {Function} labelFn  - item → label string
  * @param {Function} [valueFn] - item → numeric value (defaults to r => Number(r.count))
  */
-export function makeDoughnutData(items, labelFn, valueFn = r => Number(r.count)) {
+export function makeDoughnutData(items, labelFn, valueFn = (r) => Number(r.count)) {
   const alpha = cssNumber('--cid-chart-doughnut-alpha', 0.62);
-  const palette = Array.from({ length: Math.max(items.length, 1) }, (_, i) => chartFill(i + 1, alpha));
+  const palette = Array.from({ length: Math.max(items.length, 1) }, (_, i) =>
+    chartFill(i + 1, alpha),
+  );
   return {
     labels: items.map(labelFn),
-    datasets: [{
-      data: items.map(valueFn),
-      backgroundColor: items.map((_, i) => palette[i % palette.length]),
-      borderWidth: 0,
-    }],
+    datasets: [
+      {
+        data: items.map(valueFn),
+        backgroundColor: items.map((_, i) => palette[i % palette.length]),
+        borderWidth: 0,
+      },
+    ],
   };
 }

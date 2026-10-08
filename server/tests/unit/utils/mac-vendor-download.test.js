@@ -10,11 +10,16 @@ vi.mock('../../../src/utils/url-guard.js', () => ({
 const rows = [];
 const fakeDb = {
   prepare: (sql) => ({
-    run: (...a) => { rows.push([sql, a]); },
+    run: (...a) => {
+      rows.push([sql, a]);
+    },
     get: () => ({ cnt: 0 }),
     all: () => [],
   }),
-  transaction: (fn) => (...a) => fn(...a),
+  transaction:
+    (fn) =>
+    (...a) =>
+      fn(...a),
 };
 vi.mock('../../../src/db/init.js', () => ({ getDb: () => fakeDb }));
 
@@ -36,13 +41,23 @@ const { parseManufLine } = mod;
  */
 describe('parseManufLine', () => {
   it('parses a 24-bit prefix', () => {
-    expect(parseManufLine('00:1A:2B\tAcme\tAcme Corporation'))
-      .toEqual({ prefix: '00:1A:2B', prefixLength: 24, shortName: 'Acme', vendorName: 'Acme Corporation' });
+    expect(parseManufLine('00:1A:2B\tAcme\tAcme Corporation')).toEqual({
+      prefix: '00:1A:2B',
+      prefixLength: 24,
+      shortName: 'Acme',
+      vendorName: 'Acme Corporation',
+    });
   });
 
   it('parses 28-bit and 36-bit prefixes', () => {
-    expect(parseManufLine('00:1A:2B:30:00/28\tS\tShort Co')).toMatchObject({ prefix: '00:1A:2B:30:00', prefixLength: 28 });
-    expect(parseManufLine('00:1A:2B:30:40/36\tT\tTiny Co')).toMatchObject({ prefix: '00:1A:2B:30:40', prefixLength: 36 });
+    expect(parseManufLine('00:1A:2B:30:00/28\tS\tShort Co')).toMatchObject({
+      prefix: '00:1A:2B:30:00',
+      prefixLength: 28,
+    });
+    expect(parseManufLine('00:1A:2B:30:40/36\tT\tTiny Co')).toMatchObject({
+      prefix: '00:1A:2B:30:40',
+      prefixLength: 36,
+    });
   });
 
   it('uppercases the prefix', () => {
@@ -50,13 +65,24 @@ describe('parseManufLine', () => {
   });
 
   it('falls back to the short name when there is no full name', () => {
-    expect(parseManufLine('00:1A:2B\tOnlyShort')).toMatchObject({ shortName: 'OnlyShort', vendorName: 'OnlyShort' });
+    expect(parseManufLine('00:1A:2B\tOnlyShort')).toMatchObject({
+      shortName: 'OnlyShort',
+      vendorName: 'OnlyShort',
+    });
   });
 
   it('skips comments, blanks and malformed lines', () => {
     for (const line of [
-      '', '   \tx\ty'.slice(0, 0), '# a comment', '#', 'no-tabs-at-all',
-      '00:1A:2B', 'ZZ:ZZ:ZZ\tx\tX', '00-1A-2B\tx\tX', '\tx\tX', '001A2B\tx\tX',
+      '',
+      '   \tx\ty'.slice(0, 0),
+      '# a comment',
+      '#',
+      'no-tabs-at-all',
+      '00:1A:2B',
+      'ZZ:ZZ:ZZ\tx\tX',
+      '00-1A-2B\tx\tX',
+      '\tx\tX',
+      '001A2B\tx\tX',
     ]) {
       expect(parseManufLine(line), JSON.stringify(line)).toBeNull();
     }
@@ -83,12 +109,18 @@ describe('refreshVendorDb: the download is capped, timed and guarded', () => {
     vi.spyOn(console, 'error').mockImplementation((...a) => errors.push(a.join(' ')));
     vi.spyOn(console, 'log').mockImplementation(() => {});
   });
-  afterEach(() => { vi.restoreAllMocks(); });
+  afterEach(() => {
+    vi.restoreAllMocks();
+  });
 
-  const manuf = (n) => Readable.from(
-    Array.from({ length: n }, (_, i) =>
-      `${i.toString(16).padStart(6, '0').match(/../g).join(':').toUpperCase()}\tV${i}\tVendor ${i}\n`)
-  );
+  const manuf = (n) =>
+    Readable.from(
+      Array.from(
+        { length: n },
+        (_, i) =>
+          `${i.toString(16).padStart(6, '0').match(/../g).join(':').toUpperCase()}\tV${i}\tVendor ${i}\n`,
+      ),
+    );
 
   it('asks the guard for a bounded, timed stream rather than calling fetch', async () => {
     openPinnedOutboundStream.mockResolvedValue({ ok: true, stream: manuf(1500) });
@@ -113,7 +145,11 @@ describe('refreshVendorDb: the download is capped, timed and guarded', () => {
   });
 
   it('writes NOTHING when the guard refuses the download, and says why', async () => {
-    openPinnedOutboundStream.mockResolvedValue({ ok: false, status: 503, statusText: 'Unavailable' });
+    openPinnedOutboundStream.mockResolvedValue({
+      ok: false,
+      status: 503,
+      statusText: 'Unavailable',
+    });
     await mod.refreshVendorDb();
     expect(rows.filter(([sql]) => sql.includes('DELETE FROM mac_vendors'))).toHaveLength(0);
     expect(rows.filter(([sql]) => sql.includes('INSERT OR REPLACE'))).toHaveLength(0);
@@ -125,7 +161,9 @@ describe('refreshVendorDb: the download is capped, timed and guarded', () => {
 
   it('writes NOTHING when the body exceeds the cap', async () => {
     openPinnedOutboundStream.mockResolvedValue({
-      ok: false, cause: { code: 'E_FEED_TOO_LARGE' }, error: 'too large',
+      ok: false,
+      cause: { code: 'E_FEED_TOO_LARGE' },
+      error: 'too large',
     });
     await mod.refreshVendorDb();
     expect(rows).toHaveLength(0);
@@ -134,7 +172,13 @@ describe('refreshVendorDb: the download is capped, timed and guarded', () => {
   });
 
   it('writes NOTHING when the cap trips mid-stream', async () => {
-    const boom = new Readable({ read() { const e = new Error('too large'); e.code = 'E_FEED_TOO_LARGE'; this.destroy(e); } });
+    const boom = new Readable({
+      read() {
+        const e = new Error('too large');
+        e.code = 'E_FEED_TOO_LARGE';
+        this.destroy(e);
+      },
+    });
     openPinnedOutboundStream.mockResolvedValue({ ok: true, stream: boom });
     await mod.refreshVendorDb();
     expect(rows.filter(([sql]) => sql.includes('DELETE FROM mac_vendors'))).toHaveLength(0);

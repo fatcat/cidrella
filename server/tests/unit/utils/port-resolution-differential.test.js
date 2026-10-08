@@ -31,9 +31,16 @@ const FALLBACK = 8443;
 function bashResolvePort(dbVal, envVal, fallback = FALLBACK) {
   return execFileSync(
     'bash',
-    ['-c', '. "$1"; resolve_port "$2" "$3" "$4"', 'bash', SLOTS_LIB,
-      String(dbVal ?? ''), String(envVal ?? ''), String(fallback)],
-    { encoding: 'utf8' }
+    [
+      '-c',
+      '. "$1"; resolve_port "$2" "$3" "$4"',
+      'bash',
+      SLOTS_LIB,
+      String(dbVal ?? ''),
+      String(envVal ?? ''),
+      String(fallback),
+    ],
+    { encoding: 'utf8' },
   ).trim();
 }
 
@@ -56,13 +63,21 @@ function jsResolvePort(dbVal, envVal, fallback = FALLBACK) {
 // [dbValue, envValue] pairs, grouped by the property each probes.
 const CASES = [
   // DB wins when valid, whatever the environment says
-  ['9443', '8443'], ['443', ''], ['1', '65535'], ['65535', '1'],
+  ['9443', '8443'],
+  ['443', ''],
+  ['1', '65535'],
+  ['65535', '1'],
   // DB empty or absent, environment wins
-  ['', '9000'], ['', '443'],
+  ['', '9000'],
+  ['', '443'],
   // DB out of range, so the environment is consulted
-  ['0', '9000'], ['65536', '9000'], ['99999', '9000'],
+  ['0', '9000'],
+  ['65536', '9000'],
+  ['99999', '9000'],
   // nothing usable anywhere, hardcoded fallback
-  ['', ''], ['0', '0'], ['65536', '99999'],
+  ['', ''],
+  ['0', '0'],
+  ['65536', '99999'],
   // the real-world shape: admin sets a high port in the UI, no env override
   ['9443', ''],
   // install.sh probed 443 free on a fresh install and wrote the drop-in
@@ -91,9 +106,18 @@ describe('web port: the bash and JS ladders agree', () => {
 
   it('the fixture table exercises every tier, so agreement is not vacuous', () => {
     const results = CASES.map(([d, e]) => jsResolvePort(d, e));
-    expect(results.some(r => r === 9443), 'a DB-tier win').toBe(true);
-    expect(results.some(r => r === 9000), 'an env-tier win').toBe(true);
-    expect(results.some(r => r === FALLBACK), 'a fallback').toBe(true);
+    expect(
+      results.some((r) => r === 9443),
+      'a DB-tier win',
+    ).toBe(true);
+    expect(
+      results.some((r) => r === 9000),
+      'an env-tier win',
+    ).toBe(true);
+    expect(
+      results.some((r) => r === FALLBACK),
+      'a fallback',
+    ).toBe(true);
   });
 
   it('bash is strictly stricter, and never accepts what JS would reject', () => {
@@ -105,8 +129,9 @@ describe('web port: the bash and JS ladders agree', () => {
     // bash into matching parseInt this pins the property that matters.
     for (const junk of ['8443abc', ' 8443', '+8443', '84.43']) {
       const bash = bashResolvePort(junk, '');
-      expect(bash, `bash should refuse ${JSON.stringify(junk)} and fall through`)
-        .toBe(String(FALLBACK));
+      expect(bash, `bash should refuse ${JSON.stringify(junk)} and fall through`).toBe(
+        String(FALLBACK),
+      );
     }
     // And the converse: every value bash accepts, JS agrees on exactly.
     for (const good of ['1', '80', '443', '8443', '9443', '65535']) {

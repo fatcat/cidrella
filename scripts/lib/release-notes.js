@@ -32,7 +32,8 @@
 
 const fs = require('fs');
 
-const RELEASE_HEADER_RE = /^##\s+v(\d+\.\d+\.\d+)\s+—\s+(\d{4}-\d{2}-\d{2})(?:\s+\[([^\]]+)\])?\s*$/;
+const RELEASE_HEADER_RE =
+  /^##\s+v(\d+\.\d+\.\d+)\s+—\s+(\d{4}-\d{2}-\d{2})(?:\s+\[([^\]]+)\])?\s*$/;
 
 // Anything trying to be a release header. Used to tell "malformed header" apart
 // from "an ordinary ## heading", so the former fails loudly instead of being
@@ -40,9 +41,11 @@ const RELEASE_HEADER_RE = /^##\s+v(\d+\.\d+\.\d+)\s+—\s+(\d{4}-\d{2}-\d{2})(?:
 const RELEASE_HEADER_HINT_RE = /^##\s+v\d/;
 
 function malformedHeaderMessage(line) {
-  return `malformed release header: ${JSON.stringify(String(line).trim())}. `
-    + 'Expected "## vX.Y.Z — YYYY-MM-DD" with a U+2014 em-dash separator '
-    + '(an ASCII hyphen will not parse).';
+  return (
+    `malformed release header: ${JSON.stringify(String(line).trim())}. ` +
+    'Expected "## vX.Y.Z — YYYY-MM-DD" with a U+2014 em-dash separator ' +
+    '(an ASCII hyphen will not parse).'
+  );
 }
 
 /**
@@ -110,7 +113,8 @@ if (require.main === module) {
   // ignoring a header we could not read is exactly the failure this exists
   // to prevent.
   if (parsed.errors.length > 0) {
-    for (const e of parsed.errors) console.error(`  ERROR: ${notesPath} line ${e.line}: ${e.message}`);
+    for (const e of parsed.errors)
+      console.error(`  ERROR: ${notesPath} line ${e.line}: ${e.message}`);
     process.exit(1);
   }
 
@@ -124,7 +128,7 @@ if (require.main === module) {
   }
 
   if (mode === '--has-version') {
-    process.exit(parsed.headers.some(h => h.version === argv[1]) ? 0 : 1);
+    process.exit(parsed.headers.some((h) => h.version === argv[1]) ? 0 : 1);
   }
 
   console.error(`unknown mode: ${mode}`);

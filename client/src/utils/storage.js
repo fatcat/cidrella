@@ -9,7 +9,9 @@ export function loadJson(key, fallback) {
 }
 
 export function saveJson(key, value) {
-  try { localStorage.setItem(key, JSON.stringify(value)); } catch {}
+  try {
+    localStorage.setItem(key, JSON.stringify(value));
+  } catch {}
 }
 
 /**
@@ -22,12 +24,14 @@ export function migrateStorageKeys() {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
       if (key?.startsWith('ipam_') || key?.startsWith('ipam-')) {
-        const newKey = key.replace(/^ipam[_-]/, (m) => m === 'ipam_' ? 'cidrella_' : 'cidrella-');
+        const newKey = key.replace(/^ipam[_-]/, (m) => (m === 'ipam_' ? 'cidrella_' : 'cidrella-'));
         localStorage.setItem(newKey, localStorage.getItem(key));
         localStorage.removeItem(key);
         i--; // adjust index after removal
       }
     }
     localStorage.setItem('cidrella_storage_migrated', '1');
-  } catch { /* storage access may fail in private browsing */ }
+  } catch {
+    /* storage access may fail in private browsing */
+  }
 }

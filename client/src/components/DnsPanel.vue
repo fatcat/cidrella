@@ -1,25 +1,38 @@
 <template>
-  <div class="dns-panel" style="display: flex; flex-direction: column; height: 100%;">
-    <div class="dns-layout">
+  <div class="dns-panel" style="display: flex; flex-direction: column; height: 100%">
+    <div v-if="!dialogsOnly" class="dns-layout">
       <!-- Zone List -->
       <div class="zone-panel">
         <Tabs v-model:value="zoneTab">
           <TabList>
-            <Tab value="forward" data-track="dns-tab-forward"><i class="pi pi-globe" style="margin-right: 0.3rem" />Forward</Tab>
-            <Tab value="reverse" data-track="dns-tab-reverse"><i class="pi pi-replay" style="margin-right: 0.3rem" />Reverse</Tab>
+            <Tab value="forward" data-track="dns-tab-forward"
+              ><i class="pi pi-globe" style="margin-right: 0.3rem" />Forward</Tab
+            >
+            <Tab value="reverse" data-track="dns-tab-reverse"
+              ><i class="pi pi-replay" style="margin-right: 0.3rem" />Reverse</Tab
+            >
           </TabList>
           <TabPanels>
             <!-- Forward Zones Tab -->
             <TabPanel value="forward">
               <div class="sidebar-search">
                 <i class="pi pi-search search-icon"></i>
-                <input type="text" v-model="zoneFilterText" placeholder="Filter zones..." class="sidebar-filter" data-track="dns-sidebar-filter" />
+                <input
+                  type="text"
+                  v-model="zoneFilterText"
+                  placeholder="Filter zones..."
+                  class="sidebar-filter"
+                  data-track="dns-sidebar-filter"
+                />
               </div>
               <div class="zone-list" v-if="!store.loading">
-                <div v-for="zone in filteredForwardZones" :key="zone.id"
-                     class="zone-item"
-                     :class="{ active: selectedZone?.id === zone.id }"
-                     @click="selectZone(zone)">
+                <div
+                  v-for="zone in filteredForwardZones"
+                  :key="zone.id"
+                  class="zone-item"
+                  :class="{ active: selectedZone?.id === zone.id }"
+                  @click="selectZone(zone)"
+                >
                   <div class="zone-info">
                     <div class="zone-name">
                       <i class="pi pi-globe" />
@@ -31,10 +44,22 @@
                     </div>
                   </div>
                   <div class="zone-actions">
-                    <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                            @click.stop="openZoneDialog(zone)" />
-                    <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                            @click.stop="confirmDeleteZone(zone)" />
+                    <Button
+                      icon="pi pi-pencil"
+                      severity="secondary"
+                      text
+                      rounded
+                      size="small"
+                      @click.stop="openZoneDialog(zone)"
+                    />
+                    <Button
+                      icon="pi pi-trash"
+                      severity="danger"
+                      text
+                      rounded
+                      size="small"
+                      @click.stop="confirmDeleteZone(zone)"
+                    />
                   </div>
                 </div>
                 <div v-if="filteredForwardZones.length === 0" class="empty-state">
@@ -50,14 +75,23 @@
             <TabPanel value="reverse">
               <div class="sidebar-search">
                 <i class="pi pi-search search-icon"></i>
-                <input type="text" v-model="zoneFilterText" placeholder="Filter zones..." class="sidebar-filter" data-track="dns-sidebar-filter-reverse" />
+                <input
+                  type="text"
+                  v-model="zoneFilterText"
+                  placeholder="Filter zones..."
+                  class="sidebar-filter"
+                  data-track="dns-sidebar-filter-reverse"
+                />
               </div>
               <div class="zone-list" v-if="!store.loading">
                 <template v-for="entry in filteredGroupedReverseZones" :key="entry.key">
                   <!-- Standalone reverse zone -->
-                  <div v-if="!entry.isGroup" class="zone-item"
-                       :class="{ active: selectedZone?.id === entry.zone.id }"
-                       @click="selectZone(entry.zone)">
+                  <div
+                    v-if="!entry.isGroup"
+                    class="zone-item"
+                    :class="{ active: selectedZone?.id === entry.zone.id }"
+                    @click="selectZone(entry.zone)"
+                  >
                     <div class="zone-info">
                       <div class="zone-name">
                         <i class="pi pi-replay" />
@@ -65,29 +99,50 @@
                       </div>
                       <div class="zone-meta">
                         <span class="record-count">{{ entry.zone.record_count }} records</span>
-                        <span v-if="!entry.zone.enabled" class="badge-sm badge-red-light">disabled</span>
+                        <span v-if="!entry.zone.enabled" class="badge-sm badge-red-light"
+                          >disabled</span
+                        >
                       </div>
                     </div>
                     <div class="zone-actions">
-                      <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                              @click.stop="openZoneDialog(entry.zone)" />
-                      <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                              @click.stop="confirmDeleteZone(entry.zone)" />
+                      <Button
+                        icon="pi pi-pencil"
+                        severity="secondary"
+                        text
+                        rounded
+                        size="small"
+                        @click.stop="openZoneDialog(entry.zone)"
+                      />
+                      <Button
+                        icon="pi pi-trash"
+                        severity="danger"
+                        text
+                        rounded
+                        size="small"
+                        @click.stop="confirmDeleteZone(entry.zone)"
+                      />
                     </div>
                   </div>
                   <!-- Grouped reverse zones -->
                   <template v-else>
                     <div class="zone-group-header" @click="toggleGroup(entry.key)">
-                      <i class="pi" :class="expandedGroups[entry.key] ? 'pi-chevron-down' : 'pi-chevron-right'" style="font-size: 0.6rem" />
+                      <i
+                        class="pi"
+                        :class="expandedGroups[entry.key] ? 'pi-chevron-down' : 'pi-chevron-right'"
+                        style="font-size: 0.6rem"
+                      />
                       <i class="pi pi-replay" />
                       <span>{{ entry.description }}</span>
                       <span class="record-count">{{ entry.zones.length }} zones</span>
                     </div>
                     <template v-if="expandedGroups[entry.key]">
-                      <div v-for="zone in entry.zones" :key="zone.id"
-                           class="zone-item zone-child"
-                           :class="{ active: selectedZone?.id === zone.id }"
-                           @click="selectZone(zone)">
+                      <div
+                        v-for="zone in entry.zones"
+                        :key="zone.id"
+                        class="zone-item zone-child"
+                        :class="{ active: selectedZone?.id === zone.id }"
+                        @click="selectZone(zone)"
+                      >
                         <div class="zone-info">
                           <div class="zone-name">
                             <i class="pi pi-replay" />
@@ -95,14 +150,28 @@
                           </div>
                           <div class="zone-meta">
                             <span class="record-count">{{ zone.record_count }} records</span>
-                            <span v-if="!zone.enabled" class="badge-sm badge-red-light">disabled</span>
+                            <span v-if="!zone.enabled" class="badge-sm badge-red-light"
+                              >disabled</span
+                            >
                           </div>
                         </div>
                         <div class="zone-actions">
-                          <Button icon="pi pi-pencil" severity="secondary" text rounded size="small"
-                                  @click.stop="openZoneDialog(zone)" />
-                          <Button icon="pi pi-trash" severity="danger" text rounded size="small"
-                                  @click.stop="confirmDeleteZone(zone)" />
+                          <Button
+                            icon="pi pi-pencil"
+                            severity="secondary"
+                            text
+                            rounded
+                            size="small"
+                            @click.stop="openZoneDialog(zone)"
+                          />
+                          <Button
+                            icon="pi pi-trash"
+                            severity="danger"
+                            text
+                            rounded
+                            size="small"
+                            @click.stop="confirmDeleteZone(zone)"
+                          />
                         </div>
                       </div>
                     </template>
@@ -123,29 +192,67 @@
       <!-- Records Panel -->
       <div class="records-panel">
         <div class="dns-toolbar">
-          <Button label="Add Zone" icon="pi pi-plus" size="small" text data-track="dns-add-zone" @click="openZoneDialog()" />
+          <Button
+            label="Add Zone"
+            icon="pi pi-plus"
+            size="small"
+            text
+            data-track="dns-add-zone"
+            @click="openZoneDialog()"
+          />
           <template v-if="selectedZone">
             <span class="toolbar-divider"></span>
-            <Button label="Add Record" icon="pi pi-plus" size="small" text data-track="dns-add-record" @click="openRecordDialog()" />
+            <Button
+              label="Add Record"
+              icon="pi pi-plus"
+              size="small"
+              text
+              data-track="dns-add-record"
+              @click="openRecordDialog()"
+            />
           </template>
         </div>
         <template v-if="selectedZone">
           <div class="info-bar">
             <span class="info-bar-name">{{ selectedZone.name }}</span>
             <span class="info-bar-sep"></span>
-            <span class="info-bar-pair"><span class="info-bar-label">Type</span> <span class="info-bar-val">{{ selectedZone.type }}</span></span>
+            <span class="info-bar-pair"
+              ><span class="info-bar-label">Type</span>
+              <span class="info-bar-val">{{ selectedZone.type }}</span></span
+            >
             <span class="info-bar-sep"></span>
-            <span class="info-bar-pair"><span class="info-bar-label">Records</span> <span class="info-bar-val">{{ selectedZone.record_count ?? 0 }}</span></span>
+            <span class="info-bar-pair"
+              ><span class="info-bar-label">Records</span>
+              <span class="info-bar-val">{{ selectedZone.record_count ?? 0 }}</span></span
+            >
             <span class="info-bar-sep"></span>
-            <span class="info-bar-pair"><span class="info-bar-label">Status</span> <span class="info-bar-val">{{ selectedZone.enabled ? 'enabled' : 'disabled' }}</span></span>
+            <span class="info-bar-pair"
+              ><span class="info-bar-label">Status</span>
+              <span class="info-bar-val">{{
+                selectedZone.enabled ? 'enabled' : 'disabled'
+              }}</span></span
+            >
           </div>
 
           <div class="search-bar">
             <IconField>
               <InputIcon class="pi pi-search" />
-              <InputText v-model="dnsSearch" placeholder="Search by name, type, value…" size="small" class="search-input" />
+              <InputText
+                v-model="dnsSearch"
+                placeholder="Search by name, type, value…"
+                size="small"
+                class="search-input"
+              />
             </IconField>
-            <Button v-if="dnsSearch" icon="pi pi-times" severity="secondary" text rounded size="small" @click="dnsSearch = ''" />
+            <Button
+              v-if="dnsSearch"
+              icon="pi pi-times"
+              severity="secondary"
+              text
+              rounded
+              size="small"
+              @click="dnsSearch = ''"
+            />
             <ColumnChooserButton
               tableName="DNS"
               :allColumns="dnsTableColumns"
@@ -155,21 +262,34 @@
             />
           </div>
 
-          <DataTable :key="'records-' + selectedZone?.type" :value="filteredRecords" :loading="loadingRecords" stripedRows
-                     size="small"
-                     :rowClass="recordRowClass"
-                     scrollable scrollHeight="flex"
-                     :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'" :sortOrder="1"
-                     removableSort
-                     paginator :rows="dnsRows" paginatorPosition="bottom"
-                     :rowsPerPageOptions="[50, 100, 250, 500]"
-                     @page="onDnsPage"
-                     @row-click="onRecordRowClick"
-                     @row-dblclick="onRecordDoubleClick"
-                     @row-contextmenu="onRecordRightClick"
-                     :contextMenu="true">
+          <DataTable
+            :key="'records-' + selectedZone?.type"
+            :value="filteredRecords"
+            :loading="loadingRecords"
+            stripedRows
+            size="small"
+            :rowClass="recordRowClass"
+            scrollable
+            scrollHeight="flex"
+            :sortField="selectedZone?.type === 'reverse' ? 'name' : 'value'"
+            :sortOrder="1"
+            removableSort
+            paginator
+            :rows="dnsRows"
+            paginatorPosition="bottom"
+            :rowsPerPageOptions="[50, 100, 250, 500]"
+            @page="onDnsPage"
+            @row-click="onRecordRowClick"
+            @row-dblclick="onRecordDoubleClick"
+            @row-contextmenu="onRecordRightClick"
+            :contextMenu="true"
+          >
             <template #empty>
-              <EmptyState icon="pi-book" title="No records in this zone" description="Add A, CNAME, MX, TXT, or SRV records to serve them for this zone." />
+              <EmptyState
+                icon="pi-book"
+                title="No records in this zone"
+                description="Add A, CNAME, MX, TXT, or SRV records to serve them for this zone."
+              />
             </template>
             <Column
               v-for="col in visibleDnsColumns"
@@ -179,36 +299,59 @@
               :sortField="col.sortField || col.field"
               :style="col.style"
             >
-            <template #header>
-              <ColumnHeaderTooltip :column="col" />
-            </template>
-            <template #body="{ data }">
-                <IpTableCell :column="col" :row="data" :view="dnsTableView"
-                             :domain-name="isReverse ? null : selectedZone?.name"
-                             :zone-name="selectedZone?.name"
-                             :soa-minimum-ttl="selectedZone?.soa_minimum_ttl" />
+              <template #header>
+                <ColumnHeaderTooltip :column="col" />
+              </template>
+              <template #body="{ data }">
+                <IpTableCell
+                  :column="col"
+                  :row="data"
+                  :view="dnsTableView"
+                  :domain-name="isReverse ? null : selectedZone?.name"
+                  :zone-name="selectedZone?.name"
+                  :soa-minimum-ttl="selectedZone?.soa_minimum_ttl"
+                />
               </template>
             </Column>
           </DataTable>
           <ContextMenu ref="recordContextMenu" :model="recordContextMenuItems" />
         </template>
-        <EmptyState v-else-if="store.zones.length === 0"
+        <EmptyState
+          v-else-if="store.zones.length === 0"
           icon="pi-globe"
           title="No DNS zones yet"
           description="Add a forward or reverse zone to start managing DNS records for your networks."
           :actions="[
-            { label: 'Add Zone', icon: 'pi-plus', severity: 'primary', dataTrack: 'empty-add-zone', onClick: () => openZoneDialog() }
-          ]" />
+            {
+              label: 'Add Zone',
+              icon: 'pi-plus',
+              severity: 'primary',
+              dataTrack: 'empty-add-zone',
+              onClick: () => openZoneDialog(),
+            },
+          ]"
+        />
         <div v-else class="empty-state centered">
-          <i class="pi pi-arrow-left" style="font-size: 2rem; opacity: 0.3;" />
+          <i class="pi pi-arrow-left" style="font-size: 2rem; opacity: 0.3" />
           <p>Select a zone to view its records</p>
         </div>
       </div>
     </div>
 
     <!-- Zone Dialog -->
-    <Dialog v-model:visible="showZoneDialog" :header="editingZone ? 'Edit Zone' : 'Add Zone'"
-            modal :style="{ width: '32rem' }" data-track="dialog-dns-zone">
+    <Dialog
+      :visible="showZoneDialog"
+      @update:visible="zoneDiscard.requestClose"
+      :header="editingZone ? 'Edit Zone' : 'Add Zone'"
+      modal
+      :style="{ width: '32rem' }"
+      data-track="dialog-dns-zone"
+    >
+      <DiscardPrompt
+        v-if="zoneDiscard.confirmingDiscard.value"
+        @keep="zoneDiscard.keepEditing"
+        @discard="zoneDiscard.discard"
+      />
       <div class="form-grid">
         <div class="field">
           <label>Zone Name *</label>
@@ -216,8 +359,13 @@
         </div>
         <div class="field" v-if="!editingZone">
           <label>Type *</label>
-          <Select v-model="zoneForm.type" :options="zoneTypes" optionLabel="label" optionValue="value"
-                    class="w-full" />
+          <Select
+            v-model="zoneForm.type"
+            :options="zoneTypes"
+            optionLabel="label"
+            optionValue="value"
+            class="w-full"
+          />
         </div>
         <div class="field">
           <label>Description</label>
@@ -227,34 +375,86 @@
           <label>Enabled</label>
           <ToggleSwitch v-model="zoneForm.enabled" />
         </div>
+        <div class="field">
+          <label for="zone-forward-unknown">Look up names this zone doesn't have upstream</label>
+          <ToggleSwitch
+            v-model="zoneForm.forward_unknown"
+            input-id="zone-forward-unknown"
+            data-track="dns-zone-forward-unknown"
+          />
+          <small class="field-help"
+            >Off: CIDRella answers every name in this zone. Turn on for a domain that also has
+            public records CIDRella doesn't hold.</small
+          >
+        </div>
 
         <!-- SOA Fields -->
         <div class="soa-section">
           <h4>SOA Record</h4>
           <div class="field">
             <label>Primary Nameserver</label>
-            <InputText v-model="zoneForm.soa_primary_ns" class="w-full" placeholder="ns1.example.com" />
+            <InputText
+              v-model="zoneForm.soa_primary_ns"
+              class="w-full"
+              placeholder="ns1.example.com"
+            />
           </div>
           <div class="field">
             <label>Admin Email</label>
-            <InputText v-model="zoneForm.soa_admin_email" class="w-full" placeholder="admin.example.com" />
-            <small class="field-help">Use dotted notation (admin.example.com = admin@example.com)</small>
+            <InputText
+              v-model="zoneForm.soa_admin_email"
+              class="w-full"
+              placeholder="admin.example.com"
+            />
+            <small class="field-help"
+              >Use dotted notation (admin.example.com = admin@example.com)</small
+            >
           </div>
           <div class="soa-grid">
             <div class="field">
-              <label>Refresh (s) <span v-tooltip.top="'How often secondaries check for zone updates'" class="soa-help">?</span></label>
+              <label
+                >Refresh (s)
+                <span
+                  v-tooltip.top="'How often secondaries check for zone updates'"
+                  class="soa-help"
+                  >?</span
+                ></label
+              >
               <InputNumber v-model="zoneForm.soa_refresh" class="w-full" :min="0" />
             </div>
             <div class="field">
-              <label>Retry (s) <span v-tooltip.top="'How long secondaries wait before retrying a failed refresh'" class="soa-help">?</span></label>
+              <label
+                >Retry (s)
+                <span
+                  v-tooltip.top="'How long secondaries wait before retrying a failed refresh'"
+                  class="soa-help"
+                  >?</span
+                ></label
+              >
               <InputNumber v-model="zoneForm.soa_retry" class="w-full" :min="0" />
             </div>
             <div class="field">
-              <label>Expire (s) <span v-tooltip.top="'How long secondaries serve the zone without a successful refresh'" class="soa-help">?</span></label>
+              <label
+                >Expire (s)
+                <span
+                  v-tooltip.top="'How long secondaries serve the zone without a successful refresh'"
+                  class="soa-help"
+                  >?</span
+                ></label
+              >
               <InputNumber v-model="zoneForm.soa_expire" class="w-full" :min="0" />
             </div>
             <div class="field">
-              <label>Minimum TTL (s) <span v-tooltip.top="'Default negative-cache TTL: how long resolvers cache NXDOMAIN responses'" class="soa-help">?</span></label>
+              <label
+                >Minimum TTL (s)
+                <span
+                  v-tooltip.top="
+                    'Default negative-cache TTL: how long resolvers cache NXDOMAIN responses'
+                  "
+                  class="soa-help"
+                  >?</span
+                ></label
+              >
               <InputNumber v-model="zoneForm.soa_minimum_ttl" class="w-full" :min="0" />
             </div>
           </div>
@@ -266,33 +466,56 @@
         </div>
       </div>
       <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showZoneDialog = false" />
+        <Button label="Cancel" severity="secondary" @click="zoneDiscard.requestClose(false)" />
         <Button :label="editingZone ? 'Save' : 'Create'" @click="saveZone" :loading="savingZone" />
       </template>
     </Dialog>
 
     <!-- Record Dialog -->
-    <Dialog v-model:visible="showRecordDialog" :header="editingRecord ? 'Edit Record' : 'Add Record'"
-            modal :style="{ width: '28rem' }" data-track="dialog-dns-record">
+    <Dialog
+      :visible="showRecordDialog"
+      @update:visible="recordDiscard.requestClose"
+      :header="editingRecord ? 'Edit Record' : 'Add Record'"
+      modal
+      :style="{ width: '28rem' }"
+      data-track="dialog-dns-record"
+    >
+      <DiscardPrompt
+        v-if="recordDiscard.confirmingDiscard.value"
+        @keep="recordDiscard.keepEditing"
+        @discard="recordDiscard.discard"
+      />
       <div class="form-grid">
         <div v-if="recordForm.type === 'PTR' && selectedZone" class="field ptr-preview">
           <label>Record Name</label>
-          <span class="ptr-preview-value">{{ recordForm.name ? `${recordForm.name}.${selectedZone.name}` : selectedZone.name }}</span>
+          <span class="ptr-preview-value">{{
+            recordForm.name ? `${recordForm.name}.${selectedZone.name}` : selectedZone.name
+          }}</span>
         </div>
         <div class="field">
-          <label>{{ recordForm.type === 'PTR' ? 'Last Octet *' : 'Name *' }}</label>
-          <InputText v-model="recordForm.name" class="w-full"
-                     :placeholder="recordForm.type === 'PTR' ? 'e.g. 5' : 'e.g. www or @'" />
-          <small v-if="recordForm.type === 'PTR'" class="field-help">Host portion of the IP address</small>
+          <label>{{ recordForm.type === 'PTR' ? ptrHint.label : 'Name *' }}</label>
+          <InputText
+            v-model="recordForm.name"
+            class="w-full"
+            :placeholder="recordForm.type === 'PTR' ? ptrHint.placeholder : 'e.g. www or @'"
+          />
+          <small v-if="recordForm.type === 'PTR'" class="field-help">{{ ptrHint.help }}</small>
         </div>
         <div class="field" v-if="!isReverse">
           <label>Type *</label>
-          <Select v-model="recordForm.type" :options="availableRecordTypes" class="w-full" :disabled="!!editingRecord" />
+          <Select
+            v-model="recordForm.type"
+            :options="availableRecordTypes"
+            class="w-full"
+            :disabled="!!editingRecord"
+          />
         </div>
         <div class="field">
           <label>{{ recordForm.type === 'PTR' ? 'Hostname *' : 'Value *' }}</label>
           <InputText v-model="recordForm.value" class="w-full" :placeholder="valuePlaceholder" />
-          <small v-if="recordForm.type === 'PTR'" class="field-help">The FQDN this IP resolves to (e.g., web.example.com)</small>
+          <small v-if="recordForm.type === 'PTR'" class="field-help"
+            >The FQDN this IP resolves to (e.g., web.example.com)</small
+          >
         </div>
         <div class="field" v-if="['MX', 'SRV'].includes(recordForm.type)">
           <label>Priority *</label>
@@ -309,51 +532,70 @@
         <div class="field">
           <label>TTL (seconds)</label>
           <InputNumber v-model="recordForm.ttl" class="w-full" :min="0" placeholder="Default" />
-          <small class="field-help">Leave empty to use zone default</small>
+          <small class="field-help">{{ ttlHelp }}</small>
         </div>
         <div class="field">
           <label>Enabled</label>
           <ToggleSwitch v-model="recordForm.enabled" />
         </div>
       </div>
+      <p v-if="recordError" class="warn-text" role="alert" data-track="dns-record-error">
+        {{ recordError }}
+      </p>
       <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showRecordDialog = false" />
-        <Button :label="editingRecord ? 'Save' : 'Create'" @click="saveRecord" :loading="savingRecord" />
+        <Button label="Cancel" severity="secondary" @click="recordDiscard.requestClose(false)" />
+        <Button
+          :label="editingRecord ? 'Save' : 'Create'"
+          @click="saveRecord"
+          :loading="savingRecord"
+        />
       </template>
     </Dialog>
 
     <!-- Delete Zone Dialog -->
-    <Dialog v-model:visible="showDeleteZoneDialog" header="Delete Zone" modal :style="{ width: '28rem' }" data-track="dialog-dns-delete-zone"
-            @hide="zoneDeleteConfirmText = ''">
-      <p>Delete zone <strong>{{ deletingZone?.name }}</strong>?</p>
-      <template v-if="deletingZone?.record_count > 0">
-        <p class="warn-text">
-          This will permanently delete {{ deletingZone.record_count }} DNS record(s).
-        </p>
-        <p class="warn-text" style="margin-top: 0.5rem;">Type <strong>DELETE</strong> to confirm:</p>
-        <InputText v-model="zoneDeleteConfirmText" placeholder="DELETE" style="width: 100%" />
-      </template>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteZoneDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteZone" :loading="savingZone"
-                :disabled="deletingZone?.record_count > 0 && zoneDeleteConfirmText !== 'DELETE'" />
-      </template>
-    </Dialog>
+    <ConfirmDialog
+      v-model:visible="showDeleteZoneDialog"
+      header="Delete Zone"
+      width="28rem"
+      :loading="savingZone"
+      :type-to-confirm="deletingZone?.record_count > 0 ? 'DELETE' : ''"
+      data-track="dialog-dns-delete-zone"
+      @confirm="doDeleteZone"
+    >
+      <p>
+        Delete zone <strong>{{ deletingZone?.name }}</strong
+        >?
+      </p>
+      <p v-if="deletingZone?.record_count > 0" class="warn-text">
+        This will permanently delete {{ deletingZone.record_count }} DNS record(s).
+      </p>
+    </ConfirmDialog>
 
     <!-- Delete Record Dialog -->
-    <Dialog v-model:visible="showDeleteRecordDialog" header="Delete Record" modal :style="{ width: '24rem' }" data-track="dialog-dns-delete-record">
-      <p>Delete {{ deletingRecord?.record_type }} record <strong>{{ deletingRecord?.name }}</strong>?</p>
-      <template #footer>
-        <Button label="Cancel" severity="secondary" @click="showDeleteRecordDialog = false" />
-        <Button label="Delete" severity="danger" @click="doDeleteRecord" :loading="savingRecord" />
-      </template>
-    </Dialog>
+    <ConfirmDialog
+      v-model:visible="showDeleteRecordDialog"
+      header="Delete Record"
+      :loading="savingRecord"
+      data-track="dialog-dns-delete-record"
+      @confirm="doDeleteRecord"
+    >
+      <p>
+        Delete {{ deletingRecord?.record_type }} record <strong>{{ deletingRecord?.name }}</strong
+        >?
+      </p>
+    </ConfirmDialog>
 
-    <IpDetailsDrawer v-model:visible="showIpDetails" :host="ipDetailsRow"
-                     :subnet-id="ipDetailsSubnetId" :domain-name="ipDetailsDomainName"
-                     :columns="visibleDnsColumns" :view="dnsTableView" table-name="DNS"
-                     :zone-name="selectedZone?.name"
-                     :soa-minimum-ttl="selectedZone?.soa_minimum_ttl" />
+    <IpDetailsDrawer
+      v-model:visible="showIpDetails"
+      :host="ipDetailsRow"
+      :subnet-id="ipDetailsSubnetId"
+      :domain-name="ipDetailsDomainName"
+      :columns="visibleDnsColumns"
+      :view="dnsTableView"
+      table-name="DNS"
+      :zone-name="selectedZone?.name"
+      :soa-minimum-ttl="selectedZone?.soa_minimum_ttl"
+    />
 
     <Toast />
   </div>
@@ -384,16 +626,26 @@ import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { ipToLong, isValidIpv4 } from '../utils/ip.js';
+import { dhcpPoolScopeFor, isValidIpv4, isValidIpv6, sortKey } from '../utils/ip.js';
+import {
+  reverseZoneFamily,
+  ptrRecordAddress,
+  reverseZoneSortKey,
+  ptrHostHint,
+} from '../utils/reverseZone.js';
+import { recordTypesFor } from '../utils/dnsRecordTypes.js';
+import { useFeatures } from '../composables/useFeatures.js';
 import {
   addCnameMenuItem,
   dnsRecordProbeIp,
   isEditableDnsRecord,
   managedDnsRecordMenuItem,
-  probeNowMenuItem
+  probeNowMenuItem,
 } from '../utils/rowContextMenu.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import EmptyState from './EmptyState.vue';
+import '../assets/panel-chrome.css';
+import ConfirmDialog from './ConfirmDialog.vue';
 import ColumnChooserButton from './table/ColumnChooserButton.vue';
 import ColumnHeaderTooltip from './table/ColumnHeaderTooltip.vue';
 import IpTableCell from './table/IpTableCell.vue';
@@ -401,14 +653,18 @@ import { useColumnPreferences } from '../composables/useColumnPreferences.js';
 import { useRowsPreference } from '../composables/useRowsPreference.js';
 import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 import IpDetailsDrawer from './IpDetailsDrawer.vue';
+import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
+import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
+import { dnsRecordPayload } from '../utils/dnsRecordPayload.js';
 import {
   IP_TABLE_COLUMN_ALIASES,
   IP_TABLE_DEFAULT_KEYS,
   IP_TABLE_VIEW,
-  ipTableColumns
+  ipTableColumns,
 } from '../utils/ipTableColumns.js';
 
-// No props needed, shows all zones globally
+defineProps({ dialogsOnly: { type: Boolean, default: false } });
+const emit = defineEmits(['changed']);
 
 const store = useDnsStore();
 const dhcpStore = useDhcpStore();
@@ -419,38 +675,32 @@ const {
   host: ipDetailsRow,
   subnetId: ipDetailsSubnetId,
   domainName: ipDetailsDomainName,
-  openIpDetails
+  openIpDetails,
 } = useIpDetailsDrawer();
 
 // Find the first DHCP scope whose pool contains `ip`. Returns { scope, cidr }
 // or null. Used to warn when a user points a DNS A record at an IP inside a
 // dynamic DHCP pool, DHCP may hand that IP to a different host tomorrow.
+// The DHCP pool an A or AAAA value falls in, for the "inside a DHCP pool"
+// warning (utils/ip.js dhcpPoolScopeFor, either family).
 function findDhcpScopeForIp(ip) {
-  if (!ip) return null;
-  let ipLong;
-  try { ipLong = ipToLong(ip); } catch { return null; }
-  for (const s of (dhcpStore.scopes || [])) {
-    if (!s.start_ip || !s.end_ip) continue;
-    // Guard per-scope IP conversion: a malformed start/end in the store
-    // (import or migration edge case) would otherwise throw mid-loop,
-    // bubble up to saveRecord's catch, and fire an error toast AFTER the
-    // DNS A record has already been created, user thinks the save
-    // failed and retries, creating a duplicate record.
-    let startLong, endLong;
-    try { startLong = ipToLong(s.start_ip); endLong = ipToLong(s.end_ip); } catch { continue; }
-    if (ipLong >= startLong && ipLong <= endLong) {
-      return { scope: s, cidr: s.subnet_cidr };
-    }
-  }
-  return null;
+  const scope = dhcpPoolScopeFor(dhcpStore.scopes, ip);
+  return scope ? { scope, cidr: scope.subnet_cidr } : null;
 }
-
 
 // Zone state
 const zoneFilterText = ref('');
 const selectedZone = ref(null);
 const isReverse = computed(() => selectedZone.value?.type === 'reverse');
-const dnsTableView = computed(() => isReverse.value ? IP_TABLE_VIEW.DNS_REVERSE : IP_TABLE_VIEW.DNS_FORWARD);
+// 4 or 6 for a reverse zone by its arpa spelling; the PTR form copy follows.
+const reverseFamily = computed(() =>
+  isReverse.value ? reverseZoneFamily(selectedZone.value?.name) || 4 : null,
+);
+const ptrHint = computed(() => ptrHostHint(reverseFamily.value));
+const { ipv6: ipv6Supported } = useFeatures();
+const dnsTableView = computed(() =>
+  isReverse.value ? IP_TABLE_VIEW.DNS_REVERSE : IP_TABLE_VIEW.DNS_FORWARD,
+);
 
 const dnsForwardColumns = ipTableColumns(IP_TABLE_VIEW.DNS_FORWARD);
 const dnsReverseColumns = ipTableColumns(IP_TABLE_VIEW.DNS_REVERSE);
@@ -458,22 +708,24 @@ const dnsReverseColumns = ipTableColumns(IP_TABLE_VIEW.DNS_REVERSE);
 const {
   visibleColumns: visibleDnsForwardColumns,
   setVisibleColumns: setVisibleDnsForwardColumns,
-  resetColumns: resetDnsForwardColumns
+  resetColumns: resetDnsForwardColumns,
 } = useColumnPreferences('cidrella_columns_dns_forward', dnsForwardColumns, {
   defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.DNS_FORWARD],
-  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DNS_FORWARD]
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DNS_FORWARD],
 });
 const {
   visibleColumns: visibleDnsReverseColumns,
   setVisibleColumns: setVisibleDnsReverseColumns,
-  resetColumns: resetDnsReverseColumns
+  resetColumns: resetDnsReverseColumns,
 } = useColumnPreferences('cidrella_columns_dns_reverse', dnsReverseColumns, {
   defaultKeys: IP_TABLE_DEFAULT_KEYS[IP_TABLE_VIEW.DNS_REVERSE],
-  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DNS_REVERSE]
+  aliases: IP_TABLE_COLUMN_ALIASES[IP_TABLE_VIEW.DNS_REVERSE],
 });
 
-const dnsTableColumns = computed(() => isReverse.value ? dnsReverseColumns : dnsForwardColumns);
-const visibleDnsColumns = computed(() => isReverse.value ? visibleDnsReverseColumns.value : visibleDnsForwardColumns.value);
+const dnsTableColumns = computed(() => (isReverse.value ? dnsReverseColumns : dnsForwardColumns));
+const visibleDnsColumns = computed(() =>
+  isReverse.value ? visibleDnsReverseColumns.value : visibleDnsForwardColumns.value,
+);
 
 function setVisibleDnsColumns(columns) {
   if (isReverse.value) setVisibleDnsReverseColumns(columns);
@@ -485,17 +737,14 @@ function resetDnsColumns() {
   else resetDnsForwardColumns();
 }
 
-// Reconstruct the IPv4 address a PTR record points at, by concatenating the
-// record's host label(s) with the zone's arpa prefix and reversing. For zone
-// "0.10.in-addr.arpa" + record name "5.1" → "10.0.1.5".
+// The address a PTR record points at: the record's host label(s) in front
+// of the zone's arpa labels, reversed back into address order, for either
+// arpa spelling. For zone "0.10.in-addr.arpa" + record name "5.1" that is
+// "10.0.1.5"; for an ip6.arpa zone the nibbles become the canonical address.
 function ptrRecordIp(record) {
   if (record?.ip_address) return record.ip_address;
   if (!selectedZone.value || selectedZone.value.type !== 'reverse') return record.name;
-  const zoneLabel = (selectedZone.value.name || '').replace(/\.?in-addr\.arpa\.?$/, '');
-  const recordLabel = record.name || '';
-  const combined = [recordLabel, zoneLabel].filter(Boolean).join('.');
-  // combined is reverse-octet order, e.g. "5.1.0.10"
-  return combined.split('.').reverse().join('.');
+  return ptrRecordAddress(selectedZone.value.name, record.name) || record.name || '';
 }
 const records = ref([]);
 const loadingRecords = ref(false);
@@ -504,28 +753,23 @@ const zoneTab = ref(loadJson('cidrella_dns_zone_tab', 'forward'));
 
 // Forward zones (simple list)
 const forwardZones = computed(() =>
-  store.zones.filter(z => z.type === 'forward').sort((a, b) => a.name.localeCompare(b.name))
+  store.zones.filter((z) => z.type === 'forward').sort((a, b) => a.name.localeCompare(b.name)),
 );
 
 const filteredForwardZones = computed(() => {
   const q = zoneFilterText.value.trim().toLowerCase();
   if (!q) return forwardZones.value;
-  return forwardZones.value.filter(z => z.name.toLowerCase().includes(q));
+  return forwardZones.value.filter((z) => z.name.toLowerCase().includes(q));
 });
 
 // Group reverse zones that share a subnet_id (multiple /24 zones for one supernet)
 const groupedReverseZones = computed(() => {
   const result = [];
   const bySubnet = new Map();
-  const reverseZones = store.zones.filter(z => z.type === 'reverse').sort((a, b) => {
-    const octetsA = a.name.replace('.in-addr.arpa', '').split('.').reverse().map(Number);
-    const octetsB = b.name.replace('.in-addr.arpa', '').split('.').reverse().map(Number);
-    for (let i = 0; i < Math.max(octetsA.length, octetsB.length); i++) {
-      const diff = (octetsA[i] || 0) - (octetsB[i] || 0);
-      if (diff !== 0) return diff;
-    }
-    return 0;
-  });
+  const reverseZones = store.zones
+    .filter((z) => z.type === 'reverse')
+    // By the network each zone covers, IPv4 zones before IPv6 ones.
+    .sort((a, b) => reverseZoneSortKey(a.name).localeCompare(reverseZoneSortKey(b.name)));
 
   for (const zone of reverseZones) {
     if (zone.subnet_id) {
@@ -540,12 +784,13 @@ const groupedReverseZones = computed(() => {
 
     if (zone.subnet_id && bySubnet.get(zone.subnet_id).length > 1) {
       const zones = bySubnet.get(zone.subnet_id);
-      zones.forEach(z => grouped.add(z.id));
+      zones.forEach((z) => grouped.add(z.id));
       result.push({
         isGroup: true,
         key: `subnet-${zone.subnet_id}`,
-        description: zones[0].description?.replace(/^Reverse zone for /, '') || `Subnet ${zone.subnet_id}`,
-        zones
+        description:
+          zones[0].description?.replace(/^Reverse zone for /, '') || `Subnet ${zone.subnet_id}`,
+        zones,
       });
     } else {
       result.push({ isGroup: false, key: `zone-${zone.id}`, zone });
@@ -557,10 +802,12 @@ const groupedReverseZones = computed(() => {
 const filteredGroupedReverseZones = computed(() => {
   const q = zoneFilterText.value.trim().toLowerCase();
   if (!q) return groupedReverseZones.value;
-  return groupedReverseZones.value.filter(entry => {
+  return groupedReverseZones.value.filter((entry) => {
     if (entry.isGroup) {
-      return entry.description.toLowerCase().includes(q) ||
-        entry.zones.some(z => z.name.toLowerCase().includes(q));
+      return (
+        entry.description.toLowerCase().includes(q) ||
+        entry.zones.some((z) => z.name.toLowerCase().includes(q))
+      );
     }
     return entry.zone.name.toLowerCase().includes(q);
   });
@@ -578,25 +825,58 @@ const savingZone = ref(false);
 // literals here: they were a second, drifting copy of the server's defaults
 // (audit #38).
 const zoneForm = ref({
-  name: '', type: 'forward', description: '', enabled: true,
-  soa_primary_ns: '', soa_admin_email: '',
-  soa_refresh: null, soa_retry: null, soa_expire: null, soa_minimum_ttl: null
+  name: '',
+  type: 'forward',
+  description: '',
+  enabled: true,
+  forward_unknown: false,
+  soa_primary_ns: '',
+  soa_admin_email: '',
+  soa_refresh: null,
+  soa_retry: null,
+  soa_expire: null,
+  soa_minimum_ttl: null,
 });
 const zoneTypes = [
   { label: 'Forward', value: 'forward' },
-  { label: 'Reverse', value: 'reverse' }
+  { label: 'Reverse', value: 'reverse' },
 ];
+let zoneFormBaseline = '';
+const zoneDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(zoneForm.value) !== zoneFormBaseline,
+  close: () => {
+    showZoneDialog.value = false;
+  },
+  busy: savingZone,
+});
 
 // Record dialog
 const showRecordDialog = ref(false);
 const editingRecord = ref(null);
 const savingRecord = ref(false);
-const recordForm = ref({ name: '', type: 'A', value: '', priority: null, weight: null, port: null, ttl: null, enabled: true });
-const allRecordTypes = ['A', 'CNAME', 'MX', 'TXT', 'SRV', 'PTR'];
+const recordForm = ref({
+  name: '',
+  type: 'A',
+  value: '',
+  priority: null,
+  weight: null,
+  port: null,
+  ttl: null,
+  enabled: true,
+});
+const recordError = ref('');
+let recordFormBaseline = '';
+const recordDiscard = useDiscardGuard({
+  isDirty: () => JSON.stringify(recordForm.value) !== recordFormBaseline,
+  close: () => {
+    showRecordDialog.value = false;
+  },
+  busy: savingRecord,
+});
 
 const dnsSearch = ref(loadJson('cidrella_dns_search', ''));
 watch(dnsSearch, (val) => {
-  saveJson('cidrella_dns_search', val)
+  saveJson('cidrella_dns_search', val);
 });
 const filteredRecords = computed(() => {
   let base = [...records.value];
@@ -605,36 +885,34 @@ const filteredRecords = computed(() => {
   // sort on `sortField`; if two columns share the same field, they share a
   // toggle. `_ip_long` gives IP Address its own.
   if (isReverse.value) {
-    base = base.map(r => {
+    base = base.map((r) => {
       const ip = ptrRecordIp(r);
-      // utils/ip.js is already imported by this file. The inline copy that used
-      // to live here returned null for unparseable input where ipToLong returns
-      // 0, so a malformed reverse-zone row sorted to the opposite end of the
-      // table depending on which code path produced it (audit #52). Guard with
-      // the shared validator and use the shared conversion.
-      const ipLong = isValidIpv4(ip) ? ipToLong(ip) : null;
-      return { ...r, _ip_long: ipLong };
+      // The shared fixed-width key sorts either family numerically and keeps
+      // a malformed row at one consistent end (audit #52). The field keeps its
+      // name: the column catalog points the IP Address sort at it.
+      return { ...r, _ip_long: sortKey(ip) };
     });
   }
   const q = dnsSearch.value.trim().toLowerCase();
   if (!q) return base;
-  return base.filter(r =>
-    (r.name && r.name.toLowerCase().includes(q)) ||
-    (r.record_type && r.record_type.toLowerCase().includes(q)) ||
-    (r.value && r.value.toLowerCase().includes(q)) ||
-    (r.os_family && r.os_family.toLowerCase().includes(q)) ||
-    (r.device_type && r.device_type.toLowerCase().includes(q)) ||
-    String(r.device_confidence ?? '').includes(q) ||
-    (r.dhcp_fingerprint && r.dhcp_fingerprint.includes(q)) ||
-    (r.dhcp_vendor_class && r.dhcp_vendor_class.toLowerCase().includes(q)) ||
-    (r.dhcp_fingerprint_hostname && r.dhcp_fingerprint_hostname.toLowerCase().includes(q)) ||
-    (r.device_fingerprint_source && r.device_fingerprint_source.includes(q))
+  return base.filter(
+    (r) =>
+      (r.name && r.name.toLowerCase().includes(q)) ||
+      (r.record_type && r.record_type.toLowerCase().includes(q)) ||
+      (r.value && r.value.toLowerCase().includes(q)) ||
+      (r.os_family && r.os_family.toLowerCase().includes(q)) ||
+      (r.device_type && r.device_type.toLowerCase().includes(q)) ||
+      String(r.device_confidence ?? '').includes(q) ||
+      (r.dhcp_fingerprint && r.dhcp_fingerprint.includes(q)) ||
+      (r.dhcp_vendor_class && r.dhcp_vendor_class.toLowerCase().includes(q)) ||
+      (r.dhcp_fingerprint_hostname && r.dhcp_fingerprint_hostname.toLowerCase().includes(q)) ||
+      (r.device_fingerprint_source && r.device_fingerprint_source.includes(q)),
   );
 });
-const availableRecordTypes = computed(() => {
-  if (selectedZone.value?.type === 'reverse') return ['PTR'];
-  return allRecordTypes;
-});
+// AAAA is offered only while IPv6 support is on; existing AAAA rows still show.
+const availableRecordTypes = computed(() =>
+  recordTypesFor({ zoneType: selectedZone.value?.type, ipv6: ipv6Supported.value }),
+);
 
 // Record context menu
 const recordContextMenu = ref();
@@ -649,14 +927,13 @@ const recordContextMenuItems = computed(() => {
   } else {
     items.push(
       { label: 'Edit Record', icon: 'pi pi-pencil', command: () => openRecordDialog(r) },
-      { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) }
+      { label: 'Delete Record', icon: 'pi pi-trash', command: () => confirmDeleteRecord(r) },
     );
   }
 
   const rowActions = [];
-  const cnameItem = addCnameMenuItem(
-    r,
-    () => openRecordDialog(null, { type: 'CNAME', value: r.record_fqdn })
+  const cnameItem = addCnameMenuItem(r, () =>
+    openRecordDialog(null, { type: 'CNAME', value: r.record_fqdn }),
   );
   if (cnameItem) rowActions.push(cnameItem);
   const ip = dnsRecordProbeIp(r, isReverse.value ? ptrRecordIp(r) : null);
@@ -679,7 +956,7 @@ function onRecordDoubleClick(event) {
 }
 function onRecordRowClick(event) {
   openIpDetails(event.data, {
-    domainName: isReverse.value ? null : selectedZone.value?.name
+    domainName: isReverse.value ? null : selectedZone.value?.name,
   });
 }
 function recordRowClass(record) {
@@ -687,7 +964,12 @@ function recordRowClass(record) {
 }
 
 async function probeDnsRecord(ip, subnetId) {
-  toast.add({ severity: 'info', summary: 'Probing...', detail: `Sending probe to ${ip}`, life: 2000 });
+  toast.add({
+    severity: 'info',
+    summary: 'Probing...',
+    detail: `Sending probe to ${ip}`,
+    life: 2000,
+  });
   try {
     const payload = subnetId ? { ip, subnet_id: subnetId } : { ip };
     const res = await api.post('/scans/probe', payload);
@@ -697,14 +979,14 @@ async function probeDnsRecord(ip, subnetId) {
         severity: 'success',
         summary: `${ip} is Online`,
         detail: `Method: ${result.method.toUpperCase()}${result.mac ? ` · MAC: ${result.mac}` : ''}`,
-        life: 5000
+        life: 5000,
       });
     } else {
       toast.add({
         severity: 'warn',
         summary: `${ip} is Offline`,
         detail: `No response via ${result.method.toUpperCase()}`,
-        life: 5000
+        life: 5000,
       });
     }
     if (selectedZone.value) await selectZone(selectedZone.value);
@@ -716,35 +998,45 @@ async function probeDnsRecord(ip, subnetId) {
 // Delete dialogs
 const showDeleteZoneDialog = ref(false);
 const deletingZone = ref(null);
-const zoneDeleteConfirmText = ref('');
 const showDeleteRecordDialog = ref(false);
 const deletingRecord = ref(null);
 
 const valuePlaceholder = computed(() => {
   switch (recordForm.value.type) {
-    case 'A': return '192.168.1.10';
-    case 'CNAME': return 'target.example.com';
-    case 'MX': return 'mail.example.com';
-    case 'TXT': return 'v=spf1 include:...';
-    case 'SRV': return 'server.example.com';
-    case 'PTR': return 'host.example.com';
-    default: return '';
+    case 'A':
+      return '192.168.1.10';
+    case 'AAAA':
+      return 'fd00:1234::10';
+    case 'CNAME':
+      return 'target.example.com';
+    case 'MX':
+      return 'mail.example.com';
+    case 'TXT':
+      return 'v=spf1 include:...';
+    case 'SRV':
+      return 'server.example.com';
+    case 'PTR':
+      return 'host.example.com';
+    default:
+      return '';
   }
 });
 
 // Persist zone tab selection
 watch(zoneTab, (val) => {
-  saveJson('cidrella_dns_zone_tab', val)
+  saveJson('cidrella_dns_zone_tab', val);
 });
 
 async function selectZone(zone) {
   selectedZone.value = zone;
-  saveJson('cidrella_dns_selected_zone_id', zone?.id || null)
+  saveJson('cidrella_dns_selected_zone_id', zone?.id || null);
   loadingRecords.value = true;
   try {
     const fetched = await store.getRecords(zone.id);
     if (zone.type === 'reverse') {
-      fetched.sort((a, b) => (a.value || '').localeCompare(b.value || '', undefined, { numeric: true }));
+      fetched.sort((a, b) =>
+        (a.value || '').localeCompare(b.value || '', undefined, { numeric: true }),
+      );
     }
     records.value = fetched;
   } catch (err) {
@@ -775,15 +1067,18 @@ async function openZoneDialog(zone = null) {
       severity: 'error',
       summary: 'Could not load SOA defaults',
       detail: `${apiError(err)}. The zone editor needs them, so it has not been opened.`,
-      life: 6000
+      life: 6000,
     });
     return;
   }
 
   if (zone) {
     zoneForm.value = {
-      name: zone.name, type: zone.type,
-      description: zone.description || '', enabled: !!zone.enabled,
+      name: zone.name,
+      type: zone.type,
+      description: zone.description || '',
+      enabled: !!zone.enabled,
+      forward_unknown: !!zone.forward_unknown,
       // A stored zone can hold NULL in these columns. Fall back to the SERVER's
       // defaults, not to a second set of numbers written down over here.
       soa_primary_ns: zone.soa_primary_ns || soaDefaults.soa_primary_ns,
@@ -791,15 +1086,20 @@ async function openZoneDialog(zone = null) {
       soa_refresh: zone.soa_refresh ?? soaDefaults.soa_refresh,
       soa_retry: zone.soa_retry ?? soaDefaults.soa_retry,
       soa_expire: zone.soa_expire ?? soaDefaults.soa_expire,
-      soa_minimum_ttl: zone.soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl
+      soa_minimum_ttl: zone.soa_minimum_ttl ?? soaDefaults.soa_minimum_ttl,
     };
   } else {
     zoneForm.value = {
-      name: '', type: zoneTab.value || 'forward',
-      description: '', enabled: true,
-      ...soaDefaults
+      name: '',
+      type: zoneTab.value || 'forward',
+      description: '',
+      enabled: true,
+      forward_unknown: false,
+      ...soaDefaults,
     };
   }
+  zoneFormBaseline = JSON.stringify(zoneForm.value);
+  zoneDiscard.reset();
   showZoneDialog.value = true;
 }
 
@@ -810,13 +1110,14 @@ async function saveZone() {
       await store.updateZone(editingZone.value.id, zoneForm.value);
       toast.add({ severity: 'success', summary: 'Zone updated', life: 3000 });
       if (selectedZone.value?.id === editingZone.value.id) {
-        selectedZone.value = store.zones.find(z => z.id === editingZone.value.id) || null;
+        selectedZone.value = store.zones.find((z) => z.id === editingZone.value.id) || null;
       }
     } else {
       const zone = await store.createZone(zoneForm.value);
       toast.add({ severity: 'success', summary: 'Zone created', life: 3000 });
-      selectZone(store.zones.find(z => z.id === zone.id) || zone);
+      selectZone(store.zones.find((z) => z.id === zone.id) || zone);
     }
+    emit('changed', editingZone.value ? 'DNS zone updated' : 'DNS zone created');
     showZoneDialog.value = false;
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -839,6 +1140,7 @@ async function doDeleteZone() {
       records.value = [];
     }
     showDeleteZoneDialog.value = false;
+    emit('changed', 'DNS zone deleted');
     toast.add({ severity: 'success', summary: 'Zone deleted', life: 3000 });
   } catch (err) {
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
@@ -847,33 +1149,70 @@ async function doDeleteZone() {
   }
 }
 
+// What the TTL field promises. The DNS server decides the TTL a record is
+// answered with (dnsmasq serves most records with one fixed TTL), so an
+// existing record says what it is served with now.
+const ttlHelp = computed(() => {
+  const served = editingRecord.value?.served_ttl;
+  const fallback = "Leave empty for the DNS server's default.";
+  return served == null ? fallback : `Served with a ${served} second TTL. ${fallback}`;
+});
+
 // Record CRUD
 function openRecordDialog(record = null, defaults = {}) {
   editingRecord.value = record;
   if (record) {
     recordForm.value = {
-      name: record.name, type: record.record_type, value: record.value,
-      priority: record.priority, weight: record.weight, port: record.port,
-      ttl: record.ttl, enabled: !!record.enabled
+      name: record.name,
+      type: record.record_type,
+      value: record.value,
+      priority: record.priority,
+      weight: record.weight,
+      port: record.port,
+      ttl: record.ttl,
+      enabled: !!record.enabled,
     };
   } else {
     const defaultType = selectedZone.value?.type === 'reverse' ? 'PTR' : 'A';
     recordForm.value = {
-      name: '', type: defaultType, value: '', priority: null, weight: null,
-      port: null, ttl: null, enabled: true, ...defaults
+      name: '',
+      type: defaultType,
+      value: '',
+      priority: null,
+      weight: null,
+      port: null,
+      ttl: null,
+      enabled: true,
+      ...defaults,
     };
   }
+  recordFormBaseline = JSON.stringify(recordForm.value);
+  recordDiscard.reset();
+  recordError.value = '';
   showRecordDialog.value = true;
 }
 
 async function saveRecord() {
   savingRecord.value = true;
+  recordError.value = '';
   try {
+    // Address records are checked here so the operator sees which field is
+    // wrong instead of a generic 400.
+    const typedValue = (recordForm.value.value || '').trim();
+    if (recordForm.value.type === 'A' && typedValue && !isValidIpv4(typedValue)) {
+      recordError.value = 'An A record needs a valid IPv4 address';
+      return;
+    }
+    if (recordForm.value.type === 'AAAA' && typedValue && !isValidIpv6(typedValue)) {
+      recordError.value = 'An AAAA record needs a valid IPv6 address';
+      return;
+    }
+    const payload = dnsRecordPayload(recordForm.value);
     if (editingRecord.value) {
-      await store.updateRecord(selectedZone.value.id, editingRecord.value.id, recordForm.value);
+      await store.updateRecord(selectedZone.value.id, editingRecord.value.id, payload);
       toast.add({ severity: 'success', summary: 'Record updated', life: 3000 });
     } else {
-      await store.createRecord(selectedZone.value.id, recordForm.value);
+      await store.createRecord(selectedZone.value.id, payload);
       toast.add({ severity: 'success', summary: 'Record created', life: 3000 });
     }
 
@@ -882,22 +1221,24 @@ async function saveRecord() {
     // different host, breaking the A record until the next renewal. A
     // DHCP Reservation would be the right tool if the user wants a stable
     // hostname for that MAC.
-    if (recordForm.value.type === 'A' && recordForm.value.value) {
+    if (['A', 'AAAA'].includes(recordForm.value.type) && recordForm.value.value) {
       const hit = findDhcpScopeForIp(recordForm.value.value);
       if (hit) {
         toast.add({
           severity: 'warn',
           summary: 'IP is inside a DHCP pool',
           detail: `${recordForm.value.value} is inside the DHCP range on ${hit.cidr || 'a subnet'} (${hit.scope.start_ip}–${hit.scope.end_ip}). DHCP may reassign this address. Consider a DHCP Reservation instead.`,
-          life: 8000
+          life: 8000,
         });
       }
     }
 
     showRecordDialog.value = false;
+    emit('changed', editingRecord.value ? 'DNS record updated' : 'DNS record created');
     records.value = await store.getRecords(selectedZone.value.id);
     await store.fetchZones(); // refresh record counts
   } catch (err) {
+    recordError.value = apiError(err);
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   } finally {
     savingRecord.value = false;
@@ -914,6 +1255,7 @@ async function doDeleteRecord() {
   try {
     await store.deleteRecord(selectedZone.value.id, deletingRecord.value.id);
     showDeleteRecordDialog.value = false;
+    emit('changed', 'DNS record deleted');
     toast.add({ severity: 'success', summary: 'Record deleted', life: 3000 });
     records.value = await store.getRecords(selectedZone.value.id);
     await store.fetchZones();
@@ -934,13 +1276,13 @@ onMounted(async () => {
   // Restore previously selected zone
   const savedZoneId = loadJson('cidrella_dns_selected_zone_id', null);
   if (savedZoneId) {
-    const zone = store.zones.find(z => z.id === savedZoneId);
+    const zone = store.zones.find((z) => z.id === savedZoneId);
     if (zone) {
       zoneTab.value = zone.type === 'reverse' ? 'reverse' : 'forward';
       // Auto-expand the group containing this reverse zone
       if (zone.type === 'reverse') {
         for (const entry of groupedReverseZones.value) {
-          if (entry.isGroup && entry.zones.some(z => z.id === savedZoneId)) {
+          if (entry.isGroup && entry.zones.some((z) => z.id === savedZoneId)) {
             expandedGroups.value = { ...expandedGroups.value, [entry.key]: true };
             break;
           }
@@ -951,7 +1293,17 @@ onMounted(async () => {
   }
 });
 
-defineExpose({ openZoneDialog });
+function openRecordEditor(record = null, defaults = {}, zone = null) {
+  if (zone) selectedZone.value = zone;
+  openRecordDialog(record, defaults);
+}
+
+function confirmDeleteRecordForZone(record, zone = null) {
+  if (zone) selectedZone.value = zone;
+  confirmDeleteRecord(record);
+}
+
+defineExpose({ openZoneDialog, openRecordEditor, confirmDeleteZone, confirmDeleteRecordForZone });
 </script>
 
 <style scoped>
@@ -966,17 +1318,17 @@ defineExpose({ openZoneDialog });
 }
 
 .zone-panel {
-  background: var(--p-content-background);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-content-background);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   overflow: hidden;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 .zone-panel :deep(.p-tabpanels) {
   padding: 0;
 }
 .zone-panel :deep(.p-tablist) {
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
 }
 
 .panel-header {
@@ -984,55 +1336,20 @@ defineExpose({ openZoneDialog });
   justify-content: space-between;
   align-items: center;
   padding: 0.75rem 1rem;
-  border-bottom: 1px solid var(--p-surface-border);
-  background: var(--p-surface-ground);
-  color: var(--p-text-color);
+  border-bottom: 1px solid var(--cid-surface-border);
+  background: var(--cid-surface-ground);
+  color: var(--cid-text-color);
 }
-.panel-header h3 { margin: 0; font-size: var(--app-fs-md); color: var(--p-text-color); }
-
-.info-bar {
-  display: flex;
-  align-items: center;
-  flex-shrink: 0;
-  border-bottom: 1px solid var(--p-surface-border);
-  padding: 0 0.75rem;
-  gap: 0.6rem;
-  height: 2.4rem;
-  box-sizing: border-box;
-}
-.info-bar-name { font-weight: 700; font-size: var(--app-fs-md); color: var(--p-primary-color); font-family: monospace; white-space: nowrap; }
-.info-bar-sep { width: 1px; height: 1rem; background: var(--p-surface-border); flex-shrink: 0; }
-.info-bar-pair { display: flex; align-items: baseline; gap: 4px; white-space: nowrap; }
-.info-bar-label { font-size: var(--app-fs-xs); text-transform: uppercase; color: var(--p-text-muted-color); letter-spacing: 0.08em; }
-.info-bar-val { font-size: var(--app-fs-sm); font-weight: 600; font-family: monospace; }
-
-.sidebar-search {
-  display: flex;
-  align-items: center;
-  padding: 0 0.6rem;
-  border-bottom: 1px solid var(--p-surface-border);
-  gap: 0.4rem;
-  height: 2.4rem;
-  box-sizing: border-box;
-  flex-shrink: 0;
-}
-.search-icon {
-  font-size: var(--app-fs-sm);
-  color: var(--p-text-muted-color);
-}
-.sidebar-filter {
-  flex: 1;
-  border: none;
-  background: transparent;
-  color: var(--p-text-color);
-  font-size: var(--app-fs-sm);
-  outline: none;
-}
-.sidebar-filter::placeholder {
-  color: var(--p-text-muted-color);
+.panel-header h3 {
+  margin: 0;
+  font-size: var(--app-fs-md);
+  color: var(--cid-text-color);
 }
 
-.zone-list { max-height: 500px; overflow-y: auto; }
+.zone-list {
+  max-height: 500px;
+  overflow-y: auto;
+}
 
 .zone-item {
   display: flex;
@@ -1040,15 +1357,26 @@ defineExpose({ openZoneDialog });
   align-items: center;
   padding: 0.6rem 1rem;
   cursor: pointer;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   transition: background 0.15s;
 }
-.zone-item:hover { background: var(--p-highlight-background); }
-.zone-item.active { background: var(--p-highlight-background); border-left: 3px solid var(--p-primary-color); }
+.zone-item:hover {
+  background: var(--cid-highlight-background);
+}
+.zone-item.active {
+  background: var(--cid-highlight-background);
+  box-shadow: inset 0 0 0 1px
+    color-mix(in srgb, var(--cid-primary-color) 45%, var(--cid-surface-border));
+}
 
-:deep(.ip-detail-row) { cursor: pointer; }
+:deep(.ip-detail-row) {
+  cursor: pointer;
+}
 
-.zone-info { flex: 1; min-width: 0; }
+.zone-info {
+  flex: 1;
+  min-width: 0;
+}
 .zone-name {
   font-weight: 600;
   font-size: var(--app-fs-md);
@@ -1058,14 +1386,26 @@ defineExpose({ openZoneDialog });
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
   font-family: monospace;
 }
-.zone-meta { display: flex; gap: 0.4rem; margin-top: 0.2rem; align-items: center; }
+.zone-meta {
+  display: flex;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+  align-items: center;
+}
 
-.record-count { font-size: var(--app-fs-xs); color: var(--p-text-muted-color); }
+.record-count {
+  font-size: var(--app-fs-xs);
+  color: var(--cid-text-muted-color);
+}
 
-.zone-actions { display: flex; gap: 0.15rem; flex-shrink: 0; }
+.zone-actions {
+  display: flex;
+  gap: 0.15rem;
+  flex-shrink: 0;
+}
 
 .records-panel {
   display: flex;
@@ -1085,13 +1425,13 @@ defineExpose({ openZoneDialog });
   align-items: center;
   gap: 0.5rem;
   padding: 0.4rem 0.75rem;
-  border-bottom: 1px solid var(--p-surface-border);
+  border-bottom: 1px solid var(--cid-surface-border);
   flex-shrink: 0;
 }
 .dns-toolbar .toolbar-divider {
   width: 1px;
   height: 1.2rem;
-  background: var(--p-surface-border);
+  background: var(--cid-surface-border);
 }
 
 .type-badge {
@@ -1103,30 +1443,9 @@ defineExpose({ openZoneDialog });
   letter-spacing: 0.02em;
 }
 
-.badge-enabled { font-size: var(--app-fs-xs); color: var(--p-green-500); }
-
-.action-buttons { display: flex; gap: 0.25rem; }
-
-.search-bar { display: flex; align-items: center; gap: 0.25rem; padding: 0.4rem 0; flex-shrink: 0; }
-.search-input { width: 22rem; }
-
-.empty-state {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--p-surface-400);
-  font-size: var(--app-fs-base);
-}
-.empty-state.centered {
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 4rem 2rem;
-}
-.loading-state {
-  padding: 2rem 1rem;
-  text-align: center;
-  color: var(--p-surface-400);
+.badge-enabled {
+  font-size: var(--app-fs-xs);
+  color: var(--cid-green-500);
 }
 
 .form-grid {
@@ -1142,7 +1461,7 @@ defineExpose({ openZoneDialog });
 }
 
 .soa-section {
-  border-top: 1px solid var(--p-surface-border);
+  border-top: 1px solid var(--cid-surface-border);
   padding-top: 0.75rem;
   margin-top: 0.25rem;
   display: flex;
@@ -1152,7 +1471,7 @@ defineExpose({ openZoneDialog });
 .soa-section h4 {
   margin: 0;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   text-transform: uppercase;
   letter-spacing: 0.08em;
 }
@@ -1168,8 +1487,8 @@ defineExpose({ openZoneDialog });
   width: 1rem;
   height: 1rem;
   border-radius: 50%;
-  background: var(--p-surface-200);
-  color: var(--p-text-muted-color);
+  background: var(--cid-surface-200);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
   font-weight: 700;
   cursor: help;
@@ -1185,7 +1504,7 @@ defineExpose({ openZoneDialog });
   display: block;
   margin-top: 0.4rem;
   font-size: var(--app-fs-xs);
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
 }
 
 .zone-group-header {
@@ -1196,13 +1515,13 @@ defineExpose({ openZoneDialog });
   cursor: pointer;
   font-weight: 600;
   font-size: var(--app-fs-md);
-  color: var(--p-text-color);
-  background: var(--p-surface-ground);
-  border-bottom: 1px solid var(--p-surface-border);
+  color: var(--cid-text-color);
+  background: var(--cid-surface-ground);
+  border-bottom: 1px solid var(--cid-surface-border);
   transition: background 0.15s;
 }
 .zone-group-header:hover {
-  background: color-mix(in srgb, var(--p-surface-ground) 80%, var(--p-highlight-background));
+  background: color-mix(in srgb, var(--cid-surface-ground) 80%, var(--cid-highlight-background));
 }
 .zone-group-header .record-count {
   margin-left: auto;
@@ -1213,21 +1532,21 @@ defineExpose({ openZoneDialog });
 }
 
 .warn-text {
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-weight: 500;
 }
 
 .ptr-preview {
-  background: var(--p-surface-ground);
+  background: var(--cid-surface-ground);
   padding: 0.5rem 0.75rem;
   border-radius: 6px;
-  border: 1px solid var(--p-surface-border);
+  border: 1px solid var(--cid-surface-border);
 }
 .ptr-preview-value {
   font-family: monospace;
   font-size: var(--app-fs-md);
   font-weight: 600;
-  color: var(--p-text-color);
+  color: var(--cid-text-color);
 }
 
 @media (max-width: 900px) {

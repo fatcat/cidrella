@@ -71,6 +71,12 @@ function parseV6(str, embeddedV4) {
   let trailing = null;
   if (parts.length > 0 && parts[parts.length - 1].includes('.')) {
     if (!embeddedV4) return null;
+    // RFC 4291 puts the dotted-quad in the TRAILING two hextets, so a '::'
+    // after it means it is not trailing at all. Without this, '1.2.3.4::'
+    // takes its quad from the head, then fills six zero groups in front of
+    // it, producing exactly the value of the legitimate '::1.2.3.4'. Two
+    // different strings, one of them invalid, canonicalizing to one address.
+    if (hasDoubleColon && tailParts.length === 0) return null;
     const v4 = parseV4(parts[parts.length - 1]);
     if (v4 === null) return null;
     trailing = v4;
@@ -80,9 +86,15 @@ function parseV6(str, embeddedV4) {
   const groupCount = trailing === null ? 8 : 6;
   if (hasDoubleColon) {
     const fill = groupCount - parts.length;
-    if (fill < 0) return null;
-    parts = [...parts.slice(0, headParts.length), ...Array(fill).fill('0'),
-      ...parts.slice(headParts.length)];
+    // RFC 4291 2.2: "::" stands for ONE or more zero groups. With none left
+    // to fill, "1::2:3:4:5:6:7:8" would canonicalize to a different, valid
+    // spelling while net.isIP refuses it.
+    if (fill < 1) return null;
+    parts = [
+      ...parts.slice(0, headParts.length),
+      ...Array(fill).fill('0'),
+      ...parts.slice(headParts.length),
+    ];
   }
   if (parts.length !== groupCount) return null;
 
@@ -188,10 +200,16 @@ export function formatIp(value, bits) {
   let bestStart = -1;
   let bestLen = 0;
   for (let i = 0; i < 8;) {
-    if (groups[i] !== '0') { i++; continue; }
+    if (groups[i] !== '0') {
+      i++;
+      continue;
+    }
     let j = i;
     while (j < 8 && groups[j] === '0') j++;
-    if (j - i > bestLen) { bestStart = i; bestLen = j - i; }
+    if (j - i > bestLen) {
+      bestStart = i;
+      bestLen = j - i;
+    }
     i = j;
   }
 

@@ -4,21 +4,44 @@ import AddressDetailsPanel from '../../../src/views/networks-workspace/AddressDe
 import api from '../../../src/api/client.js';
 
 vi.mock('../../../src/api/client.js', () => ({
-  default: { get: vi.fn(), put: vi.fn(), post: vi.fn() }
+  default: { get: vi.fn(), put: vi.fn(), post: vi.fn(), delete: vi.fn() },
 }));
 
 const availableRow = {
-  id: 'address:10.0.0.33', address: '10.0.0.33', hostname: null, status: 'DHCP Scope', type: null,
-  online: 'offline', mac: '—', source: null, lastSeen: '—', scanning: 'On · inherited',
-  raw: { ip_address: '10.0.0.33', allocation_state: 'unassigned', scan_enabled: null, scanning_enabled: true }
+  id: 'address:10.0.0.33',
+  address: '10.0.0.33',
+  hostname: null,
+  status: 'DHCP Scope',
+  type: null,
+  online: 'offline',
+  mac: '—',
+  source: null,
+  lastSeen: '—',
+  scanning: 'On · inherited',
+  raw: {
+    ip_address: '10.0.0.33',
+    allocation_state: 'unassigned',
+    scan_enabled: null,
+    scanning_enabled: true,
+  },
 };
 
 function response(data) {
   return Promise.resolve({ data });
 }
 
-function mountPanel(row = availableRow) {
-  return mount(AddressDetailsPanel, { props: { row, subnetId: 7, networkName: 'Lab', dnsCount: 1, dhcpCount: 2 } });
+function mountPanel(row = availableRow, extraProps = {}) {
+  return mount(AddressDetailsPanel, {
+    props: {
+      row,
+      subnetId: 7,
+      networkName: 'Lab',
+      dns: { total: 1, disabled: 0, note: '1 record references this address' },
+      dhcpCount: 2,
+      canWrite: true,
+      ...extraProps,
+    },
+  });
 }
 
 describe('workspace address details panel', () => {
@@ -26,21 +49,64 @@ describe('workspace address details panel', () => {
     api.get.mockReset();
     api.put.mockReset();
     api.post.mockReset();
-    api.get.mockResolvedValue(response({ events: [
-      { id: 1, event_type: 'retired', source: 'retirement', created_at: '2026-09-10 12:00:00' },
-      { id: 2, event_type: 'allocation_changed', old_value: 'unassigned', new_value: 'reserved', source: 'manual', created_at: '2026-09-10 11:00:00' }
-    ] }));
+    api.delete.mockReset();
+    api.get.mockResolvedValue(
+      response({
+        events: [
+          { id: 1, event_type: 'retired', source: 'retirement', created_at: '2026-09-10 12:00:00' },
+          {
+            id: 2,
+            event_type: 'allocation_changed',
+            old_value: 'unassigned',
+            new_value: 'reserved',
+            source: 'manual',
+            created_at: '2026-09-10 11:00:00',
+          },
+        ],
+      }),
+    );
     api.put.mockResolvedValue(response({}));
-    api.post.mockResolvedValue(response({ responded: true, method: 'arp', mac: '02:00:00:00:00:33' }));
+    api.delete.mockResolvedValue(response({ ok: true, cleared: true }));
+    api.post.mockResolvedValue(
+      response({ responded: true, method: 'arp', mac: '02:00:00:00:00:33' }),
+    );
   });
 
   it('loads lifecycle history and uses the concise Metadata Expired label', async () => {
     const wrapper = mountPanel();
     await flushPromises();
 
-    expect(api.get).toHaveBeenCalledWith('/subnets/7/ips/10.0.0.33/events');
+    expect(api.get).toHaveBeenCalledWith('/subnets/7/ips/10.0.0.33/events?limit=100');
+    await wrapper.findAll('[role="tab"]')[1].trigger('click');
     expect(wrapper.find('.events-list').text()).toContain('Metadata Expired');
     expect(wrapper.find('.events-list').text()).toContain('Allocation changed');
+    expect(wrapper.find('.events-list').text()).toContain('Latest 100');
+
+    api.get.mockResolvedValueOnce(response({ events: [] }));
+    await wrapper.find('.show-events').trigger('click');
+    await flushPromises();
+    expect(api.get).toHaveBeenLastCalledWith('/subnets/7/ips/10.0.0.33/events?limit=500');
+  });
+
+  it('keeps the open tab when a refresh hands over the same address, IPv4 or IPv6', async () => {
+    for (const address of ['10.0.0.33', 'fd00:a::33']) {
+      const row = { ...availableRow, address, raw: { ...availableRow.raw, ip_address: address } };
+      const wrapper = mountPanel(row);
+      await flushPromises();
+      await wrapper.findAll('[role="tab"]')[1].trigger('click');
+      api.get.mockClear();
+
+      // The workspace's minute refresh: a new row object for the same address.
+      await wrapper.setProps({ row: { ...row, raw: { ...row.raw } } });
+      await flushPromises();
+      expect(wrapper.find('[role="tab"][aria-selected="true"]').text()).toBe('Lifecycle');
+      expect(api.get).not.toHaveBeenCalled();
+
+      // Another address starts over on Overview.
+      await wrapper.setProps({ row: { ...availableRow, address: '10.0.0.34' } });
+      await flushPromises();
+      expect(wrapper.find('[role="tab"][aria-selected="true"]').text()).toBe('Overview');
+    }
   });
 
   it('creates an IP Reservation with an explicit note', async () => {
@@ -51,7 +117,8 @@ describe('workspace address details panel', () => {
     await flushPromises();
 
     expect(api.put).toHaveBeenCalledWith('/subnets/7/ips/10.0.0.33/allocation', {
-      allocation_state: 'reserved', note: 'Printer replacement'
+      allocation_state: 'reserved',
+      note: 'Printer replacement',
     });
     expect(wrapper.emitted('changed')?.[0]).toEqual(['IP Reservation created']);
   });
@@ -62,7 +129,9 @@ describe('workspace address details panel', () => {
 
     await wrapper.find('button[data-track="workspace-scan-off"]').trigger('click');
     await flushPromises();
-    expect(api.put).toHaveBeenCalledWith('/subnets/7/ips/10.0.0.33/scan-enabled', { scan_enabled: false });
+    expect(api.put).toHaveBeenCalledWith('/subnets/7/ips/10.0.0.33/scan-enabled', {
+      scan_enabled: false,
+    });
 
     await wrapper.find('button[data-track="workspace-probe-address"]').trigger('click');
     await flushPromises();
@@ -70,11 +139,172 @@ describe('workspace address details panel', () => {
     expect(wrapper.find('.feedback').text()).toContain('responded via ARP');
   });
 
+  it.each([
+    ['inherit', null],
+    ['on', true],
+    ['off', false],
+  ])('sends the exact nullable scan policy for %s', async (track, expected) => {
+    const row = {
+      ...availableRow,
+      raw: { ...availableRow.raw, scan_enabled: track === 'inherit' ? 1 : null },
+    };
+    const wrapper = mountPanel(row);
+    await wrapper.find(`button[data-track="workspace-scan-${track}"]`).trigger('click');
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith('/subnets/7/ips/10.0.0.33/scan-enabled', {
+      scan_enabled: expected,
+    });
+  });
+
+  it('uses the server effective scanning value and probes an IPv6 address too', async () => {
+    // IPV6-45: POST /scans/probe probes IPv6 (ICMPv6 echo, then Neighbor
+    // Discovery), so the button is offered for either family.
+    api.post.mockResolvedValue({ data: { responded: true, method: 'ndp' } });
+    const row = {
+      ...availableRow,
+      address: '2001:db8::33',
+      raw: {
+        ...availableRow.raw,
+        ip_address: '2001:db8::33',
+        address_family: 6,
+        scanning_enabled: false,
+      },
+    };
+    const wrapper = mountPanel(row);
+    expect(wrapper.text()).toContain('Effective setting: Off');
+    const probe = wrapper.find('[data-track="workspace-probe-address"]');
+    expect(probe.attributes('disabled')).toBeUndefined();
+    await probe.trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith(
+      '/scans/probe',
+      expect.objectContaining({ ip: '2001:db8::33' }),
+    );
+  });
+
+  it('distinguishes a completed probe with no response from a successful response', async () => {
+    api.post.mockResolvedValueOnce(response({ responded: false, method: 'icmp' }));
+    const wrapper = mountPanel();
+    await wrapper.find('[data-track="workspace-probe-address"]').trigger('click');
+    await flushPromises();
+    expect(wrapper.find('.feedback.warning').text()).toContain('did not respond via ICMP');
+  });
+
+  it('loads and edits device facts only with DHCP permissions', async () => {
+    const row = {
+      ...availableRow,
+      mac: '02:00:00:00:00:33',
+      raw: { ...availableRow.raw, mac_address: '02:00:00:00:00:33' },
+    };
+    api.get.mockImplementation((url) => {
+      if (url.includes('/fingerprint/history')) {
+        return response([{ field: 'os_family', new_value: 'Linux', changed_at: '2026-09-10' }]);
+      }
+      if (url.includes('/fingerprint')) {
+        return response({
+          device_type: 'Computer',
+          os_family: 'Linux',
+          confidence: 85,
+          source: 'dhcp',
+        });
+      }
+      return response({ events: [] });
+    });
+    const wrapper = mountPanel(row, { canReadDevice: true, canWriteDevice: true });
+    await wrapper.findAll('[role="tab"]')[2].trigger('click');
+    await flushPromises();
+
+    expect(api.get).toHaveBeenCalledWith('/devices/02%3A00%3A00%3A00%3A00%3A33/fingerprint');
+    expect(api.get).toHaveBeenCalledWith(
+      '/devices/02%3A00%3A00%3A00%3A00%3A33/fingerprint/history?days=90',
+    );
+    expect(wrapper.find('.device-facts').text()).toContain('85%');
+    expect(wrapper.find('.device-history').text()).toContain('os family');
+    expect(wrapper.find('.device-history').text()).toContain('Linux');
+    await wrapper.find('#workspace-device-type').setValue('Server');
+    await wrapper.find('#workspace-os-family').setValue('Linux');
+    await wrapper.find('.device-section form').trigger('submit');
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith('/devices/02%3A00%3A00%3A00%3A00%3A33/fingerprint', {
+      device_type: 'Server',
+      os_family: 'Linux',
+    });
+
+    await wrapper.find('.device-section form button[type="button"]').trigger('click');
+    await flushPromises();
+    expect(api.delete).toHaveBeenCalledWith('/devices/02%3A00%3A00%3A00%3A00%3A33/fingerprint');
+  });
+
+  it('does not request device data without DHCP read permission or a MAC', async () => {
+    const wrapper = mountPanel();
+    await flushPromises();
+    expect(wrapper.findAll('[role="tab"]')).toHaveLength(2);
+    expect(api.get.mock.calls.some(([url]) => url.startsWith('/devices/'))).toBe(false);
+  });
+
+  it('offers only the related resources that exist', () => {
+    expect(
+      mountPanel(availableRow, { dns: { total: 0, disabled: 0, note: '' }, dhcpCount: 0 }).text(),
+    ).not.toContain('RELATED RESOURCES');
+    const dhcpOnly = mountPanel(availableRow, {
+      dns: { total: 0, disabled: 0, note: '' },
+      dhcpCount: 2,
+    });
+    expect(
+      dhcpOnly.findAll('.related-button').map((button) => button.find('strong').text()),
+    ).toEqual(['DHCP identity']);
+  });
+
+  it('warns when every DNS record naming the address is disabled, and only then', () => {
+    const callout = '[data-track="workspace-address-dns-disabled"]';
+    const allDisabled = mountPanel(availableRow, {
+      dns: { total: 1, disabled: 1, note: '1 disabled record references this address' },
+    });
+    expect(allDisabled.find(callout).text()).toContain(
+      'Its DNS record is disabled, so the address is held',
+    );
+    expect(allDisabled.find('.related-button').classes()).toContain('disabled');
+    expect(allDisabled.find('.related-button small').text()).toBe(
+      '1 disabled record references this address',
+    );
+
+    const oneOfTwo = mountPanel(availableRow, {
+      dns: { total: 2, disabled: 1, note: '2 records reference this address, 1 disabled' },
+    });
+    expect(oneOfTwo.find(callout).exists()).toBe(false);
+    expect(mountPanel().find(callout).exists()).toBe(false);
+  });
+
+  it('emits stable identities for related resources and the network', async () => {
+    const wrapper = mountPanel();
+    await wrapper.findAll('.related-button')[0].trigger('click');
+    await wrapper.find('.quick-actions button:last-child').trigger('click');
+    expect(wrapper.emitted('navigate')?.[0]).toEqual([
+      'dns',
+      { kind: 'ip', subnet_id: 7, ip_address: '10.0.0.33', address_family: null },
+    ]);
+    expect(wrapper.emitted('open-network')?.[0]).toEqual([{ kind: 'network', subnet_id: 7 }]);
+  });
+
+  it('offers no release for an address a disabled DNS record holds', () => {
+    const row = {
+      ...availableRow,
+      status: 'in use',
+      type: 'disabled DNS',
+      raw: { ...availableRow.raw, allocation_state: 'reserved', allocation_source_type: 'dns' },
+    };
+    const wrapper = mountPanel(row);
+    expect(wrapper.find('button[data-track="workspace-release-ip-reservation"]').exists()).toBe(
+      false,
+    );
+  });
+
   it('requires confirmation before releasing an IP Reservation', async () => {
     const row = {
       ...availableRow,
-      status: 'in use', type: 'IP Reservation',
-      raw: { ...availableRow.raw, allocation_state: 'reserved', reservation_note: 'Printer' }
+      status: 'in use',
+      type: 'IP Reservation',
+      raw: { ...availableRow.raw, allocation_state: 'reserved', reservation_note: 'Printer' },
     };
     const wrapper = mountPanel(row);
     await wrapper.find('button[data-track="workspace-release-ip-reservation"]').trigger('click');
@@ -82,6 +312,9 @@ describe('workspace address details panel', () => {
 
     await wrapper.find('.confirm-action button.danger').trigger('click');
     await flushPromises();
-    expect(api.put).toHaveBeenCalledWith('/subnets/7/ips/10.0.0.33/allocation', { allocation_state: 'unassigned', note: null });
+    expect(api.put).toHaveBeenCalledWith('/subnets/7/ips/10.0.0.33/allocation', {
+      allocation_state: 'unassigned',
+      note: null,
+    });
   });
 });

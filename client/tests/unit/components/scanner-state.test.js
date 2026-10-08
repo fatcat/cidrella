@@ -27,7 +27,12 @@ const makeScanState = (scans) => ({ value: deriveScanState(scans) });
 describe('#55: one scanner state, three consistent renderings', () => {
   it('idle', () => {
     const s = makeScanState([]).value;
-    expect(s).toEqual({ label: 'Scanner idle', dot: 'muted', dotLabel: 'Idle', chipClass: 'chip-idle' });
+    expect(s).toEqual({
+      label: 'Scanner idle',
+      dot: 'muted',
+      dotLabel: 'Idle',
+      chipClass: 'chip-idle',
+    });
   });
 
   it('pending is its OWN state, not active and not idle', () => {
@@ -55,7 +60,11 @@ describe('#55: one scanner state, three consistent renderings', () => {
 
   it('the tooltip and the visible label are the same string', () => {
     // This is the finding in one line: they used to differ.
-    for (const scans of [[], [{ status: 'pending' }], [{ status: 'running', total_ips: 10, scanned_ips: 5 }]]) {
+    for (const scans of [
+      [],
+      [{ status: 'pending' }],
+      [{ status: 'running', total_ips: 10, scanned_ips: 5 }],
+    ]) {
       const s = makeScanState(scans).value;
       const tooltip = s.label;
       const chipText = s.label;
@@ -65,7 +74,11 @@ describe('#55: one scanner state, three consistent renderings', () => {
 
   it('every state emits a dot kind StatusDot actually accepts', () => {
     const ALLOWED = ['ok', 'warn', 'err', 'info', 'muted'];
-    for (const scans of [[], [{ status: 'pending' }], [{ status: 'running', total_ips: 1, scanned_ips: 1 }]]) {
+    for (const scans of [
+      [],
+      [{ status: 'pending' }],
+      [{ status: 'running', total_ips: 1, scanned_ips: 1 }],
+    ]) {
       expect(ALLOWED, JSON.stringify(scans)).toContain(makeScanState(scans).value.dot);
     }
   });
@@ -82,7 +95,6 @@ describe('#55: StatusDot really does accept "info"', () => {
     expect(w.find('.sd-info').exists()).toBe(true);
   });
 });
-
 
 describe('#55: every consumer actually uses the shared derivation', () => {
   // The unit tests above exercise deriveScanState in isolation, which cannot
@@ -101,7 +113,7 @@ describe('#55: every consumer actually uses the shared derivation', () => {
 
   it('both scanner StatusDots read from scanState', () => {
     const dots = header.match(/<StatusDot[^>]*>/g) || [];
-    const scannerDots = dots.filter(d => d.includes('scanState'));
+    const scannerDots = dots.filter((d) => d.includes('scanState'));
     // One in the header chip, one in the ops popover. If a third scanner
     // rendering is added it should come from scanState too.
     expect(scannerDots.length).toBeGreaterThanOrEqual(2);

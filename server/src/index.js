@@ -2,9 +2,11 @@ import express from 'express';
 import fs from 'fs';
 import path from 'path';
 import helmet from 'helmet';
+import compression from 'compression';
 import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 
 import morgan from 'morgan';
+import { skipAccessLog } from './utils/access-log.js';
 import { fileURLToPath } from 'url';
 
 // v0.4.15: backstop for any async handler that throws without a try/catch.
@@ -29,15 +31,22 @@ import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
 import { sanitizeForLog } from './utils/validation.js';
 import { authMiddleware } from './auth/middleware.js';
-import { afterCommitMiddleware, resumePendingRegeneration } from './utils/after-commit.js';
+import { actorMiddleware } from './utils/request-actor.js';
+import {
+  afterCommitMiddleware,
+  queueRegen,
+  resumePendingRegeneration,
+} from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
+import featuresRoutes from './routes/features.js';
 import subnetRoutes from './routes/subnets.js';
 import rangeTypeRoutes from './routes/range-types.js';
 import rangeRoutes from './routes/ranges.js';
 import settingsRoutes from './routes/settings.js';
 import dnsRoutes from './routes/dns.js';
 import dhcpRoutes from './routes/dhcp.js';
+import workspaceRoutes from './routes/workspace.js';
 import scanRoutes from './routes/scans.js';
 import auditRoutes from './routes/audit.js';
 import blocklistRoutes from './routes/blocklists.js';
@@ -56,9 +65,13 @@ import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
-import { startBackupScheduler, sweepStaleRestoreArtifacts } from './utils/backup.js';
+import {
+  startBackupScheduler,
+  sweepStaleRestoreArtifacts,
+  applyRestoreCarryover,
+} from './utils/backup.js';
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
-import { startRogueDhcpScheduler } from './utils/dhcp-probe.js';
+import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import {
   applyInterfaceConfig,
@@ -66,7 +79,7 @@ import {
   restartDnsmasq,
   isCidrellaDnsmasqRunning,
   dnsmasqRestartPending,
-  withValidatedDnsmasqUpdate
+  withValidatedDnsmasqUpdate,
 } from './utils/dnsmasq.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
@@ -94,15 +107,37 @@ async function main() {
   captureBootServiceHealth();
 
   // Ensure data directories exist
-  const dataDirs = ['certs', 'backups', 'dnsmasq/hosts.d', 'dnsmasq/dhcp-hosts.d', 'dnsmasq/conf.d', 'blocklists', 'geoip'];
+  const dataDirs = [
+    'certs',
+    'backups',
+    'dnsmasq/hosts.d',
+    'dnsmasq/dhcp-hosts.d',
+    'dnsmasq/conf.d',
+    'blocklists',
+    'geoip',
+  ];
   for (const dir of dataDirs) {
     fs.mkdirSync(path.join(DATA_DIR, dir), { recursive: true });
   }
 
   // Initialize database
   await initDb(DATA_DIR);
+
+  // A restore parks what the restoring operator must not lose (their
+  // two-factor enrolment) in the restored database; apply it now that the
+  // schema is current. No-op on every boot that did not follow a restore.
+  try {
+    applyRestoreCarryover(getDb());
+  } catch (err) {
+    console.error('Restore carry-over failed:', err.message);
+  }
   console.log('Database initialized');
   resumePendingRegeneration();
+  // Render the zones once per boot, so a release that changes what the
+  // generator writes (0.5.0 local zones in conf.d/local-zones.conf) reaches
+  // existing installs without waiting for a DNS edit. Unchanged files are not
+  // rewritten and nothing is signaled.
+  queueRegen('regenerate_dns');
 
   // Migrate legacy DHCP scope columns to scope_options table
   migrateLegacyScopeOptions(getDb());
@@ -117,14 +152,14 @@ async function main() {
     const ptrRepair = reconcileManagedReverseDns(getDb());
     if (ptrRepair.inserted > 0 || ptrRepair.updated > 0) {
       console.log(
-        `Reconciled reverse DNS: ${ptrRepair.inserted} PTR row(s) inserted, `
-        + `${ptrRepair.updated} updated`
+        `Reconciled reverse DNS: ${ptrRepair.inserted} PTR row(s) inserted, ` +
+          `${ptrRepair.updated} updated`,
       );
     }
     for (const skipped of ptrRepair.skipped_subnets) {
       console.warn(
-        `Reverse DNS placeholder reconciliation skipped ${skipped.cidr}: `
-        + `${skipped.addresses} usable addresses exceeds the 65536-address safety limit`
+        `Reverse DNS placeholder reconciliation skipped ${skipped.cidr}: ` +
+          `${skipped.addresses} usable addresses exceeds the 65536-address safety limit`,
       );
     }
   } catch (err) {
@@ -139,7 +174,10 @@ async function main() {
   try {
     canonicalizeGeoipAllowlist(getDb());
   } catch (err) {
-    console.error('GeoIP allowlist canonicalization failed (continuing with stored values):', err.message);
+    console.error(
+      'GeoIP allowlist canonicalization failed (continuing with stored values):',
+      err.message,
+    );
   }
 
   // Repair stale system "Gateway" range rows whose start_ip doesn't match
@@ -151,7 +189,8 @@ async function main() {
   // gateway; this heal fixes the ones that already landed.
   try {
     const repaired = Range.repairStaleGatewayRanges(getDb());
-    if (repaired.changes > 0) console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
+    if (repaired.changes > 0)
+      console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
   } catch (err) {
     console.warn('Gateway range repair skipped:', err?.message || err);
   }
@@ -173,7 +212,9 @@ async function main() {
   try {
     const warning = getCapabilityWarning();
     if (warning) {
-      console.warn(`[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`);
+      console.warn(
+        `[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`,
+      );
     }
   } catch (err) {
     console.warn(`[capabilities] Unable to inspect process capabilities: ${err?.message || err}`);
@@ -217,7 +258,9 @@ async function main() {
     } else {
       console.log('dnsmasq config unchanged and service running, skipping boot restart');
     }
-  } catch { console.warn('dnsmasq restart failed (may not be installed)'); }
+  } catch {
+    console.warn('dnsmasq restart failed (may not be installed)');
+  }
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,
@@ -294,36 +337,46 @@ async function main() {
   app.set('strict routing', true);
 
   // Middleware
-  app.use(helmet({
-    contentSecurityPolicy: {
-      directives: {
-        defaultSrc: ["'self'"],
-        scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],  // Vue/PrimeVue injects inline styles
-        imgSrc: ["'self'", "data:"],
-        connectSrc: ["'self'"],
-        fontSrc: ["'self'", "data:"],
-        objectSrc: ["'none'"],
-        frameAncestors: ["'none'"]
-      }
-    },
-    crossOriginEmbedderPolicy: false,
-    referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-    strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true }
-  }));
+  app.use(
+    helmet({
+      contentSecurityPolicy: {
+        directives: {
+          defaultSrc: ["'self'"],
+          scriptSrc: ["'self'"],
+          styleSrc: ["'self'", "'unsafe-inline'"], // Vue/PrimeVue injects inline styles
+          imgSrc: ["'self'", 'data:'],
+          connectSrc: ["'self'"],
+          fontSrc: ["'self'", 'data:'],
+          objectSrc: ["'none'"],
+          frameAncestors: ["'none'"],
+        },
+      },
+      crossOriginEmbedderPolicy: false,
+      referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
+      strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true },
+    }),
+  );
   app.use((req, res, next) => {
     res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=(), payment=()');
     next();
   });
-  app.use(morgan('short'));
+  app.use(morgan('short', { skip: skipAccessLog }));
+  // gzip everything compressible above the default 1 KB. A full-network
+  // address read (4,096 rows for a /20 in the grid view) is 4 MB of JSON
+  // that shrinks about ten to one. The log stream is left alone: an event
+  // stream has to leave as it is written, and gzip would hold it.
+  app.use(
+    compression({
+      filter: (req, res) =>
+        !String(res.getHeader('Content-Type') || '').startsWith('text/event-stream') &&
+        compression.filter(req, res),
+    }),
+  );
   app.use(express.json());
 
   // Attach req.afterCommit(hookName) for routes to queue dedup'd regen.
   // Hooks fire on res.on('finish') so regen never blocks the HTTP response.
   app.use(afterCommitMiddleware);
-
-  // Setup routes (pre-auth, accessible before installation is complete)
-  app.use('/api/setup', setupRoutes);
 
   // API browser, developer tool only. Mounts /api-browser which enumerates
   // every registered route and offers an interactive client. In a release
@@ -342,6 +395,8 @@ async function main() {
 
   // Auth middleware for API routes
   app.use(authMiddleware);
+  // Names the signed-in user on the records written for this request.
+  app.use(actorMiddleware);
 
   // v0.4.15: authenticated write rate-limiter. v0.4.14 had only the login
   // limiter, so a compromised/bought token could fill the DB, thrash dnsmasq
@@ -357,7 +412,7 @@ async function main() {
   // this mount below the auth middleware).
   const writeLimiter = rateLimit({
     windowMs: 60 * 1000,
-    max: 300,  // 5/sec sustained per user, plenty for a human, too slow to brick the server
+    max: 300, // 5/sec sustained per user, plenty for a human, too slow to brick the server
     message: { error: 'Too many write requests. Slow down or retry later.' },
     standardHeaders: true,
     legacyHeaders: false,
@@ -374,7 +429,7 @@ async function main() {
       if (req.path.startsWith('/api/auth/login')) return true;
       if (req.path.startsWith('/api/auth/change-password')) return true;
       return false;
-    }
+    },
   });
   app.use(writeLimiter);
 
@@ -387,7 +442,10 @@ async function main() {
 
   // API routes
   app.use('/api/auth', authRoutes);
+  // First-run step markers; the API is never gated on them.
+  app.use('/api/setup', setupRoutes);
   app.use('/api/health', healthRoutes);
+  app.use('/api/features', featuresRoutes);
   app.use('/api/subnets', subnetRoutes);
   app.use('/api/range-types', rangeTypeRoutes);
   app.use('/api/settings', settingsRoutes);
@@ -395,6 +453,7 @@ async function main() {
   app.use('/api/dhcp/rogue', rogueDhcpRoutes);
   app.use('/api/devices', deviceRoutes);
   app.use('/api/dhcp', dhcpRoutes);
+  app.use('/api/workspace', workspaceRoutes);
   app.use('/api/scans', scanRoutes);
   app.use('/api/audit', auditRoutes);
   app.use('/api/blocklists', blocklistRoutes);
@@ -422,7 +481,12 @@ async function main() {
   // Block page for filtered domains
   app.get('/blocked', (req, res) => {
     const rawDomain = req.query.domain || req.hostname;
-    const domain = String(rawDomain).replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+    const domain = String(rawDomain)
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;')
+      .replace(/"/g, '&quot;')
+      .replace(/'/g, '&#39;');
     res.status(200).send(`<!DOCTYPE html>
 <html><head><title>Blocked</title>
 <style>body{font-family:system-ui,sans-serif;display:flex;justify-content:center;align-items:center;height:100vh;margin:0;background:#f5f5f5}
@@ -452,7 +516,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
       const table = match ? match[1] : 'unknown';
       console.error(`Missing table "${table}". Database migrations may not have been applied`);
       return res.status(500).json({
-        error: `Missing database table "${table}". Please restart the server to apply pending migrations.`
+        error: `Missing database table "${table}". Please restart the server to apply pending migrations.`,
       });
     }
 
@@ -477,6 +541,13 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
   const clientDist = path.join(__dirname, '..', '..', 'client', 'dist');
   if (fs.existsSync(clientDist)) {
     app.use(express.static(clientDist));
+    // A built asset that is not there is a 404, never the SPA page: a tab
+    // from before a deploy asks for chunks the new build removed, and
+    // index.html in their place is refused as a script with no clear cause.
+    // The 404 lets the client's stale-chunk reload take over.
+    app.use('/assets', (req, res) => {
+      res.status(404).json({ error: 'Not found' });
+    });
     // SPA fallback, serve index.html for all non-API routes
     app.get(/^(?!\/api).*/, (req, res) => {
       res.sendFile(path.join(clientDist, 'index.html'));
@@ -512,7 +583,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
   await applyHttpRedirectConfig();
 }
 
-main().catch(err => {
+main().catch((err) => {
   console.error('Failed to start server:', err);
   process.exit(1);
 });

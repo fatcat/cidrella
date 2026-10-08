@@ -10,7 +10,7 @@
   align-items: center;
   justify-content: center;
   padding: 4rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: 1.5rem;
 }
 </style>

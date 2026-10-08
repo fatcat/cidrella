@@ -8,7 +8,9 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   const learning = ref([]);
   const clientHistory = ref([]);
   const clientModel = ref(null);
+  const clientEvidence = ref(null);
   const fingerprintChanges = ref([]);
+  const map = ref([]);
   const settings = ref(null);
   const loading = ref(false);
 
@@ -25,6 +27,14 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     return res.data;
   }
 
+  // One row per device with a trained model, carrying its latest scored
+  // window: the triage map's dots, flagged or not.
+  async function fetchMap() {
+    const res = await api.get('/anomalies/map');
+    map.value = res.data;
+    return res.data;
+  }
+
   async function fetchClientHistory(ip, limit = 100) {
     const res = await api.get(`/anomalies/client/${ip}?limit=${limit}`);
     clientHistory.value = res.data;
@@ -34,6 +44,27 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   async function fetchClientModel(ip) {
     const res = await api.get(`/anomalies/client/${ip}/model`);
     clientModel.value = res.data;
+    return res.data;
+  }
+
+  // The DNS traffic behind one scored window: what the client actually asked
+  // for while it was being flagged. Omit windowStart to get the most recent
+  // flagged window, which is what a detail view opens on.
+  async function fetchClientEvidence(identity, { windowStart = null, limit = 50 } = {}) {
+    const params = new URLSearchParams({ limit: String(limit) });
+    if (windowStart) params.set('window_start', windowStart);
+    const res = await api.get(`/anomalies/client/${identity}/evidence?${params}`);
+    clientEvidence.value = res.data;
+    return res.data;
+  }
+
+  // The names behind one contributing factor of a flagged window, ranked by
+  // that factor's own measure. Not kept in the store: the page holds one
+  // result per factor for the device it has open.
+  async function fetchSignalEvidence(identity, feature, { windowStart = null, limit = 8 } = {}) {
+    const params = new URLSearchParams({ feature, limit: String(limit) });
+    if (windowStart) params.set('window_start', windowStart);
+    const res = await api.get(`/anomalies/client/${identity}/evidence/signal?${params}`);
     return res.data;
   }
 
@@ -54,14 +85,15 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   function clearClient() {
     clientHistory.value = [];
     clientModel.value = null;
+    clientEvidence.value = null;
     fingerprintChanges.value = [];
   }
 
-  async function whitelistClient(clientIp, reason) {
-    await api.post('/anomalies/whitelist', { client_ip: clientIp, reason });
+  async function allowlistClient(clientIp, reason) {
+    await api.post('/anomalies/allowlist', { client_ip: clientIp, reason });
     // Remove all entries for this client from every locally-held list
-    events.value = events.value.filter(e => e.client_ip !== clientIp);
-    learning.value = learning.value.filter(l => l.client_ip !== clientIp);
+    events.value = events.value.filter((e) => e.client_ip !== clientIp);
+    learning.value = learning.value.filter((l) => l.client_ip !== clientIp);
     if (summary.value) {
       await fetchSummary();
     }
@@ -82,7 +114,8 @@ export const useAnomalyStore = defineStore('anomalies', () => {
     const res = await api.post('/anomalies/acknowledge');
     if (summary.value) {
       summary.value.unacknowledged_active = 0;
-      summary.value.acknowledged_through_id = res.data.acknowledged_through_id || summary.value.acknowledged_through_id || 0;
+      summary.value.acknowledged_through_id =
+        res.data.acknowledged_through_id || summary.value.acknowledged_through_id || 0;
     }
     return res.data;
   }
@@ -90,19 +123,36 @@ export const useAnomalyStore = defineStore('anomalies', () => {
   async function fetchAll() {
     loading.value = true;
     try {
-      await Promise.all([
-        fetchSummary(),
-        fetchEvents(),
-      ]);
+      await Promise.all([fetchSummary(), fetchEvents()]);
     } finally {
       loading.value = false;
     }
   }
 
   return {
-    summary, events, learning, clientHistory, clientModel, fingerprintChanges, settings, loading,
-    fetchSummary, fetchEvents, fetchClientHistory, fetchClientModel, fetchFingerprintChanges, clearClient,
-    whitelistClient,
-    fetchSettings, updateSettings, acknowledgeCounter, fetchAll,
+    summary,
+    events,
+    learning,
+    clientHistory,
+    clientModel,
+    clientEvidence,
+    fingerprintChanges,
+    map,
+    settings,
+    loading,
+    fetchSummary,
+    fetchEvents,
+    fetchMap,
+    fetchClientHistory,
+    fetchClientModel,
+    fetchClientEvidence,
+    fetchSignalEvidence,
+    fetchFingerprintChanges,
+    clearClient,
+    allowlistClient,
+    fetchSettings,
+    updateSettings,
+    acknowledgeCounter,
+    fetchAll,
   };
 });

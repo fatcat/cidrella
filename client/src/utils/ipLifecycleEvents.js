@@ -1,0 +1,122 @@
+/**
+ * Display formatting for IP lifecycle history events.
+ *
+ * `ipLifecycleDisplay.js` formats the canonical current state (status, type).
+ * This file formats the recorded history: one label, tone and detail line per
+ * `ip_events` row. It was duplicated in IpDetailsDrawer.vue and
+ * AddressDetailsPanel.vue with different wording; the union lives here so the
+ * two interfaces read the same history the same way.
+ *
+ * Presentation only. Nothing here decides allocation or precedence; an
+ * unknown event type falls through to a readable form of its raw name rather
+ * than being reinterpreted.
+ */
+
+const EVENT_LABELS = {
+  online: 'Online',
+  offline: 'Offline',
+  // Written before v0.5.0, kept so older history still reads.
+  scanned: 'Scanned',
+  rogue_detected: 'Rogue detected',
+  rogue_cleared: 'Rogue cleared',
+  dns_added: 'DNS added',
+  dns_removed: 'DNS removed',
+  dns_hold_taken: 'Held for disabled DNS',
+  dns_hold_released: 'DNS hold released',
+  lease_obtained: 'Lease obtained',
+  lease_expired: 'Lease expired',
+  dhcp_reservation_created: 'DHCP Reservation created',
+  dhcp_reservation_removed: 'DHCP Reservation removed',
+  ip_reservation_created: 'IP Reservation created',
+  ip_reservation_released: 'IP Reservation released',
+  range_assigned: 'Added to range',
+  range_unassigned: 'Removed from range',
+  hostname_changed: 'Hostname changed',
+  mac_changed: 'MAC changed',
+  allocation_changed: 'Allocation changed',
+  scan_enabled_changed: 'Scan setting changed',
+  // Scope-only addresses lose learned metadata through retirement while their
+  // current status stays DHCP Scope. History says the metadata expired, not
+  // that the address was released.
+  retired: 'Metadata Expired',
+};
+
+const SOURCE_LABELS = {
+  scanner: 'active scan',
+  passive: 'passive (DNS log)',
+  stale: 'staleness timeout',
+  dns: 'DNS',
+  dhcp_reservation: 'DHCP Reservation',
+  dhcp_lease: 'DHCP Lease',
+  manual: 'manual',
+  offline: 'went offline',
+  retirement: 'automatic cleanup',
+  admin_reservation: 'IP Reservation',
+  range: 'Network Range Type',
+};
+
+/** Tone to vendor Tag severity, for the current-interface drawer. */
+export const EVENT_TONE_SEVERITY = {
+  good: 'success',
+  danger: 'danger',
+  warn: 'warn',
+  muted: 'secondary',
+  info: 'info',
+};
+
+export function eventLabel(type) {
+  if (EVENT_LABELS[type]) return EVENT_LABELS[type];
+  return String(type || 'Event').replaceAll('_', ' ');
+}
+
+export function eventTone(type) {
+  if (
+    [
+      'online',
+      'dns_added',
+      'lease_obtained',
+      'dhcp_reservation_created',
+      'ip_reservation_created',
+    ].includes(type)
+  )
+    return 'good';
+  if (type === 'rogue_detected') return 'danger';
+  if (type === 'rogue_cleared') return 'warn';
+  if (
+    [
+      'offline',
+      'dns_removed',
+      'retired',
+      'lease_expired',
+      'dhcp_reservation_removed',
+      'ip_reservation_released',
+      'dns_hold_released',
+      'range_unassigned',
+    ].includes(type)
+  )
+    return 'muted';
+  return 'info';
+}
+
+export function eventActorLabel(event) {
+  const actor = event?.actor_name || event?.username || event?.actor;
+  return actor ? String(actor) : '';
+}
+
+export function eventSourceLabel(source) {
+  if (!source) return '';
+  return SOURCE_LABELS[source] || String(source).replaceAll('_', ' ');
+}
+
+/** "old → new · via source", dropping whichever parts the row lacks. */
+export function eventDetail(event) {
+  const values =
+    event.old_value && event.new_value
+      ? `${event.old_value} → ${event.new_value}`
+      : event.new_value || event.old_value || '';
+  const source = eventSourceLabel(event.source);
+  const actor = eventActorLabel(event);
+  return [values, source ? `via ${source}` : '', actor ? `by ${actor}` : '']
+    .filter(Boolean)
+    .join(' · ');
+}

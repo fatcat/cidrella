@@ -7,6 +7,15 @@ export function formatNumber(n) {
 }
 
 /**
+ * "3 networks", "1 zone": a formatted count with a plain-English plural.
+ * Regular nouns only; pass the singular.
+ */
+// "1 zone", "3 zones"; pass the plural for a noun that does not take an s.
+export function countOf(n, noun, plural = `${noun}s`) {
+  return `${formatNumber(n)} ${n === 1 ? noun : plural}`;
+}
+
+/**
  * Extract a user-friendly error message from an API error.
  */
 export function apiError(err) {
@@ -47,7 +56,10 @@ export function formatBytes(bytes) {
   const units = ['B', 'KB', 'MB', 'GB', 'TB'];
   let i = 0;
   let size = Math.abs(n);
-  while (size >= 1024 && i < units.length - 1) { size /= 1024; i += 1; }
+  while (size >= 1024 && i < units.length - 1) {
+    size /= 1024;
+    i += 1;
+  }
   const sign = n < 0 ? '-' : '';
   return `${sign}${size.toFixed(i > 0 ? 1 : 0)} ${units[i]}`;
 }
@@ -98,7 +110,7 @@ export function displayOnlineStatus(isOnline) {
   return {
     label: state ? 'Online' : 'Offline',
     className: state ? 'status-text state-ok' : 'status-text state-muted',
-    known: true
+    known: true,
   };
 }
 

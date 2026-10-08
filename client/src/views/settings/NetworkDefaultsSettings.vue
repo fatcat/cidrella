@@ -5,16 +5,28 @@
       <h3>New Network Defaults</h3>
       <div class="field">
         <label>Default Gateway Position</label>
-        <SelectButton v-model="gatewayPosition" :options="gatewayPositionOptions"
-                      optionLabel="label" optionValue="value" :allowEmpty="false"
-                      data-track="settings-default-gateway-position" />
+        <SelectButton
+          v-model="gatewayPosition"
+          :options="gatewayPositionOptions"
+          optionLabel="label"
+          optionValue="value"
+          :allowEmpty="false"
+          data-track="settings-default-gateway-position"
+        />
         <small class="field-help">
-          Newly created IPv4 networks use the first or last allocatable address. The network and broadcast addresses are never selected.
+          Newly created IPv4 networks use the first or last allocatable address. The network and
+          broadcast addresses are never selected.
         </small>
       </div>
       <div class="settings-actions">
-        <Button label="Save Settings" icon="pi pi-save" @click="saveSettings"
-                :loading="saving" :disabled="!isDirty" data-track="settings-save-network-defaults" />
+        <Button
+          label="Save Settings"
+          icon="pi pi-save"
+          @click="saveSettings"
+          :loading="saving"
+          :disabled="!isDirty"
+          data-track="settings-save-network-defaults"
+        />
       </div>
     </div>
   </div>
@@ -62,30 +74,42 @@ onMounted(async () => {
     const value = normalizeGatewayPositionDefault(settings.default_gateway_position);
     gatewayPosition.value = value;
     savedGatewayPosition.value = value;
-  } catch { /* use the server default */ }
+  } catch {
+    /* use the server default */
+  }
   loading.value = false;
 });
 </script>
 
 <style scoped>
-.muted { color: var(--p-text-muted-color); }
 .content-card {
   margin: 0;
   padding: 1.25rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
-.content-card h3 { margin: 0 0 0.75rem; }
-.settings-form .field { max-width: 38rem; }
-.field { margin-bottom: 1rem; }
-.field label { display: block; margin-bottom: 0.4rem; }
+.content-card h3 {
+  margin: 0 0 0.75rem;
+}
+.settings-form .field {
+  max-width: 38rem;
+}
+.field {
+  margin-bottom: 1rem;
+}
+.field label {
+  display: block;
+  margin-bottom: 0.4rem;
+}
 .field-help {
   display: block;
   margin-top: 0.4rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-size: var(--app-fs-xs);
   line-height: 1.4;
 }
-.settings-actions { margin-top: 1rem; }
+.settings-actions {
+  margin-top: 1rem;
+}
 </style>

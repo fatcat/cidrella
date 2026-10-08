@@ -61,7 +61,7 @@ function compareVersions(a, b) {
     if (diff !== 0) return diff;
   }
   if (pa.pre.length === 0 && pb.pre.length === 0) return 0;
-  if (pa.pre.length === 0) return 1;   // release outranks its own prerelease
+  if (pa.pre.length === 0) return 1; // release outranks its own prerelease
   if (pb.pre.length === 0) return -1;
   for (let i = 0; i < Math.max(pa.pre.length, pb.pre.length); i += 1) {
     const x = pa.pre[i];
@@ -113,9 +113,7 @@ function runJsonCommand(command, argsForCommand, cwd) {
     encoding: 'utf8',
     stdio: ['ignore', 'pipe', 'pipe'],
   });
-  const stderr = result.error
-    ? result.error.message
-    : result.stderr.trim();
+  const stderr = result.error ? result.error.message : result.stderr.trim();
   const output = result.stdout.trim();
   if (!output) {
     return { ok: result.status === 0 && !result.error, data: {}, stderr };
@@ -126,7 +124,8 @@ function runJsonCommand(command, argsForCommand, cwd) {
     return {
       ok: false,
       data: {},
-      stderr: `${stderr}\nCould not parse JSON from ${command} ${argsForCommand.join(' ')}: ${error.message}`.trim(),
+      stderr:
+        `${stderr}\nCould not parse JSON from ${command} ${argsForCommand.join(' ')}: ${error.message}`.trim(),
     };
   }
 }
@@ -146,7 +145,9 @@ function checkNpmProject(projectRoot, relativeDir) {
   try {
     const pkg = JSON.parse(fs.readFileSync(packageJson, 'utf8'));
     heldMajors = Array.isArray(pkg.releaseHealth?.holdMajor) ? pkg.releaseHealth.holdMajor : [];
-  } catch { /* ignore malformed package.json here; other checks surface it */ }
+  } catch {
+    /* ignore malformed package.json here; other checks surface it */
+  }
 
   const audit = runJsonCommand('npm', ['audit', '--omit=dev', '--json'], cwd);
   const outdated = runJsonCommand('npm', ['outdated', '--omit=dev', '--json'], cwd);
@@ -157,7 +158,10 @@ function checkNpmProject(projectRoot, relativeDir) {
       name,
       severity: value.severity,
       via: Array.isArray(value.via)
-        ? value.via.map((entry) => (typeof entry === 'string' ? entry : entry.title)).filter(Boolean).slice(0, 5)
+        ? value.via
+            .map((entry) => (typeof entry === 'string' ? entry : entry.title))
+            .filter(Boolean)
+            .slice(0, 5)
         : [],
       fixAvailable: Boolean(value.fixAvailable),
     }))
@@ -179,10 +183,10 @@ function checkNpmProject(projectRoot, relativeDir) {
     // update prompt ever offers them.
     .filter((pkg) => !heldMajors.includes(pkg.name))
     .sort((a, b) => a.name.localeCompare(b.name));
-  const actionableUpdates = outdatedPackages
-    .filter((pkg) => pkg.wanted && pkg.current !== pkg.wanted);
-  const majorUpdates = outdatedPackages
-    .filter((pkg) => !pkg.wanted || pkg.current === pkg.wanted);
+  const actionableUpdates = outdatedPackages.filter(
+    (pkg) => pkg.wanted && pkg.current !== pkg.wanted,
+  );
+  const majorUpdates = outdatedPackages.filter((pkg) => !pkg.wanted || pkg.current === pkg.wanted);
 
   return {
     dir: relativeDir || '.',
@@ -200,7 +204,7 @@ function parseDockerfile(projectRoot) {
     return null;
   }
   const text = fs.readFileSync(dockerfile, 'utf8');
-  const fromMatches = [...text.matchAll(/^FROM\s+node:([^\s]+)(?:\s+AS\s+([^\s]+))?/gmi)];
+  const fromMatches = [...text.matchAll(/^FROM\s+node:([^\s]+)(?:\s+AS\s+([^\s]+))?/gim)];
   const nodeImages = fromMatches.map((match) => {
     const tag = match[1];
     const versionMatch = tag.match(/^(\d+)(?:\.(\d+)\.(\d+))?(-.*)?$/);
@@ -249,14 +253,19 @@ async function checkDocker(projectRoot, latestLtsMajor, latestLtsVersion, distIn
 
   const nodeImages = parsed.nodeImages.map((image) => {
     const sameMajor = image.major
-      ? distIndex.filter((release) => majorOf(release.version) === image.major).sort((a, b) => compareVersions(b.version, a.version))
+      ? distIndex
+          .filter((release) => majorOf(release.version) === image.major)
+          .sort((a, b) => compareVersions(b.version, a.version))
       : [];
     const latestSameMajor = normalizeVersion(sameMajor[0]?.version || '');
     const currentComparable = image.pinnedPatch ? image.tag.replace(/-.*/, '') : latestSameMajor;
     const securityReleases = image.pinnedPatch
       ? sameMajor
-        .filter((release) => compareVersions(release.version, currentComparable) > 0 && release.security === true)
-        .map((release) => ({ version: normalizeVersion(release.version) }))
+          .filter(
+            (release) =>
+              compareVersions(release.version, currentComparable) > 0 && release.security === true,
+          )
+          .map((release) => ({ version: normalizeVersion(release.version) }))
       : [];
     return {
       ...image,
@@ -278,7 +287,11 @@ async function checkDocker(projectRoot, latestLtsMajor, latestLtsVersion, distIn
     s6Overlay: {
       current: parsed.s6OverlayVersion,
       latest: s6Latest,
-      updateAvailable: Boolean(parsed.s6OverlayVersion && s6Latest && compareVersions(s6Latest, parsed.s6OverlayVersion) > 0),
+      updateAvailable: Boolean(
+        parsed.s6OverlayVersion &&
+        s6Latest &&
+        compareVersions(s6Latest, parsed.s6OverlayVersion) > 0,
+      ),
     },
     checkError,
   };
@@ -289,53 +302,83 @@ function printReport(report) {
   console.log(`  Bundled Node: v${report.node.current}`);
 
   if (report.node.securityUpdateRequired) {
-    console.log(`  SECURITY: newer Node security release(s) exist on v${report.node.currentMajor}.`);
+    console.log(
+      `  SECURITY: newer Node security release(s) exist on v${report.node.currentMajor}.`,
+    );
     for (const release of report.node.securityReleases) {
       console.log(`    - ${release.version}`);
     }
     console.log(`    Target update: v${report.node.recommendedVersion}`);
-    console.log('    Fix path: accept the security update prompt to rewrite BUNDLED_NODE_VERSION, then rerun the build.');
+    console.log(
+      '    Fix path: accept the security update prompt to rewrite BUNDLED_NODE_VERSION, then rerun the build.',
+    );
   } else if (report.node.routineUpdateAvailable) {
-    console.log(`  Update available: Node v${report.node.latestSameMajor} is newer than bundled v${report.node.current}.`);
-    console.log('    Fix path: accept the routine update prompt to rewrite BUNDLED_NODE_VERSION, then rerun the build.');
+    console.log(
+      `  Update available: Node v${report.node.latestSameMajor} is newer than bundled v${report.node.current}.`,
+    );
+    console.log(
+      '    Fix path: accept the routine update prompt to rewrite BUNDLED_NODE_VERSION, then rerun the build.',
+    );
   } else {
     console.log('  Node patch line: current');
   }
 
   if (report.node.ltsUpdateAvailable) {
-    console.log(`  LTS notice: active LTS is v${report.node.latestLtsMajor}; bundled major is v${report.node.currentMajor}.`);
+    console.log(
+      `  LTS notice: active LTS is v${report.node.latestLtsMajor}; bundled major is v${report.node.currentMajor}.`,
+    );
     console.log(`    Suggested LTS target: v${report.node.latestLtsVersion}`);
-    console.log('    Fix path: accept the routine update prompt to move the bundled runtime to the active LTS line.');
+    console.log(
+      '    Fix path: accept the routine update prompt to move the bundled runtime to the active LTS line.',
+    );
   }
 
   for (const project of report.npmProjects) {
     if (project.vulnerabilities.length > 0) {
-      console.log(`  SECURITY: npm audit found ${project.vulnerabilities.length} vulnerable package(s) in ${project.dir}:`);
+      console.log(
+        `  SECURITY: npm audit found ${project.vulnerabilities.length} vulnerable package(s) in ${project.dir}:`,
+      );
       for (const vuln of project.vulnerabilities.slice(0, 10)) {
         const fix = vuln.fixAvailable ? 'fix available' : 'no automatic fix reported';
-        console.log(`    - ${vuln.name} (${vuln.severity}, ${fix})${vuln.via.length ? `: ${vuln.via.join('; ')}` : ''}`);
+        console.log(
+          `    - ${vuln.name} (${vuln.severity}, ${fix})${vuln.via.length ? `: ${vuln.via.join('; ')}` : ''}`,
+        );
       }
-      console.log(`    Fix path: accept the security update prompt to run npm audit fix --omit=dev in ${project.dir}.`);
+      console.log(
+        `    Fix path: accept the security update prompt to run npm audit fix --omit=dev in ${project.dir}.`,
+      );
     }
     if (project.outdated.length > 0) {
       console.log(`  Updates available in ${project.dir}: ${project.outdated.length} package(s)`);
       for (const pkg of project.outdated.slice(0, 10)) {
-        console.log(`    - ${pkg.name}: ${pkg.current} -> wanted ${pkg.wanted}, latest ${pkg.latest}`);
+        console.log(
+          `    - ${pkg.name}: ${pkg.current} -> wanted ${pkg.wanted}, latest ${pkg.latest}`,
+        );
       }
-      console.log(`    Fix path: accept the routine update prompt to run npm update --omit=dev in ${project.dir}.`);
+      console.log(
+        `    Fix path: accept the routine update prompt to run npm update --omit=dev in ${project.dir}.`,
+      );
     }
     if (project.majorUpdates?.length > 0) {
-      console.log(`  Major updates available in ${project.dir}: ${project.majorUpdates.length} package(s)`);
+      console.log(
+        `  Major updates available in ${project.dir}: ${project.majorUpdates.length} package(s)`,
+      );
       for (const pkg of project.majorUpdates.slice(0, 10)) {
-        console.log(`    - ${pkg.name}: ${pkg.current} -> latest ${pkg.latest} (outside declared range)`);
+        console.log(
+          `    - ${pkg.name}: ${pkg.current} -> latest ${pkg.latest} (outside declared range)`,
+        );
       }
-      console.log('    Note: not applied by routine npm update; evaluate separately before changing package.json ranges.');
+      console.log(
+        '    Note: not applied by routine npm update; evaluate separately before changing package.json ranges.',
+      );
     }
     if (project.auditError) {
       console.log(`  WARNING: npm audit check failed in ${project.dir}: ${project.auditError}`);
     }
     if (project.outdatedError) {
-      console.log(`  WARNING: npm outdated check failed in ${project.dir}: ${project.outdatedError}`);
+      console.log(
+        `  WARNING: npm outdated check failed in ${project.dir}: ${project.outdatedError}`,
+      );
     }
   }
 
@@ -344,26 +387,42 @@ function printReport(report) {
     for (const image of report.docker.nodeImages) {
       const stage = image.stage ? ` (${image.stage})` : '';
       if (image.securityUpdateRequired) {
-        console.log(`    SECURITY: Docker base ${image.image}${stage} is pinned behind Node security release(s):`);
+        console.log(
+          `    SECURITY: Docker base ${image.image}${stage} is pinned behind Node security release(s):`,
+        );
         for (const release of image.securityReleases) {
           console.log(`      - ${release.version}`);
         }
-        console.log('      Fix path: accept the security update prompt to update Dockerfile FROM node tags, then rebuild the image.');
+        console.log(
+          '      Fix path: accept the security update prompt to update Dockerfile FROM node tags, then rebuild the image.',
+        );
       } else if (image.nodeLtsUpdateAvailable) {
-        console.log(`    LTS notice: Docker base ${image.image}${stage} uses Node ${image.major}; active LTS is Node ${image.latestLtsMajor}.`);
+        console.log(
+          `    LTS notice: Docker base ${image.image}${stage} uses Node ${image.major}; active LTS is Node ${image.latestLtsMajor}.`,
+        );
         console.log(`      Suggested Docker tag: ${image.fixTargetTag}`);
-        console.log('      Fix path: accept the routine update prompt to update Dockerfile FROM node tags.');
+        console.log(
+          '      Fix path: accept the routine update prompt to update Dockerfile FROM node tags.',
+        );
       } else {
-        console.log(`    Docker base ${image.image}${stage}: Node major aligned with required runtime baseline.`);
+        console.log(
+          `    Docker base ${image.image}${stage}: Node major aligned with required runtime baseline.`,
+        );
       }
       if (!image.pinnedPatch) {
-        console.log(`      Patch/security note: ${image.image} is a floating major tag; Docker publishing must rebuild/pull to pick up current ${image.latestSameMajor}.`);
+        console.log(
+          `      Patch/security note: ${image.image} is a floating major tag; Docker publishing must rebuild/pull to pick up current ${image.latestSameMajor}.`,
+        );
       }
     }
     if (report.docker.s6Overlay.current) {
       if (report.docker.s6Overlay.updateAvailable) {
-        console.log(`    s6-overlay update available: ${report.docker.s6Overlay.current} -> ${report.docker.s6Overlay.latest}`);
-        console.log('      Fix path: accept the routine update prompt to update ARG S6_OVERLAY_VERSION in Dockerfile.');
+        console.log(
+          `    s6-overlay update available: ${report.docker.s6Overlay.current} -> ${report.docker.s6Overlay.latest}`,
+        );
+        console.log(
+          '      Fix path: accept the routine update prompt to update ARG S6_OVERLAY_VERSION in Dockerfile.',
+        );
       } else if (report.docker.s6Overlay.latest) {
         console.log(`    s6-overlay: current (${report.docker.s6Overlay.current})`);
       }
@@ -371,7 +430,9 @@ function printReport(report) {
     if (report.docker.checkError) {
       console.log(`    WARNING: ${report.docker.checkError}`);
     }
-    console.log('    Alpine/apk package note: Docker OS package security is handled by rebuilding from a current base image and apk repositories; versions are intentionally not pinned here.');
+    console.log(
+      '    Alpine/apk package note: Docker OS package security is handled by rebuilding from a current base image and apk repositories; versions are intentionally not pinned here.',
+    );
   }
 }
 
@@ -389,7 +450,9 @@ async function main() {
     .filter((release) => majorOf(release.version) === currentMajor)
     .sort((a, b) => compareVersions(b.version, a.version));
   const latestSameMajor = normalizeVersion(sameMajor[0]?.version || current);
-  const newerSameMajor = sameMajor.filter((release) => compareVersions(release.version, current) > 0);
+  const newerSameMajor = sameMajor.filter(
+    (release) => compareVersions(release.version, current) > 0,
+  );
   const securityReleases = newerSameMajor
     .filter((release) => release.security === true)
     .map((release) => ({ version: normalizeVersion(release.version) }));
@@ -425,9 +488,10 @@ async function main() {
       securityReleases,
       routineUpdateAvailable: compareVersions(latestSameMajor, current) > 0,
       ltsUpdateAvailable: latestLtsMajor > currentMajor,
-      recommendedVersion: securityReleases.length > 0 || compareVersions(latestSameMajor, current) > 0
-        ? latestSameMajor
-        : latestLtsVersion,
+      recommendedVersion:
+        securityReleases.length > 0 || compareVersions(latestSameMajor, current) > 0
+          ? latestSameMajor
+          : latestLtsVersion,
     },
     npmProjects,
     docker,
@@ -443,7 +507,9 @@ async function main() {
     dockerSecurity: docker.nodeSecurityUpdateRequired,
     dockerRoutine: docker.nodeLtsUpdateAvailable || docker.s6Overlay.updateAvailable,
     dockerCheckFailures: Boolean(docker.checkError),
-    checkFailures: npmProjects.some((project) => project.auditError || project.outdatedError) || Boolean(docker.checkError),
+    checkFailures:
+      npmProjects.some((project) => project.auditError || project.outdatedError) ||
+      Boolean(docker.checkError),
   };
 
   printReport(report);

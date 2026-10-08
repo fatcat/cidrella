@@ -3,7 +3,12 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { buildSanList, certHasSan, isSelfGeneratedCert, ensureCerts } from '../../../src/utils/cert.js';
+import {
+  buildSanList,
+  certHasSan,
+  isSelfGeneratedCert,
+  ensureCerts,
+} from '../../../src/utils/cert.js';
 
 const IFACES = {
   lo: [{ family: 'IPv4', address: '127.0.0.1', internal: true }],
@@ -80,10 +85,25 @@ describe('ensureCerts', () => {
     fs.mkdirSync(certsDir, { recursive: true });
     const keyPath = path.join(certsDir, 'server.key');
     const certPath = path.join(certsDir, 'server.crt');
-    execFileSync('openssl', [
-      'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', certPath,
-      '-days', '365', '-nodes', '-subj', '/CN=cidrella/O=CIDRella/C=US',
-    ], { stdio: 'pipe' });
+    execFileSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-keyout',
+        keyPath,
+        '-out',
+        certPath,
+        '-days',
+        '365',
+        '-nodes',
+        '-subj',
+        '/CN=cidrella/O=CIDRella/C=US',
+      ],
+      { stdio: 'pipe' },
+    );
     expect(certHasSan(certPath)).toBe(false);
 
     ensureCerts(legacyDir);
@@ -99,10 +119,25 @@ describe('ensureCerts', () => {
     fs.mkdirSync(certsDir, { recursive: true });
     const keyPath = path.join(certsDir, 'server.key');
     const certPath = path.join(certsDir, 'server.crt');
-    execFileSync('openssl', [
-      'req', '-x509', '-newkey', 'rsa:2048', '-keyout', keyPath, '-out', certPath,
-      '-days', '365', '-nodes', '-subj', '/CN=nas.example.internal/O=Example Corp/C=GB',
-    ], { stdio: 'pipe' });
+    execFileSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-keyout',
+        keyPath,
+        '-out',
+        certPath,
+        '-days',
+        '365',
+        '-nodes',
+        '-subj',
+        '/CN=nas.example.internal/O=Example Corp/C=GB',
+      ],
+      { stdio: 'pipe' },
+    );
     expect(certHasSan(certPath)).toBe(false);
     const certBefore = fs.readFileSync(certPath, 'utf8');
     const keyBefore = fs.readFileSync(keyPath, 'utf8');
@@ -114,7 +149,7 @@ describe('ensureCerts', () => {
     fs.rmSync(ownDir, { recursive: true, force: true });
   });
 
-  it('recognizes its own certificate and not the operator\'s', () => {
+  it("recognizes its own certificate and not the operator's", () => {
     const { certPath } = ensureCerts(dir);
     expect(isSelfGeneratedCert(certPath)).toBe(true);
   });

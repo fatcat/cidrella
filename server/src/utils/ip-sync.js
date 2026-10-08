@@ -5,7 +5,8 @@
  * All writes go through the IpAddress model.
  */
 
-import { ipToLong } from './ip.js';
+import { parseNetwork } from './ip.js';
+import { parseIp } from './address.js';
 import { activeLeaseSql, infiniteLeaseFirstSql } from './lease-sql.js';
 import { generateFallbackHostname } from './mac-vendor.js';
 import * as IpAddress from '../models/ip-address.js';
@@ -29,22 +30,31 @@ export function invalidateSubnetCache() {
  * Uses a cached leaf subnet list to avoid per-call DB queries.
  */
 export function findSubnetForIp(db, ip) {
-  const ipLong = ipToLong(ip);
+  // A scoped link-local identity (fe80::1%eth0) still belongs to whichever
+  // network holds fe80::/10; the zone is identity, not location.
+  const address = parseIp(String(ip ?? ''), { zoneId: true });
+  if (!address) throw new Error(`Invalid IP address: ${ip}`);
+  const family = address.bits === 32 ? 4 : 6;
 
   if (!leafSubnetCache) {
-    leafSubnetCache = db.prepare(`
-      SELECT id, network_address, prefix_length FROM subnets
+    leafSubnetCache = db
+      .prepare(
+        `
+      SELECT id, cidr, network_address, prefix_length, status FROM subnets
       WHERE (SELECT COUNT(*) FROM subnets c WHERE c.parent_id = subnets.id) = 0
-    `).all().map(s => ({
-      ...s,
-      netLong: ipToLong(s.network_address),
-      size: Math.pow(2, 32 - s.prefix_length),
-    }));
+    `,
+      )
+      .all()
+      .map((s) => {
+        const parsed = parseNetwork(s.cidr);
+        return { ...s, family: parsed.family, first: parsed.networkBig, last: parsed.lastBig };
+      });
   }
 
   let best = null;
   for (const s of leafSubnetCache) {
-    if (ipLong >= s.netLong && ipLong < s.netLong + s.size) {
+    if (s.family !== family) continue;
+    if (address.value >= s.first && address.value <= s.last) {
       if (!best || s.prefix_length > best.prefix_length) best = s;
     }
   }
@@ -63,20 +73,30 @@ function ptrSourceForCanonical(canonical) {
 }
 
 export function resolveCanonicalHostname(db, subnetId, ip) {
-  const allocation = db.prepare(`
+  const allocation = db
+    .prepare(
+      `
     SELECT allocation_state
     FROM ip_addresses
     WHERE subnet_id = ? AND ip_address = ?
-  `).get(subnetId, ip)?.allocation_state;
+  `,
+    )
+    .get(subnetId, ip)?.allocation_state;
 
-  const reservation = db.prepare(`
+  const reservation = db
+    .prepare(
+      `
     SELECT hostname
     FROM dhcp_reservations
     WHERE subnet_id = ? AND ip_address = ? AND enabled = 1
       AND hostname IS NOT NULL AND trim(hostname) != ''
     LIMIT 1
-  `).get(subnetId, ip);
-  const lease = db.prepare(`
+  `,
+    )
+    .get(subnetId, ip);
+  const lease = db
+    .prepare(
+      `
     SELECT hostname
     FROM dhcp_leases
     WHERE subnet_id = ?
@@ -89,29 +109,35 @@ export function resolveCanonicalHostname(db, subnetId, ip) {
       datetime(expires_at) DESC,
       id DESC
     LIMIT 1
-  `).get(subnetId, ip);
-  const record = db.prepare(`
+  `,
+    )
+    .get(subnetId, ip);
+  const record = db
+    .prepare(
+      `
     SELECT r.name, z.name AS zone_name
     FROM dns_records r
     JOIN dns_zones z ON z.id = r.zone_id
-    WHERE r.type = 'A'
+    WHERE r.type IN ('A', 'AAAA')
       AND r.enabled = 1
       AND z.enabled = 1
       AND z.type = 'forward'
       AND r.value = ?
       AND COALESCE(r.source, 'manual') = 'manual'
     LIMIT 1
-  `).get(ip);
+  `,
+    )
+    .get(ip);
 
   return canonicalHostnameForAllocation({
     allocationState: allocation,
     dnsHostname: record ? fqdnForRecordName(record.name, record.zone_name) : null,
     reservationHostname: nonEmpty(reservation?.hostname) ? reservation.hostname.trim() : null,
-    leaseHostname: nonEmpty(lease?.hostname) ? lease.hostname.trim() : null
+    leaseHostname: nonEmpty(lease?.hostname) ? lease.hostname.trim() : null,
   });
 }
 
-function syncCanonicalHostname(db, subnetId, ip, { clearSource = false } = {}) {
+export function syncCanonicalHostname(db, subnetId, ip, { clearSource = false } = {}) {
   const canonical = resolveCanonicalHostname(db, subnetId, ip);
   const fields = { hostname: canonical.hostname };
   if (canonical.source || clearSource) fields.detection_source = canonical.source;
@@ -159,7 +185,7 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
   // hostname must not leave the removed A record behind in reverse DNS.
   setPtrForIp(db, ip, canonical.hostname || ip, {
     enabledOnly: true,
-    source: ptrSourceForCanonical(canonical)
+    source: ptrSourceForCanonical(canonical),
   });
 }
 
@@ -172,7 +198,7 @@ export function clearDnsFromIp(db, recordName, ip, zoneName) {
 export function syncPtrForIp(db, subnetId, ip, hostname, { source = null } = {}) {
   void subnetId;
   return setPtrForIp(db, ip, hostname || ip, {
-    source: source || (hostname ? 'manual' : 'placeholder')
+    source: source || (hostname ? 'manual' : 'placeholder'),
   });
 }
 
@@ -199,7 +225,7 @@ export function syncDhcpReservationToIp(db, subnetId, ip, { hostname, mac_addres
   IpAddress.upsert(db, subnetId, ip, {
     hostname: effectiveHostname,
     mac_address,
-    detection_source: 'dhcp_reservation'
+    detection_source: 'dhcp_reservation',
   });
   IpAddress.clearRogue(db, subnetId, ip);
 }
@@ -221,7 +247,9 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
   if (!existing) return;
 
   if (existing.detection_source === 'dhcp_reservation') {
-    const lease = db.prepare(`
+    const lease = db
+      .prepare(
+        `
       SELECT mac_address, hostname
       FROM dhcp_leases
       WHERE subnet_id = ?
@@ -232,7 +260,9 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
         datetime(expires_at) DESC,
         id DESC
       LIMIT 1
-    `).get(subnetId, ip);
+    `,
+      )
+      .get(subnetId, ip);
     if (lease) {
       // No is_online here. A lease says the address is assigned, not that the
       // host is present. Liveness belongs to the scanner and the passive DNS
@@ -241,7 +271,7 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
         hostname: lease.hostname || undefined,
         mac_address: lease.mac_address || undefined,
         last_seen_mac: lease.mac_address || undefined,
-        detection_source: 'dhcp_lease'
+        detection_source: 'dhcp_lease',
       });
       syncCanonicalHostname(db, subnetId, ip);
       return;
@@ -252,7 +282,7 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
       IpAddress.upsert(db, subnetId, ip, {
         hostname: canonical.hostname,
         mac_address: null,
-        detection_source: canonical.source
+        detection_source: canonical.source,
       });
       return;
     }
@@ -269,7 +299,7 @@ export function clearDhcpReservationFromIp(db, subnetId, ip, mac_address) {
   IpAddress.upsert(db, subnetId, ip, {
     mac_address: clearMac ? null : existing.mac_address,
     hostname: null,
-    detection_source: null
+    detection_source: null,
   });
 }
 
@@ -284,7 +314,11 @@ export function syncLeasesToIps(db, leases) {
       IpAddress.removeOtherRowsForMac(db, l.subnetId, l.ip, l.mac);
     }
     const before = IpAddress.findBySubnetAndIp(db, l.subnetId, l.ip);
-    const reservation = before?.allocation_state === 'static_dhcp' ? db.prepare(`
+    const reservation =
+      before?.allocation_state === 'static_dhcp'
+        ? db
+            .prepare(
+              `
       SELECT hostname
       FROM dhcp_reservations
       WHERE subnet_id = ?
@@ -293,25 +327,33 @@ export function syncLeasesToIps(db, leases) {
         AND hostname IS NOT NULL
         AND trim(hostname) != ''
       LIMIT 1
-    `).get(l.subnetId, l.ip) : null;
+    `,
+            )
+            .get(l.subnetId, l.ip)
+        : null;
     // Deliberately no is_online. Holding a lease is not evidence the host is
     // up: a reservation appears here with expires_at='infinite' and would stay
     // "online" forever, and every lease-file rewrite would re-assert it over
     // the scanner's verdict. Liveness is owned by the scanner and the passive
     // DNS watcher. Allocation is owned by the lifecycle service.
     IpAddress.upsert(db, l.subnetId, l.ip, {
-      hostname: reservation ? undefined : (l.hostname || undefined),
+      hostname: reservation ? undefined : l.hostname || undefined,
       mac_address: l.mac || undefined,
       is_online: !reservation && l.observedActivity === true ? 1 : undefined,
       last_seen_mac: l.mac || undefined,
-      detection_source: 'dhcp_lease'
+      detection_source: 'dhcp_lease',
     });
     if (reservation) {
       syncCanonicalHostname(db, l.subnetId, l.ip);
     }
     IpAddress.clearRogue(db, l.subnetId, l.ip);
-    if (!before || before.allocation_state !== 'dynamic_dhcp') {
-      IpAddress.emitEvent(db, l.subnetId, l.ip, 'lease_obtained', { newValue: l.mac || null, source: 'dhcp_lease' });
+    // replaceLeases knows whether the address held this lease a moment ago.
+    // A caller without that knowledge (newLease unset) records the lease.
+    if (l.newLease !== false) {
+      IpAddress.emitEvent(db, l.subnetId, l.ip, 'lease_obtained', {
+        newValue: l.mac || null,
+        source: 'dhcp_lease',
+      });
     }
   }
 }

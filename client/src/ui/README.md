@@ -35,9 +35,23 @@ One module per component keeps the module boundary by construction, so the
 chunking is unchanged. If a barrel is ever wanted for ergonomics, measure the
 chunk count and total JS before and after, and do not take it on faith.
 
+## tokens.css
+
+The CSS half of the same idea, added 2026-09-12. It is the only file permitted
+to read a `--p-*` custom property; the rest of the app reads `--cid-*`. 44 pure
+aliases, so a runtime theme change still propagates through `var()` with no JS
+involvement.
+
+Four names are not aliases but ours outright (`--cid-surface-ground`, `-card`,
+`-content`, `-border`), defined in `App.vue` because the library has a numbered
+surface ramp and no named elevation steps.
+
+The point is not today's kit, which emits `--p-*` anyway, but the next one:
+Element Plus uses `--el-*`, and that becomes an edit to one file instead of 755
+edits across 58. See `docs/UI-TOOLKIT-MIGRATION-PLAN.md`, Phase 0b.
+
 ## What is deliberately NOT here
 
-The ~650 `--p-*` design-token references in the app's CSS. The intended fork
-emits the same tokens and the same `p-*` classes, so rewriting them would be a
-large diff with real visual-regression risk and no benefit. That work only
-becomes worthwhile if CIDRella ever moves to a library outside this family.
+The 46 `:deep(.p-*)` selectors that reach into vendor component internals.
+Custom properties cannot abstract a class name. They survive a same-family fork
+untouched, and they are real work on any move outside it.

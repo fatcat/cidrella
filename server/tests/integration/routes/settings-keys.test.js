@@ -7,7 +7,11 @@ const { default: request } = await import('supertest');
 
 let tmpDir, app;
 
-beforeAll(async () => { const s = await setupTestDb(); tmpDir = s.tmpDir; app = createTestApp(settingsRouter, '/api/settings'); });
+beforeAll(async () => {
+  const s = await setupTestDb();
+  tmpDir = s.tmpDir;
+  app = createTestApp(settingsRouter, '/api/settings');
+});
 afterAll(() => cleanupTestDb(tmpDir));
 
 // These keys have authoritative routes that persist AND apply; the generic
@@ -21,8 +25,11 @@ const APPLY_COUPLED_KEYS = [
   'forwarder_encrypted_upstreams',
   'rogue_dhcp_detection_enabled',
   'rogue_dhcp_probe_interval_min',
+  // ipv6_enabled regenerates dnsmasq listeners and rebinds the resolver
+  // through PUT /api/interfaces/config.
+  'ipv6_enabled',
   // geoip_mode is the one with teeth. dns-proxy.js caches it in a module-level
-  // `geoipMode` refreshed only by loadGeoipRules(), and shouldBlock() branches
+  // `geoipMode` refreshed only by loadGeoipRules(), and blockingCountryCodes()
   // on that cached copy alone, so a bare settings write stored "allowlist"
   // while the resolver kept running the blocklist arm until restart. That
   // direction fails OPEN: everything not explicitly listed stays permitted
@@ -42,7 +49,9 @@ describe('PUT /api/settings/:key, apply-coupled keys are not editable', () => {
   }
 
   it('still accepts a schema key (control)', async () => {
-    const res = await request(app).put('/api/settings/update_check_enabled').send({ value: 'true' });
+    const res = await request(app)
+      .put('/api/settings/update_check_enabled')
+      .send({ value: 'true' });
     expect(res.status).toBe(200);
   });
 

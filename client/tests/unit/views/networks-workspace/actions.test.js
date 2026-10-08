@@ -1,0 +1,655 @@
+import { flushPromises, mount } from '@vue/test-utils';
+import { beforeEach, describe, expect, it, vi } from 'vitest';
+import api from '../../../../src/api/client.js';
+import BulkActionDialog from '../../../../src/views/networks-workspace/dialogs/BulkActionDialog.vue';
+import {
+  WORKSPACE_ACTIONS,
+  actionAvailability,
+  actionLabel,
+  allocationPayload,
+  createWorkspaceActionRegistry,
+  dnsSelectionTarget,
+  executeBulkAllocation,
+  menuActions,
+  targetForRow,
+} from '../../../../src/views/networks-workspace/workspace-actions.js';
+
+vi.mock('../../../../src/api/client.js', () => ({ default: { put: vi.fn() } }));
+
+describe('workspace action registry', () => {
+  beforeEach(() => vi.clearAllMocks());
+
+  it('uses stable IDs, capabilities and canonical allocation state for eligibility', () => {
+    expect(WORKSPACE_ACTIONS['ip.reserve']).toMatchObject({
+      id: 'ip.reserve',
+      capability: 'subnets:write',
+      targetKind: 'address',
+    });
+    expect(
+      actionAvailability(
+        'ip.reserve',
+        { kind: 'address', allocation_state: 'unassigned', ip_display_status: 'DHCP Scope' },
+        () => true,
+      ),
+    ).toEqual({ available: true, reason: '' });
+    expect(
+      actionAvailability(
+        'ip.release',
+        { kind: 'address', allocation_state: 'static_dhcp' },
+        () => true,
+      ),
+    ).toMatchObject({ available: false, reason: expect.stringContaining('IP Reservation') });
+    expect(
+      actionAvailability(
+        'ip.reserve',
+        { kind: 'address', allocation_state: 'unassigned' },
+        () => false,
+      ).reason,
+    ).toContain('subnets:write');
+    expect(
+      actionAvailability(
+        'ip.bulk-release',
+        {
+          kind: 'address-selection',
+          count: 2,
+          allocationStates: ['reserved', 'static_dhcp'],
+        },
+        () => true,
+      ).reason,
+    ).toContain('only IP Reservations');
+  });
+
+  it('dispatches an immutable target and never uses a display label as a key', async () => {
+    const handler = vi.fn((target) => {
+      expect(Object.isFrozen(target)).toBe(true);
+      return target.ip;
+    });
+    const registry = createWorkspaceActionRegistry({
+      can: () => true,
+      handlers: { 'ip.reserve': handler },
+    });
+    const result = await registry.invoke('ip.reserve', {
+      kind: 'address',
+      ip: '10.0.0.8',
+      allocation_state: 'unassigned',
+    });
+
+    expect(result).toEqual({ invoked: true, result: '10.0.0.8' });
+    expect(handler).toHaveBeenCalledOnce();
+    expect((await registry.invoke('Create IP Reservation', {})).invoked).toBe(false);
+  });
+
+  it('derives the target kind from the row identity prefix, not the view', () => {
+    expect(targetForRow({ id: 'network:4', raw: { id: 4, status: 'allocated' } })).toMatchObject({
+      kind: 'network',
+      id: 4,
+      status: 'allocated',
+    });
+    expect(
+      targetForRow({
+        id: 'address:10.0.0.9',
+        address: '10.0.0.9',
+        type: null,
+        status: 'DHCP Scope',
+        raw: { allocation_state: 'unassigned' },
+      }),
+    ).toMatchObject({ kind: 'address', allocation_state: 'unassigned', status: 'DHCP Scope' });
+    expect(targetForRow({ id: 'zone:2', raw: { id: 2 } })).toMatchObject({ kind: 'dns-zone' });
+    expect(
+      targetForRow({ id: 'dns:2:5', value: '10.0.0.5', raw: { id: 5, zone_id: 2 } }),
+    ).toMatchObject({ kind: 'dns-record', zone_id: 2, address: '10.0.0.5' });
+    expect(targetForRow({ id: 'scope:3', raw: { id: 3, subnet_id: 1 } })).toMatchObject({
+      kind: 'dhcp-scope',
+      subnet_id: 1,
+    });
+    expect(
+      targetForRow({
+        id: 'dhcp:reserved:7:10.0.0.7',
+        address: '10.0.0.7',
+        raw: { id: 7, dhcp_assignment_type: 'reserved', scope_id: 3 },
+      }),
+    ).toMatchObject({ kind: 'dhcp-address', reserved: true, scope_id: 3 });
+    expect(targetForRow({ id: 'range:4', rangeType: 'DHCP Scope', raw: { id: 4 } })).toMatchObject({
+      kind: 'range',
+      isScope: true,
+    });
+    expect(targetForRow(null)).toBeNull();
+    expect(targetForRow({ id: 'mystery:1', raw: {} })).toBeNull();
+  });
+
+  it('builds row menus from the registry in the documented order', () => {
+    const all = () => true;
+    const labels = (options) => menuActions(options).map((item) => item.label);
+    const row = (id, extra) => targetForRow({ id, raw: {}, ...extra });
+
+    expect(
+      labels({
+        menu: 'row',
+        target: row('address:10.0.0.9', {
+          address: '10.0.0.9',
+          status: 'DHCP Scope',
+          raw: { allocation_state: 'unassigned' },
+        }),
+        can: all,
+      }),
+    ).toEqual([
+      'Edit Scope',
+      'Remove this IP from Scope',
+      'Delete Scope',
+      'Create IP Reservation',
+      'Create DNS entry',
+      'Create DHCP Reservation',
+      'Set Range Type',
+      'Liveness scan',
+      'Probe now',
+    ]);
+    expect(
+      labels({
+        menu: 'row',
+        target: row('address:10.0.0.1', {
+          address: '10.0.0.1',
+          type: 'gateway',
+          raw: { allocation_state: 'system' },
+        }),
+        can: all,
+      }),
+    ).toEqual([
+      'Edit Gateway',
+      'Delete Gateway',
+      'Create DHCP Scope',
+      'Create DNS entry',
+      'Set Range Type',
+      'Liveness scan',
+      'Probe now',
+    ]);
+    expect(
+      labels({
+        menu: 'row',
+        target: row('dhcp:reserved:7:10.0.0.7', {
+          address: '10.0.0.7',
+          raw: { id: 7, dhcp_assignment_type: 'reserved', scope_id: 3 },
+        }),
+        can: all,
+      }),
+    ).toEqual(['Edit Scope', 'Edit DHCP Reservation', 'Delete DHCP Reservation', 'Probe now']);
+    // A DNS record row is about the record, then its zone: no IP-details or whole-zone hops.
+    expect(
+      labels({
+        menu: 'row',
+        target: row('dns:2:5', { value: '10.0.0.5', raw: { id: 5, zone_id: 2, record_type: 'A' } }),
+        can: all,
+      }),
+    ).toEqual(['Edit record', 'Add CNAME', 'Delete record', 'Edit zone']);
+    // Probe closes every row menu under the one separator; scan does the same
+    // for network rows.
+    const probe = menuActions({
+      menu: 'row',
+      target: row('dhcp:reserved:7:10.0.0.7', {
+        address: '10.0.0.7',
+        raw: { id: 7, dhcp_assignment_type: 'reserved', scope_id: 3 },
+      }),
+      can: all,
+    }).at(-1);
+    expect(probe).toMatchObject({ id: 'ip.probe', separatorBefore: true });
+    const networkItems = menuActions({
+      menu: 'row',
+      target: row('network:2', { raw: { id: 2, status: 'allocated' } }),
+      can: all,
+    });
+    expect(networkItems.at(-1)).toMatchObject({ id: 'network.scan', separatorBefore: true });
+    expect(networkItems.filter((item) => item.separatorBefore)).toHaveLength(1);
+    expect(
+      labels({ menu: 'row', target: row('range:5', { rangeType: 'Servers' }), can: all }),
+    ).toEqual(['Edit range', 'Create DHCP Scope', 'Delete range']);
+    expect(
+      labels({ menu: 'row', target: row('range:4', { rangeType: 'DHCP Scope' }), can: all }),
+    ).toEqual(['Edit Scope', 'Remove addresses from Scope', 'Delete Scope']);
+  });
+
+  it('gates each entry on its own capability rather than the view', () => {
+    const labels = (options) => menuActions(options).map((item) => item.label);
+    const lease = targetForRow({
+      id: 'dhcp:dynamic:8:10.0.0.8',
+      address: '10.0.0.8',
+      raw: { id: 8, dhcp_assignment_type: 'dynamic', scope_id: 3 },
+    });
+    // A DHCP-only operator gets the DHCP entries and no probe (subnets:write).
+    expect(labels({ menu: 'row', target: lease, can: (c) => c === 'dhcp:write' })).toEqual([
+      'Edit Scope',
+      'Create DHCP Reservation',
+    ]);
+    // A subnet-only operator gets the probe and nothing that writes DHCP.
+    expect(labels({ menu: 'row', target: lease, can: (c) => c === 'subnets:write' })).toEqual([
+      'Probe now',
+    ]);
+    expect(labels({ menu: 'row', target: lease, can: () => false })).toEqual([]);
+  });
+
+  it('scopes the header menus to the view and the open zone or scope', () => {
+    const all = () => true;
+    const labels = (options) => menuActions(options).map((item) => item.label);
+    const workspace = (zone = null, scope = null) => ({ kind: 'workspace', zone, scope });
+    const row = (id, extra) => targetForRow({ id, raw: {}, ...extra });
+
+    expect(labels({ menu: 'create', target: workspace(), can: all })).toEqual([
+      'Create network',
+      'Create folder',
+      'Add DNS zone',
+      'Add DHCP scope',
+      'Add DHCP Reservation',
+    ]);
+    expect(labels({ menu: 'create', target: workspace(), can: (c) => c === 'dns:write' })).toEqual([
+      'Add DNS zone',
+    ]);
+    expect(labels({ menu: 'actions', target: workspace(), view: 'dns', can: all })).toEqual([
+      'Add DNS zone',
+      'Apply DNS configuration',
+      'Appliance-wide DNS settings',
+    ]);
+    expect(
+      labels({ menu: 'actions', target: workspace({ id: 2 }), view: 'dns', can: all }),
+    ).toEqual([
+      'Edit selected zone',
+      'Add DNS zone',
+      'Apply DNS configuration',
+      'Appliance-wide DNS settings',
+      'Delete selected zone',
+    ]);
+    expect(
+      labels({ menu: 'actions', target: workspace(null, { id: 3 }), view: 'dhcp', can: all }),
+    ).toEqual([
+      'Edit selected scope',
+      'Sync leases now',
+      'Add DHCP scope',
+      'Apply DHCP configuration',
+      'Appliance-wide DHCP settings',
+      'Delete selected scope',
+    ]);
+    // Allocated: divide greyed out (deallocate first). Unallocated: allocate,
+    // divide, no deallocate.
+    const allocatedItems = menuActions({
+      menu: 'actions',
+      target: { kind: 'network', id: 1, status: 'allocated' },
+      view: 'addresses',
+      can: all,
+    });
+    expect(allocatedItems.find((item) => item.id === 'network.divide')).toMatchObject({
+      available: false,
+      reason: expect.stringContaining('Deallocate'),
+    });
+    expect(allocatedItems.map((item) => item.label)).toEqual([
+      'Edit network',
+      'Divide network',
+      'Move to folder',
+      'Apply defaults',
+      'Deallocate network',
+      'Delete network',
+    ]);
+    const unallocated = row('network:9', { raw: { id: 9, status: 'unallocated', parent_id: 1 } });
+    expect(labels({ menu: 'actions', target: unallocated, view: 'networks', can: all })).toEqual([
+      'Allocate network',
+      'Divide network',
+      'Move to folder',
+      'Apply defaults',
+      'Delete network',
+    ]);
+    // Row menus carry the same entries, so the explorer and the table reach them by right-click.
+    expect(labels({ menu: 'row', target: unallocated, can: all })).toEqual([
+      'Open network context',
+      'Allocate network',
+      'Divide network',
+      'Move to folder',
+      'Apply defaults',
+      'Delete network',
+    ]);
+    expect(
+      actionAvailability('network.divide', row('network:1', { raw: { status: 'allocated' } }), all)
+        .reason,
+    ).toContain('Deallocate');
+    expect(
+      actionAvailability(
+        'network.divide',
+        row('network:1', { raw: { status: 'unallocated', children: [{ id: 2 }] } }),
+        all,
+      ).reason,
+    ).toContain('already divided');
+    // A DHCP address row inside a scope edits that scope; a DNS record row edits its zone.
+    expect(
+      labels({
+        menu: 'row',
+        target: row('dhcp:reserved:7:10.0.0.7', { raw: { id: 7, scope_id: 3 } }),
+        can: (c) => c === 'dhcp:write',
+      }),
+    ).toContain('Edit Scope');
+    expect(
+      labels({
+        menu: 'row',
+        target: row('dns:2:5', { value: '10.0.0.5', raw: { id: 5, zone_id: 2, record_type: 'A' } }),
+        can: all,
+      }),
+    ).toEqual(['Edit record', 'Add CNAME', 'Delete record', 'Edit zone']);
+    expect(actionLabel('dns.zone.edit', { kind: 'dns-zone' })).toBe('Edit zone');
+    expect(actionAvailability('dns.record.create', workspace(), () => true).reason).toContain(
+      'zone',
+    );
+  });
+
+  it('offers a selection the single-address actions in the same order on right-click', () => {
+    const all = () => true;
+    const target = (extra = {}) => ({
+      kind: 'address-selection',
+      count: 3,
+      allocationStates: ['unassigned', 'unassigned', 'unassigned'],
+      addresses: ['10.0.0.10', '10.0.0.11', '10.0.0.12'],
+      runs: [{ start_ip: '10.0.0.10', end_ip: '10.0.0.12', count: 3 }],
+      inScope: false,
+      scanOverrides: 0,
+      ...extra,
+    });
+    const labels = (item) =>
+      menuActions({ menu: 'row', target: item, can: all }).map((a) => a.label);
+    expect(labels(target())).toEqual([
+      'Create DHCP Scope',
+      'Reserve',
+      'Set range type',
+      'Liveness scan',
+      'Probe now',
+    ]);
+    // Two runs, or an address already in a scope: no scope. An override: inherit.
+    const split = target({
+      runs: [
+        { start_ip: '10.0.0.10', end_ip: '10.0.0.10', count: 1 },
+        { start_ip: '10.0.0.12', end_ip: '10.0.0.12', count: 1 },
+      ],
+      scanOverrides: 1,
+    });
+    expect(labels(split)).not.toContain('Create DHCP Scope');
+    expect(labels(split)).toContain('Reset scan to Inherit');
+    expect(labels(target({ inScope: true }))).not.toContain('Create DHCP Scope');
+    // One Liveness scan switch, showing the selection's state.
+    const scanSwitch = (extra) =>
+      menuActions({ menu: 'row', target: target(extra), can: all }).find(
+        (item) => item.id === 'ip.bulk-scan-toggle',
+      ).toggle;
+    expect(scanSwitch({ scanningOn: 0 })).toBe('off');
+    expect(scanSwitch({ scanningOn: 2 })).toBe('mixed');
+    expect(scanSwitch({ scanningOn: 3 })).toBe('on');
+    const many = Array.from({ length: 257 }, (_, i) => `10.0.${i >> 8}.${i & 255}`);
+    expect(actionAvailability('ip.probe', target({ addresses: many }), all).reason).toContain(
+      '256',
+    );
+  });
+
+  it('shows one Liveness scan switch for an address, in its current state', () => {
+    const all = () => true;
+    const scanItem = (raw) =>
+      menuActions({
+        menu: 'row',
+        target: { kind: 'address', id: 'address:10.0.0.9', address: '10.0.0.9', raw },
+        can: all,
+      }).filter((item) => item.label === 'Liveness scan');
+    expect(scanItem({ scanning_enabled: true })).toMatchObject([
+      { id: 'ip.scan-toggle', toggle: 'on' },
+    ]);
+    expect(scanItem({ scanning_enabled: 0 })).toMatchObject([{ toggle: 'off' }]);
+    // A plain item carries no switch state.
+    expect(
+      menuActions({
+        menu: 'row',
+        target: { kind: 'address', id: 'address:10.0.0.9', raw: {} },
+        can: all,
+      }).find((item) => item.id === 'ip.probe').toggle,
+    ).toBeNull();
+  });
+
+  it('targets folders and checked rows through their own kinds', () => {
+    const all = () => true;
+    const labels = (options) => menuActions(options).map((item) => item.label);
+    const folder = { kind: 'folder', id: 4, name: 'Lab', raw: { id: 4, name: 'Lab' } };
+    const ungrouped = { kind: 'folder', id: null, name: 'Ungrouped', raw: { id: null } };
+
+    // Folder context header and explorer folder row: allocate here, rename, delete.
+    expect(labels({ menu: 'actions', target: folder, view: 'networks', can: all })).toEqual([
+      'Create network',
+      'Rename folder',
+      'Delete folder',
+    ]);
+    expect(labels({ menu: 'row', target: folder, can: all })).toEqual([
+      'Create network',
+      'Rename folder',
+      'Delete folder',
+    ]);
+    expect(labels({ menu: 'row', target: ungrouped, can: all })).toEqual(['Create network']);
+    expect(actionAvailability('folder.delete', ungrouped, all).reason).toContain('Ungrouped');
+    // A network context never offers folder entries, and Merge left the header.
+    expect(
+      labels({ menu: 'actions', target: { kind: 'network', id: 1 }, view: 'networks', can: all }),
+    ).not.toContain('Rename folder');
+    expect(WORKSPACE_ACTIONS['network.merge'].menus).not.toContain('actions');
+
+    // Checked networks.
+    const selection = (networks) => ({
+      kind: 'network-selection',
+      ids: networks.map((network) => network.id),
+      count: networks.length,
+      networks,
+    });
+    const leaf = (id, cidr, extra = {}) => ({
+      id,
+      cidr,
+      status: 'unallocated',
+      parent_id: 1,
+      hasChildren: false,
+      ...extra,
+    });
+    const one = selection([leaf(1, '10.0.0.0/25')]);
+    const two = selection([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25')]);
+    // A selection is acted on from its row menu. Merge stays in it, greyed
+    // out with the reason, when the checked networks cannot be merged.
+    expect(menuActions({ menu: 'row', target: one, can: all })).toMatchObject([
+      { id: 'network.bulk-allocate', available: true, label: 'Allocate 1 network' },
+      { id: 'network.merge', available: false, reason: expect.stringContaining('two') },
+      { id: 'network.apply-defaults', available: true },
+    ]);
+    expect(menuActions({ menu: 'row', target: two, can: all }).map((i) => i.id)).toEqual([
+      'network.bulk-allocate',
+      'network.merge',
+      'network.apply-defaults',
+    ]);
+    expect(menuActions({ menu: 'row', target: two, can: () => false })).toEqual([]);
+    // Bulk allocation takes unallocated, undivided networks only.
+    const allocateReason = (networks) =>
+      actionAvailability('network.bulk-allocate', selection(networks), all).reason;
+    expect(allocateReason([leaf(1, '10.0.0.0/25'), leaf(2, 'fd00:1::/64')])).toBe('');
+    expect(
+      allocateReason([leaf(1, '10.0.0.0/25', { status: 'allocated' }), leaf(2, '10.0.0.128/25')]),
+    ).toContain('unallocated');
+    expect(allocateReason([leaf(1, '10.0.0.0/25', { hasChildren: true })])).toContain('divided');
+    // Merge follows the server's rules and the allocation rule: unallocated
+    // siblings under one parent, no children, and a CIDR union that is one block.
+    const mergeReason = (networks) =>
+      actionAvailability('network.merge', selection(networks), all).reason;
+    expect(
+      mergeReason([leaf(1, '10.0.0.0/25', { status: 'allocated' }), leaf(2, '10.0.0.128/25')]),
+    ).toContain('Deallocate');
+    expect(
+      mergeReason([
+        leaf(1, '10.0.0.0/25', { parent_id: null }),
+        leaf(2, '10.0.0.128/25', { parent_id: null }),
+      ]),
+    ).toContain('Root');
+    expect(
+      mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25', { parent_id: 7 })]),
+    ).toContain('same parent');
+    expect(
+      mergeReason([leaf(1, '10.0.0.0/25', { hasChildren: true }), leaf(2, '10.0.0.128/25')]),
+    ).toContain('divided');
+    // Either family merges through the shared check; a mixed pair never does.
+    expect(mergeReason([leaf(1, 'fd00:1::/65'), leaf(2, 'fd00:1:0:0:8000::/65')])).toBe('');
+    expect(mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, 'fd00:1::/65')])).toContain(
+      'same address family',
+    );
+    expect(mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.1.0/25')])).toContain('contiguous');
+    expect(mergeReason([leaf(1, '10.0.0.0/25'), leaf(2, '10.0.0.128/25')])).toBe('');
+    const addresses = {
+      kind: 'address-selection',
+      count: 2,
+      allocationStates: ['reserved', 'unassigned'],
+    };
+    const addressMenu = menuActions({ menu: 'row', target: addresses, can: all }).map((i) => i.id);
+    expect(addressMenu).toContain('ip.bulk-range-type');
+    expect(addressMenu).not.toContain('ip.bulk-reserve');
+    expect(addressMenu).not.toContain('ip.bulk-release');
+  });
+
+  it('builds the DNS record selection and offers bulk enable, disable and delete', () => {
+    const all = () => true;
+    const target = dnsSelectionTarget([
+      { id: 1, dns_source: 'manual', enabled: 1 },
+      { id: 2, dns_source: 'manual', enabled: 0 },
+      { id: 3, dns_source: 'dhcp', enabled: 1 },
+      { id: 4, source: 'placeholder', enabled: 1 },
+    ]);
+    expect(target).toEqual({
+      kind: 'dns-selection',
+      count: 4,
+      ids: [1, 2],
+      manual: 2,
+      enabledCount: 1,
+    });
+    const items = (t, can = all) => menuActions({ menu: 'row', target: t, can });
+    expect(items(target).map((item) => [item.label, item.available])).toEqual([
+      ['Enable records', true],
+      ['Disable records', true],
+      ['Delete records', true],
+    ]);
+    // Only generated records checked: every entry stays, greyed, with why.
+    const generated = dnsSelectionTarget([{ id: 3, dns_source: 'dhcp', enabled: 1 }]);
+    expect(items(generated)).toMatchObject([
+      { available: false, reason: expect.stringContaining('Generated') },
+      { available: false, reason: expect.stringContaining('Generated') },
+      { available: false, reason: expect.stringContaining('Generated') },
+    ]);
+    expect(items(target, (capability) => capability === 'subnets:write')).toEqual([]);
+  });
+
+  it('builds distinct reserve and release payloads', () => {
+    expect(allocationPayload('reserved', '  Printer  ')).toEqual({
+      allocation_state: 'reserved',
+      note: 'Printer',
+    });
+    expect(allocationPayload('unassigned', 'ignored')).toEqual({
+      allocation_state: 'unassigned',
+    });
+    expect(() => allocationPayload('reserved', '  ')).toThrow('note is required');
+    expect(() => allocationPayload('dynamic_dhcp')).toThrow('reserved or unassigned');
+  });
+
+  it('sends exact run payloads sequentially and stops without replay after a failure', async () => {
+    const failure = new Error('network failed');
+    const put = vi
+      .fn()
+      .mockResolvedValueOnce({ data: { count: 2, skipped: 1 } })
+      .mockRejectedValueOnce(failure);
+    const runs = [
+      { start_ip: '10.0.0.1', end_ip: '10.0.0.3', count: 3 },
+      { start_ip: '10.0.0.8', end_ip: '10.0.0.8', count: 1 },
+      { start_ip: '10.0.0.12', end_ip: '10.0.0.12', count: 1 },
+    ];
+
+    const ledger = await executeBulkAllocation({
+      subnetId: 7,
+      runs,
+      allocationState: 'reserved',
+      note: 'Lab devices',
+      put,
+    });
+
+    expect(put).toHaveBeenCalledTimes(2);
+    expect(put).toHaveBeenNthCalledWith(1, '/subnets/7/ips/bulk-allocation', {
+      start_ip: '10.0.0.1',
+      end_ip: '10.0.0.3',
+      allocation_state: 'reserved',
+      note: 'Lab devices',
+    });
+    expect(ledger.completed).toHaveLength(1);
+    expect(ledger.remaining).toEqual(runs.slice(1));
+    expect(ledger).toMatchObject({ updated: 2, skipped: 1, error: failure });
+  });
+
+  it('renders the exact runs and submits release without a note', async () => {
+    api.put.mockResolvedValue({ data: { count: 2, skipped: 0 } });
+    const wrapper = mount(BulkActionDialog, {
+      props: {
+        visible: true,
+        subnetId: 9,
+        mode: 'release',
+        runs: [{ start_ip: '10.0.0.4', end_ip: '10.0.0.5', count: 2 }],
+      },
+      global: {
+        stubs: {
+          Dialog: {
+            props: ['visible'],
+            template: '<section v-if="visible"><slot /></section>',
+          },
+          Button: {
+            props: ['label', 'type', 'disabled'],
+            emits: ['click'],
+            template:
+              '<button :type="type || \'button\'" :disabled="disabled" @click="$emit(\'click\')">{{ label }}</button>',
+          },
+        },
+      },
+    });
+
+    expect(wrapper.text()).toContain('10.0.0.4 through 10.0.0.5');
+    expect(wrapper.text()).toContain('does not release DHCP leases');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(api.put).toHaveBeenCalledWith('/subnets/9/ips/bulk-allocation', {
+      start_ip: '10.0.0.4',
+      end_ip: '10.0.0.5',
+      allocation_state: 'unassigned',
+    });
+    expect(wrapper.emitted('complete')).toHaveLength(1);
+  });
+
+  it('retries only the failed and not-started bulk runs', async () => {
+    api.put
+      .mockResolvedValueOnce({ data: { updated: 2, skipped: 0 } })
+      .mockRejectedValueOnce(new Error('temporary failure'))
+      .mockResolvedValueOnce({ data: { updated: 1, skipped: 0 } })
+      .mockResolvedValueOnce({ data: { updated: 1, skipped: 0 } });
+    const runs = [
+      { start_ip: '10.0.0.1', end_ip: '10.0.0.2', count: 2 },
+      { start_ip: '10.0.0.8', end_ip: '10.0.0.8', count: 1 },
+      { start_ip: '10.0.0.12', end_ip: '10.0.0.12', count: 1 },
+    ];
+    const wrapper = mount(BulkActionDialog, {
+      props: { visible: true, subnetId: 9, mode: 'release', runs },
+      global: {
+        stubs: {
+          Dialog: { props: ['visible'], template: '<section v-if="visible"><slot /></section>' },
+          Button: {
+            props: ['label', 'type', 'disabled'],
+            emits: ['click'],
+            template:
+              '<button :type="type || \'button\'" :disabled="disabled" @click="$emit(\'click\')">{{ label }}</button>',
+          },
+        },
+      },
+    });
+
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+    expect(wrapper.text()).toContain('Retry 2 remaining run(s)');
+    await wrapper.find('form').trigger('submit');
+    await flushPromises();
+
+    expect(api.put).toHaveBeenCalledTimes(4);
+    expect(api.put.mock.calls.filter(([, body]) => body.start_ip === '10.0.0.1')).toHaveLength(1);
+    expect(wrapper.emitted('complete')).toHaveLength(1);
+    expect(wrapper.emitted('complete')[0][0]).toMatchObject({ updated: 4, skipped: 0 });
+  });
+});

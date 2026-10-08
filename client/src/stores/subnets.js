@@ -3,7 +3,7 @@ import { collectAllocatedSubnets } from '../utils/tree.js';
 import { subnetLabel } from '../utils/format.js';
 import { ref, computed } from 'vue';
 import api from '../api/client.js';
-import { ipToLong } from '../utils/ip.js';
+import { sortKey } from '../utils/ip.js';
 
 export const useSubnetStore = defineStore('subnets', () => {
   const folders = ref([]);
@@ -26,35 +26,40 @@ export const useSubnetStore = defineStore('subnets', () => {
     return total;
   });
 
+  // Numeric order within a family, every IPv4 network before every IPv6 one,
+  // shorter prefix first at the same address. The fixed-width sort key makes
+  // string comparison the numeric comparison, for either family.
+  function compareNetworks(a, b) {
+    const aKey = sortKey(a.network_address) || '';
+    const bKey = sortKey(b.network_address) || '';
+    if (aKey !== bKey) return aKey < bKey ? -1 : 1;
+    return a.prefix_length - b.prefix_length;
+  }
+
   // Convert subnet nodes to PrimeVue Tree format
   function toSubnetNodes(nodes) {
-    const sorted = [...nodes].sort((a, b) => {
-      const aNet = ipToLong(a.network_address);
-      const bNet = ipToLong(b.network_address);
-      if (aNet !== bNet) return aNet - bNet;
-      return a.prefix_length - b.prefix_length;
-    });
-    return sorted.map(s => ({
+    const sorted = [...nodes].sort(compareNetworks);
+    return sorted.map((s) => ({
       key: `subnet-${s.id}`,
       label: s.status === 'allocated' ? subnetLabel(s) : s.cidr,
       data: { ...s, type: 'subnet' },
       leaf: (s.child_count || 0) === 0 && (!s.children || s.children.length === 0),
       children: s.children && s.children.length > 0 ? toSubnetNodes(s.children) : undefined,
       styleClass: s.status === 'unallocated' ? 'node-unallocated' : 'node-allocated',
-      icon: s.status === 'allocated' ? 'pi pi-check-circle' : 'pi pi-circle'
+      icon: s.status === 'allocated' ? 'pi pi-check-circle' : 'pi pi-circle',
     }));
   }
 
   // Full tree with folders as top-level nodes
   const treeNodes = computed(() => {
-    return folders.value.map(f => ({
+    return folders.value.map((f) => ({
       key: `folder-${f.id}`,
       label: f.name,
       data: { ...f, type: 'folder' },
       leaf: !f.subnets || f.subnets.length === 0,
       children: f.subnets && f.subnets.length > 0 ? toSubnetNodes(f.subnets) : [],
       icon: 'pi pi-folder',
-      styleClass: 'node-folder'
+      styleClass: 'node-folder',
     }));
   });
 
@@ -62,30 +67,25 @@ export const useSubnetStore = defineStore('subnets', () => {
   const allocatedTreeNodes = computed(() => {
     // collectAllocatedSubnets from utils/tree.js, which this used to
     // reimplement without its query filter (audit #60/#F16).
-    return folders.value.map(f => {
+    return folders.value.map((f) => {
       const allocated = f.subnets ? collectAllocatedSubnets(f.subnets) : [];
-      const sorted = [...allocated].sort((a, b) => {
-        const aNet = ipToLong(a.network_address);
-        const bNet = ipToLong(b.network_address);
-        if (aNet !== bNet) return aNet - bNet;
-        return a.prefix_length - b.prefix_length;
-      });
+      const sorted = [...allocated].sort(compareNetworks);
       return {
         key: `folder-${f.id}`,
         label: f.name,
         data: { ...f, type: 'folder' },
         leaf: sorted.length === 0,
-        children: sorted.map(s => ({
+        children: sorted.map((s) => ({
           key: `subnet-${s.id}`,
           label: subnetLabel(s),
           data: { ...s, type: 'subnet' },
           leaf: true,
           children: [],
           styleClass: 'node-allocated',
-          icon: 'pi pi-check-circle'
+          icon: 'pi pi-check-circle',
         })),
         icon: 'pi pi-folder',
-        styleClass: 'node-folder'
+        styleClass: 'node-folder',
       };
     });
   });
@@ -94,7 +94,7 @@ export const useSubnetStore = defineStore('subnets', () => {
   const unallocatedTreeNodes = computed(() => {
     function filterForBrowse(nodes) {
       return nodes
-        .map(s => {
+        .map((s) => {
           const filteredChildren = s.children ? filterForBrowse(s.children) : [];
           const hasChildren = Array.isArray(s.children) && s.children.length > 0;
           if (filteredChildren.length > 0 || (s.status === 'unallocated' && !hasChildren)) {
@@ -174,6 +174,12 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
+  // What deleting or deallocating a network removes, disables and keeps.
+  async function previewDeallocation(id) {
+    const res = await api.get(`/subnets/${id}/deallocation-preview`);
+    return res.data;
+  }
+
   async function previewDivide(id, { new_prefix, cidr, selected_cidrs, target_gateways }) {
     const payload = {};
     if (new_prefix !== undefined) payload.new_prefix = new_prefix;
@@ -184,16 +190,42 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
-  async function divideSubnet(id, { new_prefix, cidr, force, conflict_resolutions, selected_cidrs, target_gateways }) {
+  // Callers that showed the operator a preview pass its `plan_token` and
+  // `plan_id` so the server executes exactly what was reviewed (T-15). Without
+  // one, a preview is fetched here for the token; that path exists for callers
+  // with no review step, never as a retry after a stale-plan rejection.
+  async function divideSubnet(
+    id,
+    {
+      new_prefix,
+      cidr,
+      force,
+      conflict_resolutions,
+      selected_cidrs,
+      target_gateways,
+      plan_token,
+      plan_id,
+    },
+  ) {
     const payload = { force };
     if (conflict_resolutions?.length) payload.conflict_resolutions = conflict_resolutions;
     if (new_prefix !== undefined) payload.new_prefix = new_prefix;
     if (cidr) payload.cidr = cidr;
     if (selected_cidrs?.length) payload.selected_cidrs = selected_cidrs;
     if (target_gateways?.length) payload.target_gateways = target_gateways;
-    const preview = await previewDivide(id, { new_prefix, cidr, selected_cidrs, target_gateways });
-    payload.plan_token = preview.plan?.dependency_token;
-    payload.plan_id = preview.plan?.plan_id;
+    if (plan_token) {
+      payload.plan_token = plan_token;
+      payload.plan_id = plan_id;
+    } else {
+      const preview = await previewDivide(id, {
+        new_prefix,
+        cidr,
+        selected_cidrs,
+        target_gateways,
+      });
+      payload.plan_token = preview.plan?.dependency_token;
+      payload.plan_id = preview.plan?.plan_id;
+    }
     const res = await api.post(`/subnets/${id}/divide`, payload);
     await fetchTree();
     // Response body carries `pool_adjustments` when the server had to shrink
@@ -213,7 +245,12 @@ export const useSubnetStore = defineStore('subnets', () => {
   const DETAIL_CACHE_TTL = 30_000; // 30 seconds
   const DETAIL_CACHE_MAX = 20;
 
-  async function getSubnetDetail(id, page = 1, pageSize = 256, { skipCache = false, search = '', sortField = null, sortOrder = 1, showAvailable = true } = {}) {
+  async function getSubnetDetail(
+    id,
+    page = 1,
+    pageSize = 256,
+    { skipCache = false, search = '', sortField = null, sortOrder = 1, showAvailable = true } = {},
+  ) {
     const cacheKey = `${id}:${page}:${pageSize}:${search}:${sortField}:${sortOrder}:${showAvailable}`;
     if (!skipCache) {
       const cached = _detailCache.get(cacheKey);
@@ -266,7 +303,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     const res = await api.post('/subnets/merge', {
       subnet_ids: subnetIds,
       ...(planToken ? { plan_token: planToken } : {}),
-      ...(planId ? { plan_id: planId } : {})
+      ...(planId ? { plan_id: planId } : {}),
     });
     await fetchTree();
     return res.data;
@@ -314,7 +351,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     const res = await api.put(`/subnets/${subnetId}/ranges/set-type`, {
       range_type_id: rangeTypeId,
       ranges,
-      accept_overlaps: acceptOverlaps
+      accept_overlaps: acceptOverlaps,
     });
     invalidateDetailCache(subnetId);
     return res.data;
@@ -323,7 +360,7 @@ export const useSubnetStore = defineStore('subnets', () => {
   async function setIpAllocation(subnetId, ipAddress, allocationState, note) {
     const res = await api.put(`/subnets/${subnetId}/ips/${ipAddress}/allocation`, {
       allocation_state: allocationState,
-      note
+      note,
     });
     return res.data;
   }
@@ -333,7 +370,7 @@ export const useSubnetStore = defineStore('subnets', () => {
       start_ip: startIp,
       end_ip: endIp,
       allocation_state: allocationState,
-      note
+      note,
     });
     return res.data;
   }
@@ -395,16 +432,48 @@ export const useSubnetStore = defineStore('subnets', () => {
   }
 
   return {
-    folders, tree, treeNodes, allocatedTreeNodes, unallocatedTreeNodes, loading, subnetCount, toSubnetNodes,
-    fetchTree, createFolder, updateFolder, deleteFolder, fetchFolders,
-    createSupernet, updateSubnet, deleteSubnet,
-    divideSubnet, previewDivide, configureSubnet,
-    getSubnetDetail, invalidateDetailCache, previewMerge, mergeSubnets, applyTemplate,
-    getSettings, updateSetting,
-    getRanges, createRange, updateRange, deleteRange, setNetworkRangeType,
-    setIpAllocation, bulkSetIpAllocation,
-    getRangeTypes, createRangeType, updateRangeType, deleteRangeType,
-    startScan, getScan, getScans, deleteScan,
-    calculateSubnets
+    folders,
+    tree,
+    treeNodes,
+    allocatedTreeNodes,
+    unallocatedTreeNodes,
+    loading,
+    subnetCount,
+    toSubnetNodes,
+    fetchTree,
+    createFolder,
+    updateFolder,
+    deleteFolder,
+    fetchFolders,
+    createSupernet,
+    updateSubnet,
+    deleteSubnet,
+    previewDeallocation,
+    divideSubnet,
+    previewDivide,
+    configureSubnet,
+    getSubnetDetail,
+    invalidateDetailCache,
+    previewMerge,
+    mergeSubnets,
+    applyTemplate,
+    getSettings,
+    updateSetting,
+    getRanges,
+    createRange,
+    updateRange,
+    deleteRange,
+    setNetworkRangeType,
+    setIpAllocation,
+    bulkSetIpAllocation,
+    getRangeTypes,
+    createRangeType,
+    updateRangeType,
+    deleteRangeType,
+    startScan,
+    getScan,
+    getScans,
+    deleteScan,
+    calculateSubnets,
   };
 });

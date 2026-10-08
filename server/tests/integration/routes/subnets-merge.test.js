@@ -37,8 +37,8 @@ vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
 });
 
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
-const { default: dnsRouter }    = await import('../../../src/routes/dns.js');
-const { default: dhcpRouter }   = await import('../../../src/routes/dhcp.js');
+const { default: dnsRouter } = await import('../../../src/routes/dns.js');
+const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');
 const { default: request } = await import('supertest');
 
 let tmpDir;
@@ -49,8 +49,8 @@ beforeAll(async () => {
   tmpDir = setup.tmpDir;
   app = createMultiRouterApp([
     { prefix: '/api/subnets', router: subnetRouter },
-    { prefix: '/api/dns',     router: dnsRouter },
-    { prefix: '/api/dhcp',    router: dhcpRouter },
+    { prefix: '/api/dns', router: dnsRouter },
+    { prefix: '/api/dhcp', router: dhcpRouter },
   ]);
 });
 
@@ -73,90 +73,137 @@ async function configure(id, body) {
 async function getChildren(parentId) {
   const tree = await request(app).get('/api/subnets');
   const flat = [];
-  const walk = (xs) => { for (const s of xs) { flat.push(s); walk(s.children || []); } };
+  const walk = (xs) => {
+    for (const s of xs) {
+      flat.push(s);
+      walk(s.children || []);
+    }
+  };
   for (const f of tree.body.folders) walk(f.subnets || []);
-  const p = flat.find(s => s.id === parentId);
+  const p = flat.find((s) => s.id === parentId);
   return p?.children || [];
 }
 
 describe('POST /api/subnets/merge: data preservation', () => {
   it('preserves reservations on merged children', async () => {
-    const parent = await createSubnet({ cidr: '10.20.0.0/23', name: 'M-resv', status: 'allocated', gateway_address: '10.20.0.1' });
-    await configure(parent.id, { name: 'M-resv', create_reverse_dns: false, create_dhcp_scope: false });
+    const parent = await createSubnet({
+      cidr: '10.20.0.0/23',
+      name: 'M-resv',
+      status: 'allocated',
+      gateway_address: '10.20.0.1',
+    });
+    await configure(parent.id, {
+      name: 'M-resv',
+      create_reverse_dns: false,
+      create_dhcp_scope: false,
+    });
 
-    const div = await request(app).post(`/api/subnets/${parent.id}/divide`).send({ new_prefix: 24, force: true });
+    const div = await request(app)
+      .post(`/api/subnets/${parent.id}/divide`)
+      .send({ new_prefix: 24, force: true });
     expect(div.status).toBe(200);
     const children = await getChildren(parent.id);
     const [c0, c1] = children.sort((a, b) => a.cidr.localeCompare(b.cidr));
 
     // Reservation on the upper child, should survive the merge.
     await request(app).post('/api/dhcp/reservations').send({
-      subnet_id: c1.id, ip_address: '10.20.1.50', mac_address: 'aa:bb:cc:10:00:01', hostname: 'keepme'
+      subnet_id: c1.id,
+      ip_address: '10.20.1.50',
+      mac_address: 'aa:bb:cc:10:00:01',
+      hostname: 'keepme',
     });
 
-    const merge = await request(app).post('/api/subnets/merge').send({ subnet_ids: [c0.id, c1.id] });
+    const merge = await request(app)
+      .post('/api/subnets/merge')
+      .send({ subnet_ids: [c0.id, c1.id] });
     expect(merge.status).toBe(200);
 
     // After merge, the reservation should be attached to the merged subnet
     // (which is the reconstituted parent at the /23).
     const resvs = await request(app).get('/api/dhcp/reservations');
-    const keepme = resvs.body.find(r => r.hostname === 'keepme');
+    const keepme = resvs.body.find((r) => r.hostname === 'keepme');
     expect(keepme).toBeDefined();
     expect(keepme.subnet_id).toBe(parent.id);
   });
 
   it('creates the merged network default scope when its children had scopes', async () => {
-    const parent = await createSubnet({ cidr: '10.21.0.0/23', name: 'M-scope', status: 'allocated', gateway_address: '10.21.0.1' });
+    const parent = await createSubnet({
+      cidr: '10.21.0.0/23',
+      name: 'M-scope',
+      status: 'allocated',
+      gateway_address: '10.21.0.1',
+    });
     await configure(parent.id, {
-      name: 'M-scope', create_reverse_dns: false, create_dhcp_scope: true,
-      dhcp_start_ip: '10.21.0.100', dhcp_end_ip: '10.21.0.200'
+      name: 'M-scope',
+      create_reverse_dns: false,
+      create_dhcp_scope: true,
+      dhcp_start_ip: '10.21.0.100',
+      dhcp_end_ip: '10.21.0.200',
     });
 
-    const div = await request(app).post(`/api/subnets/${parent.id}/divide`).send({ new_prefix: 24, force: true });
+    const div = await request(app)
+      .post(`/api/subnets/${parent.id}/divide`)
+      .send({ new_prefix: 24, force: true });
     expect(div.status).toBe(200);
     const children = await getChildren(parent.id);
     const [c0, c1] = children.sort((a, b) => a.cidr.localeCompare(b.cidr));
 
     // Every child receives a default-sized scope because the parent had one.
     const before = await request(app).get('/api/dhcp/scopes');
-    expect(before.body.some(s => s.subnet_id === c0.id)).toBe(true);
-    expect(before.body.some(s => s.subnet_id === c1.id)).toBe(true);
+    expect(before.body.some((s) => s.subnet_id === c0.id)).toBe(true);
+    expect(before.body.some((s) => s.subnet_id === c1.id)).toBe(true);
 
-    const merge = await request(app).post('/api/subnets/merge').send({ subnet_ids: [c0.id, c1.id] });
+    const merge = await request(app)
+      .post('/api/subnets/merge')
+      .send({ subnet_ids: [c0.id, c1.id] });
     expect(merge.status).toBe(200);
 
     // The merged network receives its own standard default-sized pool rather
     // than restoring or unioning the child pool bounds.
     const after = await request(app).get('/api/dhcp/scopes');
-    const mergedScopes = after.body.filter(s => s.subnet_id === parent.id)
+    const mergedScopes = after.body
+      .filter((s) => s.subnet_id === parent.id)
       .sort((a, b) => a.start_ip.localeCompare(b.start_ip));
-    expect(mergedScopes.map(scope => [scope.start_ip, scope.end_ip]))
-      .toEqual([['10.21.0.65', '10.21.0.128']]);
+    expect(mergedScopes.map((scope) => [scope.start_ip, scope.end_ip])).toEqual([
+      ['10.21.0.65', '10.21.0.128'],
+    ]);
   });
 
   it('preserves forward DNS zone across the merge', async () => {
-    const parent = await createSubnet({ cidr: '10.22.0.0/23', name: 'M-dns', status: 'allocated', gateway_address: '10.22.0.1' });
+    const parent = await createSubnet({
+      cidr: '10.22.0.0/23',
+      name: 'M-dns',
+      status: 'allocated',
+      gateway_address: '10.22.0.1',
+    });
     await configure(parent.id, {
-      name: 'M-dns', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'merge-dns.test'
+      name: 'M-dns',
+      create_reverse_dns: false,
+      create_dhcp_scope: false,
+      domain_name: 'merge-dns.test',
     });
 
-    const div = await request(app).post(`/api/subnets/${parent.id}/divide`).send({ new_prefix: 24, force: true });
+    const div = await request(app)
+      .post(`/api/subnets/${parent.id}/divide`)
+      .send({ new_prefix: 24, force: true });
     expect(div.status).toBe(200);
     const children = await getChildren(parent.id);
     const [c0, c1] = children.sort((a, b) => a.cidr.localeCompare(b.cidr));
 
     const zonesBefore = await request(app).get('/api/dns/zones');
-    const fwd = zonesBefore.body.find(z => z.name === 'merge-dns.test');
+    const fwd = zonesBefore.body.find((z) => z.name === 'merge-dns.test');
     expect(fwd).toBeDefined();
 
-    const merge = await request(app).post('/api/subnets/merge').send({ subnet_ids: [c0.id, c1.id] });
+    const merge = await request(app)
+      .post('/api/subnets/merge')
+      .send({ subnet_ids: [c0.id, c1.id] });
     expect(merge.status).toBe(200);
 
     // Post-decouple: the zone still exists, unmodified. Any subnet may
     // reference it via domain_name, the merged parent continues to point
     // at it.
     const zonesAfter = await request(app).get('/api/dns/zones');
-    const survived = zonesAfter.body.find(z => z.id === fwd.id);
+    const survived = zonesAfter.body.find((z) => z.id === fwd.id);
     expect(survived).toBeDefined();
     const mergedParent = await request(app).get(`/api/subnets/${parent.id}`);
     expect(mergedParent.body.domain_name).toBe('merge-dns.test');
@@ -167,43 +214,68 @@ describe('POST /api/subnets/merge: conflict detection', () => {
   it('blocks duplicate DHCP Reservation identities without choosing a winner', async () => {
     const parent = await createSubnet({ cidr: '10.26.0.0/23', name: 'M-reservation-conflict' });
     await configure(parent.id, {
-      name: 'M-reservation-conflict', create_reverse_dns: false, create_dhcp_scope: false
+      name: 'M-reservation-conflict',
+      create_reverse_dns: false,
+      create_dhcp_scope: false,
     });
-    const div = await request(app).post(`/api/subnets/${parent.id}/divide`)
+    const div = await request(app)
+      .post(`/api/subnets/${parent.id}/divide`)
       .send({ new_prefix: 24, force: true });
     expect(div.status).toBe(200);
     const [left, right] = (await getChildren(parent.id)).sort((a, b) => a.id - b.id);
-    for (const [child, ip] of [[left, '10.26.0.40'], [right, '10.26.1.40']]) {
-      const created = await request(app).post('/api/dhcp/reservations').send({
-        subnet_id: child.id,
-        ip_address: ip,
-        mac_address: 'aa:bb:cc:26:00:40',
-        hostname: `host-${child.id}`
-      });
+    for (const [child, ip] of [
+      [left, '10.26.0.40'],
+      [right, '10.26.1.40'],
+    ]) {
+      const created = await request(app)
+        .post('/api/dhcp/reservations')
+        .send({
+          subnet_id: child.id,
+          ip_address: ip,
+          mac_address: 'aa:bb:cc:26:00:40',
+          hostname: `host-${child.id}`,
+        });
       expect(created.status).toBe(201);
     }
 
-    const preview = await request(app).post('/api/subnets/merge/preview')
+    const preview = await request(app)
+      .post('/api/subnets/merge/preview')
       .send({ subnet_ids: [right.id, left.id] });
-    expect(preview.body.plan.conflicts).toContainEqual(expect.objectContaining({
-      code: 'dhcp_reservation_identity_conflict',
-      field: 'mac_address',
-      value: 'aa:bb:cc:26:00:40'
-    }));
-    const merged = await request(app).post('/api/subnets/merge')
+    expect(preview.body.plan.conflicts).toContainEqual(
+      expect.objectContaining({
+        code: 'dhcp_reservation_identity_conflict',
+        field: 'mac_address',
+        value: 'aa:bb:cc:26:00:40',
+      }),
+    );
+    const merged = await request(app)
+      .post('/api/subnets/merge')
       .send({ subnet_ids: [left.id, right.id] });
     expect(merged.status).toBe(409);
-    expect((await request(app).get('/api/dhcp/reservations')).body
-      .filter(row => row.mac_address === 'aa:bb:cc:26:00:40')).toHaveLength(2);
+    expect(
+      (await request(app).get('/api/dhcp/reservations')).body.filter(
+        (row) => row.mac_address === 'aa:bb:cc:26:00:40',
+      ),
+    ).toHaveLength(2);
   });
 
   it('blocks with 409 when siblings own forward zones with different names', async () => {
-    const parent = await createSubnet({ cidr: '10.23.0.0/23', name: 'M-conflict', status: 'allocated', gateway_address: '10.23.0.1' });
+    const parent = await createSubnet({
+      cidr: '10.23.0.0/23',
+      name: 'M-conflict',
+      status: 'allocated',
+      gateway_address: '10.23.0.1',
+    });
     await configure(parent.id, {
-      name: 'M-conflict', create_reverse_dns: false, create_dhcp_scope: false, domain_name: 'shared.test'
+      name: 'M-conflict',
+      create_reverse_dns: false,
+      create_dhcp_scope: false,
+      domain_name: 'shared.test',
     });
 
-    const div = await request(app).post(`/api/subnets/${parent.id}/divide`).send({ new_prefix: 24, force: true });
+    const div = await request(app)
+      .post(`/api/subnets/${parent.id}/divide`)
+      .send({ new_prefix: 24, force: true });
     expect(div.status).toBe(200);
     const children = await getChildren(parent.id);
     const [c0, c1] = children.sort((a, b) => a.cidr.localeCompare(b.cidr));
@@ -213,12 +285,16 @@ describe('POST /api/subnets/merge: conflict detection', () => {
     await request(app).put(`/api/subnets/${c1.id}`).send({ domain_name: 'beta.test' });
 
     // Preview surfaces the conflict...
-    const prev = await request(app).post('/api/subnets/merge/preview').send({ subnet_ids: [c0.id, c1.id] });
+    const prev = await request(app)
+      .post('/api/subnets/merge/preview')
+      .send({ subnet_ids: [c0.id, c1.id] });
     expect(prev.status).toBe(200);
     expect(prev.body.forward_zone_conflict).toBe(true);
 
     // ...and execute refuses with 409.
-    const merge = await request(app).post('/api/subnets/merge').send({ subnet_ids: [c0.id, c1.id] });
+    const merge = await request(app)
+      .post('/api/subnets/merge')
+      .send({ subnet_ids: [c0.id, c1.id] });
     expect(merge.status).toBe(409);
     expect(merge.body.error).toMatch(/forward zone/i);
   });

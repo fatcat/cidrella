@@ -14,12 +14,16 @@ router.get('/', requirePerm('subnets:read'), (req, res) => {
   // count only included roots (parent_id IS NULL); children with their own
   // folder_id are now first-class members of the folder in the tree view,
   // so they count too.
-  const folders = db.prepare(`
+  const folders = db
+    .prepare(
+      `
     SELECT f.*,
       (SELECT COUNT(*) FROM subnets WHERE folder_id = f.id) as subnet_count
     FROM folders f
     ORDER BY f.sort_order, f.name
-  `).all();
+  `,
+    )
+    .all();
   res.json(folders);
 });
 
@@ -88,7 +92,7 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const updated = Folder.updateFolder(db, folder, {
     name: cleanName,
     description,
-    sortOrder: sort_order
+    sortOrder: sort_order,
   });
 
   audit(req.user.id, 'folder_updated', 'folder', folder.id, { name: cleanName });

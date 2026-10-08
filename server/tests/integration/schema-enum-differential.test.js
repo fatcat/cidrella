@@ -38,9 +38,9 @@ afterAll(() => cleanupTestDb(tmpDir));
  * CREATE TABLE statement. Returns a Set, or null when there is no such CHECK.
  */
 function checkConstraintValues(tableName, column) {
-  const row = db.prepare(
-    "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?"
-  ).get(tableName);
+  const row = db
+    .prepare("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = ?")
+    .get(tableName);
   if (!row?.sql) return null;
 
   const re = new RegExp(`CHECK\\s*\\(\\s*${column}\\s+IN\\s*\\(([^)]*)\\)`, 'i');
@@ -50,8 +50,8 @@ function checkConstraintValues(tableName, column) {
   return new Set(
     match[1]
       .split(',')
-      .map(s => s.trim().replace(/^'|'$/g, ''))
-      .filter(Boolean)
+      .map((s) => s.trim().replace(/^'|'$/g, ''))
+      .filter(Boolean),
   );
 }
 
@@ -63,13 +63,19 @@ describe('JS enums match the SQL CHECK constraints in the live schema', () => {
     const jsRoles = new Set(Object.keys(ROLES));
 
     // Reported both ways so a failure says which side gained the value.
-    const onlyInJs = [...jsRoles].filter(r => !sqlRoles.has(r));
-    const onlyInSql = [...sqlRoles].filter(r => !jsRoles.has(r));
+    const onlyInJs = [...jsRoles].filter((r) => !sqlRoles.has(r));
+    const onlyInSql = [...sqlRoles].filter((r) => !jsRoles.has(r));
 
-    expect(onlyInJs, 'roles in auth/roles.js that the users.role CHECK would reject at INSERT '
-      + '(add a migration widening the constraint)').toEqual([]);
-    expect(onlyInSql, 'roles the users.role CHECK allows that auth/roles.js does not define '
-      + '(no route can ever assign these)').toEqual([]);
+    expect(
+      onlyInJs,
+      'roles in auth/roles.js that the users.role CHECK would reject at INSERT ' +
+        '(add a migration widening the constraint)',
+    ).toEqual([]);
+    expect(
+      onlyInSql,
+      'roles the users.role CHECK allows that auth/roles.js does not define ' +
+        '(no route can ever assign these)',
+    ).toEqual([]);
   });
 
   it('a role added to only one side is caught', () => {
@@ -77,7 +83,7 @@ describe('JS enums match the SQL CHECK constraints in the live schema', () => {
     // than passing because checkConstraintValues silently returned an empty set.
     const sqlRoles = checkConstraintValues('users', 'role');
     const pretendJsRoles = new Set([...Object.keys(ROLES), 'auditor']);
-    const onlyInJs = [...pretendJsRoles].filter(r => !sqlRoles.has(r));
+    const onlyInJs = [...pretendJsRoles].filter((r) => !sqlRoles.has(r));
     expect(onlyInJs).toEqual(['auditor']);
   });
 

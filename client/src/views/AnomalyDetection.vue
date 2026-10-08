@@ -34,34 +34,70 @@
       </div>
       <div class="setting-field">
         <label class="setting-field-label">Sensitivity</label>
-        <Select v-model="form.sensitivity" :options="sensitivityOptions" optionLabel="label"
-                optionValue="value" size="small" fluid
-                data-track="sys-anomaly-sensitivity" />
+        <Select
+          v-model="form.sensitivity"
+          :options="sensitivityOptions"
+          optionLabel="label"
+          optionValue="value"
+          size="small"
+          fluid
+          data-track="sys-anomaly-sensitivity"
+        />
       </div>
       <div class="setting-field">
         <label class="setting-field-label">Scoring Interval (min)</label>
-        <InputNumber v-model="form.scoringInterval" :min="5" :max="120" fluid
-                     style="max-width: 10rem" data-track="sys-anomaly-scoring-interval" />
+        <InputNumber
+          v-model="form.scoringInterval"
+          :min="5"
+          :max="120"
+          fluid
+          style="max-width: 10rem"
+          data-track="sys-anomaly-scoring-interval"
+        />
       </div>
       <div class="setting-field">
         <label class="setting-field-label">Training Interval (hr)</label>
-        <InputNumber v-model="form.trainingInterval" :min="1" :max="48" fluid
-                     style="max-width: 10rem" data-track="sys-anomaly-training-interval" />
+        <InputNumber
+          v-model="form.trainingInterval"
+          :min="1"
+          :max="48"
+          fluid
+          style="max-width: 10rem"
+          data-track="sys-anomaly-training-interval"
+        />
       </div>
       <div class="setting-field">
         <label class="setting-field-label">Min Training Hours</label>
-        <InputNumber v-model="form.minTrainingHours" :min="12" :max="168" fluid
-                     style="max-width: 10rem" data-track="sys-anomaly-min-training" />
+        <InputNumber
+          v-model="form.minTrainingHours"
+          :min="12"
+          :max="168"
+          fluid
+          style="max-width: 10rem"
+          data-track="sys-anomaly-min-training"
+        />
       </div>
       <div class="setting-field">
         <label class="setting-field-label">Retention (days)</label>
-        <InputNumber v-model="form.retentionDays" :min="1" :max="365" fluid
-                     style="max-width: 10rem" data-track="sys-anomaly-retention" />
+        <InputNumber
+          v-model="form.retentionDays"
+          :min="1"
+          :max="365"
+          fluid
+          style="max-width: 10rem"
+          data-track="sys-anomaly-retention"
+        />
       </div>
       <div class="setting-field setting-field-action">
-        <Button label="Save Settings" icon="pi pi-save" size="small"
-                @click="saveSettings" :loading="saving" :disabled="!isDirty"
-                data-track="sys-anomaly-save" />
+        <Button
+          label="Save Settings"
+          icon="pi pi-save"
+          size="small"
+          @click="saveSettings"
+          :loading="saving"
+          :disabled="!isDirty"
+          data-track="sys-anomaly-save"
+        />
       </div>
     </div>
 
@@ -69,21 +105,34 @@
     <div class="info-section">
       <h3>How It Works</h3>
       <p>
-        Anomaly detection uses machine learning (Isolation Forest) to build behavioral baselines
-        for each DNS client on your network. After a training period, it flags clients whose
-        query patterns deviate significantly from their established baseline.
+        Anomaly detection uses machine learning (Isolation Forest) to build behavioral baselines for
+        each DNS client on your network. After a training period, it flags clients whose query
+        patterns deviate significantly from their established baseline.
       </p>
       <p>
         It can detect behavior such as sudden query-volume spikes, unusually bursty DNS traffic,
-        high NXDOMAIN or blocked-query rates, high-entropy or very long domain names, unusual
-        query types, unexpected TLD diversity, and clients resolving domains or IPs that differ
-        from their normal activity.
+        high NXDOMAIN or blocked-query rates, high-entropy or very long domain names, unusual query
+        types, unexpected TLD diversity, and clients resolving domains or IPs that differ from their
+        normal activity.
       </p>
       <ul>
-        <li><strong>Training</strong>: the system needs at least <em>{{ form.minTrainingHours }} hours</em> of DNS query data per client before it can start detecting anomalies.</li>
-        <li><strong>Scoring</strong>: every <em>{{ form.scoringInterval }} minutes</em>, the system evaluates the last hour of queries for each trained client.</li>
-        <li><strong>Sensitivity</strong>: controls how aggressively the system flags anomalies. Higher sensitivity means more alerts.</li>
-        <li><strong>Auto-resolve</strong>: anomalies are automatically resolved after 4 consecutive normal scoring windows.</li>
+        <li>
+          <strong>Training</strong>: the system needs at least
+          <em>{{ form.minTrainingHours }} hours</em> of DNS query data per client before it can
+          start detecting anomalies.
+        </li>
+        <li>
+          <strong>Scoring</strong>: every <em>{{ form.scoringInterval }} minutes</em>, the system
+          evaluates the last hour of queries for each trained client.
+        </li>
+        <li>
+          <strong>Sensitivity</strong>: controls how aggressively the system flags anomalies. Higher
+          sensitivity means more alerts.
+        </li>
+        <li>
+          <strong>Auto-resolve</strong>: anomalies are automatically resolved after 4 consecutive
+          normal scoring windows.
+        </li>
       </ul>
     </div>
   </div>
@@ -159,12 +208,14 @@ const statusSubLabel = computed(() => {
 });
 
 const isDirty = computed(() => {
-  return form.enabled !== original.enabled
-    || form.sensitivity !== original.sensitivity
-    || form.scoringInterval !== original.scoringInterval
-    || form.trainingInterval !== original.trainingInterval
-    || form.minTrainingHours !== original.minTrainingHours
-    || form.retentionDays !== original.retentionDays;
+  return (
+    form.enabled !== original.enabled ||
+    form.sensitivity !== original.sensitivity ||
+    form.scoringInterval !== original.scoringInterval ||
+    form.trainingInterval !== original.trainingInterval ||
+    form.minTrainingHours !== original.minTrainingHours ||
+    form.retentionDays !== original.retentionDays
+  );
 });
 
 function loadFromSettings() {
@@ -197,10 +248,7 @@ async function saveSettings() {
 }
 
 onMounted(async () => {
-  await Promise.all([
-    store.fetchSettings(),
-    store.fetchSummary(),
-  ]);
+  await Promise.all([store.fetchSettings(), store.fetchSummary()]);
   loadFromSettings();
 });
 
@@ -218,19 +266,14 @@ watch(() => store.settings, loadFromSettings);
   gap: 0.75rem;
 }
 
-
-
-
-
-
 .settings-grid {
   display: grid;
   grid-template-columns: auto repeat(6, auto);
   gap: 1rem;
   align-items: end;
   padding: 0.75rem 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 
@@ -242,7 +285,7 @@ watch(() => store.settings, loadFromSettings);
 
 .setting-field-label {
   font-size: 0.75rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   white-space: nowrap;
 }
 
@@ -252,8 +295,8 @@ watch(() => store.settings, loadFromSettings);
 
 .info-section {
   padding: 1rem;
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
 }
 
@@ -265,17 +308,16 @@ watch(() => store.settings, loadFromSettings);
 
 .info-section p {
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 0 0.5rem;
   line-height: 1.5;
 }
 
 .info-section ul {
   font-size: 0.85rem;
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0 0 0.5rem;
   padding-left: 1.25rem;
   line-height: 1.8;
 }
-
 </style>

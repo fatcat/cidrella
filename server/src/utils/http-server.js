@@ -15,7 +15,7 @@ import { getSetting } from '../db/init.js';
 // takes effect for subsequent reads.
 
 const FALLBACK_HTTPS_PORT = 8443;
-const FALLBACK_HTTP_PORT  = 8080;
+const FALLBACK_HTTP_PORT = 8080;
 
 function resolvePort(settingKey, envKey, fallback) {
   try {
@@ -24,7 +24,9 @@ function resolvePort(settingKey, envKey, fallback) {
       const n = parseInt(fromDb, 10);
       if (Number.isInteger(n) && n >= 1 && n <= 65535) return n;
     }
-  } catch { /* DB may not be up yet; fall through */ }
+  } catch {
+    /* DB may not be up yet; fall through */
+  }
   const fromEnv = process.env[envKey];
   if (fromEnv) {
     const n = parseInt(fromEnv, 10);
@@ -33,14 +35,20 @@ function resolvePort(settingKey, envKey, fallback) {
   return fallback;
 }
 
-export function getHttpsPort() { return resolvePort('https_port', 'HTTPS_PORT', FALLBACK_HTTPS_PORT); }
-export function getHttpPort()  { return resolvePort('http_port',  'HTTP_PORT',  FALLBACK_HTTP_PORT);  }
+export function getHttpsPort() {
+  return resolvePort('https_port', 'HTTPS_PORT', FALLBACK_HTTPS_PORT);
+}
+export function getHttpPort() {
+  return resolvePort('http_port', 'HTTP_PORT', FALLBACK_HTTP_PORT);
+}
 
 function httpRedirectEnabled() {
   try {
     const raw = getSetting('http_redirect_enabled');
     return raw !== 'false';
-  } catch { return true; }
+  } catch {
+    return true;
+  }
 }
 
 // ─── Module-level state ─────────────────────────────────────────────────────
@@ -50,7 +58,7 @@ let _app = null;
 let _tlsKeyPath = null;
 let _tlsCertPath = null;
 let _httpsServer = null;
-let _httpsServerSetter = null;   // delegate for cert.js TLS reload
+let _httpsServerSetter = null; // delegate for cert.js TLS reload
 let _httpsPort = 0;
 let _httpServer = null;
 let _httpPort = 0;
@@ -81,7 +89,7 @@ export async function checkPortAvailable(port) {
 function loadTlsOptions() {
   return {
     key: fs.readFileSync(_tlsKeyPath),
-    cert: fs.readFileSync(_tlsCertPath)
+    cert: fs.readFileSync(_tlsCertPath),
   };
 }
 
@@ -243,9 +251,9 @@ export async function applyHttpPortChange(newPort, { force = false } = {}) {
 export function getWebPortInfo() {
   return {
     https_port: _httpsPort || getHttpsPort(),
-    http_port:  _httpPort  || getHttpPort(),
+    http_port: _httpPort || getHttpPort(),
     http_redirect_enabled: httpRedirectEnabled(),
-    http_listener_active:  _httpServer !== null
+    http_listener_active: _httpServer !== null,
   };
 }
 
@@ -253,4 +261,4 @@ export function getWebPortInfo() {
 // const snapshots of the values at MODULE LOAD, anything that needs the
 // live value should call getHttpsPort() / getHttpPort() instead.
 export const HTTPS_PORT = parseInt(process.env.HTTPS_PORT || '8443', 10);
-export const HTTP_PORT  = parseInt(process.env.HTTP_PORT  || '8080', 10);
+export const HTTP_PORT = parseInt(process.env.HTTP_PORT || '8080', 10);

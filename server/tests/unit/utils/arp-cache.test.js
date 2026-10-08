@@ -12,7 +12,8 @@ describe('parseArpingMac', () => {
   });
 
   it('reads the iputils-arping format, MAC in square brackets', () => {
-    const out = 'ARPING 10.0.0.4 from 10.0.3.250 eth0\nUnicast reply from 10.0.0.4 [B2:56:20:67:46:66]  0.746ms';
+    const out =
+      'ARPING 10.0.0.4 from 10.0.3.250 eth0\nUnicast reply from 10.0.0.4 [B2:56:20:67:46:66]  0.746ms';
     expect(parseArpingMac(out)).toBe('b2:56:20:67:46:66');
   });
 
@@ -44,7 +45,7 @@ describe('parseArpTable', () => {
     '10.0.0.131       0x1         0x2         F0:AD:4E:3E:95:EB     *        eth0',
     '10.0.3.198       0x1         0x0         00:00:00:00:00:00     *        eth0',
     '10.0.8.228       0x1         0x2         bc:24:11:6d:60:81     *        eth2',
-    ''
+    '',
   ].join('\n');
 
   it('maps addresses to lowercased MACs and skips the header', () => {

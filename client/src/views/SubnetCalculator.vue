@@ -1,5 +1,5 @@
 <template>
-  <div class="subnet-calc" style="display: flex; flex-direction: column; height: 100%;">
+  <div class="subnet-calc" style="display: flex; flex-direction: column; height: 100%">
     <h2>Network Calculator</h2>
     <p class="subtitle">Split a network into smaller networks or calculate network details.</p>
 
@@ -10,7 +10,7 @@
       </div>
       <div class="field">
         <label>Split into /</label>
-        <InputNumber v-model="newPrefix" :min="1" :max="32" />
+        <InputNumber v-model="newPrefix" :min="1" :max="maxPrefix" />
       </div>
       <Button label="Calculate" icon="pi pi-calculator" @click="calculate" :loading="loading" />
     </div>
@@ -20,33 +20,53 @@
       <h3>Parent Network</h3>
       <div class="info-grid">
         <div><span class="lbl">Network:</span> {{ parent.network }}/{{ parent.prefix }}</div>
-        <div><span class="lbl">Mask:</span> {{ parent.mask }}</div>
-        <div><span class="lbl">Broadcast:</span> {{ parent.broadcast }}</div>
-        <div><span class="lbl">Total IPs:</span> {{ parent.totalAddresses.toLocaleString() }}</div>
-        <div><span class="lbl">Usable:</span> {{ parent.usableCount.toLocaleString() }}</div>
-        <div><span class="lbl">Range:</span> {{ parent.firstUsable }} – {{ parent.lastUsable }}</div>
+        <div v-if="parent.mask"><span class="lbl">Mask:</span> {{ parent.mask }}</div>
+        <div v-if="parent.broadcast">
+          <span class="lbl">Broadcast:</span> {{ parent.broadcast }}
+        </div>
+        <div>
+          <span class="lbl">Total IPs:</span>
+          {{ formatCount(parent.totalAddresses ?? parent.size) }}
+        </div>
+        <div>
+          <span class="lbl">Usable:</span> {{ formatCount(parent.usableCount ?? parent.usable) }}
+        </div>
+        <div>
+          <span class="lbl">Range:</span> {{ parent.firstUsable }} – {{ parent.lastUsable }}
+        </div>
       </div>
     </div>
 
     <!-- Split results -->
     <div class="results" v-if="subnets.length">
-      <h3>{{ subnets.length }} Network{{ subnets.length > 1 ? 's' : '' }} (each /{{ newPrefix }})</h3>
-      <DataTable :value="subnets" stripedRows size="small"
-                 :paginator="subnets.length > 256" :rows="256"
-                 :rowsPerPageOptions="[64, 128, 256, 512]" scrollable scrollHeight="flex"
-                 @row-contextmenu="onRowContextMenu" :contextMenu="true" v-model:contextMenuSelection="contextRow">
+      <h3>
+        {{ subnets.length }} Network{{ subnets.length > 1 ? 's' : '' }} (each /{{ newPrefix }})
+      </h3>
+      <DataTable
+        :value="subnets"
+        stripedRows
+        size="small"
+        :paginator="subnets.length > 256"
+        :rows="256"
+        :rowsPerPageOptions="[64, 128, 256, 512]"
+        scrollable
+        scrollHeight="flex"
+        @row-contextmenu="onRowContextMenu"
+        :contextMenu="true"
+        v-model:contextMenuSelection="contextRow"
+      >
         <Column header="#" style="width: 3rem">
           <template #body="{ index }">{{ index + 1 }}</template>
         </Column>
         <Column header="Network">
           <template #body="{ data }">{{ data.network }}/{{ data.prefix }}</template>
         </Column>
-        <Column field="mask" header="Mask" />
+        <Column v-if="parentFamily !== 6" field="mask" header="Mask" />
         <Column field="firstUsable" header="First Usable" />
         <Column field="lastUsable" header="Last Usable" />
-        <Column field="broadcast" header="Broadcast" />
+        <Column v-if="parentFamily !== 6" field="broadcast" header="Broadcast" />
         <Column header="Usable IPs">
-          <template #body="{ data }">{{ data.usableCount.toLocaleString() }}</template>
+          <template #body="{ data }">{{ formatCount(data.usableCount ?? data.usable) }}</template>
         </Column>
       </DataTable>
       <ContextMenu ref="contextMenuRef" :model="contextMenuItems" />
@@ -71,6 +91,7 @@ import Toast from '../ui/Toast.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import { apiError } from '../utils/format.js';
 import { loadJson, saveJson } from '../utils/storage.js';
+import { maxPrefixFor, cidrFamily } from '../utils/ip.js';
 
 const STORAGE_KEY = 'cidrella-subnet-calc';
 const store = useSubnetStore();
@@ -86,6 +107,20 @@ const subnets = ref(saved?.subnets || []);
 const loading = ref(false);
 const error = ref('');
 
+// 32 or 128 by the family of what is typed; the server refuses the rest.
+const maxPrefix = computed(() => maxPrefixFor(cidr.value));
+const parentFamily = computed(() =>
+  parent.value ? cidrFamily(`${parent.value.network}/${parent.value.prefix}`) : null,
+);
+
+// Counts arrive as numbers, as strings above 2^53, or null for a prefix too
+// large to count; each reads sensibly.
+function formatCount(value) {
+  if (value === null || value === undefined) return 'more than 2^53';
+  const n = typeof value === 'string' ? Number(value) : value;
+  return Number.isSafeInteger(n) ? n.toLocaleString() : String(value);
+}
+
 async function calculate() {
   if (!cidr.value) return;
   loading.value = true;
@@ -95,8 +130,10 @@ async function calculate() {
     parent.value = result.parent;
     subnets.value = result.subnets;
     saveJson(STORAGE_KEY, {
-      cidr: cidr.value, newPrefix: newPrefix.value,
-      parent: result.parent, subnets: result.subnets
+      cidr: cidr.value,
+      newPrefix: newPrefix.value,
+      parent: result.parent,
+      subnets: result.subnets,
     });
   } catch (err) {
     error.value = apiError(err);
@@ -136,9 +173,11 @@ async function addNetwork(row) {
 </script>
 
 <style scoped>
-.subnet-calc h2 { margin: 0; }
+.subnet-calc h2 {
+  margin: 0;
+}
 .subtitle {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   margin: 0.25rem 0 1.5rem 0;
 }
 .calc-form {
@@ -155,13 +194,15 @@ async function addNetwork(row) {
   font-weight: 600;
 }
 .parent-info {
-  background: var(--p-surface-card);
-  border: 1px solid var(--p-surface-border);
+  background: var(--cid-surface-card);
+  border: 1px solid var(--cid-surface-border);
   border-radius: 8px;
   padding: 1rem 1.25rem;
   margin-bottom: 1.5rem;
 }
-.parent-info h3 { margin: 0 0 0.5rem 0; }
+.parent-info h3 {
+  margin: 0 0 0.5rem 0;
+}
 .info-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
@@ -170,14 +211,23 @@ async function addNetwork(row) {
   font-size: 0.9rem;
 }
 .lbl {
-  color: var(--p-text-muted-color);
+  color: var(--cid-text-muted-color);
   font-family: inherit;
 }
-.results { margin-top: 1rem; flex: 1; min-height: 0; display: flex; flex-direction: column; margin-bottom: 1.1rem; }
-.results h3 { margin: 0 0 0.75rem 0; }
+.results {
+  margin-top: 1rem;
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: 1.1rem;
+}
+.results h3 {
+  margin: 0 0 0.75rem 0;
+}
 .error-msg {
   margin-top: 1rem;
-  color: var(--p-red-500);
+  color: var(--cid-red-500);
   font-weight: 600;
 }
 </style>

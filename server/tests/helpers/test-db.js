@@ -31,3 +31,12 @@ export function cleanupTestDb(tmpDir) {
     fs.rmSync(tmpDir, { recursive: true, force: true });
   }
 }
+
+/**
+ * Switch IPv6 support on for a suite. The setting is off by default, so any
+ * test that creates IPv6 networks, records, scopes or reservations through
+ * the routes must call this after setupTestDb.
+ */
+export function enableIpv6(db) {
+  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ipv6_enabled', 'true')").run();
+}

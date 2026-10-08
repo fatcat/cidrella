@@ -12,9 +12,14 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 }));
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { getDb } from '../../../src/db/init.js';
 import {
-  evaluateInboundPolicy, evaluateResolvedPolicy,
-  loadBlocklist, loadWhitelist, loadGeoipRules, loadGeoipAllowlist,
+  evaluateInboundPolicy,
+  evaluateResolvedPolicy,
+  loadBlocklist,
+  loadAllowlist,
+  loadGeoipRules,
+  loadGeoipAllowlist,
 } from '../../../src/utils/dns-proxy.js';
 
 let tmpDir;
@@ -24,7 +29,16 @@ let tmpDir;
 // the drift tripwire: it pins the verdict semantics both transports rely on.
 
 // Fake country lookup so the geoip matrix runs without an MMDB on disk.
-const lookup = (ip) => ({ '203.0.113.9': 'CN', '198.51.100.7': 'RU', '192.0.2.10': 'DE' }[ip] || null);
+// 198.51.100.7 is RU but sits inside the allowlisted /24 below, so it is
+// exempted before the country lookup ever runs and cannot stand in for a
+// blocked country. 203.0.113.50 is the RU address that actually reaches here.
+const lookup = (ip) =>
+  ({
+    '203.0.113.9': 'CN',
+    '203.0.113.50': 'RU',
+    '198.51.100.7': 'RU',
+    '192.0.2.10': 'DE',
+  })[ip] || null;
 
 beforeAll(async () => {
   const result = await setupTestDb();
@@ -35,17 +49,29 @@ beforeAll(async () => {
     INSERT OR IGNORE INTO geoip_rules (country_code, country_name, enabled) VALUES ('CN', 'China', 1);
     INSERT OR IGNORE INTO geoip_rules (country_code, country_name, enabled) VALUES ('RU', 'Russia', 1);
   `);
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_mode', 'blocklist')").run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')").run();
-  db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', '')").run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('geoip_mode', 'blocklist')",
+  ).run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_enabled', 'true')",
+  ).run();
+  db.prepare(
+    "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', '')",
+  ).run();
 
-  db.prepare("INSERT INTO blocklist_categories (slug, enabled) VALUES ('malware', 1) ON CONFLICT(slug) DO UPDATE SET enabled = 1").run();
-  db.prepare("INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('evil.example.com', 'malware')").run();
-  db.prepare("INSERT OR IGNORE INTO blocklist_whitelist (domain) VALUES ('trusted.example.net')").run();
+  db.prepare(
+    "INSERT INTO blocklist_categories (slug, enabled) VALUES ('malware', 1) ON CONFLICT(slug) DO UPDATE SET enabled = 1",
+  ).run();
+  db.prepare(
+    "INSERT OR IGNORE INTO blocklist_domains (domain, category_slug) VALUES ('evil.example.com', 'malware')",
+  ).run();
+  db.prepare(
+    "INSERT OR IGNORE INTO blocklist_allowlist (domain) VALUES ('trusted.example.net')",
+  ).run();
   db.prepare("INSERT OR IGNORE INTO geoip_ip_allowlist (value) VALUES ('198.51.100.0/24')").run();
 
   loadBlocklist();
-  loadWhitelist();
+  loadAllowlist();
   loadGeoipRules();
   loadGeoipAllowlist();
 });
@@ -56,6 +82,35 @@ describe('evaluateInboundPolicy (blocklist verdict, shared by UDP + TCP)', () =>
   it('blocks a listed domain with its category and NXDOMAIN semantics', () => {
     const v = evaluateInboundPolicy('evil.example.com');
     expect(v).toEqual({ action: 'block', blockReason: 'malware', responseCode: 'NXDOMAIN' });
+  });
+
+  it('logs NOERROR when either sinkhole answers, matching the reply (IPV6-27)', () => {
+    const db = getDb();
+    const setRedirects = (v4, v6) => {
+      db.prepare(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip', ?)",
+      ).run(v4);
+      db.prepare(
+        "INSERT OR REPLACE INTO settings (key, value) VALUES ('blocklist_redirect_ip6', ?)",
+      ).run(v6);
+      loadBlocklist();
+    };
+    try {
+      for (const [v4, v6, code] of [
+        ['', 'fd00::1', 'NOERROR'],
+        ['0.0.0.0', '', 'NOERROR'],
+        ['', '', 'NXDOMAIN'],
+      ]) {
+        setRedirects(v4, v6);
+        expect([v4, v6, evaluateInboundPolicy('evil.example.com').responseCode]).toEqual([
+          v4,
+          v6,
+          code,
+        ]);
+      }
+    } finally {
+      setRedirects('', '');
+    }
   });
 
   it('blocks subdomains of a listed domain', () => {
@@ -78,31 +133,70 @@ describe('evaluateResolvedPolicy (GeoIP verdict, shared by UDP + TCP)', () => {
   });
 
   it('forwards when the country is not blocked', () => {
-    expect(evaluateResolvedPolicy('some.example.com', ['192.0.2.10'], lookup).action).toBe('forward');
+    expect(evaluateResolvedPolicy('some.example.com', ['192.0.2.10'], lookup).action).toBe(
+      'forward',
+    );
   });
 
   it('exempts allowlisted answer IPs before the country lookup', () => {
     // 198.51.100.7 is RU (blocked) but inside the allowlisted /24
-    expect(evaluateResolvedPolicy('some.example.com', ['198.51.100.7'], lookup).action).toBe('forward');
+    expect(evaluateResolvedPolicy('some.example.com', ['198.51.100.7'], lookup).action).toBe(
+      'forward',
+    );
   });
 
-  it('a whitelisted query name overrides a would-be country block', () => {
-    expect(evaluateResolvedPolicy('trusted.example.net', ['203.0.113.9'], lookup).action).toBe('forward');
+  it('a allowlisted query name overrides a would-be country block', () => {
+    expect(evaluateResolvedPolicy('trusted.example.net', ['203.0.113.9'], lookup).action).toBe(
+      'forward',
+    );
   });
 
-  it('one blocked-country IP among clean ones still blocks, and all codes are counted', () => {
+  it('one blocked-country IP among clean ones blocks, naming only the blocked country', () => {
+    // DE is clean, CN is blocked, and DE is looked up first. The verdict must
+    // name CN. This used to report ['DE', 'CN'] with blockReason 'DE', which
+    // charged DE in the per-country hit counters and logged it as the reason
+    // for a block it had nothing to do with.
     const v = evaluateResolvedPolicy('some.example.com', ['192.0.2.10', '203.0.113.9'], lookup);
     expect(v.action).toBe('block');
-    // Faithful to the pre-refactor behavior on both transports: countryCodes
-    // carries every looked-up code (clean DE included), so hit counting and
-    // the logged blockReason (first code) can name a non-blocked country
-    // when a mixed answer set trips the block. Flagged in REVIEW.md.
-    expect(v.countryCodes).toEqual(['DE', 'CN']);
-    expect(v.blockReason).toBe('DE');
+    expect(v.countryCodes).toEqual(['CN']);
+    expect(v.blockReason).toBe('CN');
+  });
+
+  it('does not charge a clean country in the hit counters', () => {
+    // countryCodes is what recordResolvedBlock increments, so a clean code
+    // appearing here is a silently wrong analytics number, not just a log line.
+    const v = evaluateResolvedPolicy('some.example.com', ['192.0.2.10', '203.0.113.9'], lookup);
+    expect(v.countryCodes).not.toContain('DE');
+  });
+
+  it('reports two DISTINCT blocked countries, not just the first', () => {
+    // CN and RU are both blocked, DE is clean. All three are looked up, so
+    // this pins the property the name claims: a regression that kept only the
+    // first distinct match would still return ['CN'] and pass a weaker test.
+    const v = evaluateResolvedPolicy(
+      'some.example.com',
+      ['203.0.113.9', '192.0.2.10', '203.0.113.50'],
+      lookup,
+    );
+    expect(v.action).toBe('block');
+    expect(v.countryCodes).toEqual(['CN', 'RU']);
+    expect(v.blockReason).toBe('CN');
+  });
+
+  it('keeps duplicates, because each answer is a separate hit', () => {
+    // countryCodes feeds per-country counters, so two CN answers are two hits.
+    const v = evaluateResolvedPolicy(
+      'some.example.com',
+      ['203.0.113.9', '192.0.2.10', '203.0.113.9'],
+      lookup,
+    );
+    expect(v.countryCodes).toEqual(['CN', 'CN']);
   });
 
   it('forwards empty and lookup-less answer sets', () => {
     expect(evaluateResolvedPolicy('some.example.com', [], lookup)).toEqual({ action: 'forward' });
-    expect(evaluateResolvedPolicy('some.example.com', ['10.0.0.1'], lookup)).toEqual({ action: 'forward' });
+    expect(evaluateResolvedPolicy('some.example.com', ['10.0.0.1'], lookup)).toEqual({
+      action: 'forward',
+    });
   });
 });

@@ -42,7 +42,7 @@ describe('#F19: one intraday range vocabulary', () => {
   it('every intraday range is an offered range option', () => {
     // The failure this prevents: adding a range to the picker without adding it
     // here silently mislabels that chart's axis, and vice versa.
-    const offered = RANGE_OPTIONS.map(o => o.value);
+    const offered = RANGE_OPTIONS.map((o) => o.value);
     for (const r of INTRADAY_RANGES) {
       expect(offered, `${r} is intraday but not in RANGE_OPTIONS`).toContain(r);
     }
@@ -62,29 +62,33 @@ describe('#F16 / #F18: shared helpers are used, not reimplemented', () => {
     }
     return acc;
   }
-  const FILES = ['components', 'views', 'stores', 'composables']
-    .flatMap(d => walk(path.join(SRC, d)));
+  const FILES = ['components', 'views', 'stores', 'composables'].flatMap((d) =>
+    walk(path.join(SRC, d)),
+  );
 
   it('scanned a meaningful number of files', () => {
     expect(FILES.length).toBeGreaterThan(40);
   });
 
   it('#F18: nobody reimplements apiError inline', () => {
-    const bad = FILES.filter(f => fs.readFileSync(f, 'utf8').includes('err.response?.data?.error'))
-      .map(f => path.relative(SRC, f));
+    const bad = FILES.filter((f) =>
+      fs.readFileSync(f, 'utf8').includes('err.response?.data?.error'),
+    ).map((f) => path.relative(SRC, f));
     expect(bad, `import apiError from utils/format.js instead: ${bad.join(', ')}`).toEqual([]);
   });
 
   it('#F18: nobody reimplements saveJson inline', () => {
-    const bad = FILES.filter(f => /localStorage\.setItem\([^;]*JSON\.stringify/.test(fs.readFileSync(f, 'utf8')))
-      .map(f => path.relative(SRC, f));
+    const bad = FILES.filter((f) =>
+      /localStorage\.setItem\([^;]*JSON\.stringify/.test(fs.readFileSync(f, 'utf8')),
+    ).map((f) => path.relative(SRC, f));
     expect(bad, `import saveJson from utils/storage.js instead: ${bad.join(', ')}`).toEqual([]);
   });
 
   it('#F16: the allocated-tree walk is not reimplemented in the store', () => {
     const store = fs.readFileSync(path.join(SRC, 'stores/subnets.js'), 'utf8');
     expect(store).toContain('collectAllocatedSubnets');
-    expect(store, 'store should not carry its own collectAllocated')
-      .not.toMatch(/function collectAllocated\s*\(/);
+    expect(store, 'store should not carry its own collectAllocated').not.toMatch(
+      /function collectAllocated\s*\(/,
+    );
   });
 });

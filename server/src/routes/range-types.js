@@ -3,6 +3,7 @@ import { getDb, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
 import * as RangeType from '../models/range-type.js';
+import { rangeColorProblem } from '../utils/range-colors.js';
 
 const router = Router();
 
@@ -30,6 +31,8 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     if (typeof color !== 'string' || !COLOR_RE.test(color)) {
       return res.status(400).json({ error: 'color must be a hex code like "#aabbcc"' });
     }
+    const problem = rangeColorProblem(color);
+    if (problem) return res.status(400).json({ error: `color ${color} ${problem}` });
   }
   if (description !== undefined) {
     const derr = validateDisplayString(description, { maxLength: 1024 });
@@ -44,7 +47,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     name,
     color,
     description,
-    isSystem: false
+    isSystem: false,
   });
   audit(req.user.id, 'range_type_created', 'range_type', type.id, { name });
   res.status(201).json(type);
@@ -55,13 +58,15 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const type = db.prepare('SELECT * FROM range_types WHERE id = ?').get(req.params.id);
   if (!type) return res.status(404).json({ error: 'Range type not found' });
-  if (type.is_system) return res.status(403).json({ error: 'Cannot modify functional system range types' });
+  if (type.is_system)
+    return res.status(403).json({ error: 'Cannot modify functional system range types' });
 
   const body = req.body || {};
   const { name, color, description } = body;
 
   if (name !== undefined) {
-    if (typeof name !== 'string' || !name) return res.status(400).json({ error: 'Name must be a non-empty string' });
+    if (typeof name !== 'string' || !name)
+      return res.status(400).json({ error: 'Name must be a non-empty string' });
     const nameErr = validateDisplayString(name, { maxLength: 64, allowEmpty: false });
     if (nameErr) return res.status(400).json({ error: `name ${nameErr}` });
   }
@@ -69,6 +74,11 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     if (typeof color !== 'string' || !COLOR_RE.test(color)) {
       return res.status(400).json({ error: 'color must be a hex code like "#aabbcc"' });
     }
+    // A type that already holds a color the rule now refuses can still be
+    // renamed; only a new color is checked.
+    const problem =
+      color.toLowerCase() === type.color?.toLowerCase() ? null : rangeColorProblem(color);
+    if (problem) return res.status(400).json({ error: `color ${color} ${problem}` });
   }
   if (description !== undefined) {
     const derr = validateDisplayString(description, { maxLength: 1024 });
@@ -76,7 +86,9 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   }
 
   if (name && name !== type.name) {
-    const dup = db.prepare('SELECT id FROM range_types WHERE name = ? AND id != ?').get(name, type.id);
+    const dup = db
+      .prepare('SELECT id FROM range_types WHERE name = ? AND id != ?')
+      .get(name, type.id);
     if (dup) return res.status(409).json({ error: 'Network Range Type name already exists' });
   }
 
@@ -90,12 +102,17 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   const db = getDb();
   const type = db.prepare('SELECT * FROM range_types WHERE id = ?').get(req.params.id);
   if (!type) return res.status(404).json({ error: 'Network Range Type not found' });
-  if (type.is_system) return res.status(403).json({ error: 'Cannot delete functional system range types' });
+  if (type.is_system)
+    return res.status(403).json({ error: 'Cannot delete functional system range types' });
 
   // Check if in use
-  const usageCount = db.prepare('SELECT COUNT(*) as count FROM ranges WHERE range_type_id = ?').get(type.id);
+  const usageCount = db
+    .prepare('SELECT COUNT(*) as count FROM ranges WHERE range_type_id = ?')
+    .get(type.id);
   if (usageCount.count > 0) {
-    return res.status(409).json({ error: `Network Range Type is in use by ${usageCount.count} range(s)` });
+    return res
+      .status(409)
+      .json({ error: `Network Range Type is in use by ${usageCount.count} range(s)` });
   }
 
   RangeType.deleteRangeType(db, type.id);

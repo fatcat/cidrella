@@ -14,7 +14,7 @@ export function findLeasesByAddress(db, subnetId, ip) {
   return db
     .prepare(
       `
-    SELECT ip_address, mac_address, client_id, expires_at
+    SELECT ip_address, mac_address, client_id, expires_at, dhcp_version, duid, iaid
     FROM dhcp_leases
     WHERE subnet_id = ? AND ip_address = ?
   `,

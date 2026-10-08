@@ -111,7 +111,7 @@ router.post('/query', async (req, res) => {
   const entry = ALLOWED_QUERIES[query];
   if (!entry) {
     return res.status(400).json({
-      error: `Unknown query '${query}'. Allowed: ${Object.keys(ALLOWED_QUERIES).join(', ')}`
+      error: `Unknown query '${query}'. Allowed: ${Object.keys(ALLOWED_QUERIES).join(', ')}`,
     });
   }
 

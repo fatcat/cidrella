@@ -22,7 +22,10 @@ let tokens;
 function makeApp(router, user = { id: 1, role: 'admin', username: 'admin' }) {
   const testApp = express();
   testApp.use(express.json());
-  testApp.use((req, res, next) => { req.user = user; next(); });
+  testApp.use((req, res, next) => {
+    req.user = user;
+    next();
+  });
   testApp.use('/api/users', router);
   return testApp;
 }
@@ -84,7 +87,9 @@ describe('service accounts', () => {
 describe('api tokens', () => {
   it('returns the secret exactly once and never again', async () => {
     const acct = await makeServiceAccount('poller-once');
-    const made = await request(app).post(`/api/users/${acct.id}/tokens`).send({ name: 'switchmap' });
+    const made = await request(app)
+      .post(`/api/users/${acct.id}/tokens`)
+      .send({ name: 'switchmap' });
 
     expect(made.status).toBe(201);
     expect(made.body.token).toMatch(/^cidr_pat_/);
@@ -125,7 +130,8 @@ describe('api tokens', () => {
 
   it('treats an expiry of zero as never', async () => {
     const acct = await makeServiceAccount('poller-never');
-    const made = await request(app).post(`/api/users/${acct.id}/tokens`)
+    const made = await request(app)
+      .post(`/api/users/${acct.id}/tokens`)
       .send({ name: 'forever', expires_in_days: 0 });
 
     expect(made.status).toBe(201);
@@ -145,7 +151,8 @@ describe('api tokens', () => {
     // Strings included because the field is free text in the UI and the client
     // now forwards it verbatim, so the server is the only thing validating it.
     for (const bad of [-1, 1.5, 'soon', '30d', '1.5', 'NaN']) {
-      const res = await request(app).post(`/api/users/${acct.id}/tokens`)
+      const res = await request(app)
+        .post(`/api/users/${acct.id}/tokens`)
         .send({ name: 'k', expires_in_days: bad });
       expect(res.status, `expires_in_days=${JSON.stringify(bad)} should be refused`).toBe(400);
     }
@@ -154,7 +161,8 @@ describe('api tokens', () => {
   it('treats a blank field as never, which is a choice rather than a typo', async () => {
     const acct = await makeServiceAccount('poller-blank');
     for (const blank of ['', '   ']) {
-      const res = await request(app).post(`/api/users/${acct.id}/tokens`)
+      const res = await request(app)
+        .post(`/api/users/${acct.id}/tokens`)
         .send({ name: 'k', expires_in_days: blank });
       expect(res.status).toBe(201);
       expect(res.body.expires_at).toBeNull();
@@ -163,12 +171,14 @@ describe('api tokens', () => {
 
   it('accepts a numeric expiry sent as a string, which is what the form produces', async () => {
     const acct = await makeServiceAccount('poller-strexp');
-    const res = await request(app).post(`/api/users/${acct.id}/tokens`)
+    const res = await request(app)
+      .post(`/api/users/${acct.id}/tokens`)
       .send({ name: 'k', expires_in_days: '30' });
     expect(res.status).toBe(201);
     expect(res.body.expires_at).toBeTruthy();
 
-    const never = await request(app).post(`/api/users/${acct.id}/tokens`)
+    const never = await request(app)
+      .post(`/api/users/${acct.id}/tokens`)
       .send({ name: 'k2', expires_in_days: '0' });
     expect(never.body.expires_at).toBeNull();
   });
@@ -179,14 +189,15 @@ describe('api tokens', () => {
     const dead = await request(app).post(`/api/users/${acct.id}/tokens`).send({ name: 'dead' });
     const gone = await request(app).post(`/api/users/${acct.id}/tokens`).send({ name: 'gone' });
 
-    db.prepare("UPDATE api_tokens SET expires_at = datetime('now', '-1 day') WHERE id = ?")
-      .run(dead.body.id);
+    db.prepare("UPDATE api_tokens SET expires_at = datetime('now', '-1 day') WHERE id = ?").run(
+      dead.body.id,
+    );
     await request(app).delete(`/api/users/${acct.id}/tokens/${gone.body.id}`);
 
     // An expired token cannot authenticate, so showing it in the count would
     // tell an admin an integration still has access when it does not.
     const list = await request(app).get('/api/users');
-    const row = list.body.find(u => u.id === acct.id);
+    const row = list.body.find((u) => u.id === acct.id);
     expect(row.active_tokens).toBe(1);
     expect(tokens.resolveApiToken(db, live.body.token).error).toBeUndefined();
   });
@@ -195,8 +206,9 @@ describe('api tokens', () => {
     const acct = await makeServiceAccount('poller-expired');
     const made = await request(app).post(`/api/users/${acct.id}/tokens`).send({ name: 'k' });
 
-    db.prepare("UPDATE api_tokens SET expires_at = datetime('now', '-1 day') WHERE id = ?")
-      .run(made.body.id);
+    db.prepare("UPDATE api_tokens SET expires_at = datetime('now', '-1 day') WHERE id = ?").run(
+      made.body.id,
+    );
     expect(tokens.resolveApiToken(db, made.body.token).error).toBe('Token expired');
   });
 
@@ -227,7 +239,9 @@ describe('api tokens', () => {
     db.prepare('PRAGMA foreign_keys = ON').run();
     const res = await request(app).delete(`/api/users/${acct.id}`);
     expect(res.status).toBe(200);
-    expect(db.prepare('SELECT COUNT(*) c FROM api_tokens WHERE user_id = ?').get(acct.id).c).toBe(0);
+    expect(db.prepare('SELECT COUNT(*) c FROM api_tokens WHERE user_id = ?').get(acct.id).c).toBe(
+      0,
+    );
   });
 
   it('requires a usable name', async () => {

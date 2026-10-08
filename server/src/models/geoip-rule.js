@@ -2,7 +2,7 @@ export function addRules(db, countries) {
   const added = [];
   db.transaction(() => {
     const insert = db.prepare(
-      'INSERT OR IGNORE INTO geoip_rules (country_code, country_name) VALUES (?, ?)'
+      'INSERT OR IGNORE INTO geoip_rules (country_code, country_name) VALUES (?, ?)',
     );
     for (const c of countries) {
       const result = insert.run(c.code, c.name || c.code);

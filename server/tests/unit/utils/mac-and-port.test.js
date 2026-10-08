@@ -25,7 +25,9 @@ describe('extractMac', () => {
 
   it('pulls a real MAC out of surrounding log text, lowercased', () => {
     expect(extractMac('DHCPACK(eth0) 10.0.0.5 AA:BB:CC:11:22:33 laptop')).toBe('aa:bb:cc:11:22:33');
-    expect(extractMac('Unicast reply from 10.0.0.1 [00:1A:2B:3C:4D:5E] 1.9ms')).toBe('00:1a:2b:3c:4d:5e');
+    expect(extractMac('Unicast reply from 10.0.0.1 [00:1A:2B:3C:4D:5E] 1.9ms')).toBe(
+      '00:1a:2b:3c:4d:5e',
+    );
   });
 
   it('returns null when there is no MAC at all', () => {
