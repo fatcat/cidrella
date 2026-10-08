@@ -1,5 +1,5 @@
 import { getSetting } from '../db/init.js';
-import { FALLBACK_SECONDARY_DNS } from '../config/defaults.js';
+import { networkOptionFills } from '../utils/dhcp-network-options.js';
 import {
   parseNetwork,
   ipToLong,
@@ -181,12 +181,9 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
 
 /**
  * The option set a scope gets from a list of enabled options, the way a new
- * scope gets it: a blank value that defaults to a network fact is filled.
- * IPv4 gets mask, router, broadcast, domain and DNS (CIDRella's address plus
- * the fallback resolver); IPv6 gets the search list (24) from the domain and
- * DNS (23) from CIDRella's IPv6 address on the network, with no fallback
- * since routers, prefixes and the rest come from Router Advertisements.
- * A value may be USE_DEFAULT, which counts as set. Returns a Map of code to
+ * scope gets it: a blank value that defaults to a network fact is filled,
+ * and the topology values replace what is set, by networkOptionFills (the
+ * rule the scope dialog shares). A value may be USE_DEFAULT, which counts as set. Returns a Map of code to
  * value; a code still blank has a null value.
  */
 export function fillScopeOptions(enabled, { parsed, gateway, domain, serverIp }) {
@@ -196,21 +193,16 @@ export function fillScopeOptions(enabled, { parsed, gateway, domain, serverIp })
     const blank = value == null || value === '';
     optionValues.set(Number(code), value === USE_DEFAULT ? value : blank ? null : String(value));
   }
-  const unset = (code) => !optionValues.get(code);
-  if (family === 6) {
-    if (domain && unset(24)) optionValues.set(24, domain);
-    if (serverIp && unset(23)) optionValues.set(23, serverIp);
-  } else {
-    if (gateway) optionValues.set(3, gateway);
-    optionValues.set(1, parsed.mask);
-    optionValues.set(28, parsed.broadcast);
-    if (domain) {
-      if (unset(15)) optionValues.set(15, domain);
-      if (unset(119)) optionValues.set(119, domain);
-    }
-    if (serverIp && unset(6)) {
-      optionValues.set(6, `${serverIp}, ${FALLBACK_SECONDARY_DNS}`);
-    }
+  const fills = networkOptionFills({
+    family,
+    mask: parsed.mask,
+    broadcast: parsed.broadcast,
+    gateway,
+    domain,
+    serverIp,
+  });
+  for (const { code, value, overwrite } of fills) {
+    if (overwrite || !optionValues.get(code)) optionValues.set(code, value);
   }
   return optionValues;
 }

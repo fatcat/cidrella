@@ -212,9 +212,6 @@ export function resolveDnsListenPort(rawValue) {
 export const ANALYTICS_FLUSH_INTERVAL_MS = 5000; // 5 seconds
 export const ANALYTICS_RETENTION_CLEANUP_MS = 6 * 60 * 60 * 1000; // 6 hours
 
-// Secondary DNS server used when auto-populating DHCP option 6
-export const FALLBACK_SECONDARY_DNS = '9.9.9.9';
-
 // Baked DHCP NTP defaults: option 42 (DHCPv4) from pool.ntp.org and option 56
 // (DHCPv6) from 2.pool.ntp.org, the one pool name that answers with IPv6.
 // scripts/refresh-ntp-defaults.js refreshes both at release-build time so new

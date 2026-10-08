@@ -261,6 +261,8 @@ function computeInheritedOptions(subnet) {
         mask & 255,
       ].join('.');
     }
+    // The resolver serves the network's broadcast whatever the scope stores.
+    inherited[28] = parseNetwork(subnet.cidr).broadcast;
   }
   if (subnet?.domain_name) {
     inherited[15] = subnet.domain_name;

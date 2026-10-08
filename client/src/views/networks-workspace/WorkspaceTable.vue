@@ -46,7 +46,7 @@
             <input
               type="checkbox"
               :checked="selectedRows.includes(row.id)"
-              :aria-label="`Select ${row.address}`"
+              :aria-label="`Select ${rowLabel(row)}`"
               @click="clickCheckbox($event, row)"
             />
           </td>
@@ -203,6 +203,14 @@ function clickRow(event, row) {
 }
 // A range pick always leaves the box checked, even where the click just
 // unchecked it.
+// What names a row for a screen reader: its address, or for a DNS record
+// with none (MX, CNAME, TXT, SRV) its name, type and value.
+function rowLabel(row) {
+  if (row.address) return row.address;
+  const record = [row.dnsName || row.name, row.recordType, row.value].filter(Boolean).join(' ');
+  return record || row.hostname || 'row';
+}
+
 function clickCheckbox(event, row) {
   if (event.shiftKey) {
     event.target.checked = true;
