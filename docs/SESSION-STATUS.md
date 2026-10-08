@@ -8,12 +8,12 @@ flight, and [REVIEW.md](../REVIEW.md) the list of known issues.
 
 ## Current State
 
-**v0.4.18 is the latest release** (2026-09-18), and `main` is at its release-notes commit.
-Everything since lives on three development lines, each merged forward into the next:
+**v0.5.0 is the latest release** (2026-10-08, tag `v0.5.0` at `5374771`), and `main`
+carries it. Work continues on development lines, each merged forward into the next:
 
 | Branch | Version | Schema | What it is |
 |---|---|---|---|
-| `dev/0.5.0` | 0.5.0 | 86 | The 0.5.0 release line. `v0.5.0-pre.15` is the newest pre-release. |
+| `dev/0.5.0` | 0.5.0 | 86 | Released as v0.5.0. Fixes for a 0.5.0.x go here. |
 | `dev/0.5.1` | 0.5.1 | 86 | 0.5.0 plus the DNS/DHCP backend layer (`server/src/backends/`). |
 | `dev/0.5.2` | 0.5.2 | 86 | 0.5.1 plus Kea as a hidden second DHCP server. Release candidates only. |
 
@@ -22,7 +22,8 @@ release that carries both stacks is **0.6.0**. A host runs one stack, dnsmasq or
 PowerDNS + Kea, and can switch both ways.
 
 Every 0.5.x line has `min_from: "0.4.17"`, so a 0.4.17 or 0.4.18 install upgrades to any of
-them directly.
+them directly. 0.5.0 is breaking for anything that reads the database directly, and its
+backups are refused by 0.4.x.
 
 ### 0.5.0
 
@@ -32,7 +33,7 @@ router detection), the reworked Analytics pages and anomaly triage, first-run se
 two-factor sign-in, DHCP Bulk Change, and DNS forwarding through CIDRella's forwarder with a
 backup resolver (On failure or Load balance) and a resolver performance test.
 
-Landed 2026-10-08, after `pre.15`:
+Landed 2026-10-08, after `pre.15` and in the release:
 
 - **DHCP defaults are opt-in per scope** (DHCP-01). A default reaches a scope only through a
   linked row (`dhcp_scope_options.value IS NULL`, Use default in the scope dialog), which
@@ -63,14 +64,16 @@ and is skipped elsewhere.
 
 ## Hosts
 
-- **Production (10.0.3.250)** runs `v0.5.0-pre.15`.
+- **Production (10.0.3.250)** ran `v0.5.0-pre.15` until the release; it has not been checked
+  since.
 - **testerella (10.0.0.8)** runs `dev/0.5.1` through `scripts/deploy-lxc.sh`, so its
   `RELEASE.json` still names `pre.15`. Schema 86. DHCP is off there (`dhcp_enabled` false),
   so live DHCP serving is not exercised on it.
 
 ## Validation
 
-At `dev/0.5.0` `3a60c88`:
+At `dev/0.5.0` `3a60c88`, before the release commit (which updates lockfiles and the
+release-notes date):
 
 - `npm run test:server`: 169 files, 1768 tests passed, 2 skipped.
 - `npm run test:client`: 114 files, 729 tests passed.
@@ -88,7 +91,8 @@ byte-identical to the ones before the upgrade.
 
 Not yet validated:
 
-- **No pre-release carries the 2026-10-08 DHCP work.** `pre.15` predates it.
+- **The 2026-10-08 DHCP work went out in v0.5.0 without a pre-release.** `pre.15` predates
+  it; testerella's check of migration 086 is the field evidence so far.
 - The disposable-appliance live DHCP matrix and the full pre-release security pipeline
   remain release gates, deferred until DHCP can be enabled on a test interface.
 
@@ -98,8 +102,7 @@ Work in flight lives in [BACKLOG.md](../BACKLOG.md). Do not restart a second lis
 
 Open threads specific to this snapshot:
 
-- Cut `v0.5.0-pre.16` with the DHCP work and soak it on production.
-- Release 0.5.0, then cut 0.5.1 (its RELEASE-NOTES date is still a placeholder).
+- Cut 0.5.1 (its RELEASE-NOTES date is still a placeholder).
 - REVIEW.md: DNSMASQ-08 (dnsmasq sizes a DHCPv4 option it does not know, such as Path MTU
   Aging Timeout, by the value's shape) is open on every line. DNSMASQ-02 (duplicate log lines
   on a reservation change) stays open by decision. On 0.5.1, DNSMASQ-06 and DNSMASQ-07 are
@@ -107,4 +110,5 @@ Open threads specific to this snapshot:
 
 Known bad metadata, not fixable in place: the `v0.4.18-pre.1` through `pre.3` tags point at
 0.4.17 code (`gh release create` had no `--target`; fixed forward). Read `RELEASE.json`
-inside a signed tarball to learn the commit it was built from.
+inside a signed tarball to learn the commit it was built from. The v0.4.18 release notes
+shipped with four garbled bullets; RELEASE-NOTES.md carries them repaired from 0.5.0 on.
