@@ -317,3 +317,67 @@ describe('DHCPv6 scope options', () => {
     db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code IN (23, 31, 32, 56)').run();
   });
 });
+
+// DHCP-03: 51 is lease time only in DHCPv4; an IPv6 51 is served like any option.
+describe('option 51 by family', () => {
+  const effectiveOf = (scopeId) =>
+    Object.fromEntries(
+      DhcpScope.resolveEffectiveScopeOptions(
+        db,
+        db
+          .prepare(
+            `SELECT s.*, sub.cidr AS subnet_cidr, sub.gateway_address AS subnet_gateway,
+               sub.domain_name AS subnet_domain_name
+             FROM dhcp_scopes s JOIN subnets sub ON sub.id = s.subnet_id WHERE s.id = ?`,
+          )
+          .get(scopeId),
+      ).options.map((option) => [option.option_code, option]),
+    );
+
+  function scopeWithLinked51(family) {
+    const subnetId =
+      family === 4
+        ? createSubnet()
+        : db
+            .prepare(
+              `INSERT INTO subnets (cidr, name, network_address, last_address, prefix_length,
+                 address_family, status, domain_name)
+               VALUES ('fd00:51::/64', 'v6-51', 'fd00:51::', 'fd00:51::ffff:ffff:ffff:ffff', 64,
+                 6, 'allocated', 'six.test')`,
+            )
+            .run().lastInsertRowid;
+    const rangeId =
+      family === 4 ? createRange(subnetId) : createRange(subnetId, 'fd00:51::1000', 'fd00:51::1fff');
+    db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code = 51 AND address_family = ?').run(
+      family,
+    );
+    db.prepare(
+      `INSERT INTO dhcp_option_defaults (option_code, value, enabled_by_default, address_family)
+       VALUES (51, ?, 0, ?)`,
+    ).run(family === 4 ? '3600' : 'v6-option-51', family);
+    const scopeId = db
+      .prepare(
+        `INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, address_family, v6_mode)
+         VALUES (?, ?, '1h', ?, ?)`,
+      )
+      .run(rangeId, subnetId, family, family === 6 ? 'stateful' : null).lastInsertRowid;
+    db.prepare(
+      'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, 51, NULL, ?)',
+    ).run(scopeId, family);
+    return scopeId;
+  }
+
+  afterAll(() => db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code = 51').run());
+
+  it('IPv4: a linked 51 serves nothing, lease time stays the scope field', () => {
+    expect(effectiveOf(scopeWithLinked51(4))[51]).toBeUndefined();
+  });
+
+  it('IPv6: a linked 51 serves the default like any other option', () => {
+    expect(effectiveOf(scopeWithLinked51(6))[51]).toEqual({
+      option_code: 51,
+      value: 'v6-option-51',
+      source: 'default',
+    });
+  });
+});
