@@ -27,6 +27,23 @@ const minute = (i, extra = {}) => ({
   ...extra,
 });
 
+// One upstream address's minute row from /api/metrics/forwarder.
+const upstream = (i, provider, address, extra = {}) => ({
+  ts: 1789900000 + i * 60,
+  provider,
+  address,
+  protocol: 'dot',
+  queries: 12,
+  answers: 12,
+  timeouts: 0,
+  drops: 0,
+  connect_failures: 0,
+  failovers: 0,
+  latency_p50_us: address ? 9000 : null,
+  latency_p95_us: address ? 21000 : null,
+  ...extra,
+});
+
 let payloads;
 
 function respond(url) {
@@ -70,7 +87,18 @@ describe('Performance', () => {
           cache_misses: 3,
           timeouts: 2,
           cpu_percent: 61,
+          servfail_dnssec: 1,
+          servfail_upstream: 1,
+          servfail_timeout: 1,
         }),
+      ],
+      '/metrics/forwarder': [
+        upstream(0, 'dns10.quad9.net', '9.9.9.10', { answers: 10, timeouts: 1 }),
+        upstream(0, 'dns10.quad9.net', '', { queries: 0, answers: 0, failovers: 1 }),
+        upstream(1, 'unfiltered.adguard-dns.com', '2a10:50c0::ad1:ff', { answers: 12 }),
+      ],
+      '/metrics/dns-failures': [
+        { domain: 'dnssec-failed.org', count: 3, failure: 'dnssec', ede: 7 },
       ],
       '/metrics/services': {
         dnsmasq: false,
@@ -83,7 +111,7 @@ describe('Performance', () => {
     api.get.mockImplementation(respond);
   });
 
-  it('shows the service chips, the seven figures and a legend per chart', async () => {
+  it('shows the service chips, every figure, a legend per chart and the two lists', async () => {
     const w = await mountPage();
     expect(text(w, '.status-rail .chip')).toEqual([
       'dnsmasq Stopped',
@@ -96,18 +124,51 @@ describe('Performance', () => {
       'Cache hit rate',
       'Timeouts',
       'Peak pending',
+      'Failed answers',
+      'DNSSEC failures',
+      'Upstream failures',
+      'Failovers',
       'CPU',
       'Memory',
     ]);
-    // 40 queries over 2 minutes; p95 averages the two minutes; 21 of 30 hit.
-    expect(text(w, '.fig .value')).toEqual(['20', '18ms', '70%', '2', '2', '61%', '210MB']);
-    expect(w.findAll('.fig')[3].classes()).toContain('warn');
-    expect(w.findAll('.fig')[5].classes()).toContain('warn');
-    expect(text(w, '.fig .sub')[5]).toBe('of one core · avg 36.7%');
-    expect(w.findAll('.panel-note')[0].text()).toBe('last 24 hours · 40 queries in 2 samples');
-    expect(w.findAll('.panel-note')[4].text()).toContain('the host has 8');
+    // 40 queries over 2 minutes; p95 averages the two minutes; 21 of 30 hit;
+    // 3 of the 40 answers failed (7.5%), one a failover to the next provider.
+    expect(text(w, '.fig .value')).toEqual([
+      '20',
+      '18ms',
+      '70%',
+      '2',
+      '2',
+      '7.5%',
+      '1',
+      '2',
+      '1',
+      '61%',
+      '210MB',
+    ]);
+    const figs = w.findAll('.fig');
+    expect(figs[3].classes()).toContain('warn');
+    expect(figs[5].classes()).toContain('err');
+    expect(figs[9].classes()).toContain('warn');
+    expect(text(w, '.fig .sub')[7]).toBe('1 no upstream answer · 1 timed out');
+    expect(text(w, '.fig .sub')[9]).toBe('of one core · avg 36.7%');
+    const notes = w.findAll('.panel-note');
+    expect(notes[0].text()).toBe('last 24 hours · 40 queries in 2 samples');
+    expect(notes[3].text()).toBe('encrypted forwarding · 22 answers in the range');
+    expect(notes[8].text()).toContain('the host has 8');
 
     expect(text(w, '.series-chart .chip')).toEqual([
+      'DNSSEC 1',
+      'Upstream 1',
+      'Timed out 1',
+      'Refused 0',
+      'Other 0',
+      'Timeouts 1',
+      'Dropped, resent 0',
+      'Refused connections 0',
+      'Failovers 1',
+      'dns10.quad9.net 21ms',
+      'unfiltered.adguard-dns.com 21ms',
       'Avg 8ms',
       'p95 18ms',
       'Max 90ms',
@@ -119,6 +180,11 @@ describe('Performance', () => {
       'RSS 210 MB',
       'Heap 90 MB',
     ]);
+    const lists = w.findAll('.top-list');
+    expect(lists[0].text()).toContain('dnssec-failed.org');
+    expect(lists[0].text()).toContain('DNSSEC · Signature Expired');
+    expect(lists[1].text()).toContain('unfiltered.adguard-dns.com');
+    expect(lists[1].text()).toContain('1 timeouts · 0 resent · 1 failovers · p95 21 ms');
     w.unmount();
   });
 
@@ -145,6 +211,8 @@ describe('Performance', () => {
         cache_misses: 0,
       }),
     ];
+    payloads['/metrics/forwarder'] = [];
+    payloads['/metrics/dns-failures'] = [];
     const w = await mountPage();
     expect(text(w, '.fig .value').slice(0, 5)).toEqual(['0', '—', '—', '0', '2']);
     expect(w.text()).toContain('No latency samples in this range.');
@@ -152,6 +220,8 @@ describe('Performance', () => {
     expect(w.text()).toContain('No lookups in this range.');
     // The process gauges still draw: a quiet process is data.
     expect(w.findAll('.line-stub').length).toBe(2);
+    expect(w.text()).toContain('No failed answers in this range');
+    expect(w.text()).toContain('encrypted forwarding is off');
     w.unmount();
   });
 });

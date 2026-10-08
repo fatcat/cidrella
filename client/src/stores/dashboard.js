@@ -8,6 +8,8 @@ const METRIC_CONFIG = [
   { key: 'blocklistHits', url: '/metrics/blocklist-hits' },
   { key: 'geoipHits', url: '/metrics/geoip-hits' },
   { key: 'proxyPerf', url: '/metrics/proxy-perf' },
+  { key: 'forwarder', url: '/metrics/forwarder' },
+  { key: 'dnsFailures', url: '/metrics/dns-failures' },
   { key: 'topClients', url: '/analytics/top-clients', params: { limit: 10 } },
   { key: 'topDomains', url: '/analytics/top-domains', params: { limit: 10 } },
   {
@@ -61,6 +63,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     blocklistHits: [],
     geoipHits: [],
     proxyPerf: [],
+    forwarder: [],
+    dnsFailures: [],
     topClients: [],
     topDomains: [],
     dnssecUnsupportedDomains: [],
@@ -133,6 +137,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const fetchBlocklistHits = (range) => fetchMetric('blocklistHits', range);
   const fetchGeoipHits = (range) => fetchMetric('geoipHits', range);
   const fetchProxyPerf = (range) => fetchMetric('proxyPerf', range);
+  const fetchForwarder = (range) => fetchMetric('forwarder', range);
+  const fetchDnsFailures = (range) => fetchMetric('dnsFailures', range);
   const fetchTopClients = (range) => fetchMetric('topClients', range);
   const fetchTopDomains = (range) => fetchMetric('topDomains', range);
   const fetchDnssecUnsupportedDomains = (range) => fetchMetric('dnssecUnsupportedDomains', range);
@@ -271,6 +277,8 @@ export const useDashboardStore = defineStore('dashboard', () => {
     fetchBlocklistHits,
     fetchGeoipHits,
     fetchProxyPerf,
+    fetchForwarder,
+    fetchDnsFailures,
     fetchServices,
     fetchSystemHealth,
     fetchTopClients,

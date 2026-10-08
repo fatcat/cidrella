@@ -8,7 +8,7 @@ vi.mock('../../../src/backends/index.js', async () =>
 );
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
-const { buildServfail, forwardDoT, forwardDoH } =
+const { buildServfail, forwardDoT, forwardDoH, queryUpstreams, getAndResetForwarderMetrics } =
   await import('../../../src/utils/encrypted-forwarder.js');
 const { pinnedLookup } = await import('../../../src/utils/upstream-pool.js');
 
@@ -39,6 +39,15 @@ describe('buildServfail', () => {
     const opt = resp.additionals.find((a) => a.type === 'OPT');
     expect(opt).toBeTruthy();
     expect(opt.flag_do).toBe(true);
+  });
+
+  it('carries an EDE when given one, so the proxy can name the cause', async () => {
+    const { extractEde, failureCause } = await import('../../../src/utils/dns-ede.js');
+    const resp = dnsPacket.decode(
+      buildServfail(encodeQuery('example.com', { withDo: true }), { code: 22, text: 'none' }),
+    );
+    expect(extractEde(resp)).toEqual({ code: 22, text: 'none' });
+    expect(failureCause(resp.rcode, extractEde(resp))).toBe('upstream');
   });
 
   it('returns null for an undecodable buffer', () => {
@@ -160,5 +169,100 @@ describe('DoH connects to the configured upstream address', () => {
     const all = vi.fn();
     lookup('doh.test', { all: true }, all);
     expect(all).toHaveBeenCalledWith(null, [{ address, family }]);
+  });
+});
+
+describe('queryUpstreams: another provider when one fails', () => {
+  const quad9 = { hostname: 'dns10.quad9.net', addresses: ['9.9.9.10', '2620:fe::10'] };
+  const adguard = { hostname: 'unfiltered.adguard-dns.com', addresses: ['94.140.14.140'] };
+  const answer = Buffer.from('answer');
+
+  it('asks the next provider when the first gives no answer', async () => {
+    const asked = [];
+    const forward = async (_buf, upstream) => {
+      asked.push(upstream.hostname);
+      return upstream === adguard ? answer : null;
+    };
+    expect(await queryUpstreams(encodeQuery('x.example'), [quad9, adguard], { forward })).toBe(
+      answer,
+    );
+    expect(asked).toEqual(['dns10.quad9.net', 'unfiltered.adguard-dns.com']);
+  });
+
+  it('starts where it is told and wraps round, so turns still spread the load', async () => {
+    const asked = [];
+    const forward = async (_buf, upstream) => {
+      asked.push(upstream.hostname);
+      return null;
+    };
+    expect(
+      await queryUpstreams(encodeQuery('x.example'), [quad9, adguard], { first: 1, forward }),
+    ).toBeNull();
+    expect(asked).toEqual(['unfiltered.adguard-dns.com', 'dns10.quad9.net']);
+  });
+
+  it('hands every provider the same deadline and stops once it passes', async () => {
+    const deadlines = [];
+    const forward = async (_buf, _upstream, deadline) => {
+      deadlines.push(deadline);
+      await new Promise((resolve) => setTimeout(resolve, 60));
+      return null;
+    };
+    const out = await queryUpstreams(encodeQuery('x.example'), [quad9, adguard, quad9], {
+      forward,
+      budgetMs: 50,
+    });
+    expect(out).toBeNull();
+    expect(deadlines).toHaveLength(1);
+  });
+
+  it('keeps going past a provider that throws', async () => {
+    const forward = async (_buf, upstream) => {
+      if (upstream === quad9) throw new Error('boom');
+      return answer;
+    };
+    expect(await queryUpstreams(encodeQuery('x.example'), [quad9, adguard], { forward })).toBe(
+      answer,
+    );
+  });
+});
+
+describe('getAndResetForwarderMetrics', () => {
+  it('counts a failover on the provider that gave no answer, then starts over', async () => {
+    getAndResetForwarderMetrics();
+    const quad9 = { hostname: 'dns10.quad9.net', addresses: ['9.9.9.10'] };
+    const adguard = { hostname: 'unfiltered.adguard-dns.com', addresses: ['2a10:50c0::1:ff'] };
+    const forward = async (_buf, upstream) => (upstream === adguard ? Buffer.from('ok') : null);
+    await queryUpstreams(encodeQuery('x.example'), [quad9, adguard], { forward });
+    // The last provider failing has no next one to fail over to.
+    await queryUpstreams(encodeQuery('y.example'), [adguard, quad9], {
+      forward: async () => null,
+    });
+
+    const rows = getAndResetForwarderMetrics();
+    expect(rows.map((r) => [r.provider, r.address, r.failovers])).toEqual([
+      ['dns10.quad9.net', '', 1],
+      ['unfiltered.adguard-dns.com', '', 1],
+    ]);
+    expect(rows[0]).toMatchObject({ protocol: 'dot', latency_p50_us: null });
+    expect(getAndResetForwarderMetrics()).toEqual([]);
+  });
+
+  it('counts each address over a real connection, either family', async () => {
+    getAndResetForwarderMetrics();
+    // Nothing listens on these: each is asked once and refuses.
+    for (const address of ['127.0.0.1', '::1']) {
+      await forwardDoT(
+        encodeQuery('z.example'),
+        { hostname: 'localhost', addresses: [address] },
+        400,
+      );
+    }
+    const rows = getAndResetForwarderMetrics();
+    for (const address of ['127.0.0.1', '::1']) {
+      const row = rows.find((r) => r.address === address);
+      expect(row).toMatchObject({ provider: 'localhost', queries: 1, answers: 0 });
+      expect(row.connect_failures + row.timeouts).toBe(1);
+    }
   });
 });

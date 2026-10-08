@@ -49,6 +49,14 @@ const FAIL = Object.freeze({
   DOWNGRADE: 'downgrade', // the DoH server offered HTTP/1.1, not HTTP/2
 });
 
+// The event a failed send reports (a DOWNGRADE is resent at once, not counted).
+const EVENT_FOR_FAIL = {
+  [FAIL.CLOSED]: 'drop',
+  [FAIL.TIMEOUT]: 'timeout',
+  [FAIL.CONNECT]: 'connect_failed',
+  [FAIL.HTTP]: 'error_status',
+};
+
 /**
  * Connect to `address`, validating the certificate against `hostname`. The
  * address is used as is, so no lookup of the upstream's own name is needed.
@@ -80,7 +88,7 @@ class Connection {
     return !this.ended;
   }
 
-  begin(resolve, label, onTimeout = () => {}) {
+  begin(resolve, label, timeoutMs, onTimeout = () => {}) {
     clearTimeout(this.idleTimer);
     const call = { resolve, done: false, cleanup: () => {} };
     call.timer = setTimeout(() => {
@@ -91,7 +99,7 @@ class Connection {
       // idling out. Drop it: the next query connects fresh, and any other
       // query still on it fails as closed and is retried on the new one.
       if (this.closeOnTimeout) this.close();
-    }, this.timeoutMs);
+    }, timeoutMs ?? this.timeoutMs);
     this.inflight.add(call);
     return call;
   }
@@ -181,12 +189,12 @@ class DotConnection extends Connection {
     return null;
   }
 
-  /** Resolves { response } or { fail, error }. */
-  send(query) {
+  /** Resolves { response } or { fail, error }, within `timeoutMs`. */
+  send(query, timeoutMs) {
     return new Promise((resolve) => {
       const id = this.allocateId();
       if (id === null) return resolve({ fail: FAIL.CLOSED, error: new Error('no free query id') });
-      const call = this.begin(resolve, 'DoT');
+      const call = this.begin(resolve, 'DoT', timeoutMs);
       call.originalId = query.readUInt16BE(0);
       call.cleanup = () => this.pending.delete(id);
       this.pending.set(id, call);
@@ -249,9 +257,9 @@ class DohH2Connection extends Connection {
   // The call and its timer start now, so a connection that never opens still
   // fails the query (end() settles everything in flight); the stream starts
   // once the session is up.
-  send(query) {
+  send(query, timeoutMs) {
     return new Promise((resolve) => {
-      const call = this.begin(resolve, 'DoH', () =>
+      const call = this.begin(resolve, 'DoH', timeoutMs, () =>
         call.stream?.close(http2.constants.NGHTTP2_CANCEL),
       );
       if (this.open) this.request(call, query);
@@ -317,10 +325,10 @@ class DohH1Connection extends Connection {
     this.closeOnTimeout = false;
   }
 
-  send(query) {
+  send(query, timeoutMs) {
     return new Promise((resolve) => {
       let req;
-      const call = this.begin(resolve, 'DoH', () => req?.destroy());
+      const call = this.begin(resolve, 'DoH', timeoutMs, () => req?.destroy());
       req = https.request(
         {
           method: 'POST',
@@ -368,6 +376,10 @@ class DohH1Connection extends Connection {
  * @param {object} opts
  * @param {'dot'|'doh'} opts.protocol
  * @param {number} opts.timeoutMs   per query
+ * @param {(kind: string, upstream: object, address: string, ms?: number) => void} [opts.onEvent]
+ *   every step, for counting: 'query' when a query starts on an address, then
+ *   per send 'answer' (with its time), 'drop', 'timeout', 'connect_failed' or
+ *   'error_status'
  * @param {(error: Error, upstream: object, address: string|null) => void} [opts.onError]
  *   every address the pool gave up on (a dropped query it resent and got an
  *   answer for is not a failure)
@@ -379,6 +391,7 @@ export function createUpstreamPool({
   protocol,
   timeoutMs,
   onError = () => {},
+  onEvent = () => {},
   port = DOT_PORT,
   idleMs = IDLE_MS,
   tlsOptions = {},
@@ -416,10 +429,15 @@ export function createUpstreamPool({
     return connection;
   }
 
-  const send = (address, upstream, url, query) => connectionFor(address, upstream, url).send(query);
+  const send = (address, upstream, url, query, ms) =>
+    connectionFor(address, upstream, url).send(query, ms);
 
-  /** The upstream's answer to `query`, or null. */
-  async function query(query, upstream) {
+  /**
+   * The upstream's answer to `query`, or null. `deadline` (epoch ms) bounds
+   * the whole query, resends and failover included: each send gets the
+   * per-query timeout or what is left, whichever is shorter.
+   */
+  async function query(query, upstream, { deadline = Infinity } = {}) {
     let url = null;
     if (protocol === 'doh') {
       try {
@@ -434,14 +452,24 @@ export function createUpstreamPool({
       onError(new Error('no upstream address'), upstream, null);
       return null;
     }
+    const attempt = async (address) => {
+      const ms = Math.min(timeoutMs, deadline - Date.now());
+      if (ms <= 0) return { fail: FAIL.TIMEOUT, error: new Error('out of time') };
+      const started = performance.now();
+      const result = await send(address, upstream, url, query, ms);
+      const kind = result.response ? 'answer' : EVENT_FOR_FAIL[result.fail];
+      if (kind) onEvent(kind, upstream, address, performance.now() - started);
+      return result;
+    };
     for (const address of addresses) {
-      let result = await send(address, upstream, url, query);
+      onEvent('query', upstream, address);
+      let result = await attempt(address);
       if (result.fail === FAIL.DOWNGRADE) {
         http1Only.add(target(address, upstream, url).key);
-        result = await send(address, upstream, url, query);
+        result = await attempt(address);
       }
       for (let retry = 0; result.fail === FAIL.CLOSED && retry < CLOSED_RETRIES; retry++) {
-        result = await send(address, upstream, url, query);
+        result = await attempt(address);
       }
       if (result.response) return result.response;
       onError(result.error, upstream, address);

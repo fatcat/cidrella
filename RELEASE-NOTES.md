@@ -555,6 +555,20 @@ first on a 0.4.17 host.
   network, as for a new scope. Lease time and pools stay as they are. A
   checkbox (on by default) saves the editor as your defaults too. A
   SLAAC-only scope sends no options and is listed but not selectable.
+- **Analytics, Performance shows failed answers and each upstream.** A
+  Failed answers panel gives the failure rate and counts DNSSEC and upstream
+  failures and provider failovers. Charts show failures by cause, upstream
+  timeouts, resent drops and refused connections, and each provider's p95
+  latency; lists name the domains that failed and rank the upstreams. The
+  cause comes from the Extended DNS Error (RFC 8914) dnsmasq puts in a
+  SERVFAIL, so a DNSSEC failure, an unreachable upstream and the proxy timing
+  out are told apart. The query log keeps the error code and cause per query.
+  Migration 085 adds the counts to the minute rows and a `metrics_forwarder`
+  table with one row a minute per provider address.
+- **The Forwarders health chip probes the upstreams in use.** With encrypted
+  forwarding on it used to test the plain DNS servers, which nothing queried.
+  It now sends a real query to each provider address over DoT or DoH, all at
+  once, and the tooltip gives each one's time or what went wrong.
 
 ### Changed
 - **History no longer records every probe.** A scan that only confirms an
@@ -715,6 +729,16 @@ first on a 0.4.17 host.
   behind an answer. It is now sent up to three times on fresh connections
   before the next address is tried, and only a query that finally fails is
   logged as an upstream error.
+- **Encrypted forwarding tries the next provider when one fails.** With
+  more than one provider set, the providers took turns per query and a
+  query the chosen one could not answer got SERVFAIL. When Quad9 timed out
+  on both its addresses for two hours one night, about one forwarded query
+  in ten came back BOGUS. A query now goes to the next provider when the
+  first gives no answer. A send waits 3 seconds rather than 5, and a query
+  gets 8 seconds in all, under the 10 seconds dnsmasq waits for it.
+- **The DNS proxy's query count stopped at 1,000 a minute.** It counted the
+  latency samples it kept rather than the queries it saw, so a busy minute
+  read as 1,000. It now counts every query.
 - **Encrypted forwarding keeps its connections open.** With DNS-over-TLS or
   DNS-over-HTTPS on, every lookup that missed dnsmasq's cache opened a new
   TCP and TLS connection to the upstream: about 46 ms an answer against a

@@ -154,9 +154,9 @@ describe('regenerateDnsmasqConf: change detection', () => {
 
     it('judges the encrypted forwarder by its own upstreams', () => {
       settings.forwarder_encryption = 'tls';
-      settings.forwarder_encrypted_upstreams = JSON.stringify([
+      settings.forwarder_encrypted_upstreams = [
         { hostname: 'resolver.corp', addresses: ['10.1.1.1'] },
-      ]);
+      ];
       expect(regenerateDnsmasqConf({})).toBe(true);
       expect(locals()).not.toContain('local=/internal/');
       settings.forwarder_encrypted_upstreams = [

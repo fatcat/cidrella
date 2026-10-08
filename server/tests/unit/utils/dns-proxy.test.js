@@ -24,7 +24,10 @@ import {
   loadAllowlist,
   getAndResetBlocklistHits,
   evaluateInboundPolicy,
+  noteAnswer,
 } from '../../../src/utils/dns-proxy.js';
+import dnsPacket from 'dns-packet';
+import { edeOption } from '../../../src/utils/dns-ede.js';
 
 let tmpDir;
 
@@ -190,6 +193,42 @@ describe('getAndResetPerformanceMetrics', () => {
     expect(m).toHaveProperty('timeouts');
     expect(m).toHaveProperty('pendingQueries');
     expect(m).toHaveProperty('startupMs');
+  });
+});
+
+describe('noteAnswer', () => {
+  const reply = (rcode, type, code) =>
+    dnsPacket.decode(
+      dnsPacket.encode({
+        id: 1,
+        type: 'response',
+        flags: { NOERROR: 0, SERVFAIL: 2, NXDOMAIN: 3 }[rcode],
+        questions: [{ type, name: 'x.example' }],
+        additionals: [
+          {
+            type: 'OPT',
+            name: '.',
+            udpPayloadSize: 1232,
+            flags: 0,
+            options: code == null ? [] : [edeOption(code)],
+          },
+        ],
+      }),
+    );
+
+  it('names the cause of each failed answer and counts them for the minute', () => {
+    getAndResetPerformanceMetrics();
+    expect(noteAnswer(reply('SERVFAIL', 'A', 6))).toEqual({ ede: 6, failure: 'dnssec' });
+    expect(noteAnswer(reply('SERVFAIL', 'AAAA', 7))).toEqual({ ede: 7, failure: 'dnssec' });
+    expect(noteAnswer(reply('SERVFAIL', 'A', 22))).toEqual({ ede: 22, failure: 'upstream' });
+    expect(noteAnswer(null, { timedOut: true })).toEqual({ ede: null, failure: 'timeout' });
+    expect(noteAnswer(reply('NXDOMAIN', 'AAAA', null))).toEqual({ ede: null, failure: null });
+    expect(noteAnswer(reply('NOERROR', 'A', null))).toEqual({ ede: null, failure: null });
+
+    const m = getAndResetPerformanceMetrics();
+    expect(m.failures).toEqual({ dnssec: 2, upstream: 1, timeout: 1, refused: 0, other: 0 });
+    expect(m.nxdomain).toBe(1);
+    expect(getAndResetPerformanceMetrics().failures.dnssec).toBe(0);
   });
 });
 

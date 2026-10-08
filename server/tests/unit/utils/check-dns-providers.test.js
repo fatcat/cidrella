@@ -8,11 +8,9 @@ import { createRequire } from 'module';
 import dnsPacket from 'dns-packet';
 
 const require = createRequire(import.meta.url);
-const {
-  answerProblem,
-  checkProviders,
-  report,
-} = require('../../../../scripts/check-dns-providers.js');
+const { checkProviders, report } = require('../../../../scripts/check-dns-providers.js');
+// The probe moved to the server, shared with the services health check.
+const { answerProblem } = await import('../../../src/utils/upstream-probe.js');
 
 function response({ rcode = 'NOERROR', answers = ['A', 'RRSIG'] } = {}) {
   return dnsPacket.encode({

@@ -311,6 +311,46 @@ describe.each(KINDS)('$kind', ({ kind, protocol, label, probe }) => {
     }
   });
 
+  it('reports each step for the minute counts: a drop, then the answer', async () => {
+    behavior = (_name, count) => (count === 2 ? 'close' : 'answer');
+    const events = [];
+    const p = pool({ onEvent: (kind, up, address, ms) => events.push({ kind, address, ms }) });
+    const upstream = upstreamFor(v4);
+    try {
+      await p.query(query(1, 'warm.example'), upstream);
+      events.length = 0;
+      await p.query(query(2, 'again.example'), upstream);
+      expect(events.map((e) => e.kind)).toEqual(['query', 'drop', 'answer']);
+      expect(events.every((e) => e.address === '127.0.0.1')).toBe(true);
+      expect(events[2].ms).toBeGreaterThanOrEqual(0);
+    } finally {
+      p.closeAll();
+    }
+  });
+
+  it('reports a timeout and a refused connection', async () => {
+    behavior = () => 'hang';
+    const events = [];
+    const p = pool({
+      timeoutMs: 150,
+      onEvent: (kind, up, address) => events.push(`${kind} ${address}`),
+    });
+    try {
+      await p.query(
+        query(3, 'gone.example'),
+        upstreamFor(v4, { addresses: ['127.0.0.2', '127.0.0.1'] }),
+      );
+      expect(events).toEqual([
+        'query 127.0.0.2',
+        'connect_failed 127.0.0.2',
+        'query 127.0.0.1',
+        'timeout 127.0.0.1',
+      ]);
+    } finally {
+      p.closeAll();
+    }
+  });
+
   it('fails closed when the upstream never answers', async () => {
     behavior = () => 'hang';
     const p = pool({ timeoutMs: 150 });
@@ -389,12 +429,40 @@ describe.each(KINDS)('$kind', ({ kind, protocol, label, probe }) => {
     expect(connections).toBe(0);
   });
 
+  it.each([
+    ['IPv4', () => v4, '127.0.0.1'],
+    ['IPv6', () => v6, '::1'],
+  ])('stops at the deadline over %s, however long the timeout', async (_f, servers, address) => {
+    if (!servers()) return; // no IPv6 loopback here; the IPv4 case still ran
+    behavior = () => 'hang';
+    const p = pool({ timeoutMs: 5000, port: servers().ports.dot });
+    try {
+      const started = Date.now();
+      const out = await p.query(
+        query(4, 'late.example'),
+        upstreamFor(servers(), { addresses: [address, address] }),
+        {
+          deadline: started + 200,
+        },
+      );
+      expect(out).toBeNull();
+      expect(Date.now() - started).toBeLessThan(1000);
+    } finally {
+      p.closeAll();
+    }
+  });
+
   it('answers over IPv6', async () => {
     if (!v6) return; // no IPv6 loopback here; the IPv4 cases above still ran
-    const p = pool({ port: v6.ports.dot });
+    const events = [];
+    const p = pool({
+      port: v6.ports.dot,
+      onEvent: (kind, up, address) => events.push(`${kind} ${address}`),
+    });
     try {
       const out = await p.query(query(6, 'six.example'), upstreamFor(v6));
       expect(dnsPacket.decode(out).answers[0].name).toBe('six.example');
+      expect(events).toEqual(['query ::1', 'answer ::1']);
     } finally {
       p.closeAll();
     }

@@ -4,6 +4,17 @@
 
 import { backendUnits } from './backend-status.js';
 
+const PROTOCOL_LABELS = { dot: 'DoT', doh: 'DoH' };
+
+// One line of the Forwarders tooltip: the provider and address, then the
+// time an answer took or why there was none.
+function forwarderLine(f) {
+  const name = f.label && f.label !== f.ip ? `${f.label} ${f.ip}` : f.ip;
+  const via = PROTOCOL_LABELS[f.protocol] ? ` (${PROTOCOL_LABELS[f.protocol]})` : '';
+  if (!f.reachable) return `${name}${via}: ${f.problem || 'unreachable'}`;
+  return `${name}${via}: ${f.latency_ms != null ? `${f.latency_ms} ms` : 'reachable'}`;
+}
+
 // `services` null means the source did not answer, which is its own chip.
 export function serviceChips(services) {
   if (!services) return [{ key: 'services', label: 'Services', value: 'unknown', tone: 'muted' }];
@@ -28,7 +39,7 @@ export function serviceChips(services) {
       label: 'Forwarders',
       value: fw.length ? `${up} of ${fw.length}` : 'none',
       tone: !fw.length ? 'muted' : up === fw.length ? 'ok' : up ? 'warn' : 'err',
-      title: fw.map((f) => `${f.ip} ${f.reachable ? 'reachable' : 'unreachable'}`).join('\n'),
+      title: fw.map(forwarderLine).join('\n'),
     },
   ];
 }

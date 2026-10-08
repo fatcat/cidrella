@@ -445,22 +445,11 @@ const SITE_LOCAL_DOMAINS = ['home.arpa', 'internal', 'local', 'd.f.ip6.arpa'];
 
 const MANAGED_LOCAL_DOMAINS = new Set([...RESERVED_LOCAL_DOMAINS, ...SITE_LOCAL_DOMAINS]);
 
-function settingList(key) {
-  const raw = getSetting(key);
-  if (Array.isArray(raw)) return raw;
-  try {
-    const parsed = JSON.parse(raw || '[]');
-    return Array.isArray(parsed) ? parsed : [];
-  } catch {
-    return [];
-  }
-}
-
 // The addresses dnsmasq's forwarded queries end up at: the encrypted
 // forwarder's upstreams when it is on, the plain servers otherwise.
 function forwardedAddresses(encrypted) {
-  if (!encrypted) return settingList('dns_upstream_servers');
-  return settingList('forwarder_encrypted_upstreams').flatMap((u) => u?.addresses || []);
+  if (!encrypted) return getSetting('dns_upstream_servers') || [];
+  return (getSetting('forwarder_encrypted_upstreams') || []).flatMap((u) => u?.addresses || []);
 }
 
 function isPublicAddress(address) {

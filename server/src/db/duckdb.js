@@ -43,17 +43,20 @@ export function initAnalyticsDb(dataDir) {
         block_reason VARCHAR,
         latency_us INTEGER,
         resolved_ip VARCHAR,
-        dnssec_supported BOOLEAN
+        dnssec_supported BOOLEAN,
+        ede INTEGER,
+        failure VARCHAR
       )
     `);
 
     // DuckDB analytics schema changes are applied in place because this file
     // is an independent, rebuildable event store rather than the canonical
     // SQLite database managed by numbered migrations.
-    await connection.run(`
-      ALTER TABLE dns_queries
-      ADD COLUMN IF NOT EXISTS dnssec_supported BOOLEAN
-    `);
+    // ede is the answer's Extended DNS Error code and failure its cause
+    // (utils/dns-ede.js failureCause), both null on an answer that worked.
+    for (const column of ['dnssec_supported BOOLEAN', 'ede INTEGER', 'failure VARCHAR']) {
+      await connection.run(`ALTER TABLE dns_queries ADD COLUMN IF NOT EXISTS ${column}`);
+    }
 
     // Start periodic flush
     flushTimer = setInterval(() => flushQueries(), ANALYTICS_FLUSH_INTERVAL_MS);
@@ -76,6 +79,8 @@ export function logDnsQuery({
   latencyUs,
   resolvedIp,
   dnssecSupported,
+  ede,
+  failure,
 }) {
   if (!connection) return;
   buffer.push({
@@ -89,8 +94,27 @@ export function logDnsQuery({
     latencyUs: latencyUs != null ? Math.round(latencyUs) : null,
     resolvedIp: resolvedIp || null,
     dnssecSupported: typeof dnssecSupported === 'boolean' ? dnssecSupported : null,
+    ede: Number.isInteger(ede) ? ede : null,
+    failure: failure || null,
   });
 }
+
+// Buffer fields in INSERT column order.
+const QUERY_COLUMNS = [
+  ['ts', 'ts'],
+  ['client_ip', 'clientIp'],
+  ['domain', 'domain'],
+  ['query_type', 'queryType'],
+  ['response_code', 'responseCode'],
+  ['action', 'action'],
+  ['block_reason', 'blockReason'],
+  ['latency_us', 'latencyUs'],
+  ['resolved_ip', 'resolvedIp'],
+  ['dnssec_supported', 'dnssecSupported'],
+  ['ede', 'ede'],
+  ['failure', 'failure'],
+];
+const QUERY_TUPLE = `(${QUERY_COLUMNS.map(() => '?').join(', ')})`;
 
 // Flush buffered queries to DuckDB using batched multi-row INSERT
 export function flushQueries() {
@@ -102,22 +126,12 @@ export function flushQueries() {
   const placeholders = [];
   const params = [];
   for (const row of rows) {
-    placeholders.push('(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)');
-    params.push(
-      row.ts,
-      row.clientIp,
-      row.domain,
-      row.queryType,
-      row.responseCode,
-      row.action,
-      row.blockReason,
-      row.latencyUs,
-      row.resolvedIp,
-      row.dnssecSupported,
-    );
+    placeholders.push(QUERY_TUPLE);
+    for (const [, field] of QUERY_COLUMNS) params.push(row[field]);
   }
 
-  const sql = `INSERT INTO dns_queries (ts, client_ip, domain, query_type, response_code, action, block_reason, latency_us, resolved_ip, dnssec_supported) VALUES ${placeholders.join(', ')}`;
+  const columns = QUERY_COLUMNS.map(([column]) => column).join(', ');
+  const sql = `INSERT INTO dns_queries (${columns}) VALUES ${placeholders.join(', ')}`;
 
   return connection
     .run(sql, params)
@@ -203,6 +217,22 @@ export function queryTopDomainsWithoutDnssec(range, limit = 10) {
        AND action = 'allowed'
        AND response_code = 'NOERROR'
        AND dnssec_supported = FALSE
+     GROUP BY domain
+     ORDER BY count DESC, domain ASC
+     LIMIT ?`,
+    [limit],
+  );
+}
+
+// The names whose answers failed most, with the cause and the EDE code seen
+// most for each (utils/dns-ede.js).
+export function queryFailedDomains(range, limit = 10) {
+  const interval = rangeToInterval(range);
+  return queryRaw(
+    `SELECT domain, COUNT(*) as count, mode(failure) as failure, mode(ede) as ede
+     FROM dns_queries
+     WHERE ts >= NOW() - INTERVAL '${interval}'
+       AND failure IS NOT NULL
      GROUP BY domain
      ORDER BY count DESC, domain ASC
      LIMIT ?`,
