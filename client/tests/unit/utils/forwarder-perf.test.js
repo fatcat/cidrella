@@ -78,9 +78,9 @@ describe('summarizeForwarder', () => {
     ]);
   });
 
-  it('says encrypted forwarding is off rather than showing zero failovers', () => {
+  it('says nothing was forwarded rather than showing zero failovers', () => {
     const s = summarizeForwarder([]);
-    expect(failoverFigureOf(s)).toMatchObject({ value: null, sub: 'encrypted forwarding is off' });
+    expect(failoverFigureOf(s)).toMatchObject({ value: null, sub: 'nothing was forwarded' });
     expect(providerListRows(s)).toEqual([]);
   });
 

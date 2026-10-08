@@ -42,8 +42,7 @@ beforeAll(async () => {
     'no-hosts',
     'local-ttl=60',
     ...reservedLocalLines({ addresses: ['8.8.8.8'] }),
-    'server=8.8.8.8',
-    'server=9.9.9.9',
+    'server=127.0.0.1#5356',
     'listen-address=127.0.0.1',
     'bind-dynamic',
     '',
@@ -69,12 +68,14 @@ describe('regenerateDnsmasqConf: change detection', () => {
     expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toBe(before);
   });
 
-  it('returns true and writes when the upstreams changed', () => {
+  // dnsmasq forwards to CIDRella's forwarder in every mode, and the forwarder
+  // reads the upstreams itself, so a new public upstream leaves the file alone.
+  it('leaves the file alone when only the public upstreams changed', () => {
     settings.dns_upstream_servers = ['1.1.1.1'];
-    expect(regenerateDnsmasqConf({})).toBe(true);
+    expect(regenerateDnsmasqConf({})).toBe(false);
     const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
-    expect(conf).toContain('server=1.1.1.1');
-    expect(conf).not.toContain('server=8.8.8.8');
+    expect(conf).not.toContain('server=1.1.1.1');
+    expect(conf).toContain('server=127.0.0.1#5356');
   });
 
   it('is a no-op on the second call after a change was applied', () => {
@@ -96,11 +97,8 @@ describe('regenerateDnsmasqConf: change detection', () => {
     // generated `server=127.0.0.1#5356` and never converge, restarting dnsmasq
     // on every single regen.
     settings.forwarder_encryption = 'tls';
-    expect(regenerateDnsmasqConf({})).toBe(true);
-    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=127.0.0.1#5356');
-
-    // Second pass with identical settings must be a no-op.
     expect(regenerateDnsmasqConf({})).toBe(false);
+    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=127.0.0.1#5356');
   });
 
   it('gives a pre-0.5.1 conf no-hosts and local-ttl once, replacing an old local-ttl', () => {
@@ -170,6 +168,31 @@ describe('regenerateDnsmasqConf: change detection', () => {
       fs.writeFileSync(DNSMASQ_CONF, `${BASE_CONF}local=/lab.example/\n`);
       expect(regenerateDnsmasqConf({})).toBe(false);
       expect(locals()).toContain('local=/lab.example/');
+    });
+  });
+
+  describe('backup resolver', () => {
+    const lines = () => fs.readFileSync(DNSMASQ_CONF, 'utf-8').split('\n');
+    const serverLines = () => lines().filter((l) => l.startsWith('server='));
+
+    it.each([
+      ['IPv4', ['9.9.9.10'], ['1.1.1.1', '1.0.0.1']],
+      ['IPv6', ['2620:fe::10'], ['2606:4700:4700::1111']],
+    ])('hands an %s primary and backup to the forwarder, not dnsmasq', (_f, primary, backup) => {
+      settings.dns_upstream_servers = primary;
+      settings.dns_upstream_backup_servers = backup;
+      for (const mode of ['failover', 'balance']) {
+        settings.dns_upstream_backup_mode = mode;
+        expect(regenerateDnsmasqConf({})).toBe(false);
+        expect(serverLines()).toEqual(['server=127.0.0.1#5356']);
+        expect(lines()).not.toContain('strict-order');
+      }
+    });
+
+    it('judges reserved site names by the backup too', () => {
+      settings.dns_upstream_backup_servers = ['192.168.1.53'];
+      expect(regenerateDnsmasqConf({})).toBe(true);
+      expect(lines()).not.toContain('local=/internal/');
     });
   });
 

@@ -344,8 +344,29 @@ first on a 0.4.17 host.
   forwarding on it used to test the plain DNS servers, which nothing queried.
   It now sends a real query to each provider address over DoT or DoH, all at
   once, and the tooltip gives each one's time or what went wrong.
+- **A backup resolver, used on failure or in turn.** Settings > DNS >
+  Upstream Forwarders takes a primary and a backup in every mode: a preset or
+  a custom resolver, plaintext, DoT or DoH. "When there is a backup" picks On
+  failure (every query goes to the primary, the backup answers only when it
+  does not) or Load balance (queries take turns, each covering for the
+  other). Load balance is the default, which is how two encrypted providers
+  behaved before. An existing plaintext list stays as the primary.
+- **Test performance.** A button beside the resolvers times every preset and
+  any custom resolver for a minute over the mode's protocol, straight from
+  CIDRella with no local cache: common names a resolver usually has cached,
+  and random names under unsigned zones that it has to look up. The dialog
+  lists each one's p50 and p95 for both, and its failures, and sets the one
+  you pick as the primary or the backup. Nothing is saved until you save.
 
 ### Changed
+- **Plaintext DNS goes through CIDRella's forwarder.** dnsmasq now forwards
+  to the in-Node forwarder in every mode, not only with DoT or DoH, so On
+  failure and Load balance mean the same thing for plaintext. Left to
+  itself, dnsmasq sent 45 queries to one plain server for every one to the
+  other. Plain forwarding now gets per-address counts in
+  `metrics_forwarder` and shows on Performance like an encrypted provider.
+  One trade-off: with the DNS proxy bypassed and the Node service fully
+  down, plaintext forwarding stops too.
 - **History no longer records every probe.** A scan that only confirms an
   address's state records nothing; Online and Offline mark a change, and Last
   Scanned says when it was last probed. Migration 080 drops the existing
@@ -509,8 +530,10 @@ first on a 0.4.17 host.
   query the chosen one could not answer got SERVFAIL. When Quad9 timed out
   on both its addresses for two hours one night, about one forwarded query
   in ten came back BOGUS. A query now goes to the next provider when the
-  first gives no answer. A send waits 3 seconds rather than 5, and a query
-  gets 8 seconds in all, under the 10 seconds dnsmasq waits for it.
+  first gives no answer. A send waits 2.5 seconds rather than 5 and a query
+  gets 4.5 seconds in all, under the proxy's 5 seconds and dnsmasq's 10. A
+  provider that gave no answer goes to the back of the line for 30 seconds,
+  so a dead primary costs one slow query rather than one on every query.
 - **The DNS proxy's query count stopped at 1,000 a minute.** It counted the
   latency samples it kept rather than the queries it saw, so a busy minute
   read as 1,000. It now counts every query.

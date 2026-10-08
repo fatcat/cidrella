@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from 'vitest';
+import { describe, it, expect, vi, beforeEach } from 'vitest';
 import dnsPacket from 'dns-packet';
 import net from 'net';
 
@@ -9,9 +9,18 @@ vi.mock('../../../src/utils/dnsmasq.js', () => ({
 }));
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
-const { buildServfail, forwardDoT, forwardDoH, queryUpstreams, getAndResetForwarderMetrics } =
-  await import('../../../src/utils/encrypted-forwarder.js');
+const {
+  buildServfail,
+  forwardDoT,
+  forwardDoH,
+  forwardPlain,
+  queryUpstreams,
+  getAndResetForwarderMetrics,
+  heldProviders,
+  releaseHolds,
+} = await import('../../../src/utils/encrypted-forwarder.js');
 const { pinnedLookup } = await import('../../../src/utils/upstream-pool.js');
+const { plainDnsServer } = await import('../../helpers/plain-dns-server.js');
 
 function encodeQuery(name, { withDo = false } = {}) {
   const msg = {
@@ -173,6 +182,9 @@ describe('DoH connects to the configured upstream address', () => {
   });
 });
 
+// A provider that gave no answer is held; each test starts with none held.
+beforeEach(() => releaseHolds());
+
 describe('queryUpstreams: another provider when one fails', () => {
   const quad9 = { hostname: 'dns10.quad9.net', addresses: ['9.9.9.10', '2620:fe::10'] };
   const adguard = { hostname: 'unfiltered.adguard-dns.com', addresses: ['94.140.14.140'] };
@@ -217,6 +229,64 @@ describe('queryUpstreams: another provider when one fails', () => {
     expect(deadlines).toHaveLength(1);
   });
 
+  describe('holding a provider that gave no answer', () => {
+    let clock;
+    const now = () => clock;
+    const asked = [];
+    const forwardTo = (alive) => async (_buf, upstream) => {
+      asked.push(upstream.hostname);
+      return alive.includes(upstream) ? answer : null;
+    };
+    const ask = (forward, first = 0) =>
+      queryUpstreams(encodeQuery('x.example'), [quad9, adguard], {
+        first,
+        forward,
+        now,
+        holdMs: 30_000,
+      });
+
+    beforeEach(() => {
+      clock = 1_000_000;
+      asked.length = 0;
+    });
+
+    it('asks a silent primary once, then goes to the backup until the hold ends', async () => {
+      const backupOnly = forwardTo([adguard]);
+      expect(await ask(backupOnly)).toBe(answer);
+      expect(heldProviders(clock)).toEqual(['dns10.quad9.net']);
+      clock += 10_000;
+      expect(await ask(backupOnly)).toBe(answer);
+      expect(asked).toEqual([
+        'dns10.quad9.net',
+        'unfiltered.adguard-dns.com',
+        'unfiltered.adguard-dns.com',
+      ]);
+
+      // The hold ends: the primary is asked again, and answers.
+      clock += 25_000;
+      asked.length = 0;
+      expect(await ask(forwardTo([quad9, adguard]))).toBe(answer);
+      expect(asked).toEqual(['dns10.quad9.net']);
+      expect(heldProviders(clock)).toEqual([]);
+    });
+
+    it('still asks held providers when all of them are held', async () => {
+      await ask(forwardTo([]));
+      expect(heldProviders(clock)).toEqual(['dns10.quad9.net', 'unfiltered.adguard-dns.com']);
+      asked.length = 0;
+      expect(await ask(forwardTo([adguard]))).toBe(answer);
+      expect(asked).toEqual(['dns10.quad9.net', 'unfiltered.adguard-dns.com']);
+    });
+
+    it('under turns, skips the held provider when its turn comes', async () => {
+      await ask(forwardTo([adguard])); // quad9 now held
+      asked.length = 0;
+      await ask(forwardTo([adguard]), 0);
+      await ask(forwardTo([adguard]), 1);
+      expect(asked).toEqual(['unfiltered.adguard-dns.com', 'unfiltered.adguard-dns.com']);
+    });
+  });
+
   it('keeps going past a provider that throws', async () => {
     const forward = async (_buf, upstream) => {
       if (upstream === quad9) throw new Error('boom');
@@ -245,7 +315,8 @@ describe('getAndResetForwarderMetrics', () => {
       ['dns10.quad9.net', '', 1],
       ['unfiltered.adguard-dns.com', '', 1],
     ]);
-    expect(rows[0]).toMatchObject({ protocol: 'dot', latency_p50_us: null });
+    // Counted under the forwarder's mode, plaintext until one is applied.
+    expect(rows[0]).toMatchObject({ protocol: 'plain', latency_p50_us: null });
     expect(getAndResetForwarderMetrics()).toEqual([]);
   });
 
@@ -265,5 +336,70 @@ describe('getAndResetForwarderMetrics', () => {
       expect(row).toMatchObject({ provider: 'localhost', queries: 1, answers: 0 });
       expect(row.connect_failures + row.timeouts).toBe(1);
     }
+  });
+});
+
+describe('forwardPlain', () => {
+  beforeEach(() => getAndResetForwarderMetrics());
+
+  it.each([
+    ['UDP', false],
+    ['TCP', true],
+  ])('answers over %s from either family', async (_t, tcp) => {
+    for (const address of ['127.0.0.1', '::1']) {
+      const server = await plainDnsServer(address, { tcp });
+      try {
+        const answer = await forwardPlain(
+          encodeQuery('a.example'),
+          { label: address, hostname: '', addresses: [address] },
+          Infinity,
+          { tcp, port: server.port, timeoutMs: 1000 },
+        );
+        expect(dnsPacket.decode(answer).id).toBe(0x4242);
+        expect(server.queries).toBe(1);
+      } finally {
+        server.close();
+      }
+    }
+    const rows = getAndResetForwarderMetrics();
+    expect(rows.map((r) => [r.protocol, r.address, r.queries, r.answers])).toEqual(
+      expect.arrayContaining([
+        ['plain', '127.0.0.1', 1, 1],
+        ['plain', '::1', 1, 1],
+      ]),
+    );
+  });
+
+  it("moves to the resolver's next address when one gives no answer", async () => {
+    // Only ::1 listens on the port, so 127.0.0.1 is asked and times out.
+    const server = await plainDnsServer('::1');
+    const resolver = { label: 'lab', hostname: '', addresses: ['127.0.0.1', '::1'] };
+    try {
+      const answer = await forwardPlain(encodeQuery('b.example'), resolver, Infinity, {
+        port: server.port,
+        timeoutMs: 150,
+      });
+      expect(answer).not.toBeNull();
+    } finally {
+      server.close();
+    }
+    const rows = getAndResetForwarderMetrics();
+    expect(rows.find((r) => r.address === '127.0.0.1')).toMatchObject({
+      provider: 'lab',
+      queries: 1,
+      answers: 0,
+      timeouts: 1,
+    });
+    expect(rows.find((r) => r.address === '::1')).toMatchObject({ queries: 1, answers: 1 });
+  });
+
+  it('asks nothing once the deadline has passed', async () => {
+    const answer = await forwardPlain(
+      encodeQuery('c.example'),
+      { label: 'lab', hostname: '', addresses: ['127.0.0.1'] },
+      Date.now() - 1,
+    );
+    expect(answer).toBeNull();
+    expect(getAndResetForwarderMetrics()).toEqual([]);
   });
 });

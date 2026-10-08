@@ -78,18 +78,20 @@ describe('regenerateDnsmasqConf: no-recursion (authoritative-only)', () => {
     regenerateDnsmasqConf({});
     settings.dns_no_recursion = 'false';
     regenerateDnsmasqConf({});
-    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=8.8.8.8');
+    expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=127.0.0.1#5356');
   });
 });
 
 describe('regenerateDnsmasqConf: encrypted forwarding server= wiring', () => {
-  it('uses plain upstream IPs when encryption is off', () => {
+  // Plaintext goes through CIDRella's forwarder too, so it can take turns or
+  // fail over the way the setting says; dnsmasq never sees the upstreams.
+  it('points server= at the forwarder when encryption is off', () => {
     settings.forwarder_encryption = 'off';
     regenerateDnsmasqConf({});
     const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
-    expect(conf).toContain('server=8.8.8.8');
-    expect(conf).toContain('server=9.9.9.9');
-    expect(conf).not.toContain('server=127.0.0.1#5356');
+    expect(conf).toContain('server=127.0.0.1#5356');
+    expect(conf).not.toContain('server=8.8.8.8');
+    expect(conf).not.toContain('server=9.9.9.9');
   });
 
   it('points server= at the in-Node stub when encryption is tls', () => {
@@ -100,15 +102,15 @@ describe('regenerateDnsmasqConf: encrypted forwarding server= wiring', () => {
     expect(conf).not.toContain('server=8.8.8.8');
   });
 
-  it('points server= at the stub when encryption is https, and reverts when off', () => {
+  it('keeps one server= line at the forwarder when https is switched off', () => {
     settings.forwarder_encryption = 'https';
     regenerateDnsmasqConf({});
     expect(fs.readFileSync(DNSMASQ_CONF, 'utf-8')).toContain('server=127.0.0.1#5356');
     settings.forwarder_encryption = 'off';
     regenerateDnsmasqConf({});
     const conf = fs.readFileSync(DNSMASQ_CONF, 'utf-8');
-    expect(conf).toContain('server=8.8.8.8');
-    expect(conf).not.toContain('server=127.0.0.1#5356');
+    expect(conf.match(/^server=/gm)).toEqual(['server=']);
+    expect(conf).toContain('server=127.0.0.1#5356');
   });
 });
 
@@ -119,8 +121,8 @@ describe('regenerateDnsmasqConf: DNSSEC block', () => {
     expect(dnssecLines(conf)).toHaveLength(0);
     expect(conf).not.toContain('dnssec-check-unsigned');
     expect(conf).not.toContain('trust-anchor=');
-    // upstream servers still present
-    expect(conf).toContain('server=8.8.8.8');
+    // the forwarder line is still present
+    expect(conf).toContain('server=127.0.0.1#5356');
   });
 
   it('injects the full DNSSEC block when enabled', () => {
@@ -146,7 +148,7 @@ describe('regenerateDnsmasqConf: DNSSEC block', () => {
     expect(dnssecLines(conf)).toHaveLength(1);
     expect(conf.match(/dnssec-no-timecheck/g)).toHaveLength(1);
     // server lines also not duplicated
-    expect(conf.match(/server=8\.8\.8\.8/g)).toHaveLength(1);
+    expect(conf.match(/server=127\.0\.0\.1#5356/g)).toHaveLength(1);
   });
 
   it('strips the DNSSEC block when toggled back off', () => {

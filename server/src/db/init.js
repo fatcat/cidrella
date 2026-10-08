@@ -41,6 +41,7 @@ export function getSetting(key) {
   // JSON-stored keys
   if (
     key === 'dns_upstream_servers' ||
+    key === 'dns_upstream_backup_servers' ||
     key === 'dns_soa_defaults' ||
     key === 'forwarder_encrypted_upstreams'
   ) {

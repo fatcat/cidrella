@@ -8,6 +8,7 @@
 import { getSetting } from '../db/init.js';
 import { testDnsForwarder } from './dns-test.js';
 import { probeAddress } from './upstream-probe.js';
+import { plainUpstreams } from './forwarding-settings.js';
 
 const CACHE_MS = 30_000;
 const PROBE_TIMEOUT_MS = 3000;
@@ -63,8 +64,7 @@ export async function forwarderHealth({ now = Date.now() } = {}) {
   if (getSetting('dns_no_recursion') === 'true') return [];
   const mode = getSetting('forwarder_encryption') || 'off';
   const encrypted = mode === 'tls' || mode === 'https';
-  const targets =
-    getSetting(encrypted ? 'forwarder_encrypted_upstreams' : 'dns_upstream_servers') || [];
+  const targets = encrypted ? getSetting('forwarder_encrypted_upstreams') || [] : plainUpstreams();
   const key = JSON.stringify([mode, targets]);
   if (cache?.key === key && now - cache.at < CACHE_MS) return cache.value;
   const value = encrypted

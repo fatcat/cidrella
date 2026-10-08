@@ -40,7 +40,7 @@ it returns "unsupported" / approximates, and that gap list is the migration map.
 | 4 | **DHCP fingerprint capture** | `utils/dhcp-fingerprint.js` | parse `log-dhcp` text (opt55/60/hostname) | `getDhcpFingerprintEvents()` | Kea hooks (`flex-id`, lease cmds, packet callouts) | log-parse vs structured hook data |
 | 5 | **Recursion + filtering proxy** | `utils/dns-proxy.js` (blocklist, GeoIP, DNSSEC TCP relay, EDNS, bypass) | bespoke UDP/TCP proxy in front of dnsmasq | `setBlocklist()` / `setGeoPolicy()` / forward config | Recursor **RPZ** (blocklist), **Lua** (GeoIP), native validation | entire hand-rolled proxy → Recursor features |
 | 6 | **DNSSEC** | `utils/dnsmasq.js` (`dnssec*` directives, `dnsmasqSupportsDnssec`) | inject `dnssec`/`trust-anchor` directives | `setDnssec(enabled)` | Recursor `dnssec=validate` (+ Auth signing) | no online signing; validate-only |
-| 7 | **Forwarders / upstreams** | `utils/dnsmasq.js` (`server=` lines), settings `dns_upstream_servers` | `server=` IPs (plain UDP/TCP only) | `setForwarders([{addr, mode, hostname}])` | Recursor `forward-zones` + DoT/DoH upstream | **no DoT/DoH** → needs the in-Node stub (see below) |
+| 7 | **Forwarders / upstreams** | `utils/dnsmasq.js` (one `server=127.0.0.1#5356` line), `utils/encrypted-forwarder.js` (the upstreams, plain, DoT or DoH), `utils/forwarding-settings.js` | `server=` at the in-Node forwarder | `setForwarders([{addr, mode, hostname}])` | Recursor `forward-zones` + DoT/DoH upstream | **no DoT/DoH** → needs the in-Node stub (see below) |
 
 ### Supporting coupling
 - **Process control**: `utils/dnsmasq.js` `signalDnsmasq()` / `restartDnsmasq()` + `scripts/systemd/cidrella-dnsmasq.service` + s6 `run`. Future: adapter calls REST, no SIGHUP/restart. Behind `reload()` / implicit (API is live).
@@ -51,7 +51,7 @@ it returns "unsupported" / approximates, and that gap list is the migration map.
 1. **DB stays canonical.** No dnsmasq-flavored strings in the schema; store intent (records, scopes, modes), render at the edge.
 2. **One module per seam.** Any new dnsmasq touch goes behind an intent-named function in the owning module (above), never inline in routes/services.
 3. **Route everything through `after-commit` hooks**, not direct `dnsmasq.js` calls from features.
-4. **Build new features adapter-swappable.** E.g. encrypted forwarders = a self-contained in-Node DoT/DoH stub that dnsmasq points `server=` at. When Recursor lands, delete the stub and point `setForwarders()` at Recursor's native DoT/DoH. (Seam #7.)
+4. **Build new features adapter-swappable.** E.g. forwarders = a self-contained in-Node forwarder (plain, DoT or DoH, primary and backup) that dnsmasq points `server=` at. When Recursor lands, delete the stub and point `setForwarders()` at Recursor's native DoT/DoH. (Seam #7.)
 
 ## Migration approach (when serious, not now)
 1. **Spike PowerDNS Recursor + RPZ** against the blocklist/GeoIP needs to validate it can retire `dns-proxy.js`. Let the real second implementation define the API boundary (don't finalize the interface from dnsmasq alone).
