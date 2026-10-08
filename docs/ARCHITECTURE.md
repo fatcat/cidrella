@@ -7,17 +7,17 @@ guardrails to prevent new ad hoc writers.
 
 ## Runtime Shape
 
-| Area | Implementation |
-| --- | --- |
-| Web/API | Node.js, Express, ES modules |
-| UI | Vue 3, PrimeVue, Pinia, Vue Router |
-| Primary storage | SQLite via `better-sqlite3`, WAL mode |
-| Analytics storage | DuckDB |
-| DNS/DHCP | dnsmasq, generated config/state files |
-| DNS filtering | Node DNS proxy for blocklist and GeoIP decisions |
-| Anomaly detection | Python sidecar using DuckDB features and SQLite status/scores |
-| Native process manager | systemd |
-| Docker process manager | s6-overlay |
+| Area                   | Implementation                                                |
+| ---------------------- | ------------------------------------------------------------- |
+| Web/API                | Node.js, Express, ES modules                                  |
+| UI                     | Vue 3, PrimeVue, Pinia, Vue Router                            |
+| Primary storage        | SQLite via `better-sqlite3`, WAL mode                         |
+| Analytics storage      | DuckDB                                                        |
+| DNS/DHCP               | dnsmasq, generated config/state files                         |
+| DNS filtering          | Node DNS proxy for blocklist and GeoIP decisions              |
+| Anomaly detection      | Python sidecar using DuckDB features and SQLite status/scores |
+| Native process manager | systemd                                                       |
+| Docker process manager | s6-overlay                                                    |
 
 Persistent state is rooted at `DATA_DIR` (`/var/lib/cidrella` native,
 `/data` Docker). Application code is rooted at `/opt/cidrella` on native
@@ -25,14 +25,14 @@ installs.
 
 ## Layer Responsibilities
 
-| Layer | Responsibility |
-| --- | --- |
-| `server/src/db/` | Connection lifecycle, migrations, low-level initialization, DB adapters. |
-| `server/src/models/` | Table or aggregate ownership. Models own write semantics and local invariants. |
+| Layer                  | Responsibility                                                                                           |
+| ---------------------- | -------------------------------------------------------------------------------------------------------- |
+| `server/src/db/`       | Connection lifecycle, migrations, low-level initialization, DB adapters.                                 |
+| `server/src/models/`   | Table or aggregate ownership. Models own write semantics and local invariants.                           |
 | `server/src/services/` | Cross-model workflows, transactions, audit coordination, queued side effects, process/file coordination. |
-| `server/src/routes/` | Auth, permission checks, input parsing, request validation, response shaping. |
-| `server/src/utils/` | Pure helpers or external process/file utilities. DB-writing utilities must be explicit exceptions. |
-| `server/anomaly/` | Python anomaly sidecar and its storage boundary. |
+| `server/src/routes/`   | Auth, permission checks, input parsing, request validation, response shaping.                            |
+| `server/src/utils/`    | Pure helpers or external process/file utilities. DB-writing utilities must be explicit exceptions.       |
+| `server/anomaly/`      | Python anomaly sidecar and its storage boundary.                                                         |
 
 The highest priority is centralized writes. Read-heavy projections may stay
 near routes until a read model meaningfully reduces duplication or ambiguity.
@@ -184,28 +184,28 @@ The ownership checker (`npm run check:db-ownership`) enforces strict ownership
 for the tables already migrated. `npm run check:db-ownership:report` lists
 remaining consolidation opportunities.
 
-| Domain | Current Owner |
-| --- | --- |
-| IP lifecycle transitions and liveness workflows | `services/ip-lifecycle-service.js` |
-| IP lifecycle persistence and IP events | `models/ip-address.js` |
-| IP read projection | `models/ip-view.js` |
-| Scan runs and results | `models/scan-run.js` |
-| DNS records, PTR helpers, SOA bumps, Pi-hole DNS imports | `models/dns-record.js` |
-| DNS zones and zone/subnet domain pointer sync | `models/dns-zone.js` |
-| DHCP scopes and explicit scope options | `models/dhcp-scope.js` |
-| DHCP Reservations and DHCP Reservation IP/PTR sync | `models/dhcp-reservation.js` |
-| DHCP lease replacement and DHCP-derived DNS A sync | `models/dhcp-lease.js` |
-| DHCP option defaults/catalog maintenance | `models/dhcp-option.js` |
-| Ranges and range repair | `models/range.js` |
-| Range types | `models/range-type.js` |
-| Folders | `models/folder.js` |
-| VLANs | `models/vlan.js` |
-| Users | `models/user.js` |
-| Settings | `models/setting.js` |
-| GeoIP rules | `models/geoip-rule.js` |
-| Anomaly route mutations | `models/anomaly.js` |
-| Blocklist route mutations | `models/blocklist-store.js` |
-| Audit retention | `models/audit-log.js` |
+| Domain                                                   | Current Owner                      |
+| -------------------------------------------------------- | ---------------------------------- |
+| IP lifecycle transitions and liveness workflows          | `services/ip-lifecycle-service.js` |
+| IP lifecycle persistence and IP events                   | `models/ip-address.js`             |
+| IP read projection                                       | `models/ip-view.js`                |
+| Scan runs and results                                    | `models/scan-run.js`               |
+| DNS records, PTR helpers, SOA bumps, Pi-hole DNS imports | `models/dns-record.js`             |
+| DNS zones and zone/subnet domain pointer sync            | `models/dns-zone.js`               |
+| DHCP scopes and explicit scope options                   | `models/dhcp-scope.js`             |
+| DHCP Reservations and DHCP Reservation IP/PTR sync       | `models/dhcp-reservation.js`       |
+| DHCP lease replacement and DHCP-derived DNS A sync       | `models/dhcp-lease.js`             |
+| DHCP option defaults/catalog maintenance                 | `models/dhcp-option.js`            |
+| Ranges and range repair                                  | `models/range.js`                  |
+| Range types                                              | `models/range-type.js`             |
+| Folders                                                  | `models/folder.js`                 |
+| VLANs                                                    | `models/vlan.js`                   |
+| Users                                                    | `models/user.js`                   |
+| Settings                                                 | `models/setting.js`                |
+| GeoIP rules                                              | `models/geoip-rule.js`             |
+| Anomaly route mutations                                  | `models/anomaly.js`                |
+| Blocklist route mutations                                | `models/blocklist-store.js`        |
+| Audit retention                                          | `models/audit-log.js`              |
 
 ## Topology Services
 
@@ -297,6 +297,38 @@ file classes have different reload behavior:
 
 The backend should keep DNS and DHCP table ownership in models/services; config
 generators should read and emit, not invent persistence semantics.
+
+### Why an answer failed
+
+The DNS proxy sorts every failed answer into one cause with `failureCause` in
+`utils/dns-ede.js`, from the rcode and the Extended DNS Error (RFC 8914, EDNS
+option 15) in the answer. The query log keeps the EDE code and the cause per
+query; the minute rows keep a count per cause.
+
+| Cause      | When                                          |
+| ---------- | --------------------------------------------- |
+| `dnssec`   | SERVFAIL with EDE 1, 2, 5 to 12, 25 or 27     |
+| `upstream` | SERVFAIL with EDE 22 or 23                    |
+| `timeout`  | the proxy gave up waiting for dnsmasq         |
+| `refused`  | REFUSED                                       |
+| `other`    | any other SERVFAIL, including one with no EDE |
+
+Measured on dnsmasq 2.91 (2026-10-08, scratch instances on testerella):
+
+- A name that fails validation gets SERVFAIL with an EDE of dnsmasq's own: 6
+  (DNSSEC Bogus) or 7 (Signature Expired) for `dnssec-failed.org`.
+- dnsmasq relays the EDE an upstream sends with its SERVFAIL, whether or not it
+  validates itself. So the encrypted forwarder's own SERVFAIL carries EDE 22
+  when no provider answered, and that reaches the client as `upstream`.
+- A dead or refusing plain upstream gets no answer from dnsmasq at all; it
+  gives up after 10 seconds. The client, or the proxy in front of it, times out,
+  which is why `timeout` is its own cause and the encrypted forwarder keeps a
+  query under 8 seconds.
+- Local names answer with no EDE.
+
+Each encrypted provider address also gets a minute row in `metrics_forwarder`
+(queries, answers, timeouts, resent drops, refused connections, failovers, p50
+and p95 latency). Plain forwarding has no per-server counts yet.
 
 ### What deallocating a network takes with it
 

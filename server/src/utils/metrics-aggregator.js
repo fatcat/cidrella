@@ -15,6 +15,7 @@ import {
   getAndResetPerformanceMetrics,
   getAndResetBlocklistHits,
 } from './dns-proxy.js';
+import { getAndResetForwarderMetrics } from './encrypted-forwarder.js';
 import { DATA_DIR } from '../config/defaults.js';
 const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
@@ -52,10 +53,12 @@ let insertMetrics = null;
 let insertBlocklistHit = null;
 let insertGeoipHit = null;
 let insertProxyPerf = null;
+let insertForwarder = null;
 let deleteOldMetrics = null;
 let deleteOldBlocklistHits = null;
 let deleteOldGeoipHits = null;
 let deleteOldProxyPerf = null;
+let deleteOldForwarder = null;
 
 /**
  * Parse new log lines and return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs }.
@@ -101,6 +104,7 @@ function aggregate() {
 
     // Proxy performance metrics
     const perf = getAndResetPerformanceMetrics();
+    const forwarderRows = getAndResetForwarderMetrics();
 
     // Process-level CPU (delta since last cycle)
     const now = Date.now();
@@ -154,7 +158,14 @@ function aggregate() {
         rssMb,
         heapMb,
         startupMs,
+        perf.failures?.dnssec ?? 0,
+        perf.failures?.upstream ?? 0,
+        perf.failures?.timeout ?? 0,
+        perf.failures?.refused ?? 0,
+        perf.failures?.other ?? 0,
+        perf.nxdomain ?? 0,
       );
+      for (const row of forwarderRows) insertForwarder.run({ ts, ...row });
     });
     insertAll();
 
@@ -166,6 +177,7 @@ function aggregate() {
       deleteOldBlocklistHits.run(cutoff);
       deleteOldGeoipHits.run(cutoff);
       deleteOldProxyPerf.run(cutoff);
+      deleteOldForwarder.run(cutoff);
     }
   } catch (err) {
     console.error('[metrics-aggregator] Error:', err.message);
@@ -192,13 +204,23 @@ export function startMetricsAggregator(database) {
     `INSERT INTO metrics_proxy_perf
      (ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
       cache_hits, cache_misses, timeouts, pending_queries,
-      cpu_percent, rss_mb, heap_mb, startup_ms)
-     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      cpu_percent, rss_mb, heap_mb, startup_ms,
+      servfail_dnssec, servfail_upstream, servfail_timeout, servfail_refused, servfail_other,
+      nxdomain)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   deleteOldMetrics = db.prepare('DELETE FROM metrics WHERE ts < ?');
   deleteOldBlocklistHits = db.prepare('DELETE FROM metrics_blocklist_hits WHERE ts < ?');
   deleteOldGeoipHits = db.prepare('DELETE FROM metrics_geoip_hits WHERE ts < ?');
   deleteOldProxyPerf = db.prepare('DELETE FROM metrics_proxy_perf WHERE ts < ?');
+  insertForwarder = db.prepare(
+    `INSERT INTO metrics_forwarder
+     (ts, provider, address, protocol, queries, answers, timeouts, drops, connect_failures,
+      failovers, latency_p50_us, latency_p95_us)
+     VALUES (@ts, @provider, @address, @protocol, @queries, @answers, @timeouts, @drops,
+      @connect_failures, @failovers, @latency_p50_us, @latency_p95_us)`,
+  );
+  deleteOldForwarder = db.prepare('DELETE FROM metrics_forwarder WHERE ts < ?');
 
   // Start from end of log file (don't process historical lines)
   try {

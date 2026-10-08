@@ -16,68 +16,15 @@
 // over DoT or over DoH, which is the build host's network rather than the
 // presets.
 const path = require('path');
-const { createRequire } = require('module');
 const { pathToFileURL } = require('url');
 
 const projectDir = path.resolve(__dirname, '..');
 const serverDir = path.join(projectDir, 'server');
-const dnsPacket = createRequire(path.join(serverDir, 'package.json'))('dns-packet');
 
-const TIMEOUT_MS = 5000;
-// Signed, and stable for decades: an answer without an RRSIG means the
-// upstream stripped it.
-const PROBE_NAME = 'example.com';
 const PROTOCOLS = [
   { protocol: 'dot', label: 'DoT' },
   { protocol: 'doh', label: 'DoH' },
 ];
-
-function probeQuery() {
-  return dnsPacket.encode({
-    id: 0x5ec5,
-    type: 'query',
-    flags: dnsPacket.RECURSION_DESIRED,
-    questions: [{ type: 'A', name: PROBE_NAME }],
-    additionals: [
-      { type: 'OPT', name: '.', udpPayloadSize: 1232, flags: dnsPacket.DNSSEC_OK, options: [] },
-    ],
-  });
-}
-
-// What is wrong with one answer, or null.
-function answerProblem(response, { dnssecTransparent }) {
-  if (!response) return 'no answer';
-  let message;
-  try {
-    message = dnsPacket.decode(response);
-  } catch (error) {
-    return `undecodable answer: ${error.message}`;
-  }
-  if (message.rcode !== 'NOERROR') return `answered ${message.rcode} for ${PROBE_NAME}`;
-  if (!message.answers.some((a) => a.type === 'A')) return `no A record for ${PROBE_NAME}`;
-  if (dnssecTransparent && !message.answers.some((a) => a.type === 'RRSIG')) {
-    return `no RRSIG for ${PROBE_NAME}, but the preset says it passes DNSSEC through`;
-  }
-  return null;
-}
-
-// One query to one address of one preset. Resolves { problem } with null
-// for a good answer; `connected` says whether anything got that far.
-async function probeAddress({ createUpstreamPool, provider, address, protocol }) {
-  const errors = [];
-  const pool = createUpstreamPool({
-    protocol,
-    timeoutMs: TIMEOUT_MS,
-    onError: (error) => errors.push(error.message.trim()),
-  });
-  try {
-    const response = await pool.query(probeQuery(), { ...provider, addresses: [address] });
-    const problem = response ? answerProblem(response, provider) : errors.at(-1) || 'no answer';
-    return { problem, connected: Boolean(response) };
-  } finally {
-    pool.closeAll();
-  }
-}
 
 // A failed probe is tried once more, on a new connection, before it counts:
 // a resolver's anycast node closing one connection is not a broken preset.
@@ -139,10 +86,9 @@ function report({ failures, answered }) {
 async function main() {
   const load = (file) => import(pathToFileURL(path.join(serverDir, file)).href);
   const { DOH_PROVIDERS } = await load('src/data/doh-providers.js');
-  const { createUpstreamPool } = await load('src/utils/upstream-pool.js');
-  const result = await checkProviders(DOH_PROVIDERS, (args) =>
-    probeAddress({ createUpstreamPool, ...args }),
-  );
+  // The probe is shared with the services health check.
+  const { probeAddress } = await load('src/utils/upstream-probe.js');
+  const result = await checkProviders(DOH_PROVIDERS, probeAddress);
   return report(result);
 }
 
@@ -156,4 +102,4 @@ if (require.main === module) {
   );
 }
 
-module.exports = { answerProblem, checkProviders, report };
+module.exports = { checkProviders, report };

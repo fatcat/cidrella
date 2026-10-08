@@ -1,6 +1,6 @@
 // The numbers behind the Resolution figures, computed once from the minute
 // rows of /api/metrics/proxy-perf. The Dashboard shows three of them and the
-// Performance page shows all seven; both read this so a definition (what
+// Performance page shows them all; both read this so a definition (what
 // "p95" means over a range, when hit rate is unknown) cannot drift.
 //
 // Latencies arrive in microseconds and leave here in milliseconds. A figure
@@ -8,6 +8,12 @@
 // in this range" instead of drawing a zero.
 
 import { formatNumber } from './format.js';
+import { EDE_NAMES, FAILURE_CAUSES, FAILURE_LABELS } from '@shared/dns-ede.js';
+
+// The minute-row column of each failed-answer cause (utils/dns-ede.js).
+export const FAILURE_COLUMNS = Object.freeze(
+  Object.fromEntries(FAILURE_CAUSES.map((cause) => [cause, `servfail_${cause}`])),
+);
 
 const num = (v) => (typeof v === 'number' && Number.isFinite(v) ? v : null);
 const sum = (rows, key) => rows.reduce((s, r) => s + (Number(r[key]) || 0), 0);
@@ -39,9 +45,21 @@ export function summarizeProxyPerf(rows = []) {
   const latest = rows[rows.length - 1] || null;
   const cpuValues = rows.map(cpuOf).filter((v) => v !== null);
 
+  const failures = Object.fromEntries(
+    FAILURE_CAUSES.map((cause) => [cause, sum(rows, FAILURE_COLUMNS[cause])]),
+  );
+  const failed = FAILURE_CAUSES.reduce((total, cause) => total + failures[cause], 0);
+  const failedOf = (r) =>
+    FAILURE_CAUSES.reduce((t, c) => t + (Number(r[FAILURE_COLUMNS[c]]) || 0), 0);
+
   return {
     minutes,
     queries,
+    failures,
+    failed,
+    // Of every answer the proxy gave, how many failed: a rate, so a quiet
+    // night and a busy one read the same.
+    failedRate: queries ? (failed / queries) * 100 : null,
     perMinute: minutes ? Math.round(queries / minutes) : null,
     hits,
     misses,
@@ -76,9 +94,16 @@ export function summarizeProxyPerf(rows = []) {
       pending: rows.map((r) => r.pending_queries || 0),
       cpu: rows.map(cpuOf),
       rss: rows.map((r) => num(r.rss_mb)),
+      failed: rows.map(failedOf),
+      dnssec: rows.map((r) => r.servfail_dnssec || 0),
+      upstream: rows.map((r) => (r.servfail_upstream || 0) + (r.servfail_timeout || 0)),
     },
   };
 }
+
+// Failed answers above 1% are worth a look, above 5% something is broken: the
+// night Quad9 timed out ran at 10%, a normal one well under 1%.
+const failedTone = (rate) => (rate === null ? 'ok' : rate > 5 ? 'err' : rate > 1 ? 'warn' : 'ok');
 
 // The figures as FigureCard props, keyed so a page picks the ones it shows.
 export function proxyPerfFigures(s) {
@@ -120,6 +145,32 @@ export function proxyPerfFigures(s) {
       tone: s.timeouts > 0 ? 'warn' : 'ok',
       series: s.series.timeouts,
     },
+    failedRate: {
+      label: 'Failed answers',
+      value: s.failedRate === null ? null : Math.round(s.failedRate * 100) / 100,
+      unit: '%',
+      sub: s.queries
+        ? `${formatNumber(s.failed)} of ${formatNumber(s.queries)} answers`
+        : 'no queries in this range',
+      tone: failedTone(s.failedRate),
+      series: s.series.failed,
+    },
+    dnssecFailed: {
+      label: 'DNSSEC failures',
+      value: s.minutes ? s.failures.dnssec : null,
+      sub: s.failures.dnssec ? 'answers that failed validation' : 'none failed validation',
+      tone: s.failures.dnssec ? 'warn' : 'ok',
+      series: s.series.dnssec,
+    },
+    upstreamFailed: {
+      label: 'Upstream failures',
+      value: s.minutes ? s.failures.upstream + s.failures.timeout : null,
+      sub: `${formatNumber(s.failures.upstream)} no upstream answer · ${formatNumber(
+        s.failures.timeout,
+      )} timed out`,
+      tone: s.failures.upstream + s.failures.timeout ? 'warn' : 'ok',
+      series: s.series.upstream,
+    },
     peakPending: {
       label: 'Peak pending',
       value: s.peakPending,
@@ -148,4 +199,15 @@ export function proxyPerfFigures(s) {
       series: s.series.rss,
     },
   };
+}
+
+// /api/metrics/dns-failures as TopList rows: the name, how often it failed,
+// and its usual cause and error code.
+export function failedNameRows(failures = []) {
+  return (failures || []).map((r) => ({
+    key: r.domain,
+    label: r.domain,
+    count: r.count,
+    sub: [FAILURE_LABELS[r.failure], EDE_NAMES[r.ede]].filter(Boolean).join(' · '),
+  }));
 }

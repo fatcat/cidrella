@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { formatMs, proxyPerfFigures, summarizeProxyPerf } from '../../../src/utils/proxy-perf.js';
+import {
+  failedNameRows,
+  formatMs,
+  proxyPerfFigures,
+  summarizeProxyPerf,
+} from '../../../src/utils/proxy-perf.js';
 
 const row = (i, extra = {}) => ({
   ts: 1789900000 + i * 60,
@@ -90,6 +95,38 @@ describe('summarizeProxyPerf', () => {
     });
     expect(f.memory).toMatchObject({ value: 210, unit: 'MB', sub: 'heap 90 MB' });
     expect(f.perMinute).toMatchObject({ value: 20, sub: '20 over 1 min' });
+  });
+});
+
+describe('failed answers', () => {
+  const rows = [
+    { ts: 0, query_count: 100, servfail_dnssec: 2, servfail_upstream: 1, servfail_timeout: 3 },
+    { ts: 60, query_count: 100, servfail_other: 1, servfail_refused: 1 },
+  ];
+
+  it('totals failed answers by cause and as a share of every answer', () => {
+    const s = summarizeProxyPerf(rows);
+    expect(s.failures).toEqual({ dnssec: 2, upstream: 1, timeout: 3, refused: 1, other: 1 });
+    expect(s.failed).toBe(8);
+    expect(s.failedRate).toBe(4);
+    expect(s.series.failed).toEqual([6, 2]);
+    expect(s.series.upstream).toEqual([4, 0]);
+  });
+
+  it('turns warn above 1% and err above 5%', () => {
+    const tone = (failed) =>
+      proxyPerfFigures(summarizeProxyPerf([{ ts: 0, query_count: 100, servfail_other: failed }]))
+        .failedRate.tone;
+    expect([tone(1), tone(2), tone(6)]).toEqual(['ok', 'warn', 'err']);
+  });
+
+  it('lists failed names with their cause and error code', () => {
+    expect(
+      failedNameRows([{ domain: 'a.example', count: 3, failure: 'upstream', ede: 22 }]),
+    ).toEqual([
+      { key: 'a.example', label: 'a.example', count: 3, sub: 'Upstream · No Reachable Authority' },
+    ]);
+    expect(failedNameRows(null)).toEqual([]);
   });
 });
 

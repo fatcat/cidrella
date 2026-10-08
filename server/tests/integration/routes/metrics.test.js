@@ -63,6 +63,19 @@ beforeAll(async () => {
      cpu_percent, rss_mb, heap_mb, startup_ms)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   ).run(ts, 50, 120, 450, 2200, 1800, 40, 10, 0, 2, 1.5, 45.2, 22.1, 85);
+  db.prepare(
+    `UPDATE metrics_proxy_perf SET servfail_dnssec = 3, servfail_upstream = 1,
+       servfail_timeout = 2, nxdomain = 7 WHERE ts = ?`,
+  ).run(ts);
+  const insertForwarder = db.prepare(
+    `INSERT INTO metrics_forwarder
+     (ts, provider, address, protocol, queries, answers, timeouts, drops, connect_failures,
+      failovers, latency_p50_us, latency_p95_us)
+     VALUES (?, ?, ?, 'dot', ?, ?, ?, ?, 0, ?, ?, ?)`,
+  );
+  insertForwarder.run(ts, 'dns10.quad9.net', '9.9.9.10', 40, 31, 9, 2, 9, 12000, 3000000);
+  insertForwarder.run(ts, 'dns10.quad9.net', '2620:fe::10', 5, 5, 0, 0, 0, 13000, 20000);
+  insertForwarder.run(ts - 90000, 'old.example', '192.0.2.1', 1, 1, 0, 0, 0, 1, 1);
 });
 
 afterAll(() => {
@@ -153,6 +166,33 @@ describe('GET /api/metrics/proxy-perf', () => {
     expect(row.cache_hits).toBe(40);
     expect(row.cache_misses).toBe(10);
     expect(row.startup_ms).toBe(85);
+  });
+});
+
+describe('resolver failures', () => {
+  it('proxy-perf rows carry failed answers by cause', async () => {
+    const row = (await request(app).get('/api/metrics/proxy-perf?range=24h')).body[0];
+    expect(row).toMatchObject({
+      servfail_dnssec: 3,
+      servfail_upstream: 1,
+      servfail_timeout: 2,
+      servfail_refused: 0,
+      servfail_other: 0,
+      nxdomain: 7,
+    });
+  });
+
+  it('serves each upstream address its minute rows in the range, either family', async () => {
+    const res = await request(app).get('/api/metrics/forwarder?range=24h');
+    expect(res.status).toBe(200);
+    expect(res.body.map((r) => r.address)).toEqual(['2620:fe::10', '9.9.9.10']);
+    expect(res.body[1]).toMatchObject({ timeouts: 9, failovers: 9, latency_p95_us: 3000000 });
+  });
+
+  it('lists failed names (empty without the analytics store)', async () => {
+    const res = await request(app).get('/api/metrics/dns-failures?range=bogus');
+    expect(res.status).toBe(200);
+    expect(res.body).toEqual([]);
   });
 });
 

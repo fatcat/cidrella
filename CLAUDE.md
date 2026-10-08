@@ -159,6 +159,13 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder
   upstream, DoT or DoH: reused connections, retry, address failover, fail closed),
+  `failureCause` in `utils/dns-ede.js` (the one place a failed DNS answer gets its cause,
+  from the rcode and EDE; the client reads its labels through `@shared`),
+  `probeAddress` in `utils/upstream-probe.js` (one real query to one upstream address; the
+  health chip and `scripts/check-dns-providers.js` both use it), `forwarderHealth` in
+  `utils/forwarder-health.js` (the Forwarders health entries, cached 30 s),
+  `createReservoir` / `quantileOfSorted` in `utils/samples.js` (latency samples and their
+  percentiles),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
   enabled set, blanks filled from its network; new scopes and Bulk Change),
   `isTopologyAddress` in `utils/cidr.js` (is this the network or broadcast address topology

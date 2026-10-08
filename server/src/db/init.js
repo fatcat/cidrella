@@ -39,7 +39,11 @@ export function getSetting(key) {
   const raw = row?.value;
 
   // JSON-stored keys
-  if (key === 'dns_upstream_servers' || key === 'dns_soa_defaults') {
+  if (
+    key === 'dns_upstream_servers' ||
+    key === 'dns_soa_defaults' ||
+    key === 'forwarder_encrypted_upstreams'
+  ) {
     try {
       return raw ? JSON.parse(raw) : DEFAULTS[key];
     } catch {

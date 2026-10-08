@@ -160,7 +160,11 @@ export const DEFAULT_DNS_LISTEN_PORT = 53;
 // here (server=127.0.0.1#<port>) when DoT/DoH forwarding is enabled. 5356 avoids
 // 5353 (mDNS, dnsmasq internal) and 5355 (LLMNR).
 export const ENCRYPTED_FORWARDER_PORT = 5356;
-export const ENCRYPTED_FORWARDER_TIMEOUT_MS = 5000;
+// One send to an encrypted upstream, and the whole query: every send, resend
+// and failover to the next provider fits in the budget, which stays under the
+// 10 seconds dnsmasq waits for a forwarded UDP query (TIMEOUT in its config.h).
+export const ENCRYPTED_FORWARDER_TIMEOUT_MS = 3000;
+export const ENCRYPTED_FORWARDER_BUDGET_MS = 8000;
 
 /**
  * Returns the port dnsmasq should bind internally, given the user's LAN

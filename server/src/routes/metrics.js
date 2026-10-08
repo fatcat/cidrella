@@ -1,13 +1,14 @@
 import { Router } from 'express';
-import { getDb, getSetting } from '../db/init.js';
+import { getDb } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getProxyStatus } from '../utils/dns-proxy.js';
 import { isDnsmasqRunning } from '../utils/dnsmasq.js';
-import { testDnsForwarder } from '../utils/dns-test.js';
+import { forwarderHealth } from '../utils/forwarder-health.js';
 import { VALID_RANGE_KEYS } from '../config/defaults.js';
 import { getIpLifecycleDiagnostics } from '../utils/ip-lifecycle-diagnostics.js';
 import { getNetworkDhcpDiagnostics } from '../utils/network-dhcp-diagnostics.js';
 import { listGenerations } from '../models/configuration-generation.js';
+import { queryFailedDomains } from '../db/duckdb.js';
 
 const router = Router();
 
@@ -71,11 +72,35 @@ router.get('/proxy-perf', requirePerm('analytics:read'), (req, res) => {
     .prepare(
       `SELECT ts, query_count, latency_min, latency_avg, latency_max, latency_p95,
             cache_hits, cache_misses, timeouts, pending_queries,
-            cpu_percent, rss_mb, heap_mb, startup_ms
+            cpu_percent, rss_mb, heap_mb, startup_ms,
+            servfail_dnssec, servfail_upstream, servfail_timeout, servfail_refused,
+            servfail_other, nxdomain
      FROM metrics_proxy_perf WHERE ts >= ? ORDER BY ts`,
     )
     .all(cutoff);
   res.json(rows);
+});
+
+// GET /api/metrics/forwarder?range=24h: each encrypted-forwarding upstream
+// address's minute rows.
+router.get('/forwarder', requirePerm('analytics:read'), (req, res) => {
+  const db = getDb();
+  const cutoff = parseCutoff(req.query.range);
+  const rows = db
+    .prepare(
+      `SELECT ts, provider, address, protocol, queries, answers, timeouts, drops,
+            connect_failures, failovers, latency_p50_us, latency_p95_us
+     FROM metrics_forwarder WHERE ts >= ? ORDER BY ts, provider, address`,
+    )
+    .all(cutoff);
+  res.json(rows);
+});
+
+// GET /api/metrics/dns-failures?range=24h: the names whose answers failed
+// most, with their cause (utils/dns-ede.js) and EDE code.
+router.get('/dns-failures', requirePerm('analytics:read'), async (req, res) => {
+  const range = RANGE_MAP[req.query.range] ? req.query.range : '24h';
+  res.json(await queryFailedDomains(range, 10));
 });
 
 // GET /api/metrics/ip-lifecycle
@@ -99,20 +124,9 @@ router.get('/services', requirePerm('analytics:read'), async (req, res) => {
   // GeoIP proxy status
   const geoipStatus = getProxyStatus();
 
-  // Forwarder liveness
-  const upstreamRaw = getSetting('dns_upstream_servers');
-  let upstreams;
-  try {
-    upstreams = typeof upstreamRaw === 'string' ? JSON.parse(upstreamRaw) : upstreamRaw || [];
-  } catch {
-    upstreams = [];
-  }
-
-  const forwarders = [];
-  for (const ip of upstreams) {
-    const result = await testDnsForwarder(ip);
-    forwarders.push({ ip, reachable: result.reachable });
-  }
+  // The upstreams DNS is forwarded to, encrypted or plain (probed together,
+  // kept 30 s).
+  const forwarders = await forwarderHealth();
 
   res.json({
     dnsmasq,
