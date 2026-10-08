@@ -10,6 +10,8 @@ export function useDhcpOptionCatalog(family) {
   const catalog = ref([]);
   const groups = ref([]);
   const customRange = ref([128, 254]);
+  // Code to the number of scopes using that default (Use default).
+  const linkedCounts = ref({});
   const loading = ref(false);
 
   const rows = computed(() => {
@@ -37,13 +39,14 @@ export function useDhcpOptionCatalog(family) {
       catalog.value = res.data.catalog;
       if (res.data.groups) groups.value = res.data.groups;
       if (Array.isArray(res.data.customRange)) customRange.value = res.data.customRange;
+      linkedCounts.value = res.data.linkedCounts || {};
       return res.data;
     } finally {
       loading.value = false;
     }
   }
 
-  return { catalog, rows, customRange, loading, load };
+  return { catalog, rows, customRange, linkedCounts, loading, load };
 }
 
 /** Replace a reactive code-keyed object's entries in place. */

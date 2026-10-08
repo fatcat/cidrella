@@ -132,6 +132,19 @@ export function seedDefaultOptions(db) {
   seed();
 }
 
+/** How many scopes use each default (linked rows: Use default), by option code. */
+export function linkedOptionCounts(db, family = 4) {
+  return Object.fromEntries(
+    db
+      .prepare(
+        `SELECT option_code, COUNT(*) AS scopes FROM dhcp_scope_options
+         WHERE value IS NULL AND address_family = ? GROUP BY option_code`,
+      )
+      .all(familyOf(family))
+      .map((row) => [row.option_code, row.scopes]),
+  );
+}
+
 export function getDefaultOptions(db, family = 4) {
   const rows = db
     .prepare(

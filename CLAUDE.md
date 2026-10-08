@@ -217,7 +217,11 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `createReservoir` / `quantileOfSorted` in `utils/samples.js` (latency samples and their
   percentiles),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
-  enabled set, blanks filled from its network; new scopes and Bulk Change),
+  enabled set, blanks filled from its network; new scopes and Bulk Change; `USE_DEFAULT` there
+  marks an option linked to its default, written as a NULL row),
+  `resolveEffectiveScopeOptions` and `isLinkedOption` in `models/dhcp-scope.js` (what a scope
+  serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
+  `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default),
   `isTopologyAddress` in `utils/cidr.js` (is this the network or broadcast address topology
   reserves; nothing on /31, /32, /127, /128), `macFromDuid` in `utils/duid.js`, client
   `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family),

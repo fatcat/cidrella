@@ -50,7 +50,22 @@ const previews = {
         subnet_name: 'Lab',
         pools: [{ start_ip: '10.0.0.100', end_ip: '10.0.0.200' }],
         skip_reason: null,
-        changes: [{ code: 6, before: '10.0.0.9', after: '10.0.0.2' }],
+        changes: [
+          {
+            code: 6,
+            before: '10.0.0.9',
+            after: '10.0.0.2',
+            before_default: false,
+            after_default: true,
+          },
+          {
+            code: 15,
+            before: 'old.test',
+            after: 'lab.test',
+            before_default: false,
+            after_default: false,
+          },
+        ],
       },
       {
         id: 2,
@@ -137,7 +152,7 @@ describe('DHCP Bulk Change', () => {
     });
     const rows = wrapper.findAll('tr[data-scope-id]');
     expect(rows.map((row) => row.text())).toEqual([
-      expect.stringContaining('1 option'),
+      expect.stringContaining('2 options'),
       expect.stringContaining('Matches'),
     ]);
   });
@@ -165,6 +180,9 @@ describe('DHCP Bulk Change', () => {
     await flushPromises();
     // Ticking a scope opens its changes.
     expect(wrapper.find('.change-list').text()).toContain('10.0.0.9');
+    // The new value is the default's (DHCP-01: linked), and says so.
+    expect(wrapper.find('[data-track="dhcp-bulk-change-default"]').text()).toBe('(default)');
+    expect(wrapper.find('.change-list').text()).not.toContain('removed');
     wrapper.vm.toggle(1, false);
     await flushPromises();
     expect(wrapper.find('.change-list').exists()).toBe(false);
@@ -175,7 +193,7 @@ describe('DHCP Bulk Change', () => {
     wrapper.vm.toggle(1, true);
     await flushPromises();
     expect(wrapper.text()).toContain('Apply to 1 scope');
-    expect(wrapper.vm.applySummary).toBe('1 option change, and your defaults');
+    expect(wrapper.vm.applySummary).toBe('2 option changes, and your defaults');
     await wrapper.vm.apply();
     await flushPromises();
     expect(api.post).toHaveBeenCalledWith('/dhcp/scopes/bulk-options', {

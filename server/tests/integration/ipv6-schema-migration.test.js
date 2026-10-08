@@ -175,7 +175,19 @@ describe('IPv6 schema migrations 070-073', () => {
     const after = counts(upgraded);
     // Startup seeds the three IPv6 option defaults (DNS servers 23, search
     // list 24, NTP 56); every other table keeps exactly its rows.
-    expect(after).toEqual({ ...before, dhcp_option_defaults: before.dhcp_option_defaults + 3 });
+    // 086 links the scope to the defaults it was served (DHCP-01): the seeded
+    // 66 and the NTP pool (42) the migrations ship.
+    expect(after).toEqual({
+      ...before,
+      dhcp_option_defaults: before.dhcp_option_defaults + 3,
+      dhcp_scope_options: before.dhcp_scope_options + 2,
+    });
+    expect(
+      upgraded
+        .prepare('SELECT option_code FROM dhcp_scope_options WHERE value IS NULL ORDER BY option_code')
+        .all()
+        .map((row) => row.option_code),
+    ).toEqual([42, 66]);
     expect(
       upgraded
         .prepare(
@@ -186,7 +198,7 @@ describe('IPv6 schema migrations 070-073', () => {
     ).toEqual([23, 24, 56]);
     expect(upgraded.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
-    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(85);
+    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(86);
 
     const child = upgraded.prepare("SELECT * FROM subnets WHERE cidr = '10.70.0.0/24'").get();
     expect(child.address_family).toBe(4);

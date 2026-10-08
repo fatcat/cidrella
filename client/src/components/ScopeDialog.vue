@@ -180,6 +180,16 @@
             </div>
             <div class="scope-option-value">
               <span v-if="opt.builtIn" class="scope-option-default">always on</span>
+              <span
+                v-else-if="
+                  form.selectedOptions.includes(opt.code) && form.useDefault.includes(opt.code)
+                "
+                class="scope-option-default"
+              >
+                {{
+                  hasDefault(opt.code) ? defaultValues[opt.code] : 'the default has no value'
+                }}
+              </span>
               <template v-else-if="form.selectedOptions.includes(opt.code)">
                 <Select
                   v-if="opt.type === 'select'"
@@ -214,6 +224,23 @@
                 default: {{ defaultValues[opt.code] }}
               </span>
             </div>
+            <label
+              v-if="
+                form.selectedOptions.includes(opt.code) &&
+                (hasDefault(opt.code) || form.useDefault.includes(opt.code))
+              "
+              class="scope-option-use-default"
+              title="Serve the default's value, and follow it when the default changes"
+            >
+              <Checkbox
+                :modelValue="form.useDefault.includes(opt.code)"
+                binary
+                :inputId="`scope-option-${opt.code}-use-default`"
+                data-track="scope-option-use-default"
+                @update:modelValue="(on) => setUseDefault(opt.code, on)"
+              />
+              Use default
+            </label>
           </div>
         </template>
       </div>
@@ -266,6 +293,7 @@ import { ref, reactive, computed, watch, nextTick } from 'vue';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import Dialog from '../ui/Dialog.js';
+import Checkbox from '../ui/Checkbox.js';
 import InputText from '../ui/InputText.js';
 import InputNumber from '../ui/InputNumber.js';
 import Select from '../ui/Select.js';
@@ -502,6 +530,9 @@ function emptyForm() {
     enabled: true,
     selectedOptions: [],
     optionValues: {},
+    // Codes that use the default (Use default): served with whatever the
+    // default holds, now and after later edits of it.
+    useDefault: [],
     v6_mode: null,
   };
 }
@@ -595,11 +626,25 @@ function applyV6NetworkDefaults(selected, values, { domain, serverIp } = {}) {
   setOptionValue(selected, values, 23, serverIp, { overwrite: false });
 }
 
-function selectEnabledDefaults(selected, values) {
+// A new scope takes the add-to-new-scopes options: one with a default value
+// uses the default (linked), one without is left for a network fill.
+function selectEnabledDefaults(selected, linked) {
   for (const code of enabledDefaultCodes.value) {
     addOptionSelection(selected, code);
-    setOptionValue(selected, values, code, defaultValues[code], { overwrite: false });
+    if (hasDefault(code) && !linked.includes(Number(code))) linked.push(Number(code));
   }
+}
+
+const hasDefault = (code) => defaultValues[code] != null && defaultValues[code] !== '';
+
+function setUseDefault(code, on) {
+  const linked = form.value.useDefault.filter((c) => c !== code);
+  if (on) linked.push(code);
+  else if (form.value.optionValues[code] == null || form.value.optionValues[code] === '') {
+    // Start an own value from the default's.
+    form.value.optionValues[code] = defaultValues[code];
+  }
+  form.value.useDefault = linked;
 }
 
 function addOptionSelection(selected, code) {
@@ -650,13 +695,12 @@ async function resolveHostnameField(code) {
 function toggleOption(code, checked) {
   if (checked) {
     addOptionSelection(form.value.selectedOptions, code);
-    // Pre-fill from default if no value set
-    if (form.value.optionValues[code] == null || form.value.optionValues[code] === '') {
-      const def = defaultValues[code];
+    // An option with a default uses it; otherwise pre-fill from the network.
+    if (hasDefault(code)) {
+      setUseDefault(code, true);
+    } else if (form.value.optionValues[code] == null || form.value.optionValues[code] === '') {
       const v6 = scopeFamily.value === 6;
-      if (def != null) {
-        form.value.optionValues[code] = def;
-      } else if (v6 && code === 24 && editing.value?.subnet_domain_name) {
+      if (v6 && code === 24 && editing.value?.subnet_domain_name) {
         form.value.optionValues[code] = editing.value.subnet_domain_name;
       } else if (v6 && code === 23 && editing.value?.server_ip) {
         form.value.optionValues[code] = editing.value.server_ip;
@@ -672,6 +716,7 @@ function toggleOption(code, checked) {
     }
   } else {
     form.value.selectedOptions = form.value.selectedOptions.filter((c) => c !== code);
+    form.value.useDefault = form.value.useDefault.filter((c) => c !== code);
     delete form.value.optionValues[code];
   }
 }
@@ -708,7 +753,8 @@ watch(
       if (form.value.subnet_id !== subnetId) return;
       form.value.selectedOptions = [];
       form.value.optionValues = {};
-      selectEnabledDefaults(form.value.selectedOptions, form.value.optionValues);
+      form.value.useDefault = [];
+      selectEnabledDefaults(form.value.selectedOptions, form.value.useDefault);
       applyV6NetworkDefaults(form.value.selectedOptions, form.value.optionValues, {
         domain: subnet.domain_name,
       });
@@ -733,15 +779,10 @@ watch(
       if (form.value.subnet_id !== subnetId) return;
       form.value.selectedOptions = [];
       form.value.optionValues = {};
+      form.value.useDefault = [];
     }
 
-    // Enable all enabled-by-default options
-    for (const code of enabledDefaultCodes.value) {
-      addOptionSelection(form.value.selectedOptions, code);
-      if (defaultValues[code] != null && !form.value.optionValues[code]) {
-        form.value.optionValues[code] = defaultValues[code];
-      }
-    }
+    selectEnabledDefaults(form.value.selectedOptions, form.value.useDefault);
 
     if (subnet.cidr) {
       const mask = computeMask(subnet.cidr);
@@ -921,11 +962,18 @@ async function save() {
   try {
     // Send all selected options to the server. The server strips inherited
     // values using fresh subnet data from the DB (avoids stale client-side list).
+    const linked = new Set(form.value.useDefault);
     const options = form.value.selectedOptions
       .filter(
-        (code) => form.value.optionValues[code] != null && form.value.optionValues[code] !== '',
+        (code) =>
+          linked.has(code) ||
+          (form.value.optionValues[code] != null && form.value.optionValues[code] !== ''),
       )
-      .map((code) => ({ code, value: String(form.value.optionValues[code]) }));
+      .map((code) =>
+        linked.has(code)
+          ? { code, use_default: true }
+          : { code, value: String(form.value.optionValues[code]) },
+      );
 
     const payload = {
       lease_time: form.value.lease_time || '24h',
@@ -1063,14 +1111,17 @@ async function openEdit(scope) {
 
   const selOpts = [];
   const optVals = {};
+  const linked = [];
   if (scope.options && Array.isArray(scope.options)) {
     for (const o of scope.options) {
-      setOptionValue(selOpts, optVals, o.option_code, o.value);
+      // A row with no value uses the default.
+      if (o.value == null) {
+        addOptionSelection(selOpts, o.option_code);
+        linked.push(Number(o.option_code));
+      } else {
+        setOptionValue(selOpts, optVals, o.option_code, o.value);
+      }
     }
-  }
-
-  for (const code of enabledDefaultCodes.value) {
-    setOptionValue(selOpts, optVals, code, defaultValues[code], { overwrite: false });
   }
 
   // Re-populate inherited values for options not stored in scope_options
@@ -1104,6 +1155,7 @@ async function openEdit(scope) {
     enabled: !!scope.enabled,
     selectedOptions: selOpts,
     optionValues: optVals,
+    useDefault: linked,
     v6_mode: scope.v6_mode || null,
   };
   optionsExpanded.value = form.value.selectedOptions.length > 0;
@@ -1129,9 +1181,8 @@ async function openNewWithPicker(subnetCtx) {
 
   const autoSelected = [];
   const autoValues = {};
-
-  // Auto-select all enabled-by-default options
-  selectEnabledDefaults(autoSelected, autoValues);
+  const autoLinked = [];
+  selectEnabledDefaults(autoSelected, autoLinked);
 
   // Network-dependent overrides from subnet context
   let autoStartIp = '';
@@ -1177,6 +1228,7 @@ async function openNewWithPicker(subnetCtx) {
       subnetCtx?.name || subnetCtx?.cidr ? `${subnetCtx.name || subnetCtx.cidr} DHCP Scope` : '',
     selectedOptions: autoSelected,
     optionValues: autoValues,
+    useDefault: autoLinked,
   };
   if (poolSuggested) suggestedPool = { start: autoStartIp, end: autoEndIp };
   await loadNetwork(form.value.subnet_id);
@@ -1206,10 +1258,10 @@ async function openNewForRange(opts) {
   contextCidr.value = opts.cidr || '';
   await loadOptions(scopeFamily.value);
 
-  // Auto-select enabled-by-default options
   const autoSelected = [];
   const autoValues = {};
-  selectEnabledDefaults(autoSelected, autoValues);
+  const autoLinked = [];
+  selectEnabledDefaults(autoSelected, autoLinked);
 
   if (scopeFamily.value === 6) {
     applyV6NetworkDefaults(autoSelected, autoValues, { domain: opts.domainName });
@@ -1238,6 +1290,7 @@ async function openNewForRange(opts) {
     subnet_id: opts.subnetId,
     selectedOptions: autoSelected,
     optionValues: autoValues,
+    useDefault: autoLinked,
   };
   optionsExpanded.value = form.value.selectedOptions.length > 0;
   await loadNetwork(form.value.subnet_id);
@@ -1336,6 +1389,15 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   padding: 0.35rem 0.75rem;
   border-top: 1px solid color-mix(in srgb, var(--cid-surface-border) 50%, transparent);
   font-size: 0.8rem;
+}
+.scope-option-use-default {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  color: var(--cid-text-muted-color);
+  white-space: nowrap;
+  cursor: pointer;
 }
 .scope-option-row:first-child {
   border-top: 1px solid var(--cid-surface-border);
