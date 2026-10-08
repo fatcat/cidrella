@@ -7,17 +7,17 @@ guardrails to prevent new ad hoc writers.
 
 ## Runtime Shape
 
-| Area                   | Implementation                                                |
-| ---------------------- | ------------------------------------------------------------- |
-| Web/API                | Node.js, Express, ES modules                                  |
-| UI                     | Vue 3, PrimeVue, Pinia, Vue Router                            |
-| Primary storage        | SQLite via `better-sqlite3`, WAL mode                         |
-| Analytics storage      | DuckDB                                                        |
-| DNS/DHCP               | dnsmasq, generated config/state files                         |
-| DNS filtering          | Node DNS proxy for blocklist and GeoIP decisions              |
-| Anomaly detection      | Python sidecar using DuckDB features and SQLite status/scores |
-| Native process manager | systemd                                                       |
-| Docker process manager | s6-overlay                                                    |
+| Area | Implementation |
+| --- | --- |
+| Web/API | Node.js, Express, ES modules |
+| UI | Vue 3, PrimeVue, Pinia, Vue Router |
+| Primary storage | SQLite via `better-sqlite3`, WAL mode |
+| Analytics storage | DuckDB |
+| DNS/DHCP | dnsmasq, generated config/state files |
+| DNS filtering | Node DNS proxy for blocklist and GeoIP decisions |
+| Anomaly detection | Python sidecar using DuckDB features and SQLite status/scores |
+| Native process manager | systemd |
+| Docker process manager | s6-overlay |
 
 Persistent state is rooted at `DATA_DIR` (`/var/lib/cidrella` native,
 `/data` Docker). Application code is rooted at `/opt/cidrella` on native
@@ -25,14 +25,14 @@ installs.
 
 ## Layer Responsibilities
 
-| Layer                  | Responsibility                                                                                           |
-| ---------------------- | -------------------------------------------------------------------------------------------------------- |
-| `server/src/db/`       | Connection lifecycle, migrations, low-level initialization, DB adapters.                                 |
-| `server/src/models/`   | Table or aggregate ownership. Models own write semantics and local invariants.                           |
+| Layer | Responsibility |
+| --- | --- |
+| `server/src/db/` | Connection lifecycle, migrations, low-level initialization, DB adapters. |
+| `server/src/models/` | Table or aggregate ownership. Models own write semantics and local invariants. |
 | `server/src/services/` | Cross-model workflows, transactions, audit coordination, queued side effects, process/file coordination. |
-| `server/src/routes/`   | Auth, permission checks, input parsing, request validation, response shaping.                            |
-| `server/src/utils/`    | Pure helpers or external process/file utilities. DB-writing utilities must be explicit exceptions.       |
-| `server/anomaly/`      | Python anomaly sidecar and its storage boundary.                                                         |
+| `server/src/routes/` | Auth, permission checks, input parsing, request validation, response shaping. |
+| `server/src/utils/` | Pure helpers or external process/file utilities. DB-writing utilities must be explicit exceptions. |
+| `server/anomaly/` | Python anomaly sidecar and its storage boundary. |
 
 The highest priority is centralized writes. Read-heavy projections may stay
 near routes until a read model meaningfully reduces duplication or ambiguity.
@@ -184,28 +184,28 @@ The ownership checker (`npm run check:db-ownership`) enforces strict ownership
 for the tables already migrated. `npm run check:db-ownership:report` lists
 remaining consolidation opportunities.
 
-| Domain                                                   | Current Owner                      |
-| -------------------------------------------------------- | ---------------------------------- |
-| IP lifecycle transitions and liveness workflows          | `services/ip-lifecycle-service.js` |
-| IP lifecycle persistence and IP events                   | `models/ip-address.js`             |
-| IP read projection                                       | `models/ip-view.js`                |
-| Scan runs and results                                    | `models/scan-run.js`               |
-| DNS records, PTR helpers, SOA bumps, Pi-hole DNS imports | `models/dns-record.js`             |
-| DNS zones and zone/subnet domain pointer sync            | `models/dns-zone.js`               |
-| DHCP scopes and explicit scope options                   | `models/dhcp-scope.js`             |
-| DHCP Reservations and DHCP Reservation IP/PTR sync       | `models/dhcp-reservation.js`       |
-| DHCP lease replacement and DHCP-derived DNS A sync       | `models/dhcp-lease.js`             |
-| DHCP option defaults/catalog maintenance                 | `models/dhcp-option.js`            |
-| Ranges and range repair                                  | `models/range.js`                  |
-| Range types                                              | `models/range-type.js`             |
-| Folders                                                  | `models/folder.js`                 |
-| VLANs                                                    | `models/vlan.js`                   |
-| Users                                                    | `models/user.js`                   |
-| Settings                                                 | `models/setting.js`                |
-| GeoIP rules                                              | `models/geoip-rule.js`             |
-| Anomaly route mutations                                  | `models/anomaly.js`                |
-| Blocklist route mutations                                | `models/blocklist-store.js`        |
-| Audit retention                                          | `models/audit-log.js`              |
+| Domain | Current Owner |
+| --- | --- |
+| IP lifecycle transitions and liveness workflows | `services/ip-lifecycle-service.js` |
+| IP lifecycle persistence and IP events | `models/ip-address.js` |
+| IP read projection | `models/ip-view.js` |
+| Scan runs and results | `models/scan-run.js` |
+| DNS records, PTR helpers, SOA bumps, Pi-hole DNS imports | `models/dns-record.js` |
+| DNS zones and zone/subnet domain pointer sync | `models/dns-zone.js` |
+| DHCP scopes and explicit scope options | `models/dhcp-scope.js` |
+| DHCP Reservations and DHCP Reservation IP/PTR sync | `models/dhcp-reservation.js` |
+| DHCP lease replacement and DHCP-derived DNS A sync | `models/dhcp-lease.js` |
+| DHCP option defaults/catalog maintenance | `models/dhcp-option.js` |
+| Ranges and range repair | `models/range.js` |
+| Range types | `models/range-type.js` |
+| Folders | `models/folder.js` |
+| VLANs | `models/vlan.js` |
+| Users | `models/user.js` |
+| Settings | `models/setting.js` |
+| GeoIP rules | `models/geoip-rule.js` |
+| Anomaly route mutations | `models/anomaly.js` |
+| Blocklist route mutations | `models/blocklist-store.js` |
+| Audit retention | `models/audit-log.js` |
 
 ## Topology Services
 
@@ -305,13 +305,13 @@ The DNS proxy sorts every failed answer into one cause with `failureCause` in
 option 15) in the answer. The query log keeps the EDE code and the cause per
 query; the minute rows keep a count per cause.
 
-| Cause      | When                                          |
-| ---------- | --------------------------------------------- |
-| `dnssec`   | SERVFAIL with EDE 1, 2, 5 to 12, 25 or 27     |
-| `upstream` | SERVFAIL with EDE 22 or 23                    |
-| `timeout`  | the proxy gave up waiting for dnsmasq         |
-| `refused`  | REFUSED                                       |
-| `other`    | any other SERVFAIL, including one with no EDE |
+| Cause | When |
+| --- | --- |
+| `dnssec` | SERVFAIL with EDE 1, 2, 5 to 12, 25 or 27 |
+| `upstream` | SERVFAIL with EDE 22 or 23 |
+| `timeout` | the proxy gave up waiting for dnsmasq |
+| `refused` | REFUSED |
+| `other` | any other SERVFAIL, including one with no EDE |
 
 Measured on dnsmasq 2.91 (2026-10-08, scratch instances on testerella):
 
