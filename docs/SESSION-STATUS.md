@@ -1,110 +1,109 @@
 # Session Status
 
-Updated: 2026-09-09
+Updated: 2026-10-08
 
 Snapshot of where the tree stands. [RELEASE-NOTES.md](../RELEASE-NOTES.md) is canonical
 for what actually shipped. [BACKLOG.md](../BACKLOG.md) is the one place for work in
-flight.
+flight, and [REVIEW.md](../REVIEW.md) the list of known issues.
 
 ## Current State
 
-Version is **0.4.18, not yet released**. v0.4.17 shipped 2026-09-02.
-`v0.4.18-pre.4` and `v0.4.18-pre.5` are published for validation.
+**v0.4.18 is the latest release** (2026-09-18), and `main` is at its release-notes commit.
+Everything since lives on three development lines, each merged forward into the next:
 
-`main` is at `58f79ae` plus documentation-only commits on top, so the gate run
-below covers all current code.
+| Branch | Version | Schema | What it is |
+|---|---|---|---|
+| `dev/0.5.0` | 0.5.0 | 86 | The 0.5.0 release line. `v0.5.0-pre.15` is the newest pre-release. |
+| `dev/0.5.1` | 0.5.1 | 86 | 0.5.0 plus the DNS/DHCP backend layer (`server/src/backends/`). |
+| `dev/0.5.2` | 0.5.2 | 86 | 0.5.1 plus Kea as a hidden second DHCP server. Release candidates only. |
 
-**0.4.18 is a breaking release.** `min_from` is 0.4.17, the legacy
-`ip_addresses.status` field is removed, and schema runs to **69** in the current
-working tree. Upgrades from
-schema 54 inventory ambiguous DNS and DHCP claims before mutating anything and can
-refuse to proceed until an operator reconciles them.
+0.5.2 and 0.5.3 are never released on their own: 0.5.3 adds the PowerDNS + Kea stack, and the
+release that carries both stacks is **0.6.0**. A host runs one stack, dnsmasq or
+PowerDNS + Kea, and can switch both ways.
 
-Landed since 0.4.17:
+Every 0.5.x line has `min_from: "0.4.17"`, so a 0.4.17 or 0.4.18 install upgrades to any of
+them directly.
 
-- **Canonical Network/DHCP governance (working tree, not committed).** Gateway
-  intent, scope pools, topology revisions, exact transformation plans,
-  transactional split/carve/merge, durable configuration generation, repair
-  diagnostics, and authoritative client previews are implemented with schema
-  64 through 69 and cross-model regression coverage.
+### 0.5.0
 
-- **IP lifecycle governance.** One canonical allocation state and transition boundary
-  across Networks, DNS, DHCP, imports, scans, and passive liveness. Schema 55 through
-  59. Merged from `plan/ip-lifecycle-governance` in `bd15d7f`.
-- **Anomalies page redesign.** Pattern-based triage: flagged clients are classified by
-  the shape of their score history (escalating, recurring, resolved one-off, learning
-  baseline) and the detector's per-window history is exposed as a timeline. Backed by
-  a new `GET /api/anomalies/events`, since `/active` returns only currently-unresolved
-  rows and hid recurring and resolved anomalies between occurrences. PR #26.
-- **Anomaly identity keyed by MAC** wherever a current DHCP lease makes one known,
-  falling back to the IP for static hosts. Schema 60. A device taking over an IP no
-  longer inherits the previous holder's learned baseline. PR #27.
-- **Device fingerprint change history.** Reclassification of device type, OS family,
-  or vendor class on a MAC is recorded rather than overwritten in place. Schema 61.
-  PR #27.
-- **Migration 060 handles the legacy `anomaly_models` shape.** It assumed the table
-  came from migration 042 with `model_path`, but older installations can have an
-  equivalent table created by the anomaly sidecar carrying `model_version` instead.
-  `server/src/db/init.js` adapts that shape inside the same transaction, keeping the
-  published migration immutable, and schema 062 restores the retained model versions.
-- **Pre-release tags now pin to the built commit.** `build-release.sh` passed no
-  `--target` to `gh release create`, so pre-release tags were created at the default
-  branch head instead of at what was built.
+The release notes list it all; the large pieces are the networks and settings workspaces,
+IPv6 behind one switch (networks, AAAA and `ip6.arpa`, DHCPv6 per network, rogue DHCPv6 and
+router detection), the reworked Analytics pages and anomaly triage, first-run setup,
+two-factor sign-in, DHCP Bulk Change, and DNS forwarding through CIDRella's forwarder with a
+backup resolver (On failure or Load balance) and a resolver performance test.
 
-Two merge details worth knowing, both from folding PR #27 onto the lifecycle work:
+Landed 2026-10-08, after `pre.15`:
 
-- PR #27's migrations were renumbered from 055/056 to **060/061**. The lifecycle merge
-  had already taken 055 through 059, and `server/src/db/init.js` keys applied
-  migrations by the integer filename prefix and skips a version already recorded in
-  `schema_version`, so a duplicate number silently drops one file of the colliding
-  pair.
-- In `server/src/models/device-fingerprint.js`, fingerprint drift is measured against
-  the row as actually written, not against the incoming DHCP capture. The upsert
-  conflict clause keeps manual overrides sticky and keeps the strongest automatic
-  classification, so it can decline a weaker incoming value, and a write that never
-  happened is not drift.
+- **DHCP defaults are opt-in per scope** (DHCP-01). A default reaches a scope only through a
+  linked row (`dhcp_scope_options.value IS NULL`, Use default in the scope dialog), which
+  follows later edits of the default. Migration 086 links every scope to each default it was
+  being served, so an upgrade changes nothing a client receives. The DHCPv6 NTP default (56)
+  is seeded at boot, after migrations, so a 0.4.x upgrade does not add it to existing IPv6
+  scopes; Bulk Change does that.
+- **An IPv6 option 51 is served** (DHCP-03). 51 is lease time in DHCPv4 only.
+- **One network fill rule** (DHCP-02). `networkOptionFills` in
+  `server/src/utils/dhcp-network-options.js` is what a scope takes from its network, for
+  the server and, through `@shared`, the scope dialog. This also fixed a crash in the dialog
+  when picking an IPv6 range while a default with a value was ticked.
+- **DNS table row checkboxes are named** (A11Y-01): a record without an address was read
+  out as "Select null".
+
+### 0.5.1
+
+The backend layer: a registry under `server/src/backends/` with dnsmasq as the first DNS,
+DHCP and RA backend, and health that reports backends by role. The rendered dnsmasq output
+is pinned by golden tests (`server/tests/integration/backends/dnsmasq-golden.test.js`).
+
+### 0.5.2
+
+Kea 3.0 ships with native installs and updates but is hidden: Settings > DHCP > Server is
+not in the settings areas, and `/api/dhcp/server` is admin-only for harness and testerella
+testing. Kea output is pinned by `kea-golden.test.js`; `kea/live.test.js` needs a real Kea
+and is skipped elsewhere.
+
+## Hosts
+
+- **Production (10.0.3.250)** runs `v0.5.0-pre.15`.
+- **testerella (10.0.0.8)** runs `dev/0.5.1` through `scripts/deploy-lxc.sh`, so its
+  `RELEASE.json` still names `pre.15`. Schema 86. DHCP is off there (`dhcp_enabled` false),
+  so live DHCP serving is not exercised on it.
 
 ## Validation
 
-Last full gate run, at `58f79ae`:
+At `dev/0.5.0` `3a60c88`:
 
-- `npm run test:server` passed: 89 files, 1040 tests.
-- `npm run test:client` passed: 26 files, 170 tests.
-- `npm run build:client` passed.
-- `scripts/check-release-version.js` passed (package.json 0.4.18 matches the
-  RELEASE-NOTES heading).
-- `scripts/build-releases-manifest.js --lint` passed, 22 releases parsed.
-- `npm run lint` ignores the gitignored `tmp/` scratch directory and checks tracked
-  source consistently in local and CI worktrees.
+- `npm run test:server`: 169 files, 1768 tests passed, 2 skipped.
+- `npm run test:client`: 114 files, 729 tests passed.
+- `npm run lint`, `npm run check:reuse`, `npm run check:db-ownership`,
+  `npm run build:client`, the release-version guard and the release-notes lint passed.
+- madge reports one circular chain, the CI baseline.
+- `MODEL_SEEDS=100 npm run hunt:workspace` passed.
+
+The DHCP-01 merge was gated on `dev/0.5.1` (server 1826, client 734) and `dev/0.5.2`
+(server 1960, client 742), with the dnsmasq and Kea goldens unchanged.
+
+On testerella, migration 086 was checked against real data: each scope gained one linked
+row for the default it was already served, and the scope files the new code renders are
+byte-identical to the ones before the upgrade.
 
 Not yet validated:
 
-- **No soak on `v0.4.18-pre.5` yet.** It is the first pre-release that carries both
-  anomaly merges and the migration 060 fix. `pre.4` predates that fix and should not be
-  used.
-- **No upgrade run against 0.4.18.** Given the breaking migration path and the
-  reconciliation gate, an end-to-end 0.4.17 to 0.4.18 upgrade plus a rollback still
-  needs a run on testerella before release.
+- **No pre-release carries the 2026-10-08 DHCP work.** `pre.15` predates it.
 - The disposable-appliance live DHCP matrix and the full pre-release security pipeline
   remain release gates, deferred until DHCP can be enabled on a test interface.
 
-Known bad metadata, not fixable in place:
-
-- The `v0.4.18-pre.1`, `v0.4.18-pre.2`, and `v0.4.18-pre.3` tags point at `1d3329f`,
-  which is 0.4.17 code, for the `--target` reason above. `v0.4.17-pre.4` is an orphan
-  tag with no release attached (that is the **0.4.17** line, unrelated to
-  `v0.4.18-pre.4` above). The fix is forward-only, and it is confirmed working:
-  `v0.4.18-pre.4` and `v0.4.18-pre.5` each point at the exact commit they were built
-  from rather than at the default branch head. To learn what a given artifact
-  really contains, read `RELEASE.json` inside the signed tarball, which carries the
-  real commit.
-
 ## Next Resume
 
-Work in flight lives in [BACKLOG.md](../BACKLOG.md), consolidated there on 2026-08-19.
-Do not restart a second list here.
+Work in flight lives in [BACKLOG.md](../BACKLOG.md). Do not restart a second list here.
 
-The one open thread specific to this snapshot: soak `v0.4.18-pre.5` and run the upgrade
-and rollback validation against it on testerella. Everything the four
-items previously listed here tracked has been resolved and is recorded in BACKLOG.md
-and the release notes.
+Open threads specific to this snapshot:
+
+- Cut `v0.5.0-pre.16` with the DHCP work and soak it on production.
+- Release 0.5.0, then cut 0.5.1 (its RELEASE-NOTES date is still a placeholder).
+- REVIEW.md: DNSMASQ-02 (duplicate log lines on a reservation change) stays open by
+  decision. On 0.5.1 and later, DNSMASQ-06 and DNSMASQ-07 are open too: dnsmasq traits the
+  backend layer kept on purpose.
+
+Known bad metadata, not fixable in place: the `v0.4.18-pre.1` through `pre.3` tags point at
+0.4.17 code (`gh release create` had no `--target`; fixed forward). Read `RELEASE.json`
+inside a signed tarball to learn the commit it was built from.

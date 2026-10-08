@@ -30,3 +30,5 @@ was suggested.
 - **Fix:** Cosmetic, once per reservation change; leaving it is reasonable. To silence it, write
   reservations to a file dnsmasq reads only on reload (`dhcp-hostsfile` instead of
   `dhcp-hostsdir`), which also drops the inotify path.
+- **Decided 2026-10-08: leave it.** The fix rewrites every managed install's live dnsmasq.conf
+  and cannot reach include-mode installs, for log noise only.
