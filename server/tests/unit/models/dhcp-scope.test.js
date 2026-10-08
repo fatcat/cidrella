@@ -87,6 +87,7 @@ describe('DHCP scope ownership', () => {
         subnet_id: subnetId,
         options: [
           { code: 3, value: '10.50.0.1' },
+          { code: 28, value: '10.50.0.255' },
           { code: 6, value: '10.50.0.8' },
         ],
       },
@@ -94,6 +95,12 @@ describe('DHCP scope ownership', () => {
     );
 
     expect(scope.lease_time).toBe('24h');
+    // Router and broadcast equal the network's, so the network serves them.
+    expect(scope.effective.options.find((option) => option.option_code === 28)).toEqual({
+      option_code: 28,
+      value: '10.50.0.255',
+      source: 'network',
+    });
     expect(scope.options).toEqual([{ option_code: 6, value: '10.50.0.8' }]);
     const router = scope.effective.options.find((option) => option.option_code === 3);
     expect(router).toEqual({ option_code: 3, value: '10.50.0.1', source: 'network' });

@@ -19,6 +19,7 @@ vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => toast }));
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 
 const ScopeDialog = (await import('../../../src/components/ScopeDialog.vue')).default;
+const { FALLBACK_SECONDARY_DNS } = await import('@shared/dhcp-network-options.js');
 
 const DialogStub = {
   props: ['visible'],
@@ -529,3 +530,58 @@ describe('the gateway choice', () => {
     expect(wrapper.vm.form).toMatchObject({ start_ip: '10.0.0.1', end_ip: '10.0.0.200' });
   });
 });
+
+// DHCP-02: the dialog fills network values by the server's rule
+// (networkOptionFills through @shared), never its own copy.
+describe('network fills from a picked range', () => {
+  const pickRange = async (range) => {
+    dhcpStore.fetchAvailableRanges.mockResolvedValue([range]);
+    const wrapper = mountDialog();
+    await wrapper.vm.openNewWithPicker();
+    await flushPromises();
+    wrapper.vm.form.range_id = range.id;
+    await flushPromises();
+    return wrapper;
+  };
+
+  it('IPv4: mask, router, broadcast, domain, and DNS with the fallback resolver', async () => {
+    const wrapper = await pickRange({
+      id: 5,
+      subnet_id: 11,
+      subnet_name: 'Lab',
+      subnet_cidr: '10.0.0.0/24',
+      subnet_gateway: '10.0.0.1',
+      subnet_domain_name: 'lab.test',
+      server_ip: '10.0.0.2',
+      start_ip: '10.0.0.10',
+      end_ip: '10.0.0.50',
+    });
+    expect(wrapper.vm.form.optionValues).toMatchObject({
+      1: '255.255.255.0',
+      3: '10.0.0.1',
+      28: '10.0.0.255',
+      15: 'lab.test',
+      119: 'lab.test',
+      6: `10.0.0.2, ${FALLBACK_SECONDARY_DNS}`,
+    });
+  });
+
+  // Picking an IPv6 range passed the option values where the linked list
+  // belongs, and threw on the first default with a value.
+  it('IPv6: links the NTP default and fills DNS and the search list', async () => {
+    const wrapper = await pickRange({
+      id: 6,
+      subnet_id: 12,
+      subnet_name: 'Lab v6',
+      subnet_cidr: 'fd00:1234::/64',
+      subnet_domain_name: 'six.test',
+      server_ip: 'fd00:1234::53',
+      start_ip: 'fd00:1234::10',
+      end_ip: 'fd00:1234::20',
+    });
+    expect(wrapper.vm.form.useDefault).toEqual([56]);
+    expect(wrapper.vm.form.optionValues).toMatchObject({ 23: 'fd00:1234::53', 24: 'six.test' });
+    expect(wrapper.vm.form.optionValues[6]).toBeUndefined();
+  });
+});
+
