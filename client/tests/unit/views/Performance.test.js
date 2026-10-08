@@ -154,7 +154,7 @@ describe('Performance', () => {
     expect(text(w, '.fig .sub')[9]).toBe('of one core · avg 36.7%');
     const notes = w.findAll('.panel-note');
     expect(notes[0].text()).toBe('last 24 hours · 40 queries in 2 samples');
-    expect(notes[3].text()).toBe('encrypted forwarding · 22 answers in the range');
+    expect(notes[3].text()).toBe('forwarding · 22 answers in the range');
     expect(notes[8].text()).toContain('the host has 8');
 
     expect(text(w, '.series-chart .chip')).toEqual([
@@ -221,7 +221,7 @@ describe('Performance', () => {
     // The process gauges still draw: a quiet process is data.
     expect(w.findAll('.line-stub').length).toBe(2);
     expect(w.text()).toContain('No failed answers in this range');
-    expect(w.text()).toContain('encrypted forwarding is off');
+    expect(w.text()).toContain('nothing was forwarded');
     w.unmount();
   });
 });

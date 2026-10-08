@@ -27,6 +27,7 @@ import {
   HOSTS_DIR,
   RESTART_PENDING,
 } from './paths.js';
+import { plainUpstreams } from '../../utils/forwarding-settings.js';
 
 // The temp file sits beside its target, often in a directory dnsmasq watches
 // (hostsdir, dhcp-hostsdir). dnsmasq loads every file there but names that
@@ -513,7 +514,7 @@ const MANAGED_LOCAL_DOMAINS = new Set([...RESERVED_LOCAL_DOMAINS, ...SITE_LOCAL_
 // The addresses dnsmasq's forwarded queries end up at: the encrypted
 // forwarder's upstreams when it is on, the plain servers otherwise.
 function forwardedAddresses(encrypted) {
-  if (!encrypted) return getSetting('dns_upstream_servers') || [];
+  if (!encrypted) return plainUpstreams();
   return (getSetting('forwarder_encrypted_upstreams') || []).flatMap((u) => u?.addresses || []);
 }
 
@@ -541,8 +542,6 @@ function isManagedLocalAnswerLine(line) {
 export function regenerateDnsmasqConf(_db) {
   if (!fs.existsSync(DNSMASQ_CONF)) return false;
 
-  // dnsmasq always uses real upstream servers, proxy sits in front, not behind
-  const servers = getSetting('dns_upstream_servers');
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
   const encryption = getSetting('forwarder_encryption') || 'off';
   const noRecursion = getSetting('dns_no_recursion') === 'true';
@@ -557,17 +556,13 @@ export function regenerateDnsmasqConf(_db) {
   );
 
   // Insert server lines after no-resolv or at the start. When recursion is
-  // disabled, emit NO upstreams (authoritative-only). Otherwise, when encrypted
-  // forwarding is on, send everything to the in-Node DoT/DoH stub on loopback
-  // instead of the plain upstream IPs (the stub encrypts to the real upstreams).
+  // disabled, emit NO upstreams (authoritative-only). Otherwise send everything
+  // to the in-Node forwarder stub on loopback, in every mode: it picks the
+  // resolver (primary, backup, turns) and speaks plain DNS, DoT or DoH to it.
   const noResolvIdx = filtered.findIndex((l) => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
   const encrypted = encryption === 'tls' || encryption === 'https';
-  const serverLines = noRecursion
-    ? []
-    : encrypted
-      ? [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`]
-      : servers.map((s) => `server=${s}`);
+  const serverLines = noRecursion ? [] : [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`];
   const localLines = reservedLocalLines({
     addresses: noRecursion ? [] : forwardedAddresses(encrypted),
   });

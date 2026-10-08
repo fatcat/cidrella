@@ -22,6 +22,10 @@ export function createReservoir(size = 1000) {
         if (j < size) samples[j] = value;
       }
     },
+    /** The samples, ascending, and how many values were offered, left in place. */
+    peek() {
+      return { sorted: [...samples].sort((a, b) => a - b), seen };
+    },
     /** The samples, ascending, and how many values were offered; then empty. */
     drain() {
       const out = { sorted: samples.sort((a, b) => a - b), seen };

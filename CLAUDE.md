@@ -114,7 +114,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `client/src/ui/*.js`, never from the package; `EmptyState`, `StatusDot`, `StatusBadge`,
   `AddressTypePill`, `ConfirmDialog` (every danger or warn confirmation, with
   `type-to-confirm` for the typed gates), `ScanToggle` (`inherits-from` names the parent),
-  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`, `dhcp/DhcpOptionTable` (the DHCP option editor
+  `DiscardPrompt` + `useDiscardGuard`, `AllowlistDialog`, `dns/ResolverPicker` (a resolver choice: preset, custom or none; `utils/resolvers.js`
+  describes selections) and `dns/ResolverTestDialog`, `dhcp/DhcpOptionTable` (the DHCP option editor
   table: Settings defaults and Bulk Change; `composables/useDhcpOptionCatalog.js` loads its
   catalog and builds the request body), `networks-workspace/dialogs/RangeTypeDialog`
   + `RangeTypeFields` (the one Network Range Type editor: Settings uses the dialog, RangeEditor
@@ -176,6 +177,11 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder
   upstream, DoT or DoH: reused connections, retry, address failover, fail closed),
+  `plainUpstreams` and `backupMode` in `utils/forwarding-settings.js` (the plaintext primary
+  then backup, and On failure or Load balance; nothing else joins the two lists),
+  `utils/plain-dns.js` (`plainUdpQuery`, `plainTcpQuery`: one plain query, either family),
+  `timeQuery` in `utils/upstream-probe.js` (one timed query over plain, DoT or DoH) and
+  `services/resolver-benchmark.js` (the one-minute resolver performance test),
   `failureCause` in `utils/dns-ede.js` (the one place a failed DNS answer gets its cause,
   from the rcode and EDE; the client reads its labels through `@shared`),
   `probeAddress` in `utils/upstream-probe.js` (one real query to one upstream address; the

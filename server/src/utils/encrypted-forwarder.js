@@ -1,18 +1,25 @@
 /**
- * In-Node encrypted DNS forwarder stub (DoT / DoH).
+ * In-Node DNS forwarder stub: dnsmasq's one upstream whenever CIDRella
+ * recurses. dnsmasq's `server=` points at this loopback stub
+ * (127.0.0.1:<port>), and it relays each query to the configured resolvers
+ * over DNS-over-TLS, DNS-over-HTTPS or, in plaintext mode, plain DNS, then
+ * returns the raw response verbatim (preserving EDNS/DO so DNSSEC records
+ * pass through and CIDRella's own validation still works).
  *
- * dnsmasq can't forward over DoT/DoH, so when encrypted forwarding is enabled we
- * point dnsmasq's `server=` at this loopback stub (127.0.0.1:<port>). It relays
- * each query to the configured upstream over DNS-over-TLS or DNS-over-HTTPS and
- * returns the raw response verbatim (preserving EDNS/DO so DNSSEC records pass
- * through and CIDRella's own validation still works).
+ * It, not dnsmasq, decides which resolver a query goes to: a primary and an
+ * optional backup, asked On failure or in turns (utils/forwarding-settings.js),
+ * with a resolver that gave no answer held at the back of the line. dnsmasq
+ * has no turns of its own (it favors the fastest server), and going through
+ * here gives plaintext the same per-resolver metrics as the encrypted modes.
  *
- * FAIL CLOSED: any encrypted-path failure returns SERVFAIL, never a silent
- * fallback to plaintext. The cost is that resolution is down if the encrypted
- * path is broken (surfaced via getEncryptedForwarderStatus()).
+ * FAIL CLOSED: any failure returns SERVFAIL, never a silent fallback to
+ * plaintext (or, in plaintext mode, to anything else). The cost is that
+ * resolution is down if the path is broken (surfaced via
+ * getEncryptedForwarderStatus()).
  *
- * Self-contained on purpose (coupling seam #7 in docs/DNSMASQ-COUPLING.md): a
- * future PowerDNS Recursor would do DoT/DoH natively, and this module is deleted.
+ * The file keeps its name from when it carried only DoT and DoH. Coupling
+ * seam #7 in docs/DNSMASQ-COUPLING.md: a future PowerDNS Recursor would do
+ * this natively, and this module is deleted.
  */
 
 import dgram from 'dgram';
@@ -23,10 +30,14 @@ import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
 import { createUpstreamPool } from './upstream-pool.js';
 import { edeOption } from './dns-ede.js';
 import { createReservoir, quantileOfSorted } from './samples.js';
+import { backupMode } from './forwarding-settings.js';
+import { plainUdpQuery, plainTcpQuery } from './plain-dns.js';
+import { DOH_PROVIDERS } from '../data/doh-providers.js';
 import {
   ENCRYPTED_FORWARDER_PORT,
   ENCRYPTED_FORWARDER_TIMEOUT_MS,
   ENCRYPTED_FORWARDER_BUDGET_MS,
+  ENCRYPTED_FORWARDER_HOLD_MS,
 } from '../config/defaults.js';
 
 const HOST = '127.0.0.1';
@@ -37,6 +48,7 @@ let tcpServer = null;
 let mode = 'off'; // 'off' | 'tls' | 'https'
 let upstreams = []; // [{ label, addresses:[], hostname, doh_url }]
 let rrIndex = 0;
+let order = 'balance'; // 'failover' always starts at the primary, see forwarding-settings.js
 let recentErrors = []; // { at, provider } of recent failures (sliding window)
 let lastError = null;
 const ERROR_WINDOW_MS = 10 * 60 * 1000; // "recent" = last 10 minutes
@@ -118,8 +130,8 @@ export function buildServfail(reqBuf, ede = null) {
   });
 }
 
-// Every encrypted upstream failed this query (RFC 8914 code 22).
-const NO_UPSTREAM_ANSWER = { code: 22, text: 'no encrypted upstream answered' };
+// Every upstream failed this query (RFC 8914 code 22).
+const NO_UPSTREAM_ANSWER = { code: 22, text: 'no upstream answered' };
 
 // ── DoT and DoH: connections to each upstream address stay open and carry
 // every query (utils/upstream-pool.js), validated against the upstream's
@@ -204,51 +216,132 @@ export function forwardDoH(reqBuf, upstream, timeoutMs = ENCRYPTED_FORWARDER_TIM
   return poolFor('doh', timeoutMs).query(reqBuf, upstream, { deadline });
 }
 
+// Providers that gave no answer lately, by name: hostname -> held until (ms).
+const held = new Map();
+
 /**
  * Ask the upstreams in turn, starting at `first`, until one answers or the
  * budget is spent. Taking turns on who goes first still spreads the load; the
  * others are there for a query the first could not answer, as when Quad9
  * timed out on both its addresses for two hours.
+ *
+ * A provider that gives no answer is held for ENCRYPTED_FORWARDER_HOLD_MS:
+ * while held it goes to the back of the line, so a dead primary costs one
+ * timeout per hold rather than one per query. Once the hold ends, the next
+ * query tries it again. When every provider is held they are still asked,
+ * in order, since a held one may be back.
  * `forward(reqBuf, upstream, deadline)` resolves an answer or null.
  */
 export async function queryUpstreams(
   reqBuf,
   list,
-  { first = 0, forward, budgetMs = ENCRYPTED_FORWARDER_BUDGET_MS },
+  {
+    first = 0,
+    forward,
+    budgetMs = ENCRYPTED_FORWARDER_BUDGET_MS,
+    holdMs = ENCRYPTED_FORWARDER_HOLD_MS,
+    now = Date.now,
+  },
 ) {
-  const deadline = Date.now() + budgetMs;
-  for (let i = 0; i < list.length && Date.now() < deadline; i++) {
-    const upstream = list[(first + i) % list.length];
+  const deadline = now() + budgetMs;
+  const turn = list.map((_, i) => list[(first + i) % list.length]);
+  const isHeld = (upstream) => (held.get(providerName(upstream)) ?? 0) > now();
+  const line = [...turn.filter((u) => !isHeld(u)), ...turn.filter(isHeld)];
+  for (let i = 0; i < line.length && now() < deadline; i++) {
+    const upstream = line[i];
     try {
       const resp = await forward(reqBuf, upstream, deadline);
-      if (resp) return resp;
+      if (resp) {
+        held.delete(providerName(upstream));
+        return resp;
+      }
     } catch (e) {
       recordError(e, upstream);
     }
-    if (i + 1 < list.length && Date.now() < deadline) {
+    held.set(providerName(upstream), now() + holdMs);
+    if (i + 1 < line.length && now() < deadline) {
       minuteRow(upstream, '', protocolFor(mode)).failovers++;
     }
   }
   return null;
 }
 
-const protocolFor = (forwarderMode) => (forwarderMode === 'https' ? 'doh' : 'dot');
+/** The providers held after giving no answer (status, tests). */
+export function heldProviders(at = Date.now()) {
+  return [...held].filter(([, until]) => until > at).map(([name]) => name);
+}
+
+/** Release every hold (tests; a reconfigure does it too). */
+export function releaseHolds() {
+  held.clear();
+}
+
+const PROTOCOLS = { off: 'plain', tls: 'dot', https: 'doh' };
+const protocolFor = (forwarderMode) => PROTOCOLS[forwarderMode] || 'dot';
+
+/**
+ * Plaintext forwarding: the resolver's addresses in turn, UDP or TCP as the
+ * query came in (a truncated UDP answer goes back to dnsmasq as is, and it
+ * asks again over TCP). Resolves an answer or null; each address gets one
+ * send, cut short by the deadline.
+ */
+export async function forwardPlain(
+  reqBuf,
+  upstream,
+  deadline = Infinity,
+  { tcp = false, timeoutMs = ENCRYPTED_FORWARDER_TIMEOUT_MS, port } = {},
+) {
+  for (const address of upstream.addresses || []) {
+    const left = deadline - Date.now();
+    if (left <= 0) break;
+    recordEvent('plain', 'query', upstream, address);
+    const send = tcp ? plainTcpQuery : plainUdpQuery;
+    const { answer, ms, refused } = await send(address, reqBuf, {
+      timeoutMs: Math.min(timeoutMs, left),
+      port,
+    });
+    if (answer) {
+      recordEvent('plain', 'answer', upstream, address, ms);
+      return answer;
+    }
+    recordEvent('plain', refused ? 'connect_failed' : 'timeout', upstream, address);
+    recordError(new Error(refused ? 'connection refused' : 'no answer in time'), upstream, address);
+  }
+  return null;
+}
+
+// The plaintext primary and backup as the forwarder's upstreams, each named
+// after the preset whose addresses it has, or after its addresses.
+function plainResolvers() {
+  return [getSetting('dns_upstream_servers'), getSetting('dns_upstream_backup_servers')]
+    .filter((addresses) => Array.isArray(addresses) && addresses.length)
+    .map((addresses) => {
+      const key = [...addresses].sort().join();
+      const preset = DOH_PROVIDERS.find((p) => [...p.addresses].sort().join() === key);
+      return { label: preset?.hostname || addresses.join(', '), hostname: '', addresses };
+    });
+}
 
 function closePools() {
   for (const pool of pools.values()) pool.closeAll();
   pools.clear();
 }
 
-async function handleQuery(reqBuf) {
+/** Where a query starts: the primary under failover, turns under balance. */
+export function firstUpstream() {
+  return order === 'failover' || upstreams.length === 0 ? 0 : rrIndex++ % upstreams.length;
+}
+
+async function handleQuery(reqBuf, { tcp = false } = {}) {
   const forward =
     mode === 'tls'
       ? (buf, upstream, deadline) => forwardDoT(buf, upstream, undefined, deadline)
       : mode === 'https'
         ? (buf, upstream, deadline) => forwardDoH(buf, upstream, undefined, deadline)
-        : null;
+        : (buf, upstream, deadline) => forwardPlain(buf, upstream, deadline, { tcp });
   const resp =
     forward && upstreams.length
-      ? await queryUpstreams(reqBuf, upstreams, { first: rrIndex++ % upstreams.length, forward })
+      ? await queryUpstreams(reqBuf, upstreams, { first: firstUpstream(), forward })
       : null;
   return resp || buildServfail(reqBuf, NO_UPSTREAM_ANSWER); // fail closed
 }
@@ -276,7 +369,7 @@ function startListeners() {
       const { messages, rest } = extractTcpMessages(buf);
       buf = rest;
       for (const m of messages) {
-        const resp = await handleQuery(m);
+        const resp = await handleQuery(m, { tcp: true });
         if (resp && sock.writable) {
           try {
             sock.write(frameTcpMessage(resp));
@@ -300,7 +393,7 @@ function startListeners() {
   tcpServer.on('error', (e) => efLog('error', 'TCP server error', { error: e.message }));
   tcpServer.listen(ENCRYPTED_FORWARDER_PORT, HOST);
 
-  efLog('info', `Encrypted forwarder listening on ${HOST}:${ENCRYPTED_FORWARDER_PORT}`, {
+  efLog('info', `Forwarder listening on ${HOST}:${ENCRYPTED_FORWARDER_PORT}`, {
     mode,
     upstreams: upstreams.length,
   });
@@ -324,7 +417,9 @@ function stopListeners() {
 // Start/stop/reconfigure from settings. Call at startup and on settings change.
 export function applyEncryptedForwarder() {
   mode = getSetting('forwarder_encryption') || 'off';
-  upstreams = getSetting('forwarder_encrypted_upstreams') || [];
+  upstreams = mode === 'off' ? plainResolvers() : getSetting('forwarder_encrypted_upstreams') || [];
+  order = backupMode();
+  releaseHolds();
   recentErrors = [];
   lastError = null;
   // A changed upstream list or mode starts on fresh connections.
@@ -335,12 +430,12 @@ export function applyEncryptedForwarder() {
   // recursion is re-enabled).
   const noRecursion = getSetting('dns_no_recursion') === 'true';
 
-  if (mode === 'off' || noRecursion || !Array.isArray(upstreams) || upstreams.length === 0) {
+  if (noRecursion || !Array.isArray(upstreams) || upstreams.length === 0) {
     stopListeners();
     return;
   }
   if (!udpSocket && !tcpServer) startListeners();
-  else efLog('info', 'Encrypted forwarder reconfigured', { mode, upstreams: upstreams.length });
+  else efLog('info', 'Forwarder reconfigured', { mode, upstreams: upstreams.length });
 }
 
 export function stopEncryptedForwarder() {

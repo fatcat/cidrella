@@ -1,0 +1,57 @@
+/* The Upstream Forwarders form on Settings > DNS: label-and-control rows and
+   address lists. DNS.vue and components/dns/ResolverPicker.vue share it, so
+   it is scoped by the .upstream-form ancestor rather than per component. */
+
+.upstream-form .forwarders-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.upstream-form .forwarder-entry {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.upstream-form .forwarder-actions {
+  display: flex;
+  gap: 0.5rem;
+  margin-top: 0.25rem;
+}
+.upstream-form .fwd-testing {
+  color: var(--cid-text-muted-color);
+  font-size: var(--app-fs-sm);
+}
+.upstream-form .forwarder-hint {
+  font-size: var(--app-fs-xs);
+  color: var(--cid-text-muted-color);
+  margin: 0.25rem 0 0;
+  line-height: 1.4;
+}
+.upstream-form .enc-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+.upstream-form .enc-row label {
+  width: 6rem;
+  font-size: var(--app-fs-sm);
+  font-weight: 600;
+}
+.upstream-form .enc-modes {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+}
+.upstream-form .enc-mode-option {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+.upstream-form .enc-row .enc-modes label {
+  width: auto;
+  font-weight: 400;
+  cursor: pointer;
+}
+.upstream-form .enc-row.mode-row {
+  margin-bottom: 4px;
+}
