@@ -14,24 +14,24 @@ was suggested.
 
 ## Found building the Kea adapter (2026-10-07)
 
-#### DNSMASQ-08: dnsmasq sends DHCPv4 number options at the wrong width
+#### DNSMASQ-08: dnsmasq sizes a DHCPv4 option it does not know by the value's shape
 
-**medium**, confirmed in dnsmasq's source (`src/option.c`, the `is_dec` branch) and in
-`server/src/backends/dnsmasq/option-names.js:dnsmasqOptionToken`.
+**low**, confirmed in dnsmasq's source, 2.91 through 2.93 (`src/option.c` `parse_dhcp_opt`, the
+`is_dec` branch; `lookup_dhcp_len` in `src/dhcp-common.c`). CIDRella writes DHCPv4 options by
+number: `server/src/utils/dhcp.js:188` on 0.5.0, the dnsmasq backend on 0.5.1 and later.
 
-- **What happens:** Set Time Offset (2) to `3600` or ARP Cache Timeout (35) to `600`. RFC 2132
-  makes both four-byte fields; dnsmasq sends two bytes. MTU (26) at `200` goes out as one byte,
-  not two. A client either refuses the option or reads the wrong number. The same rule turns a
-  text option whose value is all digits into a number. Under Kea the same values go out at the
-  right width, because Kea encodes by its own option definitions.
-- **Why:** CIDRella writes every DHCPv4 option by number (`dhcp-option=tag:scopeN,2,3600`).
-  Given a bare number, dnsmasq looks up no type, so it reads the value by its shape and sizes a
-  number by magnitude: one, two or four bytes. dnsmasq's own table would size these correctly,
-  but only applies to an option written by name (`option:time-offset`).
-- **Fix:** Give the catalog's number options a width, and have the dnsmasq adapter add
-  dnsmasq's width suffix (`b`, `s`, `i`) to the value. Or write the DHCPv4 options dnsmasq
-  knows by name, as `option-names.js` already does for DHCPv6. Either changes the dnsmasq
-  goldens, so it belongs in its own commit.
+- **What happens:** For an option dnsmasq knows, the number is looked up in its own table, so
+  Time Offset (2), MTU (26), ARP Cache Timeout (35) and the rest go out at the right width.
+  An option it does not know is read by the shape of its value: an all-digit value becomes a
+  number sized by magnitude (one, two or four bytes). In the catalog that hits Path MTU Aging
+  Timeout (24), a four-byte field: `600` goes out as two bytes. A text option dnsmasq does not
+  know (Merit Dump File 14, NetWare/IP 62 and 63, WPAD URL 252) with an all-digit value goes
+  out as a number. Custom options are read the same way.
+- **Why:** dnsmasq has no type for a code outside its table, so it guesses from the value.
+- **Fix:** For a code dnsmasq does not know, have the renderer give the type: dnsmasq's width
+  suffix (`b`, `s`, `i`) for a number option, from a width in the catalog (`i` for 24), and a
+  form dnsmasq keeps as a string for a text option (check which one it honors). This changes
+  the dnsmasq output for those options only; on 0.5.1 and later the goldens show it.
 
 ## Found reading prod's logs (2026-10-06)
 
