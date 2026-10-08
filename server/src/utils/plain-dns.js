@@ -20,7 +20,12 @@ export function plainUdpQuery(address, query, { timeoutMs, port = 53 }) {
     const socket = dgram.createSocket(addressFamily(address) === 6 ? 'udp6' : 'udp4');
     let started = null;
     let timer = null;
+    let settled = false;
+    // A failed send can report through both the callback and the 'error'
+    // event; the socket is closed once.
     const done = (answer) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
       socket.close();
       resolve({ answer, ms: started == null ? 0 : performance.now() - started });
@@ -32,7 +37,11 @@ export function plainUdpQuery(address, query, { timeoutMs, port = 53 }) {
     socket.bind(0, () => {
       timer = setTimeout(() => done(null), timeoutMs);
       started = performance.now();
-      socket.send(query, port, address, (error) => error && done(null));
+      try {
+        socket.send(query, port, address, (error) => error && done(null));
+      } catch {
+        done(null); // a bad port or address throws rather than calling back
+      }
     });
   });
 }
