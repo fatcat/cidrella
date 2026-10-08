@@ -379,11 +379,22 @@ first on a 0.4.17 host.
   default when `dhcp_v6_mode` is left out.
 - **IPv6 NTP default.** DHCPv6 option 56 now has a default, like option 42:
   four IPv6 servers from `2.pool.ntp.org`, the only pool name that answers
-  with IPv6 addresses. Because global defaults apply to every scope that does
-  not set its own value, existing stateless and stateful IPv6 scopes start
-  offering it after the upgrade too; clear it in Settings > DHCP to opt out.
-  The release build refreshes both lists, so `scripts/refresh-ntp-defaults.js`
+  with IPv6 addresses. New IPv6 scopes use it. Existing scopes keep what they
+  served before the upgrade (see the next item), so to offer it on them, use
+  Bulk Change. The release build refreshes both lists, so
+  `scripts/refresh-ntp-defaults.js`
   now updates `DHCP6_DEFAULT_NTP_SERVERS` as well.
+- **DHCP defaults are opt-in per scope.** A default option used to reach
+  every scope that had no value of its own, ticked or not, so Bulk Change
+  could not take one off a scope. Now a scope serves a default only when the
+  option is set to Use default in the scope's options, and then it follows
+  every later edit of the default. Settings > DHCP calls the checkbox column
+  Add to new scopes (the defaults a new scope uses) and counts the scopes
+  using each default. Bulk Change with "Also make these my defaults" sets the
+  selected scopes to Use default; without it they get the values as their
+  own. The upgrade keeps what every scope serves: migration 086 sets each
+  scope to Use default for every default it was being served. It also
+  repairs IPv6 scope options that a divide or merge had stored as IPv4.
 
 - Checking rows no longer opens a bar above the table. The bar pushed the
   rows down as it appeared, so the row under the pointer moved and the

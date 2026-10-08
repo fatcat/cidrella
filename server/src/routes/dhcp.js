@@ -49,6 +49,7 @@ import {
   deleteCustomOption,
   replaceDefaultOptions,
   SHIPPED_DEFAULT_OPTIONS,
+  linkedOptionCounts,
 } from '../models/dhcp-option.js';
 import { bulkChangeScopeOptions } from '../models/dhcp-bulk-options.js';
 import { scopeMatches } from '../models/workspace-view.js';
@@ -98,11 +99,22 @@ function optionCodeError(code, family) {
   return null;
 }
 
+// No value and no opt-in: the scope leaves the option out, nothing to check.
+const isBlankOption = (opt) => opt.value == null || opt.value === '';
+
 function validateScopeOption(opt, family = 4) {
   if (!opt || typeof opt !== 'object') return 'option must be an object';
   const code = Number(opt.code);
   const codeErr = optionCodeError(code, family);
   if (codeErr) return codeErr;
+  // Use default: the scope follows the default's value and sends none itself.
+  if (opt.use_default !== undefined && typeof opt.use_default !== 'boolean')
+    return 'use_default must be true or false';
+  if (opt.use_default === true) {
+    if (opt.value != null && opt.value !== '') return 'an option that uses the default takes no value';
+    if (family === 4 && code === 51) return 'lease time is the scope\'s own, not a default';
+    return null;
+  }
   const value = opt.value;
   if (value == null || value === '') return null; // caller skips empty values
   if (typeof value !== 'string') return 'value must be a string';
@@ -389,7 +401,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   // a half-populated scope behind.
   if (Array.isArray(options)) {
     for (const opt of options) {
-      if (opt == null || opt.value == null || opt.value === '') continue;
+      if (opt == null || (isBlankOption(opt) && opt.use_default === undefined)) continue;
       const err = validateScopeOption(opt, subnet.address_family);
       if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
     }
@@ -560,7 +572,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
 
   if (Array.isArray(options)) {
     for (const opt of options) {
-      if (opt == null || opt.value == null || opt.value === '') continue;
+      if (opt == null || (isBlankOption(opt) && opt.use_default === undefined)) continue;
       const err = validateScopeOption(opt, scopeSubnet.address_family);
       if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
     }
@@ -1347,6 +1359,8 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
     catalog,
     defaults,
     enabledDefaults,
+    // How many scopes use each default, so the editor can say who an edit reaches.
+    linkedCounts: linkedOptionCounts(db, family),
     // What CIDRella ships, for the Bulk Change tab's reset.
     shipped: {
       defaults: Object.fromEntries(

@@ -378,6 +378,31 @@ describe('canonical cross-model network transformations', () => {
     expect(getDb().prepare('PRAGMA foreign_key_check').all()).toEqual([]);
   });
 
+  // DHCP-01: two scopes that use the same default match, however the default
+  // is set; a scope holding the same value as its own does not.
+  it('matches scopes linked to one default, not a scope with its own copy', async () => {
+    const parent = await createAndConfigure('10.239.0.0/24', { create_dhcp_scope: true });
+    const children = await previewAndDivide(parent.id, { new_prefix: 25 });
+    const scopeIds = children.map(
+      (child) =>
+        getDb().prepare('SELECT id FROM dhcp_scopes WHERE subnet_id = ?').get(child.id).id,
+    );
+    const link = getDb().prepare(
+      `INSERT OR REPLACE INTO dhcp_scope_options (scope_id, option_code, value, address_family)
+       VALUES (?, 66, ?, 4)`,
+    );
+    for (const id of scopeIds) link.run(id, null);
+    const preview = () =>
+      request(app)
+        .post('/api/subnets/merge/preview')
+        .send({ subnet_ids: children.map((child) => child.id) });
+    const conflict = expect.objectContaining({ code: 'dhcp_scope_policy_conflict' });
+    expect((await preview()).body.plan.conflicts).not.toContainEqual(conflict);
+
+    link.run(scopeIds[1], 'tftp.test');
+    expect((await preview()).body.plan.conflicts).toContainEqual(conflict);
+  });
+
   it('blocks merge when child scope policies differ', async () => {
     const parent = await createAndConfigure('10.232.0.0/24', {
       create_dhcp_scope: true,

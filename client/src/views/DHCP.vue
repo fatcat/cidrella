@@ -30,8 +30,10 @@
       />
     </div>
     <p class="field-help dhcp-defaults-note">
-      These settings are the defaults for newly created {{ familyLabel }} scopes. To give existing
-      scopes these settings, use Bulk Change.
+      A default reaches a {{ familyLabel }} scope only when the scope uses it (Use default in the
+      scope's options), and an edit here reaches every scope that does. Add to new scopes picks
+      the defaults a newly created scope uses. To change the options of existing scopes, use Bulk
+      Change.
       <template v-if="isV6">
         Routers, prefixes and address lifetimes come from Router Advertisements and are not options;
         a SLAAC-only scope sends no options at all.
@@ -43,6 +45,7 @@
       :family="family"
       :rows="optionRows"
       :loading="loadingOptions"
+      :usage="linkedCounts"
       deletable-custom
       @delete-custom="deleteCustomOption"
     />
@@ -142,6 +145,7 @@ const {
   catalog: optionCatalog,
   rows: optionRows,
   customRange,
+  linkedCounts,
   loading: loadingOptions,
   load: loadCatalog,
 } = useDhcpOptionCatalog(() => props.family);

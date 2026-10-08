@@ -298,6 +298,24 @@ file classes have different reload behavior:
 The backend should keep DNS and DHCP table ownership in models/services; config
 generators should read and emit, not invent persistence semantics.
 
+### DHCP option layering
+
+`resolveEffectiveScopeOptions` (`models/dhcp-scope.js`) is the one place a
+scope's served options are worked out; dnsmasq and Kea render its
+`effective.options` and never read the option tables. A default
+(`dhcp_option_defaults`) reaches a scope only through a linked row: a
+`dhcp_scope_options` row with `value IS NULL` (`isLinkedOption`), shown as Use
+default. A linked row serves the default's current value, so an edit of the
+default reaches every scope using it, and an empty default serves nothing.
+`enabled_by_default` (Add to new scopes) only picks the defaults a new scope
+links. Precedence, lowest first: IPv4 linked default, the scope's own rows, the
+legacy scope columns (only when the scope has no rows with its own value), the
+network; IPv6 linked default, legacy columns, own rows, the network. IPv4
+option 51 is the scope's `lease_time`, never a default. Writers mark a link
+with `USE_DEFAULT` (`services/subnet-dhcp-topology.js`), which
+`writeScopeOptionRows` stores as NULL; copies between scopes (divide, merge)
+carry the value as-is, so links survive.
+
 ### Why an answer failed
 
 The DNS proxy sorts every failed answer into one cause with `failureCause` in

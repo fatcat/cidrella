@@ -269,6 +269,15 @@ function computeInheritedOptions(subnet) {
   return inherited;
 }
 
+/** A scope option row that follows the default (Use default) rather than holding a value. */
+export const isLinkedOption = (row) => row.value == null;
+
+/**
+ * What a scope serves, option by option, with where each value came from.
+ * IPv4 layers default (linked rows) < scope < legacy columns (only when the
+ * scope holds no value of its own) < network; IPv6 layers default < legacy <
+ * scope < network.
+ */
 export function resolveEffectiveScopeOptions(db, scope) {
   const family = scopeAddressFamily(scope);
   const values = new Map();
@@ -278,19 +287,26 @@ export function resolveEffectiveScopeOptions(db, scope) {
     values.set(Number(code), String(value));
     provenance.set(Number(code), source);
   };
-  for (const row of db
-    .prepare(
-      'SELECT option_code, value FROM dhcp_option_defaults WHERE value IS NOT NULL AND address_family = ?',
-    )
-    .all(family)) {
-    if (Number(row.option_code) !== 51) set(row.option_code, row.value, 'global_default');
-  }
-
-  const explicit =
+  const rows =
     scope.options ||
     db
       .prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?')
       .all(scope.id);
+  // A default reaches a scope only through a linked row (Use default), and
+  // then with the default's current value; an empty default serves nothing.
+  const defaults = new Map(
+    db
+      .prepare(
+        'SELECT option_code, value FROM dhcp_option_defaults WHERE value IS NOT NULL AND address_family = ?',
+      )
+      .all(family)
+      .map((row) => [Number(row.option_code), row.value]),
+  );
+  for (const row of rows.filter(isLinkedOption)) {
+    const code = Number(row.option_code);
+    if (code !== 51) set(code, defaults.get(code), 'default');
+  }
+  const explicit = rows.filter((row) => !isLinkedOption(row));
 
   if (family === 6) {
     // DHCPv6: the scope columns (dns_servers, domain_search, ntp_servers) are
@@ -371,13 +387,17 @@ function saveScopeOptions(db, scopeId, subnet, options, { replace = false } = {}
     'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, ?)',
   );
   for (const opt of options) {
-    if (opt.code && opt.value != null && opt.value !== '') {
-      if (family === 4 && Number(opt.code) === 51) {
-        throw new Error('DHCP option 51 is represented by the scope lease_time field');
-      }
-      if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
-      insertOpt.run(scopeId, opt.code, String(opt.value), family);
+    const linked = opt.use_default === true;
+    if (!opt.code || (!linked && (opt.value == null || opt.value === ''))) continue;
+    if (family === 4 && Number(opt.code) === 51) {
+      throw new Error('DHCP option 51 is represented by the scope lease_time field');
     }
+    if (linked) {
+      insertOpt.run(scopeId, opt.code, null, family);
+      continue;
+    }
+    if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
+    insertOpt.run(scopeId, opt.code, String(opt.value), family);
   }
 }
 

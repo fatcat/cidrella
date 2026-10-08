@@ -83,6 +83,13 @@
         />
       </template>
     </Column>
+    <Column v-if="usage" header="Used by" style="width: 7rem">
+      <template #body="{ data }">
+        <span class="text-sm muted" data-track="dhcp-option-used-by">
+          {{ usedByLabel(data.code) }}
+        </span>
+      </template>
+    </Column>
     <Column header="" style="width: 3rem">
       <template #body="{ data }">
         <div class="action-buttons">
@@ -130,8 +137,9 @@
 
 <script setup>
 // The DHCP option editor table: one row per catalog option with its value and
-// a checkbox column. Settings uses it for the family's defaults ("Enabled by
-// Default") and Bulk Change for what scopes get ("Apply"). Values and checks
+// a checkbox column. Settings uses it for the family's defaults ("Add to new
+// scopes", with the Used by counts) and Bulk Change for what scopes get
+// ("Apply"). Values and checks
 // are code-keyed objects the parent owns.
 import { ref, computed } from 'vue';
 import Button from '../../ui/Button.js';
@@ -146,13 +154,17 @@ import EmptyState from '../EmptyState.vue';
 import api from '../../api/client.js';
 import { useToast } from '../../ui/useToast.js';
 import { resolveHostname, placeholderForType } from '../../utils/resolveHostname.js';
+import { EMPTY_CELL, countOf } from '../../utils/format.js';
 
 const props = defineProps({
   family: { type: Number, default: 4 },
   rows: { type: Array, required: true },
   loading: { type: Boolean, default: false },
   valueHeader: { type: String, default: 'Default Value' },
-  enabledHeader: { type: String, default: 'Enabled by Default' },
+  enabledHeader: { type: String, default: 'Add to new scopes' },
+  // Code to the number of scopes that use the default (Use default), as GET
+  // /dhcp/options answers linkedCounts. Shows a Used by column when set.
+  usage: { type: Object, default: null },
   // Codes whose value or check differs from where the editor started.
   changedCodes: { type: Set, default: () => new Set() },
   deletableCustom: { type: Boolean, default: false },
@@ -187,6 +199,11 @@ function getOptionPlaceholder(code, type) {
 }
 
 const isBlank = (value) => value == null || value === '';
+
+function usedByLabel(code) {
+  const count = props.usage?.[code] ?? 0;
+  return count ? countOf(count, 'scope') : EMPTY_CELL;
+}
 
 // InputNumber commits its model only on blur, so its typing arrives through
 // @input; both paths land here.

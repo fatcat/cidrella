@@ -119,13 +119,22 @@ describe('DHCPv4 bulk change', () => {
       res.body.scopes.find((scope) => scope.id === scopes.a).changes.map((c) => [c.code, c]),
     );
     expect(changes[6]).toMatchObject({ after: '10.61.0.53' });
-    expect(changes[66]).toEqual({ code: 66, before: null, after: 'tftp.test' });
-    // 42 is not enabled, so the scope's own NTP goes, but a default with a
-    // value is served to every scope without its own: the shipped pool.
+    expect(changes[66]).toEqual({
+      code: 66,
+      before: null,
+      after: 'tftp.test',
+      before_default: false,
+      after_default: false,
+    });
+    // 42 is not ticked, so the scope's own NTP goes, and the default with a
+    // value does not take its place: a scope serves a default only when it
+    // uses it (DHCP-01).
     expect(changes[42]).toEqual({
       code: 42,
       before: '10.61.0.9',
-      after: DHCP_DEFAULT_NTP_SERVERS,
+      after: null,
+      before_default: false,
+      after_default: false,
     });
     // Domain and search list follow the network, as for a new scope.
     expect(changes[15]).toBeUndefined();
@@ -178,6 +187,25 @@ describe('DHCPv4 bulk change', () => {
     });
     expect([...defaults.body.enabledDefaults].sort((a, b) => a - b)).toEqual([1, 3, 6, 15, 66]);
     expect(rows(scopes.b)[15]).toBe('b.test');
+    // The ticked options with a value now use the defaults, so they follow them.
+    expect(rows(scopes.b)).toMatchObject({ 6: null, 66: null });
+    expect(defaults.body.linkedCounts).toMatchObject({ 6: 1, 66: 1 });
+    await request(app)
+      .put('/api/dhcp/options/defaults')
+      .send({
+        family: 4,
+        options: [
+          { code: 6, value: '10.61.0.54' },
+          { code: 66, value: 'tftp.test' },
+        ],
+        enabledDefaults: [1, 3, 6, 15, 66],
+      });
+    const scopeB = (await request(app).get('/api/dhcp/scopes')).body.find((s) => s.id === scopes.b);
+    expect(scopeB.effective.options.find((o) => o.option_code === 6)).toEqual({
+      option_code: 6,
+      value: '10.61.0.54',
+      source: 'default',
+    });
   });
 
   it('answers the shipped defaults for a reset', async () => {

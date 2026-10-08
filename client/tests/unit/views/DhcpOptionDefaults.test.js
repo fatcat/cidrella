@@ -12,9 +12,11 @@ vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => toast }));
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 
 const DHCP = (await import('../../../src/views/DHCP.vue')).default;
+const { EMPTY_CELL } = await import('../../../src/utils/format.js');
 const DhcpOptionTable = (await import('../../../src/components/dhcp/DhcpOptionTable.vue')).default;
 const placeholder = (wrapper, code, type) =>
   wrapper.findComponent(DhcpOptionTable).vm.getOptionPlaceholder(code, type);
+const usedBy = (wrapper, code) => wrapper.findComponent(DhcpOptionTable).vm.usedByLabel(code);
 
 const catalogs = {
   4: {
@@ -27,6 +29,7 @@ const catalogs = {
     groups: [{ name: 'Common', label: 'Common' }],
     defaults: { 6: '10.0.0.2,9.9.9.9' },
     enabledDefaults: [6, 15],
+    linkedCounts: { 6: 2 },
   },
   6: {
     family: 6,
@@ -39,6 +42,7 @@ const catalogs = {
     groups: [{ name: 'Common', label: 'Common' }],
     defaults: {},
     enabledDefaults: [23, 24],
+    linkedCounts: { 56: 1 },
   },
 };
 
@@ -97,7 +101,10 @@ describe('DHCP option defaults editor by family', () => {
     const wrapper = mountEditor();
     await flushPromises();
     expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 4 } });
-    expect(wrapper.text()).toContain('newly created DHCPv4 scopes');
+    // DHCP-01: a default reaches only the scopes that use it, counted per row.
+    expect(wrapper.text()).toContain('reaches a DHCPv4 scope only when the scope uses it');
+    expect(usedBy(wrapper, 6)).toBe('2 scopes');
+    expect(usedBy(wrapper, 15)).toBe(EMPTY_CELL);
     expect(wrapper.text()).not.toContain('Router Advertisements');
     expect(wrapper.find('[data-track="dhcp-save-defaults"]').exists()).toBe(true);
     expect(wrapper.find('[data-track="dhcp-save-defaults-v6"]').exists()).toBe(false);
@@ -122,7 +129,8 @@ describe('DHCP option defaults editor by family', () => {
     const wrapper = mountEditor({ family: 6 });
     await flushPromises();
     expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 6 } });
-    expect(wrapper.text()).toContain('newly created DHCPv6 scopes');
+    expect(wrapper.text()).toContain('reaches a DHCPv6 scope only when the scope uses it');
+    expect(usedBy(wrapper, 56)).toBe('1 scope');
     expect(wrapper.text()).toContain('Router Advertisements');
     expect(wrapper.find('[data-track="dhcp-save-defaults-v6"]').exists()).toBe(true);
     expect(wrapper.find('[data-track="dhcp-save-defaults"]').exists()).toBe(false);

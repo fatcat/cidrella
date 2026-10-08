@@ -144,11 +144,19 @@
                         <dd class="mono">
                           <template v-if="change.before != null">
                             <s class="change-before">{{ change.before }}</s>
+                            <span v-if="change.before_default" class="muted"> (default)</span>
                             <span v-if="change.after != null" aria-hidden="true"> → </span>
                           </template>
-                          <span v-if="change.after != null" class="change-after">
-                            {{ change.after }}
-                          </span>
+                          <template v-if="change.after != null">
+                            <span class="change-after">{{ change.after }}</span>
+                            <span
+                              v-if="change.after_default"
+                              class="muted"
+                              data-track="dhcp-bulk-change-default"
+                            >
+                              (default)
+                            </span>
+                          </template>
                           <span v-else class="muted"> removed</span>
                         </dd>
                       </template>
@@ -170,7 +178,9 @@
             <span>
               Also make these my {{ familyLabel }} defaults
               <span class="text-sm muted save-defaults-help">
-                New scopes start with them too. Off: only the selected scopes change.
+                On: the selected scopes use these defaults and follow later edits of them, and
+                new scopes start with them. Off: the selected scopes get these values as their
+                own, and the defaults stay as they are.
               </span>
             </span>
           </label>
@@ -203,6 +213,10 @@
         Each selected scope gets exactly the options ticked under Apply; any other option it has is
         removed. Lease time and pools stay as they are.
       </p>
+      <p v-if="saveDefaults">
+        Options with a value use the default, so a later edit of your defaults reaches these scopes.
+      </p>
+      <p v-else>These scopes keep the values as their own; a later edit of the defaults leaves them alone.</p>
       <p>{{ applySummary }}.</p>
     </ConfirmDialog>
   </div>
