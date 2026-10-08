@@ -14,6 +14,20 @@ was suggested.
 
 ## Found building DHCP Bulk Change (2026-10-05)
 
+#### DHCP-03: The scope resolver drops IPv6 option 51, which is only IPv4 lease time
+
+**low**, confirmed. `server/src/models/dhcp-scope.js:307` and `:338`
+
+- **What happens:** Add a DHCPv6 custom option 51 and give a scope a value for it, or set it to
+  Use default. The scope serves nothing for 51: it is missing from `effective.options` and
+  from the rendered config.
+- **Why:** `resolveEffectiveScopeOptions` skips code 51 for linked defaults and for the
+  scope's own rows in both families. IPv4 51 is the scope's `lease_time`, so the skip is right
+  there; DHCPv4 and DHCPv6 codes are separate namespaces, and `saveScopeOptions` already
+  refuses 51 for IPv4 only. Predates DHCP-01 (the old `global_default` seed skipped it too).
+- **Fix:** skip 51 only when the scope's family is 4, in both places, with an IPv4 and an IPv6
+  test.
+
 #### DHCP-02: The scope dialog fills network-derived option values in its own copy of the rule
 
 **low**, confirmed. `client/src/components/ScopeDialog.vue:668`
