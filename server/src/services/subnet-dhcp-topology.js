@@ -151,8 +151,16 @@ export function createAutoScopeV6(db, subnetId, parsed, domainName, { mode, pool
 }
 
 /**
- * Copy the family's enabled-by-default options into a new scope, filling the
- * ones that default to a network fact (see fillScopeOptions).
+ * The value fillScopeOptions and writeScopeOptionRows carry for an option the
+ * scope takes from the default (Use default): stored as a linked row, a NULL
+ * value that follows the default (see resolveEffectiveScopeOptions).
+ */
+export const USE_DEFAULT = Symbol('use-default');
+
+/**
+ * Give a new scope the family's add-to-new-scopes options: linked to the
+ * default where it has a value, otherwise filled from a network fact (see
+ * fillScopeOptions).
  */
 export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
   const family = parsed.family === 6 ? 6 : 4;
@@ -162,7 +170,10 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
     )
     .all(family);
   const optionValues = fillScopeOptions(
-    enabledRows.map((row) => ({ code: row.option_code, value: row.value })),
+    enabledRows.map((row) => ({
+      code: row.option_code,
+      value: row.value != null && row.value !== '' ? USE_DEFAULT : null,
+    })),
     { parsed, gateway, domain, serverIp: getServerIpForSubnet(cidr) },
   );
   writeScopeOptionRows(db, scopeId, family, optionValues);
@@ -175,13 +186,15 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
  * the fallback resolver); IPv6 gets the search list (24) from the domain and
  * DNS (23) from CIDRella's IPv6 address on the network, with no fallback
  * since routers, prefixes and the rest come from Router Advertisements.
- * Returns a Map of code to value; a code still blank has a null value.
+ * A value may be USE_DEFAULT, which counts as set. Returns a Map of code to
+ * value; a code still blank has a null value.
  */
 export function fillScopeOptions(enabled, { parsed, gateway, domain, serverIp }) {
   const family = parsed.family === 6 ? 6 : 4;
   const optionValues = new Map();
   for (const { code, value } of enabled) {
-    optionValues.set(Number(code), value != null && value !== '' ? String(value) : null);
+    const blank = value == null || value === '';
+    optionValues.set(Number(code), value === USE_DEFAULT ? value : blank ? null : String(value));
   }
   const unset = (code) => !optionValues.get(code);
   if (family === 6) {
@@ -202,13 +215,17 @@ export function fillScopeOptions(enabled, { parsed, gateway, domain, serverIp })
   return optionValues;
 }
 
-/** Store a scope's option rows from fillScopeOptions; blank values are skipped. */
+/**
+ * Store a scope's option rows from fillScopeOptions: USE_DEFAULT as a linked
+ * row, blank values skipped.
+ */
 export function writeScopeOptionRows(db, scopeId, family, optionValues) {
   const insertOpt = db.prepare(
     'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, ?)',
   );
   for (const [code, value] of optionValues) {
-    if (value != null && value !== '') insertOpt.run(scopeId, code, String(value), family);
+    if (value === USE_DEFAULT) insertOpt.run(scopeId, code, null, family);
+    else if (value != null && value !== '') insertOpt.run(scopeId, code, String(value), family);
   }
 }
 
@@ -408,9 +425,10 @@ function createDefaultV6ScopeFromSource(db, source, targetId, parsed, gateway) {
   `,
   ).run(source.lease_time, source.domain_name, source.enabled, source.description, scopeId);
   // The source's DHCPv6 options, in their own namespace, replace the defaults.
+  // A linked row (NULL value) stays linked.
   db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scopeId);
   const insertOption = db.prepare(
-    'INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, ?, ?)',
+    'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, 6)',
   );
   for (const option of source.options || []) {
     insertOption.run(scopeId, option.option_code, option.value);

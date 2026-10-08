@@ -6,7 +6,10 @@
  * removed, including the pre-catalog scope columns (dns_servers, ntp_servers,
  * domain_search) that would otherwise keep serving 6, 42, 119 or 23, 24, 56.
  * A blank enabled option is filled from the scope's network by
- * fillScopeOptions, as for a new scope. Lease time and pools are untouched.
+ * fillScopeOptions, as for a new scope. When the editor's values become the
+ * defaults too, an option with a value is linked to its default (Use
+ * default), so later edits of the default reach the scope; otherwise the
+ * scope gets the value as its own. Lease time and pools are untouched.
  *
  * Preview and apply run the same code: preview does the writes in a
  * transaction, reads every scope's effective options, then rolls back. What a
@@ -14,7 +17,11 @@
  */
 
 import { parseNetwork, getServerIpForSubnet } from '../utils/ip.js';
-import { fillScopeOptions, writeScopeOptionRows } from '../services/subnet-dhcp-topology.js';
+import {
+  fillScopeOptions,
+  writeScopeOptionRows,
+  USE_DEFAULT,
+} from '../services/subnet-dhcp-topology.js';
 import { replaceDefaultOptions } from './dhcp-option.js';
 import { getScopePools, resolveEffectiveScopeOptions, scopeAddressFamily } from './dhcp-scope.js';
 
@@ -43,20 +50,33 @@ function familyScopes(db, family) {
     .filter((scope) => scopeAddressFamily(scope) === family);
 }
 
+// Code to { value, linked }: linked when the value is the default's (Use default).
 function effectiveMap(db, scope) {
   const fresh = db.prepare('SELECT * FROM dhcp_scopes WHERE id = ?').get(scope.id);
   const options = resolveEffectiveScopeOptions(db, { ...scope, ...fresh }).options;
-  return new Map(options.map((option) => [option.option_code, option.value]));
+  return new Map(
+    options.map((option) => [
+      option.option_code,
+      { value: option.value, linked: option.source === 'default' },
+    ]),
+  );
 }
 
+// A change is a different value, or the same value moving to or from the default.
 function diff(before, after) {
   const codes = [...new Set([...before.keys(), ...after.keys()])].sort((a, b) => a - b);
   return codes
-    .filter((code) => before.get(code) !== after.get(code))
+    .filter(
+      (code) =>
+        before.get(code)?.value !== after.get(code)?.value ||
+        !!before.get(code)?.linked !== !!after.get(code)?.linked,
+    )
     .map((code) => ({
       code,
-      before: before.get(code) ?? null,
-      after: after.get(code) ?? null,
+      before: before.get(code)?.value ?? null,
+      after: after.get(code)?.value ?? null,
+      before_default: !!before.get(code)?.linked,
+      after_default: !!after.get(code)?.linked,
     }));
 }
 
@@ -84,7 +104,7 @@ function replaceScopeOptions(db, scope, family, enabled) {
  * would change, so a preview can pass every scope.
  *
  * With `saveDefaults` the family's defaults become the editor's too, first,
- * since a default with a value is served to every scope without its own.
+ * and each enabled option with a value is linked to its default.
  */
 export function bulkChangeScopeOptions(
   db,
@@ -92,7 +112,11 @@ export function bulkChangeScopeOptions(
 ) {
   const enabledSet = new Set(enabled.map(Number));
   const values = new Map(options.map((option) => [Number(option.code), option.value]));
-  const enabledOptions = [...enabledSet].map((code) => ({ code, value: values.get(code) }));
+  const hasValue = (code) => values.get(code) != null && values.get(code) !== '';
+  const enabledOptions = [...enabledSet].map((code) => ({
+    code,
+    value: saveDefaults && hasValue(code) ? USE_DEFAULT : values.get(code),
+  }));
   const only = scopeIds ? new Set(scopeIds.map(Number)) : null;
 
   let result;

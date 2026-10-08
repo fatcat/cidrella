@@ -36,6 +36,12 @@ const InputStub = {
   template:
     '<input :value="modelValue" @input="$emit(\'update:modelValue\', $event.target.value)" />',
 };
+const CheckboxStub = {
+  props: ['modelValue', 'inputId'],
+  emits: ['update:modelValue'],
+  template:
+    '<input type="checkbox" :id="inputId" :checked="modelValue" @change="$emit(\'update:modelValue\', $event.target.checked)" />',
+};
 
 const subnet = { id: 11, name: 'Lab', cidr: '10.0.0.0/24', status: 'allocated', children: [] };
 const scope = {
@@ -60,6 +66,7 @@ function mountDialog() {
         Dialog: DialogStub,
         Button: ButtonStub,
         InputText: InputStub,
+        Checkbox: CheckboxStub,
         InputNumber: true,
         Select: true,
         ToggleSwitch: true,
@@ -224,7 +231,8 @@ describe('ScopeDialog on an IPv6 network', () => {
 
   it('offers the DHCPv6 modes, hides the pool for a SLAAC mode, and sends the mode', async () => {
     const wrapper = mountDialog();
-    await wrapper.vm.openEdit(scope6);
+    // NTP Servers (56) is stored linked: a row with no value uses the default.
+    await wrapper.vm.openEdit({ ...scope6, options: [{ option_code: 56, value: null }] });
     await flushPromises();
     expect(wrapper.find('[data-track="scope-v6-mode"]').exists()).toBe(true);
     expect(wrapper.vm.form.v6_mode).toBe('stateless');
@@ -242,21 +250,83 @@ describe('ScopeDialog on an IPv6 network', () => {
     expect(rapid.text()).toContain('always on');
     expect(wrapper.vm.form.optionValues[3]).toBeUndefined();
     expect(wrapper.vm.form.optionValues[1]).toBeUndefined();
-    // On edit, a default is preselected only when it carries a value (as for
-    // IPv4): the NTP default, then the search list from the network's domain.
-    // DNS Servers (23) stays unselected because this scope has no server_ip.
+    // On edit the scope's own rows load: the linked NTP row as Use default,
+    // then the search list from the network's domain. DNS Servers (23) stays
+    // unselected because this scope has no server_ip.
     expect(wrapper.vm.form.selectedOptions).toEqual([56, 24]);
-    expect(wrapper.vm.form.optionValues[56]).toBe('fd00::123');
+    expect(wrapper.vm.form.useDefault).toEqual([56]);
     expect(wrapper.vm.form.optionValues[24]).toBe('six.test');
+    const ntp = wrapper.findAll('.scope-option-row').at(2);
+    expect(ntp.text()).toContain('fd00::123');
+    expect(ntp.find('#scope-option-56-use-default').element.checked).toBe(true);
 
     await saveButton(wrapper).trigger('click');
     await flushPromises();
     const [, payload] = dhcpStore.updateScope.mock.calls[0];
     expect(payload.v6_mode).toBe('stateless');
     expect(payload.options).toEqual([
-      { code: 56, value: 'fd00::123' },
+      { code: 56, use_default: true },
       { code: 24, value: 'six.test' },
     ]);
+  });
+
+  // DHCP-01: a default reaches a scope only when the scope uses it.
+  describe('Use default', () => {
+    it('leaves a default the scope does not use unselected on edit', async () => {
+      const wrapper = mountDialog();
+      await wrapper.vm.openEdit(scope6);
+      await flushPromises();
+      expect(wrapper.vm.form.selectedOptions).toEqual([24]);
+      expect(wrapper.vm.form.useDefault).toEqual([]);
+      await saveButton(wrapper).trigger('click');
+      await flushPromises();
+      const [, payload] = dhcpStore.updateScope.mock.calls[0];
+      expect(payload.options).toEqual([{ code: 24, value: 'six.test' }]);
+    });
+
+    it('ticks an option with a default as Use default, and unticking Use default starts an own value from it', async () => {
+      const wrapper = mountDialog();
+      await wrapper.vm.openEdit(scope6);
+      await flushPromises();
+      wrapper.vm.optionsExpanded = true;
+      await flushPromises();
+      const ntp = () => wrapper.findAll('.scope-option-row').at(2);
+      await ntp().find('input[type="checkbox"]').setValue(true);
+      expect(wrapper.vm.form.useDefault).toEqual([56]);
+      await ntp().find('#scope-option-56-use-default').setValue(false);
+      expect(wrapper.vm.form.useDefault).toEqual([]);
+      expect(wrapper.vm.form.optionValues[56]).toBe('fd00::123');
+      await saveButton(wrapper).trigger('click');
+      await flushPromises();
+      const [, payload] = dhcpStore.updateScope.mock.calls[0];
+      expect(payload.options).toContainEqual({ code: 56, value: 'fd00::123' });
+    });
+
+    it('links an IPv4 scope row the same way', async () => {
+      api.get.mockImplementation((url) => {
+        if (url === '/dhcp/options')
+          return Promise.resolve({
+            data: {
+              family: 4,
+              catalog: [{ code: 42, label: 'NTP Servers', type: 'ip-list', group: 'Common' }],
+              groups: [{ name: 'Common', label: 'Common' }],
+              defaults: { 42: '10.0.0.123' },
+              enabledDefaults: [42],
+            },
+          });
+        if (url === '/subnets')
+          return Promise.resolve({ data: { folders: [{ id: 1, name: 'Lab', subnets: [subnet] }] } });
+        return Promise.reject(new Error(`Unexpected GET ${url}`));
+      });
+      const wrapper = mountDialog();
+      await wrapper.vm.openEdit({ ...scope, options: [{ option_code: 42, value: null }] });
+      await flushPromises();
+      expect(wrapper.vm.form.useDefault).toEqual([42]);
+      await saveButton(wrapper).trigger('click');
+      await flushPromises();
+      const [, payload] = dhcpStore.updateScope.mock.calls[0];
+      expect(payload.options).toContainEqual({ code: 42, use_default: true });
+    });
   });
 
   it('shows the pool again for a stateful scope', async () => {
@@ -302,6 +372,8 @@ describe('ScopeDialog on an IPv6 network', () => {
       });
       await flushPromises();
       expect(wrapper.vm.form.v6_mode).toBe('stateful');
+      // The add-to-new-scopes default with a value is linked, not copied.
+      expect(wrapper.vm.form.useDefault).toEqual([56]);
 
       await saveButton(wrapper).trigger('click');
       await flushPromises();
@@ -310,7 +382,10 @@ describe('ScopeDialog on an IPv6 network', () => {
         expect.objectContaining({ start_ip: 'fd00:1234::10', end_ip: 'fd00:1234::20' }),
       );
       expect(dhcpStore.createScope).toHaveBeenCalledWith(
-        expect.objectContaining({ v6_mode: 'stateful' }),
+        expect.objectContaining({
+          v6_mode: 'stateful',
+          options: expect.arrayContaining([{ code: 56, use_default: true }]),
+        }),
       );
     });
 

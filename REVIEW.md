@@ -14,25 +14,19 @@ was suggested.
 
 ## Found building DHCP Bulk Change (2026-10-05)
 
-#### DHCP-01: A default option with a value is served to every scope, ticked or not
+#### DHCP-03: The scope resolver drops IPv6 option 51, which is only IPv4 lease time
 
-**medium**, confirmed. `server/src/models/dhcp-scope.js:281`
+**low**, confirmed. `server/src/models/dhcp-scope.js:307` and `:338`
 
-- **What happens:** Settings, DHCP, Scopes & Leases: give NTP Servers (42) a value and untick
-  Enabled by Default. Every existing scope with no 42 row of its own now serves that NTP pool,
-  and so does every new scope. In Bulk Change, unticking 42 under Apply cannot take NTP off a
-  scope while the default has a value: the preview shows the scope's own value replaced by the
-  default's, not removed.
-- **Why:** `resolveEffectiveScopeOptions` seeds every scope from all `dhcp_option_defaults`
-  rows with a value (`global_default`), ignoring `enabled_by_default`. The checkbox only decides
-  what is copied into a new scope's rows. The editor's wording ("Enabled by Default", and until
-  this change "will not affect existing scopes") says a default is a template, not a global.
-- **Fix:** Decide which it is. Global is relied on today: the 0.5.0 release notes say existing
-  stateless and stateful DHCPv6 scopes pick up NTP (56) through it after the upgrade. If it
-  stays global, label the value column as served to every scope and let a scope or Bulk Change
-  suppress one. If it becomes a template, seed only from rows with `enabled_by_default = 1` (or
-  from none, since new scopes carry their own rows), and roll new defaults out with Bulk Change
-  instead.
+- **What happens:** Add a DHCPv6 custom option 51 and give a scope a value for it, or set it to
+  Use default. The scope serves nothing for 51: it is missing from `effective.options` and
+  from the rendered config.
+- **Why:** `resolveEffectiveScopeOptions` skips code 51 for linked defaults and for the
+  scope's own rows in both families. IPv4 51 is the scope's `lease_time`, so the skip is right
+  there; DHCPv4 and DHCPv6 codes are separate namespaces, and `saveScopeOptions` already
+  refuses 51 for IPv4 only. Predates DHCP-01 (the old `global_default` seed skipped it too).
+- **Fix:** skip 51 only when the scope's family is 4, in both places, with an IPv4 and an IPv6
+  test.
 
 #### DHCP-02: The scope dialog fills network-derived option values in its own copy of the rule
 

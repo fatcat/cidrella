@@ -266,16 +266,17 @@ describe('DHCPv6 scope options', () => {
     expect(scope.effective.router_suppressed).toBe(false);
   });
 
-  it('layers global IPv6 defaults, the scope columns and explicit rows in that order', () => {
+  it('layers linked IPv6 defaults, the scope columns and explicit rows in that order', () => {
     const subnetId = createV6Subnet();
     const rangeId = createRange(subnetId, 'fd00:50::1000', 'fd00:50::1fff');
     // Startup seeded 23 and 24 for IPv6; replace the rows this test pins.
     db.prepare(
-      'DELETE FROM dhcp_option_defaults WHERE option_code IN (23, 32, 56) AND address_family IN (4, 6)',
+      'DELETE FROM dhcp_option_defaults WHERE option_code IN (23, 31, 32, 56) AND address_family IN (4, 6)',
     ).run();
     db.prepare(
       `INSERT INTO dhcp_option_defaults (option_code, value, enabled_by_default, address_family)
-       VALUES (56, 'fd00::123', 1, 6), (32, '7200', 1, 6), (23, 'fd00::1', 1, 6)`,
+       VALUES (56, 'fd00::123', 1, 6), (32, '7200', 1, 6), (23, 'fd00::1', 1, 6),
+         (31, 'fd00::31', 0, 6)`,
     ).run();
     // An IPv4 default with the same code must not leak into an IPv6 scope.
     db.prepare(
@@ -292,6 +293,11 @@ describe('DHCPv6 scope options', () => {
     db.prepare(
       'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, 24, ?, 6)',
     ).run(scopeId, 'explicit.test');
+    // Linked rows (Use default) for 23, 32 and 56; 31 has a default the scope does not use.
+    const link = db.prepare(
+      'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, NULL, 6)',
+    );
+    for (const code of [23, 32, 56]) link.run(scopeId, code);
 
     const effective = Object.fromEntries(
       DhcpScope.resolveEffectiveScopeOptions(db, loadScope(scopeId)).options.map((option) => [
@@ -306,7 +312,8 @@ describe('DHCPv6 scope options', () => {
     });
     expect(effective[56]).toEqual({ option_code: 56, value: 'fd00:50::7', source: 'legacy_scope' });
     expect(effective[24]).toEqual({ option_code: 24, value: 'explicit.test', source: 'scope' });
-    expect(effective[32]).toEqual({ option_code: 32, value: '7200', source: 'global_default' });
-    db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code IN (23, 32, 56)').run();
+    expect(effective[32]).toEqual({ option_code: 32, value: '7200', source: 'default' });
+    expect(effective[31]).toBeUndefined();
+    db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code IN (23, 31, 32, 56)').run();
   });
 });
