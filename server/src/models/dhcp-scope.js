@@ -304,7 +304,10 @@ export function resolveEffectiveScopeOptions(db, scope) {
   );
   for (const row of rows.filter(isLinkedOption)) {
     const code = Number(row.option_code);
-    if (code !== 51) set(code, defaults.get(code), 'default');
+    // IPv4 51 is the scope's lease_time, never a default. DHCPv6 codes are a
+    // separate namespace, so an IPv6 51 is an ordinary option.
+    if (family === 4 && code === 51) continue;
+    set(code, defaults.get(code), 'default');
   }
   const explicit = rows.filter((row) => !isLinkedOption(row));
 
