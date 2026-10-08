@@ -1110,16 +1110,9 @@ function validateUpstreamList(arr, mode) {
 
 // GET /api/dns/encryption: mode, configured upstreams, preset catalog, live status
 router.get('/encryption', requirePerm('dns:read'), (req, res) => {
-  let upstreams;
-  try {
-    const raw = getSetting('forwarder_encrypted_upstreams');
-    upstreams = Array.isArray(raw) ? raw : JSON.parse(raw || '[]');
-  } catch {
-    upstreams = [];
-  }
   res.json({
     mode: getSetting('forwarder_encryption') || 'off',
-    upstreams,
+    upstreams: getSetting('forwarder_encrypted_upstreams') || [],
     providers: DOH_PROVIDERS,
     status: getEncryptedForwarderStatus(),
   });

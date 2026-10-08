@@ -18,6 +18,8 @@ import { canonicalizeIp } from './address.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import { parseCidrEntry, ipInAny } from './cidr-match.js';
 import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
+import { extractEde, failureCause, FAILURE_CAUSES } from './dns-ede.js';
+import { createReservoir, quantileOfSorted } from './samples.js';
 import {
   DATA_DIR,
   GEOIP_CACHE_MAX,
@@ -96,21 +98,17 @@ let blocklistBlockedDelta = 0;
 let blocklistCategoryHits = new Map();
 
 // Performance instrumentation, reservoir sampling caps memory at 1000 samples
-const RESERVOIR_SIZE = 1000;
-let latencySamples = [];
-let latencySampleCount = 0;
+const latency = createReservoir(1000);
 function recordLatency(us) {
-  latencySampleCount++;
-  if (latencySamples.length < RESERVOIR_SIZE) {
-    latencySamples.push(us);
-  } else {
-    const j = Math.floor(Math.random() * latencySampleCount);
-    if (j < RESERVOIR_SIZE) latencySamples[j] = us;
-  }
+  latency.add(us);
 }
 let cacheHits = 0;
 let cacheMisses = 0;
 let timeoutCount = 0;
+// Failed answers this minute, by cause (utils/dns-ede.js), and NXDOMAINs.
+const noFailures = () => Object.fromEntries(FAILURE_CAUSES.map((cause) => [cause, 0]));
+let failureCounts = noFailures();
+let nxdomainCount = 0;
 let proxyStartedAt = null;
 let proxyStartupMs = null;
 
@@ -323,6 +321,17 @@ function buildOptEcho(opt) {
 export function classifyDnssecSupport(response, { enabled, checkingDisabled = false } = {}) {
   if (!enabled || checkingDisabled || response?.rcode !== 'NOERROR') return null;
   return Boolean(response.flags & dnsPacket.AUTHENTIC_DATA);
+}
+
+// The EDE and cause of one answer the client got, counted for the minute.
+// `response` is the decoded answer, or null when there was none.
+export function noteAnswer(response, { timedOut = false } = {}) {
+  const rcode = timedOut ? 'SERVFAIL' : response?.rcode;
+  const ede = extractEde(response)?.code ?? null;
+  const failure = failureCause(rcode, ede, { timedOut });
+  if (failure) failureCounts[failure]++;
+  if (rcode === 'NXDOMAIN') nxdomainCount++;
+  return { ede, failure };
 }
 
 // Create NXDOMAIN response for a query (echoes EDNS OPT when present)
@@ -591,6 +600,7 @@ function handleQuery(msg, rinfo, sock) {
           responseCode: 'SERVFAIL',
           action: 'allowed',
           latencyUs,
+          ...noteAnswer(null, { timedOut: true }),
         });
         try {
           // Echo the client's EDNS OPT (stored on the pending entry) so a
@@ -699,6 +709,7 @@ function handleDnsmasqResponse(msg) {
       latencyUs,
       resolvedIp: firstIp,
       dnssecSupported,
+      ...noteAnswer(response),
     });
   } catch (err) {
     proxyLog('error', 'Response processing error', { error: err.message });
@@ -818,6 +829,7 @@ async function handleTcpQuery(msg, clientSock) {
       responseCode: 'SERVFAIL',
       action: 'allowed',
       latencyUs,
+      ...noteAnswer(null, { timedOut: true }),
     });
     return;
   }
@@ -870,6 +882,7 @@ async function handleTcpQuery(msg, clientSock) {
     latencyUs,
     resolvedIp: ips[0] || null,
     dnssecSupported,
+    ...noteAnswer(response),
   });
 }
 
@@ -1266,9 +1279,7 @@ export function getAndResetCountryHits() {
 
 // Get and reset performance metrics (for metrics aggregator)
 export function getAndResetPerformanceMetrics() {
-  const samples = latencySamples;
-  latencySamples = [];
-  latencySampleCount = 0;
+  const { sorted: samples, seen } = latency.drain();
 
   const hits = cacheHits;
   const misses = cacheMisses;
@@ -1279,6 +1290,10 @@ export function getAndResetPerformanceMetrics() {
   timeoutCount = 0;
 
   const pending = pendingQueries.size;
+  const failures = failureCounts;
+  const nxdomain = nxdomainCount;
+  failureCounts = noFailures();
+  nxdomainCount = 0;
 
   if (samples.length === 0) {
     return {
@@ -1292,24 +1307,26 @@ export function getAndResetPerformanceMetrics() {
       timeouts,
       pendingQueries: pending,
       startupMs: proxyStartupMs,
+      failures,
+      nxdomain,
     };
   }
 
-  samples.sort((a, b) => a - b);
   const sum = samples.reduce((a, b) => a + b, 0);
-  const p95Idx = Math.floor(samples.length * 0.95);
 
   return {
-    queryCount: samples.length,
+    queryCount: seen,
     latencyMin: Math.round(samples[0]),
     latencyAvg: Math.round(sum / samples.length),
     latencyMax: Math.round(samples[samples.length - 1]),
-    latencyP95: Math.round(samples[p95Idx]),
+    latencyP95: Math.round(quantileOfSorted(samples, 0.95)),
     cacheHits: hits,
     cacheMisses: misses,
     timeouts,
     pendingQueries: pending,
     startupMs: proxyStartupMs,
+    failures,
+    nxdomain,
   };
 }
 

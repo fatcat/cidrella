@@ -238,6 +238,22 @@ the DHCP leases table columns for DUID/IAID default to hidden. No IPv6 NTP defau
 
 ## Deferred design work
 
+### Resolver instrumentation: what the 2026-10-08 pass left out
+
+The resolver pass (failed-answer causes, `metrics_forwarder`, the probing
+Forwarders chip, the Performance board) covers encrypted forwarding. Two parts
+were left out on purpose:
+
+- **Per-server counts for plain forwarding.** With encryption off, dnsmasq
+  talks to the upstreams itself and CIDRella sees only the answers. dnsmasq
+  writes per-server counts (queries sent, retried, failed, average latency) to
+  its log on SIGUSR1. Reading them each minute would fill `metrics_forwarder`
+  for plain servers too. Not measured yet: whether the signal also dumps the
+  cache and how big that log line gets on a busy box.
+- **Alerts.** A failure rate or failover count crossing a line should notify
+  someone. That belongs with the error-reporting release (the user's ruling),
+  not here; the minute rows are what it will read.
+
 ### Workspace UI implementation (0.5.0), in flight
 
 Spec: [docs/WORKSPACE-UI-IMPLEMENTATION-PLAN.md](docs/WORKSPACE-UI-IMPLEMENTATION-PLAN.md).
