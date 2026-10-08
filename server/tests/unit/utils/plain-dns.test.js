@@ -41,3 +41,14 @@ describe.each(['127.0.0.1', '::1'])('plain DNS to %s', (address) => {
     }
   });
 });
+
+describe('plainUdpQuery when the send fails', () => {
+  it.each(['127.0.0.1', '::1'])('resolves no answer from %s instead of throwing', async (address) => {
+    // Port 0 cannot be sent to; the socket is closed once and nothing throws.
+    const result = await plainUdpQuery(address, nameQuery('example.com'), {
+      timeoutMs: 1000,
+      port: 0,
+    });
+    expect(result.answer).toBeNull();
+  });
+});
