@@ -24,7 +24,7 @@ import {
   DATA_DIR,
   GEOIP_CACHE_MAX,
   GEOIP_CACHE_TTL_MS,
-  GEOIP_QUERY_TIMEOUT_MS,
+  PROXY_UDP_TIMEOUT_MS,
   GEOIP_DOWNLOAD_TIMEOUT_MS,
   GEOIP_CHECK_INTERVAL_MS,
   GEOIP_STARTUP_DELAY_MS,
@@ -615,7 +615,7 @@ function handleQuery(msg, rinfo, sock) {
           /* ignore */
         }
       }
-    }, GEOIP_QUERY_TIMEOUT_MS);
+    }, PROXY_UDP_TIMEOUT_MS);
 
     pendingQueries.set(internalId, {
       address: rinfo.address,

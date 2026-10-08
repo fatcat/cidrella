@@ -257,8 +257,9 @@ body {
   letter-spacing: 0.02em;
 }
 
-/* Compact action buttons inside DataTable rows fit the 36px row. */
-.p-datatable .p-datatable-tbody .p-button {
+/* Compact icon buttons inside DataTable rows fit the 36px row. A button with a
+   label keeps its own size, or its label is clipped to nothing. */
+.p-datatable .p-datatable-tbody .p-button.p-button-icon-only {
   width: 1.5rem !important;
   height: 1.5rem !important;
   min-width: 1.5rem !important;
@@ -267,7 +268,7 @@ body {
   font-size: 0.75rem !important;
   line-height: 1 !important;
 }
-.p-datatable .p-datatable-tbody .p-button .p-button-icon {
+.p-datatable .p-datatable-tbody .p-button-icon-only .p-button-icon {
   font-size: 0.75rem !important;
 }
 .p-datatable .action-buttons {

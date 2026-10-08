@@ -1,8 +1,8 @@
 <!-- Analytics "Performance": how fast the resolver answers, how often it
      fails and why, and what it costs the box. The proxy's minute rows
      (/api/metrics/proxy-perf) carry the speed and the failed answers by
-     cause; the forwarder's (/api/metrics/forwarder) what each encrypted
-     upstream did; /api/metrics/dns-failures the names that failed. Same
+     cause; the forwarder's (/api/metrics/forwarder) what each upstream
+     did; /api/metrics/dns-failures the names that failed. Same
      grammar as the health board. -->
 <template>
   <div class="workspace performance" data-track="analytics-performance">
@@ -113,7 +113,7 @@
           title="Upstreams"
           :rows="providerRows"
           count-header="Answers"
-          empty-text="Encrypted forwarding is off, or nothing was forwarded"
+          empty-text="Nothing was forwarded in this range"
           track="performance-resolver-provider"
         />
       </div>
@@ -298,10 +298,10 @@ const failedNote = computed(
 );
 const upstreamNote = computed(() =>
   forwarder.value.providers.length
-    ? `encrypted forwarding · ${formatNumber(
+    ? `forwarding · ${formatNumber(
         forwarder.value.providers.reduce((t, p) => t + p.answers, 0),
       )} answers in the range`
-    : 'encrypted forwarding is off',
+    : 'nothing was forwarded',
 );
 const failoverFigure = computed(() => failoverFigureOf(forwarder.value));
 const failedNames = computed(() => failedNameRows(store.dnsFailures));

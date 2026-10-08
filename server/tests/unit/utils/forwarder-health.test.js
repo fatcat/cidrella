@@ -33,9 +33,22 @@ beforeEach(() => {
   set('dns_no_recursion', 'false');
   set('dns_upstream_servers', ['8.8.8.8', '2001:4860:4860::8888']);
   set('forwarder_encrypted_upstreams', [quad9, adguard]);
+  set('dns_upstream_backup_servers', []);
 });
 
 describe('forwarderHealth', () => {
+  it('probes the plain backup after the primary, either family', async () => {
+    set('forwarder_encryption', 'off');
+    set('dns_upstream_backup_servers', ['1.1.1.1', '2606:4700:4700::1111']);
+    testDnsForwarder.mockResolvedValue({ reachable: true });
+    const out = await forwarderHealth();
+    expect(out.map((f) => f.ip)).toEqual([
+      '8.8.8.8',
+      '2001:4860:4860::8888',
+      '1.1.1.1',
+      '2606:4700:4700::1111',
+    ]);
+  });
   it('probes every address of every encrypted provider, either family', async () => {
     set('forwarder_encryption', 'tls');
     probeAddress.mockImplementation(async ({ address }) =>

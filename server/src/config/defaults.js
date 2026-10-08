@@ -18,6 +18,11 @@ export const BACKEND_RESTART_MARKER = path.join(DATA_DIR, 'runtime', 'restart-ba
 
 export const DEFAULTS = {
   dns_upstream_servers: ['8.8.8.8', '9.9.9.9'],
+  // The plaintext backup resolver's addresses, tried after dns_upstream_servers.
+  dns_upstream_backup_servers: [],
+  // With a backup set, in both modes: 'failover' asks the backup only when the
+  // primary fails, 'balance' spreads queries over both (utils/forwarding-settings.js).
+  dns_upstream_backup_mode: 'balance',
   dns_soa_defaults: {
     soa_refresh: 3600,
     soa_retry: 900,
@@ -110,7 +115,6 @@ export const GEOIP_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 export const GEOIP_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const GEOIP_STARTUP_DELAY_MS = 15000; // 15 seconds
 export const GEOIP_DOWNLOAD_TIMEOUT_MS = 60000; // 60 seconds
-export const GEOIP_QUERY_TIMEOUT_MS = 5000;
 export const ARPING_TIMEOUT_MS = 5000;
 export const PING_TIMEOUT_MS = 1500;
 // Echoes sent before a host the scanner last saw online is called offline,
@@ -163,11 +167,18 @@ export const DEFAULT_DNS_LISTEN_PORT = 53;
 // here (server=127.0.0.1#<port>) when DoT/DoH forwarding is enabled. 5356 avoids
 // 5353 (mDNS, dnsmasq internal) and 5355 (LLMNR).
 export const ENCRYPTED_FORWARDER_PORT = 5356;
-// One send to an encrypted upstream, and the whole query: every send, resend
-// and failover to the next provider fits in the budget, which stays under the
-// 10 seconds dnsmasq waits for a forwarded UDP query (TIMEOUT in its config.h).
-export const ENCRYPTED_FORWARDER_TIMEOUT_MS = 3000;
-export const ENCRYPTED_FORWARDER_BUDGET_MS = 8000;
+// How long a forwarded query may take, outermost first. The DNS proxy answers
+// a client SERVFAIL when dnsmasq has not answered in PROXY_UDP_TIMEOUT_MS
+// (about when a client's own resolver gives up and asks again); dnsmasq itself
+// waits 10 seconds (TIMEOUT in its config.h). The encrypted forwarder behind
+// dnsmasq must answer inside the proxy's wait: one send gets
+// ENCRYPTED_FORWARDER_TIMEOUT_MS, and every send, resend and failover to the
+// next provider fits in ENCRYPTED_FORWARDER_BUDGET_MS. A provider that gave no
+// answer goes to the back of the line for ENCRYPTED_FORWARDER_HOLD_MS.
+export const PROXY_UDP_TIMEOUT_MS = 5000;
+export const ENCRYPTED_FORWARDER_TIMEOUT_MS = 2500;
+export const ENCRYPTED_FORWARDER_BUDGET_MS = 4500;
+export const ENCRYPTED_FORWARDER_HOLD_MS = 30_000;
 
 /**
  * Returns the port dnsmasq should bind internally, given the user's LAN

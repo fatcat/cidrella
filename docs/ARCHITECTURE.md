@@ -359,13 +359,44 @@ Measured on dnsmasq 2.91 (2026-10-08, scratch instances on testerella):
   when no provider answered, and that reaches the client as `upstream`.
 - A dead or refusing plain upstream gets no answer from dnsmasq at all; it
   gives up after 10 seconds. The client, or the proxy in front of it, times out,
-  which is why `timeout` is its own cause and the encrypted forwarder keeps a
-  query under 8 seconds.
+  which is why `timeout` is its own cause and the forwarder keeps a query
+  under 4.5 seconds.
 - Local names answer with no EDE.
 
-Each encrypted provider address also gets a minute row in `metrics_forwarder`
-(queries, answers, timeouts, resent drops, refused connections, failovers, p50
-and p95 latency). Plain forwarding has no per-server counts yet.
+Each upstream address also gets a minute row in `metrics_forwarder` (queries,
+answers, timeouts, resent drops, refused connections, failovers, p50 and p95
+latency), plaintext included.
+
+### Upstream forwarding: primary, backup, and the timing chain
+
+With recursion on, dnsmasq has one `server=` line, `127.0.0.1#5356`, in every
+mode. The forwarder there (`utils/encrypted-forwarder.js`, named for where it
+started) sends each query on as plain DNS, DoT or DoH. Plaintext has its own
+path because dnsmasq left to itself does not take turns: on dnsmasq 2.91 two
+plain servers got 45 queries to 1.
+
+The forwarder has at most two upstreams, a primary and a backup
+(`dns_upstream_servers` and `dns_upstream_backup_servers` for plaintext, read
+through `plainUpstreams()` in `utils/forwarding-settings.js`;
+`forwarder_encrypted_upstreams` for DoT and DoH). `dns_upstream_backup_mode`
+says where a query starts:
+
+- **On failure** (`failover`): always at the primary. The backup is asked only
+  when the primary gives no answer.
+- **Load balance** (`balance`, the default): the two take turns, and each is
+  asked when the other gives no answer.
+
+A resolver's addresses are tried in order within it. An upstream that gave no
+answer is held for 30 seconds (`ENCRYPTED_FORWARDER_HOLD_MS`): it goes to the
+back of the line until it answers again or the settings change, so a dead
+primary costs one slow query, not one per query.
+
+The waits nest so each layer answers before the one in front gives up: a send
+waits 2.5 s (`ENCRYPTED_FORWARDER_TIMEOUT_MS`), a query gets 4.5 s across
+every upstream (`ENCRYPTED_FORWARDER_BUDGET_MS`), the DNS proxy waits 5 s for
+dnsmasq (`PROXY_UDP_TIMEOUT_MS`), and dnsmasq waits 10 s for the forwarder.
+When nothing answers the forwarder returns SERVFAIL with EDE 22; there is no
+fallback from encrypted to plaintext.
 
 ### What deallocating a network takes with it
 

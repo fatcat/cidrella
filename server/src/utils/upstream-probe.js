@@ -4,23 +4,93 @@
  * (scripts/check-dns-providers.js) and the services health check probes the
  * upstreams in use.
  */
+import crypto from 'crypto';
 import dnsPacket from 'dns-packet';
 import { createUpstreamPool } from './upstream-pool.js';
+import { plainUdpQuery } from './plain-dns.js';
 
 // Signed, and stable for decades: an answer without an RRSIG means the
 // upstream stripped it.
 export const PROBE_NAME = 'example.com';
 
-export function probeQuery() {
+// Names a resolver usually answers from its own cache: what clients feel.
+export const COMMON_NAMES = Object.freeze([
+  'wikipedia.org',
+  'github.com',
+  'youtube.com',
+  'amazon.com',
+  'microsoft.com',
+  'apple.com',
+  'cloudflare.com',
+  'netflix.com',
+  'reddit.com',
+  'example.com',
+]);
+
+// Large UNSIGNED zones (no DNSKEY, checked 2026-10-08). A random label under
+// one is in no resolver's cache, and with no NSEC records to reuse (RFC 8198)
+// the resolver must ask the zone's servers. google.com is left out: Google's
+// resolver sits next to its own authority.
+export const UNCACHED_ZONES = Object.freeze([
+  'amazon.com',
+  'microsoft.com',
+  'apple.com',
+  'facebook.com',
+  'yahoo.com',
+  'netflix.com',
+]);
+
+/** A name no resolver has cached, under `zone`. */
+export function uncachedName(zone) {
+  return `${crypto.randomBytes(8).toString('hex')}.${zone}`;
+}
+
+/** An A query for `name` with EDNS and the DO bit, as dnsmasq sends them. */
+export function nameQuery(name, id = crypto.randomInt(0, 0x10000)) {
   return dnsPacket.encode({
-    id: 0x5ec5,
+    id,
     type: 'query',
     flags: dnsPacket.RECURSION_DESIRED,
-    questions: [{ type: 'A', name: PROBE_NAME }],
+    questions: [{ type: 'A', name }],
     additionals: [
       { type: 'OPT', name: '.', udpPayloadSize: 1232, flags: dnsPacket.DNSSEC_OK, options: [] },
     ],
   });
+}
+
+export function probeQuery() {
+  return nameQuery(PROBE_NAME, 0x5ec5);
+}
+
+/** Why an answer does not count as one when timing a resolver, or null. */
+export function timingProblem(response) {
+  if (!response) return 'no answer';
+  let rcode;
+  try {
+    rcode = dnsPacket.decode(response).rcode;
+  } catch (error) {
+    return `undecodable answer: ${error.message}`;
+  }
+  // NXDOMAIN is the right answer for a random name.
+  return rcode === 'NOERROR' || rcode === 'NXDOMAIN' ? null : `answered ${rcode}`;
+}
+
+/**
+ * Time one query for `name` to one address of a resolver, straight over the
+ * wire (dnsmasq and its cache are not involved). `pool` is the caller's
+ * createUpstreamPool for 'dot' and 'doh', kept open across queries the way
+ * the forwarder keeps its connections; 'plain' needs none.
+ * Resolves { ms, problem }.
+ */
+export async function timeQuery({ protocol, provider, address, name, pool, timeoutMs, port }) {
+  const query = nameQuery(name);
+  if (protocol === 'plain') {
+    const { answer, ms } = await plainUdpQuery(address, query, { timeoutMs, port });
+    return { ms, problem: timingProblem(answer) };
+  }
+  const started = performance.now();
+  const response = await pool.query(query, { ...provider, addresses: [address] });
+  return { ms: performance.now() - started, problem: timingProblem(response) };
 }
 
 /** What is wrong with one answer, or null. */

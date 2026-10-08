@@ -60,7 +60,7 @@ export function providerLatencySeries(providers) {
   }));
 }
 
-/** The Failovers FigureCard. Null with no encrypted forwarding in the range. */
+/** The Failovers FigureCard. Null with nothing forwarded in the range. */
 export function failoverFigureOf(summary) {
   const on = summary.providers.length > 0;
   return {
@@ -68,7 +68,7 @@ export function failoverFigureOf(summary) {
     value: on ? summary.failovers : null,
     sub: on
       ? 'queries one provider could not answer, sent to the next'
-      : 'encrypted forwarding is off',
+      : 'nothing was forwarded',
     tone: summary.failovers ? 'warn' : 'ok',
     series: summary.rows.map((r) => r.failovers),
   };

@@ -46,6 +46,14 @@ import {
 } from '../utils/ip.js';
 import { canonicalizeIp, isValidIpv6, addressFamily } from '../utils/address.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
+import { BACKUP_MODES, backupMode } from '../utils/forwarding-settings.js';
+import {
+  PROTOCOL_FOR_MODE,
+  BenchmarkBusyError,
+  startBenchmark,
+  getBenchmark,
+  cancelBenchmark,
+} from '../services/resolver-benchmark.js';
 import { isBlockedAddress } from '../utils/url-guard.js';
 import {
   isValidPtrName,
@@ -986,16 +994,28 @@ router.post('/apply', requirePerm('dns:write'), (req, res) => {
 
 // GET /api/dns/forwarders
 router.get('/forwarders', requirePerm('dns:read'), (req, res) => {
-  res.json({
-    servers: getSetting('dns_upstream_servers'),
-    no_recursion: getSetting('dns_no_recursion') === 'true',
-  });
+  res.json(forwarderSettings());
 });
+
+function forwarderSettings() {
+  return {
+    servers: getSetting('dns_upstream_servers'),
+    backup_servers: getSetting('dns_upstream_backup_servers') || [],
+    backup_mode: backupMode(),
+    no_recursion: getSetting('dns_no_recursion') === 'true',
+  };
+}
 
 // PUT /api/dns/forwarders
 router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
-  const { servers, no_recursion } = req.body;
+  const { servers, no_recursion, backup_servers, backup_mode } = req.body;
   const noRecursion = !!no_recursion;
+  if (backup_mode !== undefined && !BACKUP_MODES.includes(backup_mode)) {
+    return res.status(400).json({ error: `backup_mode must be one of ${BACKUP_MODES.join(', ')}` });
+  }
+  if (backup_servers !== undefined && !Array.isArray(backup_servers)) {
+    return res.status(400).json({ error: 'backup_servers must be a list of IP addresses' });
+  }
 
   // Upstream servers are only required when recursion is enabled, with recursion
   // off, CIDRella is authoritative-only and forwarders are ignored.
@@ -1004,14 +1024,29 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
       return res.status(400).json({ error: 'At least one upstream server is required' });
     }
   }
-  if (Array.isArray(servers)) {
-    for (const s of servers) {
-      if (!isValidAddress(s)) return res.status(400).json({ error: `Invalid IP address: ${s}` });
-    }
-    if (servers.some((s) => addressFamily(s) === 6) && refuseIpv6Unless(res)) return;
+  // Plain forwarders may be private (a site resolver), unlike encrypted upstreams.
+  const lists = [servers, backup_servers].filter(Array.isArray);
+  const invalid = lists.flat().find((s) => !isValidAddress(s));
+  if (invalid !== undefined) {
+    return res.status(400).json({ error: `Invalid IP address: ${invalid}` });
   }
+  if (lists.flat().some((s) => addressFamily(s) === 6) && refuseIpv6Unless(res)) return;
   // Store the canonical spelling; dnsmasq takes IPv6 literals in server= as is.
   const canonicalServers = Array.isArray(servers) ? servers.map((s) => canonicalizeIp(s)) : servers;
+  const canonicalBackup = Array.isArray(backup_servers)
+    ? backup_servers.map((s) => canonicalizeIp(s))
+    : undefined;
+  if (canonicalBackup) {
+    const primary = new Set(
+      canonicalServers?.length ? canonicalServers : getSetting('dns_upstream_servers'),
+    );
+    const shared = canonicalBackup.find((s) => primary.has(s));
+    if (shared) {
+      return res
+        .status(400)
+        .json({ error: `${shared} is in both the primary and the backup resolver` });
+    }
+  }
 
   const db = getDb();
   const oldRow = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
@@ -1021,6 +1056,8 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   if (Array.isArray(canonicalServers) && canonicalServers.length > 0) {
     setSetting('dns_upstream_servers', JSON.stringify(canonicalServers));
   }
+  if (canonicalBackup) setSetting('dns_upstream_backup_servers', JSON.stringify(canonicalBackup));
+  if (backup_mode !== undefined) setSetting('dns_upstream_backup_mode', backup_mode);
   setSetting('dns_no_recursion', noRecursion ? 'true' : 'false');
 
   // Re-evaluate the encrypted-forwarder stub: enabling no-recursion must stop it
@@ -1031,10 +1068,12 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   audit(req.user.id, 'dns_forwarders_updated', 'dns', null, {
     old: oldRow?.value,
     new: JSON.stringify(canonicalServers),
+    backup: canonicalBackup,
+    backup_mode,
     no_recursion: noRecursion,
   });
 
-  res.json({ servers: getSetting('dns_upstream_servers'), no_recursion: noRecursion });
+  res.json(forwarderSettings());
 });
 
 // GET /api/dns/dnssec: current state + dnsmasq support + clock-sync status
@@ -1084,7 +1123,12 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
 
 function validateUpstreamList(arr, mode) {
   if (!Array.isArray(arr) || arr.length === 0) return 'at least one upstream is required';
-  if (arr.length > 8) return 'too many upstreams (max 8)';
+  // A primary and a backup.
+  if (arr.length > 2) return 'at most two upstreams: a primary and a backup';
+  const hostnames = arr.map((u) => u?.hostname);
+  if (new Set(hostnames).size !== hostnames.length) {
+    return 'the primary and the backup are the same resolver';
+  }
   for (const u of arr) {
     if (!u || typeof u !== 'object') return 'each upstream must be an object';
     if (
@@ -1149,6 +1193,67 @@ router.put('/encryption', requirePerm('dns:write'), (req, res) => {
   });
 
   res.json({ mode, upstreams: list, status: getEncryptedForwarderStatus() });
+});
+
+// POST /api/dns/resolver-test: time every preset resolver, and the custom
+// ones in the form, for a minute over the selected mode's protocol. Answers
+// 202 with the run's id; the client polls GET for progress and results.
+router.post('/resolver-test', requirePerm('dns:write'), (req, res) => {
+  const { mode, custom = [] } = req.body || {};
+  const protocol = PROTOCOL_FOR_MODE[mode];
+  if (!protocol) return res.status(400).json({ error: 'mode must be off, tls, or https' });
+  if (!Array.isArray(custom) || custom.length > 2) {
+    return res.status(400).json({ error: 'custom must list at most two resolvers' });
+  }
+  if (custom.length) {
+    // Encrypted custom resolvers get the same checks (and SSRF guard) as saved
+    // ones. Plain ones may be private, like plain forwarders.
+    const err =
+      protocol === 'plain'
+        ? custom.every(
+            (c) =>
+              Array.isArray(c?.addresses) &&
+              c.addresses.length > 0 &&
+              c.addresses.every((a) => isValidAddress(a)),
+          )
+          ? null
+          : 'each custom resolver needs a non-empty addresses[] of IP address strings'
+        : validateUpstreamList(custom, mode);
+    if (err) return res.status(400).json({ error: err });
+    if (custom.some((c) => c.addresses.some((a) => addressFamily(a) === 6))) {
+      if (refuseIpv6Unless(res)) return;
+    }
+  }
+  let id;
+  try {
+    id = startBenchmark({ protocol, mode, custom });
+  } catch (err) {
+    // The run going on is named, so a page opened again can follow it.
+    if (err instanceof BenchmarkBusyError) {
+      return res.status(409).json({ error: err.message, ...err.run });
+    }
+    throw err;
+  }
+  audit(req.user.id, 'dns_resolver_test_started', 'dns', null, {
+    mode,
+    custom: custom.map((c) => c.hostname || c.addresses.join(',')),
+  });
+  res.status(202).json({ id });
+});
+
+// GET /api/dns/resolver-test/:id: progress, then results
+router.get('/resolver-test/:id', requirePerm('dns:read'), (req, res) => {
+  const result = getBenchmark(req.params.id);
+  if (!result) return res.status(404).json({ error: 'No such resolver test' });
+  res.json(result);
+});
+
+// DELETE /api/dns/resolver-test/:id: stop a running test
+router.delete('/resolver-test/:id', requirePerm('dns:write'), (req, res) => {
+  if (!cancelBenchmark(req.params.id)) {
+    return res.status(404).json({ error: 'No such resolver test' });
+  }
+  res.json(getBenchmark(req.params.id));
 });
 
 // GET /api/dns/soa-defaults

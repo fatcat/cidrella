@@ -65,11 +65,27 @@ export const useDnsStore = defineStore('dns', () => {
 
   async function getForwarders() {
     const res = await api.get('/dns/forwarders');
-    return res.data; // { servers, no_recursion }
+    return res.data; // { servers, backup_servers, backup_mode, no_recursion }
   }
 
-  async function updateForwarders(servers, noRecursion = false) {
-    const res = await api.put('/dns/forwarders', { servers, no_recursion: noRecursion });
+  // { servers, backup_servers, backup_mode, no_recursion }; any left out stay as they are.
+  async function updateForwarders(settings) {
+    const res = await api.put('/dns/forwarders', settings);
+    return res.data;
+  }
+
+  async function startResolverTest(mode, custom = []) {
+    const res = await api.post('/dns/resolver-test', { mode, custom });
+    return res.data; // { id }
+  }
+
+  async function getResolverTest(id) {
+    const res = await api.get(`/dns/resolver-test/${encodeURIComponent(id)}`);
+    return res.data; // { state, progress_pct, results }
+  }
+
+  async function cancelResolverTest(id) {
+    const res = await api.delete(`/dns/resolver-test/${encodeURIComponent(id)}`);
     return res.data;
   }
 
@@ -124,6 +140,9 @@ export const useDnsStore = defineStore('dns', () => {
     getForwarders,
     updateForwarders,
     testForwarder,
+    startResolverTest,
+    getResolverTest,
+    cancelResolverTest,
     getSoaDefaults,
     updateSoaDefaults,
     getDnssec,

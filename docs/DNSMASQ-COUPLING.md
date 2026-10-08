@@ -90,7 +90,7 @@ What enforces it:
 | 6   | **Query log readers**               | `logSource()` (`path`, `querySourceIp`, `dhcpDirection`, `isDhcpLine`)  | `backends/dnsmasq/log-format.js` regexes, read by passive liveness, the metrics aggregator and the log viewer                                                                                         | PowerDNS Recursor protobuf / dnstap; Kea logs                    | a null `logSource()` turns those readers off; they need a structured feed instead           |
 | 7   | **Recursion + filtering proxy**     | none (stays in `utils/dns-proxy.js`)                                    | bespoke UDP/TCP proxy in front of dnsmasq (blocklist, GeoIP, DNSSEC TCP relay, EDNS, bypass)                                                                                                          | Recursor **RPZ** (blocklist), **Lua** (GeoIP), native validation | the whole proxy becomes Recursor features                                                   |
 | 8   | **DNSSEC**                          | `dns.applyResolver`, `capabilities().dnssec`, `dns.onClockSynchronized` | `dnssec`/`trust-anchor` directives, `dnssec-no-timecheck` until NTP sync, then SIGHUP                                                                                                                 | Recursor `dnssec=validate` (+ Auth signing)                      | validate only, no online signing                                                            |
-| 9   | **Forwarders / upstreams**          | `dns.applyResolver`                                                     | `server=` lines (plain UDP/TCP), pointed at the in-Node DoT/DoH stub on 127.0.0.1:5356 when encryption is on                                                                                          | Recursor `forward-zones` + native DoT/DoH upstream               | dnsmasq has no DoT/DoH (`encryptedUpstream: false`)                                         |
+| 9   | **Forwarders / upstreams**          | `dns.applyResolver`                                                     | one `server=127.0.0.1#5356` line at the in-Node forwarder, which sends to the primary and backup over plain DNS, DoT or DoH                                                                           | Recursor `forward-zones` + native DoT/DoH upstream               | dnsmasq has no DoT/DoH (`encryptedUpstream: false`)                                         |
 | 10  | **Listen addresses and interfaces** | `dns.applyListen`, `activate`                                           | `interface=`/`listen-address=`/`no-dhcp-interface=` in `dnsmasq.conf`; restart                                                                                                                        | PowerDNS `local-address`; Kea `interfaces-config`                | one daemon today, two to configure after the split                                          |
 | 11  | **Process control and health**      | `status`, `activate`, `restart`, `applyActivation`, `prepare`           | systemd `cidrella-dnsmasq` unit (s6 in Docker); health and restart ask systemd, `pidof` only without systemctl                                                                                                               | REST is live; health is the API answering                        | no SIGHUP/restart once the adapter is REST                                                  |
 
@@ -132,9 +132,9 @@ Deliberate, each with a reason:
 3. **Ask for the feature, don't assume dnsmasq.** A feature that only some backends can do has a
    `backends/features.js` id; the server asks `supports(id)` (or `refuseUnlessSupported` in a
    route) and the client `useFeatures().supports(id)`, which says why it is off.
-4. **Build new features adapter-swappable.** E.g. encrypted forwarders are a self-contained
-   in-Node DoT/DoH stub that dnsmasq points `server=` at. When Recursor lands, delete the stub
-   and point the forwarders at Recursor's native DoT/DoH.
+4. **Build new features adapter-swappable.** E.g. forwarders are a self-contained in-Node
+   forwarder (plain, DoT or DoH, primary and backup) that dnsmasq points `server=` at. When
+   Recursor lands, delete the forwarder and point the upstreams at Recursor's native DoT/DoH.
 
 ## Migration approach
 

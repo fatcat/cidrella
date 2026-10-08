@@ -19,6 +19,12 @@ vi.mock('../../../src/utils/dns-proxy.js', () => ({
   loadAllowlist: vi.fn(),
 }));
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
+// A saved forwarder list reapplies the forwarder, which would listen on
+// 127.0.0.1:5356 from inside the test run.
+vi.mock('../../../src/utils/encrypted-forwarder.js', async (importOriginal) => ({
+  ...(await importOriginal()),
+  applyEncryptedForwarder: vi.fn(),
+}));
 
 const { default: request } = await import('supertest');
 
