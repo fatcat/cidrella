@@ -100,6 +100,15 @@ describe('IPv6 networks', () => {
       .send({ new_prefix: 129 });
     expect(tooLong.status).toBe(400);
 
+    // One divide makes at most 256 children: /48 to /57 would be 512.
+    for (const path of ['divide/preview', 'divide']) {
+      const tooMany = await request(app)
+        .post(`/api/subnets/${labId}/${path}`)
+        .send({ new_prefix: 57 });
+      expect(tooMany.status).toBe(400);
+      expect(tooMany.body.error).toMatch(/more than 256 networks/);
+    }
+
     const preview = await request(app)
       .post(`/api/subnets/${labId}/divide/preview`)
       .send({ new_prefix: 52 });

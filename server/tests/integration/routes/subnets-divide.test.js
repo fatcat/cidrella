@@ -365,6 +365,22 @@ describe('POST /api/subnets/:id/divide, data preservation', () => {
   });
 });
 
+describe('POST /api/subnets/:id/divide, the 256 network cap', () => {
+  it('previews and divides into 256 networks but refuses 512', async () => {
+    const parent = await createSubnet({ cidr: '100.64.0.0/10', name: 'CGNAT cap' });
+
+    const atCap = await dividePreview(parent.id, { new_prefix: 18 });
+    expect(atCap.status).toBe(200);
+    expect(atCap.body.count).toBe(256);
+
+    for (const send of [dividePreview, divide]) {
+      const tooMany = await send(parent.id, { new_prefix: 19 });
+      expect(tooMany.status).toBe(400);
+      expect(tooMany.body.error).toMatch(/more than 256 networks/);
+    }
+  });
+});
+
 describe('POST /api/subnets/:id/divide, lossy gate', () => {
   it('preview returns lossy list when a reservation would land on a new broadcast IP', async () => {
     const parent = await createSubnet({
