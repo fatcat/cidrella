@@ -134,7 +134,7 @@ PowerDNS + Kea stack (0.5.3). Until that stack lands, Kea is not offered.
 
 ---
 
-## v0.5.1 — 2026-10-06
+## v0.5.1 — 2026-10-09
 
 ```yaml
 min_from: "0.4.17"
@@ -171,7 +171,7 @@ names, below).
 ### Deprecated
 
 - `services.dnsmasq` on `/api/health/system` and the top-level `dnsmasq` on
-  `/api/metrics/services`. Read `backends` instead; both go in 0.5.2.
+  `/api/metrics/services`. Read `backends` instead; both go in 0.6.0.
 - `dnsmasqName` in `GET /api/dhcp/options`. It moves into the dnsmasq adapter
   with the Kea release.
 
