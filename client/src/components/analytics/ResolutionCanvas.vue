@@ -1,6 +1,6 @@
 <!-- The Resolution Map's drawing: a dark world (flat map or globe) with a
      flight from home to wherever GeoIP puts each answer. A permitted answer
-     lands and rings, a GeoIP block is shot down partway, and a blocklist
+     lands and rings, a GeoIP block bursts red where it lands, and a blocklist
      block flashes a shield over home. One fixed palette in either theme: the
      map is one deliberate look. The math lives in
      utils/resolution-map-geometry.js; this file only draws. -->
@@ -31,6 +31,7 @@ import { COUNTRY_GEO } from '../../utils/country-geo.js';
 import {
   destinationOf,
   facesViewer,
+  flightSeconds,
   launchDelays,
   liftedPoint,
   wrapsAround,
@@ -147,7 +148,7 @@ function launch(event) {
   const outline = COUNTRY_GEO[event.country]?.outline || null;
   if (reducedMotion?.matches) {
     // No flights: the destination pulses where it is.
-    bursts.push({ kind: blocked ? 'geo-still' : 'land', at: dest, t: 0 });
+    bursts.push({ kind: blocked ? 'geo' : 'land', at: dest, spin: 0, t: 0 });
     if (outline) glow.set(outline, { heat: 1, blocked });
     return;
   }
@@ -160,9 +161,9 @@ function launch(event) {
     dest,
     interp: geoInterpolate(props.home, dest),
     t: 0,
-    speed: 0.5 + Math.random() * 0.35,
+    // t per second: every flight crosses the globe at the same pace.
+    speed: (1 / flightSeconds(props.home, dest)) * (0.9 + Math.random() * 0.2),
     blocked,
-    stopAt: blocked ? 0.55 + Math.random() * 0.2 : 1,
     outline,
   });
 }
@@ -170,7 +171,7 @@ function launch(event) {
 function finish(shot) {
   bursts.push(
     shot.blocked
-      ? { kind: 'geo', at: shot.interp(shot.t), flight: shot, tt: shot.t, t: 0 }
+      ? { kind: 'geo', at: shot.dest, spin: Math.random() * 7, t: 0 }
       : { kind: 'land', at: shot.dest, t: 0 },
   );
   if (shot.outline) glow.set(shot.outline, { heat: 1, blocked: shot.blocked });
@@ -275,7 +276,7 @@ function drawShots(dt) {
   for (let i = shots.length - 1; i >= 0; i--) {
     const s = shots[i];
     if (s.done) s.fade -= dt * 0.7;
-    else s.t = Math.min(s.stopAt, s.t + dt * s.speed);
+    else s.t = Math.min(1, s.t + dt * s.speed);
     if (s.done && s.fade <= 0) {
       shots.splice(i, 1);
       continue;
@@ -326,7 +327,7 @@ function drawShots(dt) {
         ctx.arc(tip[0], tip[1], 1.8, 0, 2 * Math.PI);
         ctx.fill();
       }
-      if (s.t >= s.stopAt) finish(s);
+      if (s.t >= 1) finish(s);
     }
   }
   ctx.restore();
@@ -345,7 +346,7 @@ function drawBursts(dt) {
       continue;
     }
     if (!visible(b.at)) continue;
-    const p = b.kind === 'geo' ? at(b.flight, b.tt) : projection(b.at);
+    const p = projection(b.at);
     if (!p) continue;
     ctx.globalAlpha = 1 - k;
     if (b.kind === 'land') {
@@ -363,10 +364,10 @@ function drawBursts(dt) {
       ctx.arc(p[0], p[1], 18 + k * 6, Math.PI * 1.05, Math.PI * 1.95);
       ctx.stroke();
     } else {
-      // The interception: a starburst of shards.
+      // A GeoIP block: a starburst of shards where the answer would have gone.
       ctx.strokeStyle = COLORS.geo;
       ctx.lineWidth = 1.2;
-      const spin = (b.tt || 0) * 7;
+      const spin = b.spin;
       for (let a = 0; a < 10; a++) {
         const angle = (a / 10) * 2 * Math.PI + spin;
         const r1 = 2 + k * 10;

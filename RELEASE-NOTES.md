@@ -56,8 +56,8 @@ the server, and a sign-in from before the update has none.
   uses. Each change is in the address's history and the audit log.
 - **Resolution Map.** A new Analytics section draws every answer the resolver
   gives as a flight from this CIDRella to where GeoIP puts it, live. A GeoIP
-  block is shot down on the way and a blocklist block flashes a shield over
-  home; a panel counts the last minute and lists the top destinations and the
+  block flies red and bursts where it lands, and a blocklist block flashes a
+  shield over home; a panel counts the last minute and lists the top destinations and the
   latest names. It switches between a flat map and a globe you can turn.
   Answers land at their city, to about 100 km, from DB-IP's free City Lite
   data, which ships with the release and is refreshed when the release build

@@ -3,6 +3,8 @@ import { geoDistance, geoInterpolate, geoNaturalEarth1, geoOrthographic } from '
 import {
   destinationOf,
   facesViewer,
+  flightSeconds,
+  FLIGHT_DEGREES_PER_SECOND,
   launchDelays,
   liftedPoint,
   localeHome,
@@ -113,5 +115,16 @@ describe('spreading one poll over the next', () => {
   it('spaces events with one timestamp evenly', () => {
     expect(launchDelays([{ at: 5 }, { at: 5 }], 2000)).toEqual([0, 1000]);
     expect(launchDelays([], 2000)).toEqual([]);
+  });
+});
+
+describe('flight time', () => {
+  it('grows with distance, so every flight moves at one pace', () => {
+    const near = flightSeconds(HOME, [-73.99, 40.73]);
+    const far = flightSeconds(HOME, TOKYO);
+    const halfway = flightSeconds([0, 0], [90, 0]);
+    expect(near).toBe(0.8);
+    expect(halfway).toBeCloseTo(90 / FLIGHT_DEGREES_PER_SECOND, 5);
+    expect(far > halfway).toBe(true);
   });
 });

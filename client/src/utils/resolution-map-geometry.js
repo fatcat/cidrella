@@ -71,6 +71,28 @@ export function liftedPoint(projection, mode, flight, t) {
   return [cx + (p[0] - cx) * k, cy + (p[1] - cy) * k];
 }
 
+/** How fast a flight crosses the globe, in degrees of arc a second. */
+export const FLIGHT_DEGREES_PER_SECOND = 45;
+const MIN_FLIGHT_SECONDS = 0.8;
+
+/**
+ * How long a flight from a to b takes: the same pace for every flight, so a
+ * long one is not faster on screen, with a floor so a short hop still shows.
+ */
+export function flightSeconds(a, b, geoDistance = arcRadians) {
+  const degrees = (geoDistance(a, b) * 180) / Math.PI;
+  return Math.max(MIN_FLIGHT_SECONDS, degrees / FLIGHT_DEGREES_PER_SECOND);
+}
+
+// Great-circle distance in radians (haversine), so this module needs no d3.
+function arcRadians([lon1, lat1], [lon2, lat2]) {
+  const r = Math.PI / 180;
+  const h =
+    Math.sin(((lat2 - lat1) * r) / 2) ** 2 +
+    Math.cos(lat1 * r) * Math.cos(lat2 * r) * Math.sin(((lon2 - lon1) * r) / 2) ** 2;
+  return 2 * Math.asin(Math.min(1, Math.sqrt(h)));
+}
+
 /**
  * Whether the step from a to b jumps across the flat map (a flight over the
  * date line leaves one edge and comes in at the other), so the trail breaks

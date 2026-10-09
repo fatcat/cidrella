@@ -1,6 +1,6 @@
 <!-- Analytics "Resolution Map": every DNS answer CIDRella gives, drawn as a
-     flight from this box to where GeoIP puts the answer. GeoIP blocks are shot
-     down on the way, blocklist blocks flash a shield at home. Live: the feed
+     flight from this box to where GeoIP puts the answer. GeoIP blocks fly red
+     and burst where they land, blocklist blocks flash a shield at home. Live: the feed
      is the server's last few thousand decisions (utils/resolution-feed.js),
      polled every two seconds. -->
 <template>
@@ -110,7 +110,7 @@
 
       <div class="hud legend">
         <span class="l-ok">answered, permitted</span>
-        <span class="l-geo">GeoIP block, shot down</span>
+        <span class="l-geo">GeoIP block, bursts on arrival</span>
         <span class="l-shield">blocklist block at home</span>
         <span class="l-home">{{ homeLabel }}</span>
         <GeoAttribution />
