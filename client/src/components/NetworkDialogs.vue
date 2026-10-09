@@ -582,11 +582,15 @@
             />
             <span class="divide-count-label">networks (/{{ divideTargetPrefix }})</span>
           </div>
+          <small v-if="divideCapped" class="field-help" data-track="divide-limit-hint">
+            One divide makes at most {{ MAX_DIVIDE_COUNT }} networks, so the change and its preview
+            stay reviewable. To go smaller, divide one of the new networks again.
+          </small>
         </div>
       </div>
 
       <div
-        v-if="authoritativeDivideTargets.length > 0 && authoritativeDivideTargets.length <= 256"
+        v-if="authoritativeDivideTargets.length > 0 && authoritativeDivideTargets.length <= MAX_DIVIDE_COUNT"
         class="divide-preview"
       >
         <h4>
@@ -1923,11 +1927,22 @@ const carvePreview = computed(() => {
   }
 });
 
-const maxDivideSteps = computed(() => {
-  if (!divideNode.value) return 1;
-  const bound = maxPrefixFor(divideNode.value.data.cidr) - divideNode.value.data.prefix_length;
-  return Math.max(1, Math.min(bound, 8));
-});
+// One divide makes at most 256 networks (the server refuses more): each one is
+// a network row plus moved DHCP and DNS settings in one transaction, and the
+// preview lists them all. Finer splits are a second divide of a child.
+const MAX_DIVIDE_STEPS = 8;
+const MAX_DIVIDE_COUNT = 2 ** MAX_DIVIDE_STEPS;
+
+const divideStepBound = computed(() =>
+  divideNode.value
+    ? maxPrefixFor(divideNode.value.data.cidr) - divideNode.value.data.prefix_length
+    : 1,
+);
+const maxDivideSteps = computed(() =>
+  Math.max(1, Math.min(divideStepBound.value, MAX_DIVIDE_STEPS)),
+);
+// The hint shows only when the cap, not the network's size, stops the slider.
+const divideCapped = computed(() => divideStepBound.value > MAX_DIVIDE_STEPS);
 
 const maxDivideCount = computed(() => Math.pow(2, maxDivideSteps.value));
 

@@ -44,6 +44,7 @@ the server, and a sign-in from before the update has none.
 ### Changed
 
 - **The address grid outlines every address in a Network Range with the range type's color**, whatever the address's status. Before, an assigned, reserved or DHCP address in a range showed only its status color and the range was invisible. The status keeps the fill and the range keeps the outline, in both grid densities.
+- **The Divide dialog says why it stops at 256 networks.** One divide makes at most 256, so the change and its preview stay reviewable. When that cap, not the network's size, stops the slider, a line under it says so and points to dividing one of the new networks again.
 - **Signing out ends only that browser's session.** It used to end every
   session the account had, and the user menu's Sign out never told the server
   at all, so the token stayed valid until it expired. A password change now

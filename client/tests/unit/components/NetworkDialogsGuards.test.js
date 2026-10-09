@@ -190,3 +190,32 @@ describe('NetworkDialogs unsaved-form guards', () => {
     expect(prompt(wrapper, 'dialog-network-create').exists()).toBe(true);
   });
 });
+
+describe('NetworkDialogs divide cap', () => {
+  const sized = (cidr, prefix) => ({
+    data: { ...node.data, cidr, network_address: cidr.split('/')[0], prefix_length: prefix },
+  });
+  const hint = (wrapper) => wrapper.find('[data-track="divide-limit-hint"]');
+
+  it('says why the divide stops at 256 only when the cap, not the size, stops it', async () => {
+    const wrapper = mountDialogs();
+    wrapper.vm.openDivide(sized('100.64.0.0/10', 10));
+    await settle();
+    expect(hint(wrapper).text()).toContain('at most 256 networks');
+
+    wrapper.vm.openDivide(node);
+    await settle();
+    expect(hint(wrapper).exists()).toBe(false);
+  });
+
+  it('does the same for IPv6, where /128 bounds the divide', async () => {
+    const wrapper = mountDialogs();
+    wrapper.vm.openDivide(sized('fd00:1234::/48', 48));
+    await settle();
+    expect(hint(wrapper).exists()).toBe(true);
+
+    wrapper.vm.openDivide(sized('fd00:1234::/124', 124));
+    await settle();
+    expect(hint(wrapper).exists()).toBe(false);
+  });
+});
