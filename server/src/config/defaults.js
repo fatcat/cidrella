@@ -67,6 +67,9 @@ export const DEFAULTS = {
   password_require_mixed_case: 'true',
   password_require_number: 'true',
   password_require_symbol: 'false',
+  // Minutes without activity before a sign-in session ends: 0, 15, 30 or 60,
+  // 0 for no inactivity limit. Every session also ends 24 hours after sign-in.
+  session_idle_timeout_minutes: '60',
   // Migration 033 seeds this row as 'true' and 076 flips a fresh database to
   // 'false', so this default only matters if the row is ever deleted.
   dhcp_enabled: 'false',

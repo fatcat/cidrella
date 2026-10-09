@@ -454,6 +454,25 @@ not supported.
 Outbound URL fetches must use the guarded/pinned URL helper in
 `utils/url-guard.js` when the URL is operator supplied.
 
+### Sign-in sessions
+
+A login JWT names a row in `sessions` (`sid`), and that row, not the token,
+decides whether the login still works. `models/session.js` holds every rule:
+
+- A session ends after `session_idle_timeout_minutes` without activity (0, 15,
+  30 or 60; 0 is no inactivity limit), and always 24 hours after sign-in. The
+  JWT's `exp` matches the 24 hours.
+- Activity is a person using the page. The client reports input with
+  `POST /api/auth/activity` at most once a minute
+  (`composables/useSessionActivity.js`), and only that and sign-in move
+  `last_activity_at`. Ordinary requests never do: the dashboards poll on
+  timers.
+- Signing out, a password change or reset, a role change, deleting a user and
+  a restore end sessions through the model, with the reason stored on the row
+  and written to the audit log. `users.updated_at` is no longer a revocation
+  signal.
+- API tokens (`cidr_pat_`) are not sessions and never go idle.
+
 ## Guardrails
 
 Use these before committing:

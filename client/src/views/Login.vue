@@ -3,6 +3,14 @@
     <div class="login-card">
       <h1>CIDRella</h1>
       <p class="subtitle">IP Address Management</p>
+      <Message
+        v-if="signedOut"
+        severity="info"
+        :closable="false"
+        class="mb-3"
+        data-track="login-signed-out-reason"
+        >{{ signedOut }}</Message
+      >
       <form v-if="challenge" @submit.prevent="handleTotp" data-track="login-totp-form">
         <div class="field">
           <label for="totp-code">Authentication code</label>
@@ -79,6 +87,7 @@ import Password from '../ui/Password.js';
 import Button from '../ui/Button.js';
 import Message from '../ui/Message.js';
 import { apiError } from '../utils/format.js';
+import { takeSignOutMessage } from '../utils/session.js';
 
 const router = useRouter();
 const route = useRoute();
@@ -91,6 +100,8 @@ const error = ref('');
 // Set when the password was right but the account has two-factor on.
 const challenge = ref(null);
 const code = ref('');
+// Why the last session ended, shown once.
+const signedOut = ref(takeSignOutMessage());
 
 function resetChallenge() {
   challenge.value = null;
@@ -121,6 +132,7 @@ function landAfterLogin(data) {
 
 async function handleLogin() {
   error.value = '';
+  signedOut.value = null;
   loading.value = true;
   try {
     const data = await auth.login(username.value, password.value);

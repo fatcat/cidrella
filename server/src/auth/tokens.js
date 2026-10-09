@@ -57,9 +57,8 @@ function isExpired(row, now) {
  * Resolve a presented token to its principal.
  *
  * The user row is joined on every call rather than trusted from the token, so a
- * role change or a deletion takes effect on the next request. That is stronger
- * than the JWT path, which can only invalidate by comparing issue time against
- * users.updated_at.
+ * role change or a deletion takes effect on the next request, as a sign-in
+ * session's row does on the JWT path (models/session.js).
  *
  * Returns { user } on success, or { error } with a reason safe to return.
  */

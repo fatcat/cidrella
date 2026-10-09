@@ -146,10 +146,37 @@ Groundwork for moving DHCP to Kea and DNS to PowerDNS. Every dnsmasq call now
 goes through one backend layer, with dnsmasq as its only adapter. A golden
 test snapshots every generated file and command for every apply path; the
 refactor left them byte for byte the same, and the fixes below are the only
-changes to what dnsmasq is given. Schema runs to 82 (migration 082, record
-names, below).
+changes to what dnsmasq is given. It also signs people out after
+inactivity. Schema runs to 87 (migration 082, record names, and 087,
+sessions, both below).
+
+**Everyone signs in once after this update.** Sign-ins now have a session on
+the server, and a sign-in from before the update has none.
+
+### New
+
+- **Sign out after inactivity.** Settings > Access > Sessions sets how long a
+  sign-in survives without anyone using it: never, 15, 30 or 60 minutes. The
+  default is 60. Clicking, typing or scrolling in any CIDRella tab counts;
+  a dashboard refreshing on its own does not. A minute before the limit a
+  dialog counts down with **Stay signed in**. Every session also still ends
+  24 hours after sign-in, whatever the setting, and five minutes before that
+  a dialog offers to sign in again so nothing is lost. The sign-in page says
+  why the last session ended.
+- **Sessions are recorded** (schema 87): who signed in, from which address
+  and browser, when they were last active, and how the session ended. Each
+  end is also in the audit log as `session_ended`. Ended sessions are kept as
+  long as the audit log keeps its rows. An administrator can list them with
+  `GET /api/auth/sessions` (`?live=1`, `?user_id=`); a screen comes later.
 
 ### Changed
+
+- **Signing out ends only that browser's session.** It used to end every
+  session the account had, and the user menu's Sign out never told the server
+  at all, so the token stayed valid until it expired. A password change now
+  keeps the session it was made in and ends the account's others; an
+  administrator's password reset, a role change and deleting a user end all
+  of that account's sessions, as does a restore for every account.
 
 - **DNS/DHCP backend layer.** `server/src/backends/` holds a registry
   (`index.js`), the contract every adapter keeps (`contract.js`) and the
@@ -176,6 +203,10 @@ names, below).
   with the Kea release.
 
 ### Fixed
+
+- **Saving your preferences no longer signs you out.** Changing the time
+  format bumped the account's update time, which invalidated the token the
+  change was made with on its next request.
 
 - **SRV records answer under their zone.** An SRV record `_sip._tcp` in
   `example.lan` was written as `srv-host=_sip._tcp,...`, so dnsmasq answered

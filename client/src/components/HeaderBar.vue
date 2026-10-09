@@ -512,9 +512,9 @@ async function onTimeFormatChange(event) {
   }
 }
 
-function handleLogout() {
+async function handleLogout() {
   userMenuRef.value.hide();
-  auth.logout();
+  await auth.signOut();
   router.push('/login');
 }
 

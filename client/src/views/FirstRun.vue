@@ -161,7 +161,7 @@ async function restoreAndRestart() {
   restarting.value = true;
   progress.value = 'Service is restarting';
   await waitForRestart();
-  auth.logout();
+  auth.logout('restore');
   router.push({ name: 'Login' });
 }
 
