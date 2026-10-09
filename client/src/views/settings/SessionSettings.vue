@@ -5,9 +5,8 @@
     <div class="setting-group">
       <h3>Sign out after inactivity</h3>
       <p class="field-help">
-        A session ends when nobody has clicked, typed or scrolled in CIDRella for this long. A
-        dashboard refreshing on its own does not count. A warning comes a minute before, and every
-        session also ends 24 hours after sign-in.
+        You will receive a warning 1 minute before being logged out. Session cookies expire after 24
+        hours regardless of the setting here.
       </p>
 
       <div v-if="minutes === null" class="muted">Loading</div>

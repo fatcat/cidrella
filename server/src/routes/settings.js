@@ -8,6 +8,7 @@ import {
   validateInterfaceConfig,
   validPortOrError,
   isIntInRangeCoercing,
+  parseMapHome,
 } from '../utils/validation.js';
 import { IDLE_TIMEOUT_CHOICES } from '../models/session.js';
 
@@ -200,6 +201,15 @@ const SETTING_SCHEMA = {
   http_port: {
     validate: (v) => (v === '' || v === null ? null : validPortOrError(v, 'http_port')),
     normalize: (v) => (v === '' || v === null ? '' : String(v)),
+  },
+  // The Resolution Map's home point, "lat,lon" or '' (not set).
+  map_home: {
+    validate: (v) =>
+      v === '' || parseMapHome(v) ? null : 'must be "lat,lon" in degrees, or empty',
+    normalize: (v) => {
+      const home = parseMapHome(v);
+      return home ? `${home.lat},${home.lon}` : '';
+    },
   },
   ip_history_retention_days: {
     validate: (v) => (isIntInRangeCoercing(v, 1, 3650) ? null : 'must be an integer 1-3650'),

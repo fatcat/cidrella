@@ -26,6 +26,8 @@
       <IntelligencePanel v-if="activeTab === 'intelligence'" />
 
       <AnomaliesPanel v-if="activeTab === 'anomalies'" />
+
+      <ResolutionMapPanel v-if="activeTab === 'map'" />
     </div>
   </div>
 </template>
@@ -48,6 +50,7 @@ const DashboardPanel = asyncTab(() => import('./Dashboard.vue'));
 const PerformancePanel = asyncTab(() => import('./Performance.vue'));
 const IntelligencePanel = asyncTab(() => import('./Intelligence.vue'));
 const AnomaliesPanel = asyncTab(() => import('./AnomaliesWorkspace.vue'));
+const ResolutionMapPanel = asyncTab(() => import('./ResolutionMap.vue'));
 
 const menuItems = [
   {
@@ -74,12 +77,18 @@ const menuItems = [
     icon: 'pi pi-exclamation-triangle',
     dataTrack: 'ana-tab-anomalies',
   },
+  {
+    id: 'map',
+    label: 'Resolution Map',
+    icon: 'pi pi-globe',
+    dataTrack: 'ana-tab-map',
+  },
 ];
 
 const route = useRoute();
 const router = useRouter();
 const tabIds = new Set(menuItems.map((item) => item.id));
-const legacyTabs = ['dashboard', 'performance', 'intelligence', 'anomalies'];
+const legacyTabs = ['dashboard', 'performance', 'intelligence', 'anomalies', 'map'];
 
 const savedTab = legacyTabs[Number(localStorage.getItem('cidrella_analytics_tab'))] || 'dashboard';
 const activeTab = computed(() => {

@@ -1,7 +1,8 @@
 // Sequences the model walks found, each a bug that was fixed. Every step is
 // checked against the same invariants as the random walks, and each walk
 // ends with a reload that must bring the same screen back.
-import { describe, it, vi } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+import { FILTERING_OFF } from './fake-estate.js';
 import { useModelSession } from './session.js';
 
 vi.mock('../../../../../src/api/client.js', () => ({
@@ -15,6 +16,19 @@ vi.mock('vue-router', async (importOriginal) => ({
 
 describe('Networks workspace regressions', () => {
   const { walk } = useModelSession();
+
+  // Not a bug found, a guard on the control: turning filtering off for a DHCP
+  // client is keyed by its MAC, so its rows in every table follow (the
+  // invariant), and turning it back on clears it.
+  it('a Filtering toggle turns a device off everywhere', async () => {
+    await walk(['tab dhcp', 'filtering 0', 'tab dns', 'filtering 1', 'filtering 1']);
+    expect([...FILTERING_OFF]).toHaveLength(1);
+  });
+
+  it('a Filtering toggle turns a device back on', async () => {
+    await walk(['tab dhcp', 'filtering 0', 'filtering 0']);
+    expect([...FILTERING_OFF]).toEqual([]);
+  });
 
   it('a network with only a reverse zone opens the DNS view on it', () =>
     walk(['tab dns', 'network 14']));

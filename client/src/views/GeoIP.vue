@@ -32,6 +32,7 @@
           status.dbLastUpdated ? formatDate(status.dbLastUpdated) : 'No DB'
         }}</span>
         <span class="stat-label">GeoIP Database</span>
+        <GeoAttribution />
       </div>
     </div>
 
@@ -209,6 +210,7 @@ import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import EmptyState from '../components/EmptyState.vue';
 import StatusDot from '../components/StatusDot.vue';
+import GeoAttribution from '../components/GeoAttribution.vue';
 import ConfirmDialog from '../components/ConfirmDialog.vue';
 import InputText from '../ui/InputText.js';
 import Select from '../ui/Select.js';

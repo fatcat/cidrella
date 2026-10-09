@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import WorkspaceTable from '../../../../src/views/networks-workspace/WorkspaceTable.vue';
 import { mapDnsRows } from '../../../../src/views/networks-workspace-data.js';
+import { EMPTY_CELL } from '../../../../src/utils/format.js';
 
 describe('WorkspaceTable', () => {
   it('marks a disabled row so it recedes, and leaves rows without the flag alone', () => {
@@ -109,3 +110,51 @@ describe('WorkspaceTable', () => {
   });
 });
 
+
+describe('WorkspaceTable Filtering column', () => {
+  const ToggleStub = {
+    props: ['modelValue', 'disabled', 'ariaLabel'],
+    emits: ['update:modelValue'],
+    template:
+      '<button type="button" class="toggle" :disabled="disabled" :aria-label="ariaLabel" :data-on="String(modelValue)" @click="$emit(\'update:modelValue\', !modelValue)" />',
+  };
+  const mountTable = (props = {}) =>
+    mount(WorkspaceTable, {
+      props: {
+        columns: [{ key: 'filtering_enabled', label: 'Filtering' }],
+        rows: [
+          { id: 'address:10.0.0.5', address: '10.0.0.5', filtering: true },
+          { id: 'address:fd00::5', address: 'fd00::5', filtering: false },
+          { id: 'dns:1:9', address: null, filtering: null },
+        ],
+        filteringEditable: true,
+        ...props,
+      },
+      global: { stubs: { ToggleSwitch: ToggleStub } },
+    });
+
+  it('shows a toggle per addressed row, both families, and a dash for a row with none', () => {
+    const wrapper = mountTable();
+    const toggles = wrapper.findAll('.toggle');
+    expect(toggles.map((t) => [t.attributes('aria-label'), t.attributes('data-on')])).toEqual([
+      ['Filtering for 10.0.0.5', 'true'],
+      ['Filtering for fd00::5', 'false'],
+    ]);
+    expect(wrapper.findAll('tbody tr')[2].text()).toBe(EMPTY_CELL);
+  });
+
+  it('flipping a toggle asks for the change without selecting or opening the row', async () => {
+    const wrapper = mountTable();
+    await wrapper.findAll('.toggle')[1].trigger('click');
+    expect(wrapper.emitted('toggle-filtering')).toHaveLength(1);
+    expect(wrapper.emitted('toggle-filtering')[0][1]).toBe(true);
+    expect(wrapper.emitted('toggle-filtering')[0][0].address).toBe('fd00::5');
+    expect(wrapper.emitted('select')).toBeUndefined();
+  });
+
+  it('locks the toggles without the permission, and the one still saving', () => {
+    expect(mountTable({ filteringEditable: false }).findAll('.toggle[disabled]')).toHaveLength(2);
+    const busy = mountTable({ filteringBusy: ['10.0.0.5'] }).findAll('.toggle');
+    expect(busy.map((t) => t.attributes('disabled') !== undefined)).toEqual([true, false]);
+  });
+});

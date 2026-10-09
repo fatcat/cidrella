@@ -43,7 +43,7 @@ describe('Analytics workspace shell', () => {
 
     const navigation = wrapper.get('nav');
     const buttons = navigation.findAll('button');
-    expect(buttons).toHaveLength(4);
+    expect(buttons).toHaveLength(5);
     expect(buttons[0].attributes('aria-current')).toBe('page');
 
     await buttons[2].trigger('click');
@@ -51,6 +51,14 @@ describe('Analytics workspace shell', () => {
 
     expect(push).toHaveBeenCalledWith({ query: { view: 'intelligence' } });
     expect(navigation.findAll('button')[2].attributes('aria-current')).toBe('page');
+    wrapper.unmount();
+  });
+
+  it('opens the Resolution Map from its link', async () => {
+    route.query = { view: 'map' };
+    const wrapper = shallowMount(Analytics);
+    const current = wrapper.findAll('nav button').find((b) => b.attributes('aria-current'));
+    expect(current.attributes('data-track')).toBe('ana-tab-map');
     wrapper.unmount();
   });
 

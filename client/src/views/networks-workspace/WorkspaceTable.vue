@@ -103,6 +103,26 @@
               </span>
               <span v-else class="muted">{{ EMPTY_CELL }}</span>
             </template>
+            <template v-else-if="column.key === 'filtering_enabled'">
+              <!-- A control, not a fact: clicks and keys stay in the cell so
+                   flipping it never selects or opens the row. -->
+              <span
+                v-if="row.filtering != null"
+                class="filtering-cell"
+                @click.stop
+                @keydown.stop
+              >
+                <ToggleSwitch
+                  :model-value="row.filtering"
+                  :disabled="!filteringEditable || filteringBusy.includes(row.address)"
+                  :aria-label="`Filtering for ${row.address}`"
+                  data-track="ip-filtering-toggle"
+                  :data-row-id="row.id"
+                  @update:model-value="emit('toggle-filtering', row, $event)"
+                />
+              </span>
+              <span v-else class="muted">{{ EMPTY_CELL }}</span>
+            </template>
             <template v-else-if="SWITCH_COLUMNS.has(column.key)">
               <StatusDot
                 v-if="cellValue(row, column) != null"
@@ -131,6 +151,7 @@
 import { computed, nextTick, onMounted, ref, watch } from 'vue';
 import AddressTypePill from '../../components/table/AddressTypePill.vue';
 import StatusDot from '../../components/StatusDot.vue';
+import ToggleSwitch from '../../ui/ToggleSwitch.js';
 import { EMPTY_CELL } from '../../utils/format.js';
 import { ipLifecycleDisplay } from '../../utils/ipLifecycleDisplay.js';
 
@@ -149,6 +170,10 @@ const props = defineProps({
   // The parent decides what a drag carries (N-08 network moves); the table
   // only marks rows draggable and forwards the event.
   draggableRows: { type: Boolean, default: false },
+  // The Filtering column's toggles: whether this user may flip them, and the
+  // addresses whose change is still saving.
+  filteringEditable: { type: Boolean, default: false },
+  filteringBusy: { type: Array, default: () => [] },
 });
 const emit = defineEmits([
   'sort',
@@ -158,6 +183,7 @@ const emit = defineEmits([
   'toggle-all',
   'row-menu',
   'row-dragstart',
+  'toggle-filtering',
 ]);
 
 // The header box shows the selection: checked when every visible row is,
@@ -266,6 +292,7 @@ const CELL_FIELDS = {
   reservation_enabled: 'reservationEnabled',
   network_range_type: 'rangeType',
   scanning_enabled: 'scanning',
+  filtering_enabled: 'filtering',
   is_online: 'online',
 };
 // Columns shown as an on/off dot. The two enabled columns are null on a row

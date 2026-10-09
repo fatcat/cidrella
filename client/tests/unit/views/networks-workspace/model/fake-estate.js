@@ -136,6 +136,23 @@ export const DHCP_ROWS = [
   })),
 ];
 
+// Hosts with DNS filtering off, as models/filtering-exemption.js stores them:
+// "mac:<mac>" for a device with a known MAC (a DHCP client here), "ip:<ip>"
+// for any other address. Reset with each estate.
+export const FILTERING_OFF = new Set();
+const dhcpMac = (entry) => `02:00:00:00:00:${String(entry.id % 100).padStart(2, '0')}`;
+const deviceMacOf = (ip) => {
+  const entry = DHCP_ROWS.find((row) => row.ip_address === ip);
+  return entry ? dhcpMac(entry) : null;
+};
+// Whether filtering applies to an address: null for a row with none. Every
+// address a device's MAC holds follows it, as exemptAddressSet does.
+export function filteringOn(ip) {
+  if (!ip) return null;
+  const mac = deviceMacOf(ip);
+  return !(FILTERING_OFF.has(`ip:${ip}`) || (mac && FILTERING_OFF.has(`mac:${mac}`)));
+}
+
 // ─── Address arithmetic ───────────────────────────────────────────────
 
 export const ipToNumber = (ip) =>
@@ -198,6 +215,7 @@ export function recordRow(entry) {
     zone_wide: zoneWide,
     subnet_id: network?.id ?? null,
     subnet_name: network?.name ?? null,
+    filtering_enabled: filteringOn(ip),
   };
 }
 
@@ -237,7 +255,7 @@ export function dhcpRow(entry) {
     id: entry.id,
     ip_address: entry.ip_address,
     hostname: entry.hostname,
-    mac_address: `02:00:00:00:00:${String(entry.id % 100).padStart(2, '0')}`,
+    mac_address: dhcpMac(entry),
     subnet_id: network.id,
     subnet_name: network.name,
     subnet_cidr: network.cidr,
@@ -249,6 +267,7 @@ export function dhcpRow(entry) {
     address_type: entry.type === 'dynamic' ? 'dynamic DHCP' : 'DHCP Reservation',
     enabled: 1,
     is_online: 0,
+    filtering_enabled: filteringOn(entry.ip_address),
   };
 }
 
@@ -279,6 +298,7 @@ function addressRows(network) {
       is_online: 0,
       scanning_enabled: true,
       scan_enabled: null,
+      filtering_enabled: filteringOn(ip),
     };
   });
 }
@@ -489,6 +509,18 @@ function page(rows, params, table, sizeKey = 'page_size') {
 export function createFakeApi() {
   const unexpected = [];
   const reply = (data) => Promise.resolve({ data });
+  FILTERING_OFF.clear();
+  // The Filtering column's write. Other writes stay unanswered, as before.
+  function put(url, body = {}) {
+    if (url !== '/blocklists/host-filtering') return Promise.resolve(undefined);
+    const ip = body.ip_address;
+    const mac = deviceMacOf(ip);
+    if (body.enabled) {
+      FILTERING_OFF.delete(`ip:${ip}`);
+      if (mac) FILTERING_OFF.delete(`mac:${mac}`);
+    } else FILTERING_OFF.add(mac ? `mac:${mac}` : `ip:${ip}`);
+    return reply({ ip_address: ip, filtering_enabled: filteringOn(ip) });
+  }
   function get(url, config = {}) {
     const params = config.params || {};
     if (url === '/subnets') return reply(subnetTree());
@@ -548,5 +580,5 @@ export function createFakeApi() {
     unexpected.push(`GET ${url}`);
     return reply({});
   }
-  return { get, unexpected };
+  return { get, put, unexpected };
 }

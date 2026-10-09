@@ -8,6 +8,7 @@ import { findSubnetForIp } from '../utils/ip-sync.js';
 import { generateFallbackHostname } from '../utils/mac-vendor.js';
 import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { dhcpLeaseRejectionReason } from './ip-lifecycle-service.js';
+import { loadFilteringOverrides } from '../utils/dns-proxy.js';
 
 /**
  * Store a backend's whole lease set: leases missing from `leases` are
@@ -50,6 +51,9 @@ export function ingestLeases(db, leases) {
 
   // Sync DHCP hostnames (leases + reservations) into dns_records
   syncDhcpDnsRecords(db, acceptedLeases);
+
+  // A host with filtering off is keyed by MAC; its new address takes effect now.
+  loadFilteringOverrides();
 
   return { synced: acceptedLeases.length, rejected };
 }
