@@ -149,6 +149,18 @@ const reset = db.transaction(() => {
     ).run(newHash, username);
   }
 
+  // End the account's sign-in sessions, as the admin reset does
+  // (models/session.js). Raw SQL because this CLI imports no models, and
+  // guarded because a database from before 0.5.1 has no sessions table.
+  const hasSessions = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'")
+    .get();
+  if (hasSessions) {
+    db.prepare(
+      "UPDATE sessions SET ended_at = datetime('now'), end_reason = 'password_reset' WHERE user_id = ? AND ended_at IS NULL",
+    ).run(user.id);
+  }
+
   // Audit log INSERT uses the canonical schema. user_id is NULL because the
   // actor is not a CIDRella user, it's an OS-level root with shell access.
   // The actor label goes into details.

@@ -9,6 +9,7 @@ import {
   validPortOrError,
   isIntInRangeCoercing,
 } from '../utils/validation.js';
+import { IDLE_TIMEOUT_CHOICES } from '../models/session.js';
 
 const router = Router();
 
@@ -128,6 +129,13 @@ const SETTING_SCHEMA = {
   password_min_length: {
     validate: (v) => (isIntInRangeCoercing(v, 0, 1024) ? null : 'must be an integer 0-1024'),
     normalize: (v) => String(parseInt(v, 10)),
+  },
+  session_idle_timeout_minutes: {
+    validate: (v) =>
+      /^\d+$/.test(String(v)) && IDLE_TIMEOUT_CHOICES.includes(Number(v))
+        ? null
+        : `must be one of ${IDLE_TIMEOUT_CHOICES.join(', ')}`,
+    normalize: (v) => String(Number(v)),
   },
   password_require_mixed_case: {
     validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),

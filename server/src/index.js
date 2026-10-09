@@ -27,6 +27,7 @@ import { initDb, getDb, getSetting } from './db/init.js';
 import * as Range from './models/range.js';
 import { reconcileManagedReverseDns } from './models/dns-record.js';
 import * as AuditLog from './models/audit-log.js';
+import * as Session from './models/session.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
 import { sanitizeForLog } from './utils/validation.js';
@@ -280,6 +281,10 @@ async function main() {
       const result = AuditLog.pruneAuditLog(getDb(), days);
       if (result.changes > 0) {
         console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
+      }
+      const sessions = Session.pruneSessions(getDb(), days);
+      if (sessions.changes > 0) {
+        console.log(`Sessions pruned: ${sessions.changes} older than ${days} days removed`);
       }
     } catch (err) {
       console.error('Audit log prune error:', err.message);

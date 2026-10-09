@@ -171,7 +171,7 @@ export const SETTINGS_AREAS = [
     label: 'Access',
     icon: 'pi pi-lock',
     group: 'System',
-    blurb: 'Users & roles, two-factor, password rule, TLS certificate',
+    blurb: 'Users & roles, two-factor, password rule, sessions, TLS certificate',
     dataTrack: 'settings-area-access',
     subtabs: [
       {
@@ -192,6 +192,12 @@ export const SETTINGS_AREAS = [
         label: 'Password rule',
         dataTrack: 'settings-sec-password-rule',
         component: defineAsyncComponent(() => import('../views/settings/PasswordRuleSettings.vue')),
+      },
+      {
+        id: 'sessions',
+        label: 'Sessions',
+        dataTrack: 'settings-sec-sessions',
+        component: defineAsyncComponent(() => import('../views/settings/SessionSettings.vue')),
       },
       {
         id: 'certificate',

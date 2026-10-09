@@ -42,10 +42,17 @@ api.interceptors.response.use(
       /* store may not be ready */
     }
     if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
-      sessionStorage.setItem('cidrella_session_expired', '1');
+      // Only a 401 for the token this browser holds now ends anything. A poll
+      // still in flight when the user signed out, or sent before they signed
+      // in again, answers for a session that is already gone.
       const auth = useAuthStore();
-      auth.logout();
-      router.push('/login');
+      const sentWith = error.config?.headers?.Authorization;
+      if (auth.token && sentWith === `Bearer ${auth.token}`) {
+        // The server says why the session ended; the sign-in page repeats it.
+        const data = error.response.data || {};
+        auth.logout(data.code === 'SESSION_ENDED' ? data.reason || 'revoked' : 'revoked');
+        router.push('/login');
+      }
     }
     return Promise.reject(error);
   },

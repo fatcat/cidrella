@@ -6,6 +6,7 @@ import { insertAuditRow } from '../models/audit-log.js';
 import { upsertSettingWithConflict, deleteSetting } from '../models/setting.js';
 import * as User from '../models/user.js';
 import * as BackupCode from '../models/backup-code.js';
+import { endAllLiveSessions } from '../models/session.js';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { DATA_DIR } from '../config/defaults.js';
 import { APP_VERSION } from './version.js';
@@ -597,6 +598,12 @@ export function stampRestoredSettings(
         upsertSettingWithConflict(staged, RESTORE_CARRYOVER_KEY, JSON.stringify(carryover));
       }
       if (restoredBy) {
+        // Sessions that were live when the backup was taken must not come back
+        // to life with it. A backup from before sessions existed has no table.
+        const hasSessions = staged
+          .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sessions'")
+          .get();
+        if (hasSessions) endAllLiveSessions(staged, 'restore');
         const user = restoredBy.username
           ? staged.prepare('SELECT id FROM users WHERE username = ?').get(restoredBy.username)
           : null;

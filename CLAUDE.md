@@ -197,6 +197,11 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `resolveEffectiveScopeOptions` and `isLinkedOption` in `models/dhcp-scope.js` (what a scope
   serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
   `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default),
+  `models/session.js` (every sign-in session rule: idle and 24 hour limits, ending sessions
+  with a reason; see ARCHITECTURE.md Sign-in sessions), client
+  `composables/useSessionActivity.js` (what counts as activity and the warnings, mounted once in
+  `App.vue` with `SessionTimeoutDialog`) and `utils/session.js` (why the last session ended, for
+  the sign-in page),
   `isTopologyAddress` in `utils/cidr.js` (is this the network or broadcast address topology
   reserves; nothing on /31, /32, /127, /128), `macFromDuid` in `utils/duid.js`, client
   `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family),

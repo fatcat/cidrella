@@ -181,6 +181,11 @@ function seed(db) {
       .run().lastInsertRowid,
   );
 
+  // Signed in when the backup is taken; a restore must not bring it back live.
+  db.prepare(
+    `INSERT INTO sessions (id, user_id, username, expires_at) VALUES ('live-at-backup', ?, 'round-admin', '2999-01-01 00:00:00')`,
+  ).run(adminId);
+
   writeFile('certs/server.crt', 'CERT v1');
   writeFile('certs/server.key', 'KEY v1');
   writeFile('dnsmasq/conf.d/cidrella.conf', 'domain=round.test\n');
@@ -257,12 +262,35 @@ describe('backup round trip', () => {
   });
 
   it('brings back every table as it was, but for what a restore promises to change', () => {
-    const promised = new Set(['audit_log', 'settings', 'users', 'user_backup_codes', 'backups']);
+    const promised = new Set([
+      'audit_log',
+      'settings',
+      'users',
+      'user_backup_codes',
+      'backups',
+      'sessions',
+    ]);
     for (const name of Object.keys(before)) {
       if (promised.has(name)) continue;
       expect(after[name], `table ${name}`).toEqual(before[name]);
     }
     expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort());
+  });
+
+  it('brings the sessions back ended, but for that unchanged', () => {
+    const strip = (rows) =>
+      rows.map((row) => {
+        const { ended_at, end_reason, ...rest } = JSON.parse(row);
+        return { rest, ended: ended_at !== null, end_reason };
+      });
+    const was = strip(before.sessions);
+    const is = strip(after.sessions);
+    expect(is.map((row) => row.rest)).toEqual(was.map((row) => row.rest));
+    expect(was.find((row) => row.rest.id === 'live-at-backup').ended).toBe(false);
+    expect(is.find((row) => row.rest.id === 'live-at-backup')).toMatchObject({
+      ended: true,
+      end_reason: 'restore',
+    });
   });
 
   it('changes the settings only by the DHCP choice', () => {

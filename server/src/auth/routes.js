@@ -5,7 +5,8 @@ import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
 import { getDb, audit } from '../db/init.js';
 import * as User from '../models/user.js';
-import { permissionProjection, isSuperuser } from './roles.js';
+import * as Session from '../models/session.js';
+import { permissionProjection, isSuperuser, requireRole } from './roles.js';
 import { isSetupRequired } from '../models/setting.js';
 import * as BackupCode from '../models/backup-code.js';
 import {
@@ -63,7 +64,9 @@ function getJwtSecret() {
   return row.value;
 }
 
-function generateToken(user) {
+// The token names its session (`sid`); the row decides whether it still
+// works. Its exp matches the session's 24 hour limit.
+function generateToken(user, session) {
   const secret = getJwtSecret();
   return jwt.sign(
     {
@@ -71,17 +74,32 @@ function generateToken(user) {
       username: user.username,
       role: user.role,
       must_change_password: !!user.must_change_password,
+      sid: session.id,
     },
     secret,
-    { expiresIn: '24h' },
+    { expiresIn: Math.floor(Session.SESSION_LIFETIME_MS / 1000) },
   );
 }
 
+// Activity a person made in the page, reported by the client at most once a
+// minute per tab. Generous, but bounded so a loop cannot hammer the table.
+const activityLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 30,
+  message: { error: 'Too many activity reports.' },
+  standardHeaders: true,
+  legacyHeaders: false,
+});
+
 // POST /api/auth/login
 // The token plus the user projection every successful sign-in answers with.
-function sessionPayload(db, user) {
-  const token = generateToken(user);
-  audit(user.id, 'login', 'user', user.id, null);
+function sessionPayload(db, user, req) {
+  const session = Session.createSession(db, user, {
+    ip: req.ip,
+    userAgent: req.get('user-agent'),
+  });
+  const token = generateToken(user, session);
+  audit(user.id, 'login', 'user', user.id, { session_id: session.id, ip: session.ip });
 
   let preferences = {};
   try {
@@ -92,6 +110,7 @@ function sessionPayload(db, user) {
 
   const payload = {
     token,
+    session: Session.sessionTimes(session),
     user: {
       id: user.id,
       username: user.username,
@@ -168,7 +187,7 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.json({ totp_required: true, challenge });
     }
 
-    res.json(sessionPayload(db, user));
+    res.json(sessionPayload(db, user, req));
   } catch (err) {
     console.error('Login error:', err?.message || err);
     res.status(500).json({ error: 'Internal server error' });
@@ -204,13 +223,13 @@ router.post('/login/totp', loginLimiter, (req, res) => {
       if (BackupCode.consumeBackupCode(db, user.id, hashBackupCode(code))) {
         const remaining = BackupCode.countUnusedBackupCodes(db, user.id);
         audit(user.id, 'login_backup_code', 'user', user.id, { remaining });
-        return res.json({ ...sessionPayload(db, user), backup_codes_remaining: remaining });
+        return res.json({ ...sessionPayload(db, user, req), backup_codes_remaining: remaining });
       }
     } else {
       const step = verifyTotp(user.totp_secret, code, { afterStep: user.totp_last_step });
       if (step != null) {
         User.recordTotpStep(db, user.id, step);
-        return res.json(sessionPayload(db, user));
+        return res.json(sessionPayload(db, user, req));
       }
     }
     audit(user.id, 'login_failed', 'user', user.id, { reason: 'totp' });
@@ -369,8 +388,18 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
     const updatedUser = User.changePassword(db, user.id, hash);
 
     audit(user.id, 'password_changed', 'user', user.id, null);
+    // Every other browser signed in as this user signs in again with the new
+    // password; this one carries on.
+    Session.endUserSessions(db, user.id, 'password_changed', { except: req.user.sessionId });
 
-    const token = generateToken(updatedUser);
+    // A fresh token for the same session: the old one still says
+    // must_change_password. A caller without one gets a new session.
+    const current = req.user.sessionId ? Session.getSession(db, req.user.sessionId) : null;
+    const session =
+      current && !current.ended_at
+        ? current
+        : Session.createSession(db, updatedUser, { ip: req.ip, userAgent: req.get('user-agent') });
+    const token = generateToken(updatedUser, session);
 
     res.json({
       message: 'Password changed successfully',
@@ -391,24 +420,45 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
   }
 });
 
-// POST /api/auth/logout: invalidate the caller's token by bumping
-// users.updated_at PAST the token's iat. The auth middleware refuses
-// tokens with `iat < updated_at`; because SQLite datetime() is 1-second
-// granular, a login followed by an immediate logout in the same wall-
-// clock second would leave `iat == updated_at` and the token would
-// still verify. Bumping updated_at by 1 second closes the race.
-// A proper denylist would need persistent state; this approach is
-// equivalent for a single-admin tool and doesn't grow unbounded.
+// POST /api/auth/logout: end this browser's session. Other browsers signed
+// in as the same user keep theirs.
 router.post('/logout', (req, res) => {
   try {
     const db = getDb();
-    User.bumpTokenVersion(db, req.user.id);
-    audit(req.user.id, 'logout', 'user', req.user.id, null);
+    if (req.user.sessionId) Session.endSession(db, req.user.sessionId, 'logout');
+    audit(req.user.id, 'logout', 'user', req.user.id, { session_id: req.user.sessionId ?? null });
     res.json({ ok: true });
   } catch (err) {
     console.error('Logout error:', err?.message || err);
     res.status(500).json({ error: 'Internal server error' });
   }
+});
+
+// POST /api/auth/activity: a person used the page. The only request besides
+// sign-in that keeps a session from going idle; polling never calls it.
+router.post('/activity', activityLimiter, (req, res) => {
+  if (!req.user.sessionId) return res.status(400).json({ error: 'Not a sign-in session' });
+  const db = getDb();
+  const session = Session.touchSession(db, req.user.sessionId);
+  res.json(Session.sessionTimes(session));
+});
+
+// GET /api/auth/session: the current session's deadlines, without moving them.
+router.get('/session', (req, res) => {
+  if (!req.user.sessionId) return res.status(400).json({ error: 'Not a sign-in session' });
+  const session = Session.getSession(getDb(), req.user.sessionId);
+  res.json(Session.sessionTimes(session));
+});
+
+// GET /api/auth/sessions: sign-in sessions, newest first. `live=1` leaves out
+// ended ones, `user_id` narrows to one account.
+router.get('/sessions', requireRole('admin'), (req, res) => {
+  const userId = req.query.user_id == null ? null : Number(req.query.user_id);
+  if (userId != null && !Number.isInteger(userId)) {
+    return res.status(400).json({ error: 'user_id must be an integer' });
+  }
+  const live = req.query.live === '1' || req.query.live === 'true';
+  res.json(Session.listSessions(getDb(), { userId, live }));
 });
 
 // GET /api/auth/me
@@ -442,6 +492,9 @@ router.get('/me', (req, res) => {
     preferences,
     created_at: user.created_at,
   };
+  if (req.user.sessionId) {
+    payload.session = Session.sessionTimes(Session.getSession(db, req.user.sessionId));
+  }
   if (user.password_reset_by) {
     payload.password_reset_by = user.password_reset_by;
   }
