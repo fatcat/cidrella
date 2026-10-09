@@ -33,7 +33,7 @@
       ><span><i class="dhcp" />DHCP</span> <span><i class="dns" />Static DNS</span
       ><span><i class="reserved" />Reserved</span><span><i class="rogue" />Rogue</span
       ><span><i class="available" />Available</span
-      ><span><i class="ranged" :style="{ background: RANGE_LEGEND }" />Network range</span>
+      ><span><i class="ranged" :style="{ '--range-legend': RANGE_LEGEND }" />Network range</span>
     </div>
   </div>
   <div v-else ref="viewRoot" class="compact-grid-view">
@@ -68,7 +68,7 @@
       ><span><i class="dhcp" />DHCP</span> <span><i class="dns" />Static DNS</span
       ><span><i class="reserved" />Reserved</span><span><i class="rogue" />Rogue</span
       ><span><i class="available" />Available</span
-      ><span><i class="ranged" :style="{ background: RANGE_LEGEND }" />Network range</span>
+      ><span><i class="ranged" :style="{ '--range-legend': RANGE_LEGEND }" />Network range</span>
     </div>
   </div>
 </template>
@@ -77,7 +77,8 @@
 import { onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import { RANGE_COLOR_PRESETS } from '../../utils/rangeTypeColors.js';
 
-// The legend swatch for a Network Range shows the colors a type can be given.
+// The legend swatch for a Network Range is a ring in the colors a type can be
+// given, the way a ranged cell is outlined.
 const RANGE_LEGEND = `conic-gradient(${[...RANGE_COLOR_PRESETS, RANGE_COLOR_PRESETS[0]].join(', ')})`;
 
 // One grid, two densities. Cells arrive already classified by the parent
@@ -329,20 +330,30 @@ button {
   color: var(--cid-red-600);
   font-weight: 800;
 }
-/* A cell inside a Network Range takes the range's color. An unconfigured cell
-   is filled with it; a cell that already carries a status keeps that color
-   and shows the range as a stripe along its foot. The stripe is a background
-   layer, not a shadow, so the compact grid keeps its shadow-drawn lines. */
+/* A cell inside a Network Range is outlined in the range's color, whatever
+   its status: the status keeps the fill, the range keeps the outline. An
+   unconfigured cell is filled with the range color too. The outline is an
+   inset shadow, so it sits inside the cell beside the selection outline and
+   a rogue cell's red border, and the compact grid keeps its drawn lines. */
 .address-grid button.ranged.available,
 .compact-address-grid button.ranged.available {
   background: color-mix(in srgb, var(--range-color) 55%, var(--cid-surface-card));
   color: var(--cid-text-color);
 }
-.address-grid button.ranged:not(.available) {
-  background-image: linear-gradient(to top, var(--range-color) 3px, transparent 3px);
+.address-grid button.ranged {
+  box-shadow: inset 0 0 0 2px var(--range-color);
 }
-.compact-address-grid button.ranged:not(.available) {
-  background-image: linear-gradient(to top, var(--range-color) 2px, transparent 2px);
+.compact-address-grid button.ranged {
+  box-shadow:
+    inset 0 0 0 2px var(--range-color),
+    inset -1px 0 var(--preview-line),
+    inset 0 -1px var(--preview-line);
+}
+.compact-address-grid button.ranged.section {
+  box-shadow:
+    inset 0 0 0 2px var(--range-color),
+    inset -2px 0 color-mix(in srgb, var(--preview-line) 75%, var(--cid-text-color)),
+    inset 0 -1px var(--preview-line);
 }
 .grid-key {
   margin-top: 0.65rem;
@@ -359,6 +370,12 @@ button {
 .grid-key i.available {
   border: 1px solid var(--preview-line);
   background: var(--cid-surface-100);
+}
+.grid-key i.ranged {
+  border: 2px solid transparent;
+  background:
+    linear-gradient(var(--cid-surface-card), var(--cid-surface-card)) padding-box,
+    var(--range-legend) border-box;
 }
 .compact-grid-view {
   min-height: 0;
