@@ -79,6 +79,11 @@ names, below).
   names outside their zone, so every record keeps serving the name it
   served, and the Pi-hole import marks out-of-zone names the same way. A
   full name is now shown without its trailing dot. DNS-NAME-01.
+- **Stopping CIDRella is no longer logged as a failure.** The launcher exits
+  with 143 after a SIGTERM, the shell convention, and systemd counted that as
+  a failed exit, so every stop, restart and update showed `Failed with result
+  'exit-code'` in the journal and in `systemctl status`. The unit now lists 143
+  as a clean exit. Restarts behave as before.
 
 ### Developer notes
 
