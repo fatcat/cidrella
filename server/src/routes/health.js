@@ -239,7 +239,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
     disk,
     uptime: { system: systemUptime, process: processUptime },
     backends,
-    // Deprecated: read `backends`. Removed in 0.5.2.
+    // Deprecated: read `backends`. Removed in 0.6.0.
     services: { dnsmasq: backends.dns.running },
     service: getBootServiceHealth(),
     dnssec: {
