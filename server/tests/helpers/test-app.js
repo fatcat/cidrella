@@ -6,13 +6,17 @@ import { actorMiddleware } from '../../src/utils/request-actor.js';
  * Create a minimal Express app for testing a router with supertest.
  * Injects a fake admin user so routes pass auth checks.
  */
-export function createTestApp(router, prefix = '/api') {
+export function createTestApp(
+  router,
+  prefix = '/api',
+  user = { id: 1, role: 'admin', username: 'testadmin' },
+) {
   const app = express();
   app.use(express.json());
 
-  // Inject fake authenticated admin user
+  // Inject a fake authenticated user, an admin unless the test names another
   app.use((req, res, next) => {
-    req.user = { id: 1, role: 'admin', username: 'testadmin' };
+    req.user = { ...user };
     next();
   });
   app.use(actorMiddleware);

@@ -1,7 +1,7 @@
 import readline from 'node:readline';
 import { getDb, getSetting } from '../db/init.js';
 import { getDnsBackend } from '../backends/index.js';
-import { loadBlocklist, loadAllowlist } from './dns-proxy.js';
+import { loadBlocklist, loadAllowlist, loadFilteringOverrides } from './dns-proxy.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 import { BLOCKLIST_DOWNLOAD_TIMEOUT_MS, BLOCKLIST_INSERT_BATCH } from '../config/defaults.js';
 import { openPinnedOutboundStream, TOO_LARGE_CODE } from './url-guard.js';
@@ -311,6 +311,7 @@ export function generateBlocklistConfig(_db) {
   // is also consulted by the GeoIP path, so any allowlist change applies there).
   loadBlocklist();
   loadAllowlist();
+  loadFilteringOverrides();
 
   // Clean up the legacy blocklist.conf; the proxy handles blocking now.
   try {

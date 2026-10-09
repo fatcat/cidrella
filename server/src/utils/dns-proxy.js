@@ -16,10 +16,13 @@ import { logDnsQuery } from '../db/duckdb.js';
 import { applyListenNow } from '../services/backend-apply.js';
 import { canonicalizeIp } from './address.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
+import { exemptAddressSet } from '../models/filtering-exemption.js';
 import { parseCidrEntry, ipInAny } from './cidr-match.js';
 import { frameTcpMessage, extractTcpMessages } from './dns-wire.js';
 import { extractEde, failureCause, FAILURE_CAUSES } from './dns-ede.js';
 import { createReservoir, quantileOfSorted } from './samples.js';
+import { loadCityTable, unloadCityTable, cityPlace } from './geo-cities.js';
+import { recordResolution } from './resolution-feed.js';
 import {
   DATA_DIR,
   GEOIP_CACHE_MAX,
@@ -97,6 +100,16 @@ let blocklistRedirectIp6 = '';
 let blocklistBlockedDelta = 0;
 let blocklistCategoryHits = new Map();
 
+// Filtering overrides (blocklists and GeoIP alike). A pause is a deadline, not
+// a timer: it ends by itself, and a restart mid-pause keeps the stored time.
+// Exempt clients are the addresses models/filtering-exemption.js says have
+// filtering off; it keys hosts by MAC, so the set is rebuilt when an exemption
+// or a lease changes, and every minute for a MAC a scan learned.
+let filteringPausedUntil = 0;
+let exemptClients = new Set();
+let filteringOverridesTimer = null;
+const FILTERING_OVERRIDES_REFRESH_MS = 60 * 1000;
+
 // Performance instrumentation, reservoir sampling caps memory at 1000 samples
 const latency = createReservoir(1000);
 function recordLatency(us) {
@@ -140,34 +153,54 @@ export async function loadMmdb() {
   try {
     mmdbReader = await maxmind.open(dbPath);
     geoCache = new LRUCache({ max: GEOIP_CACHE_MAX, ttl: GEOIP_CACHE_TTL_MS });
-    proxyLog('info', 'MMDB loaded', { path: dbPath });
+    // City points for the Resolution Map ship with the release; without the
+    // file the map lands answers at their country's middle.
+    const cities = loadCityTable();
+    proxyLog('info', 'MMDB loaded', { path: dbPath, cities });
     return true;
   } catch (err) {
     proxyLog('error', 'Failed to load MMDB', { error: err.message });
     mmdbReader = null;
+    unloadCityTable();
     return false;
   }
 }
 
-// Lookup country code for an IP
+// Lookup country code for an IP. The cache keeps the city point beside the
+// country, found on the same miss, so the map costs a hit nothing.
 export function lookupCountry(ip) {
   if (!mmdbReader) return null;
 
   const cached = geoCache?.get(ip);
   if (cached !== undefined) {
     cacheHits++;
-    return cached;
+    return cached.country;
   }
 
   try {
     const result = mmdbReader.get(ip);
-    const code = result?.country?.iso_code || null;
-    geoCache?.set(ip, code);
+    const country = result?.country?.iso_code || null;
+    // The city table is coarser than the country database: a cell that names
+    // another country is a neighbor's, so the answer lands at its country's
+    // middle instead.
+    const city = country ? cityPlace(ip) : null;
+    const point = city && city.country === country ? [city.lon, city.lat] : null;
+    geoCache?.set(ip, { country, point });
     cacheMisses++;
-    return code;
+    return country;
   } catch {
     return null;
   }
+}
+
+/** The city point lookupCountry cached for an address, as [lon, lat], or null. */
+export function cachedPoint(ip) {
+  return geoCache?.get(ip)?.point || null;
+}
+
+/** Whether answers get a country now (GeoIP on and its database loaded). */
+export function isGeoipLoaded() {
+  return mmdbReader !== null;
 }
 
 // Load GeoIP rules into memory (call on startup and settings change)
@@ -473,9 +506,27 @@ export function getAndResetBlocklistHits() {
 // Transports own sockets, response synthesis, latency, and query logging.
 // The record* helpers bump the shared counters on a block.
 
+/** Read the pause deadline and the exempt clients into memory. */
+export function loadFilteringOverrides() {
+  try {
+    const until = Date.parse(getSetting('filtering_paused_until') || '');
+    filteringPausedUntil = Number.isFinite(until) ? until : 0;
+    exemptClients = exemptAddressSet(getDb());
+  } catch (err) {
+    proxyLog('error', 'Failed to load filtering overrides', { error: err.message });
+  }
+}
+
+/** Why filtering is off for this client: 'paused', 'host', or null. */
+export function filteringBypass(clientIp, now = Date.now()) {
+  if (now < filteringPausedUntil) return 'paused';
+  if (clientIp && exemptClients.has(clientIp)) return 'host';
+  return null;
+}
+
 // Pre-forward verdict: does the blocklist intercept this name?
-export function evaluateInboundPolicy(queryName) {
-  if (!queryName) return { action: 'forward' };
+export function evaluateInboundPolicy(queryName, clientIp = null) {
+  if (!queryName || filteringBypass(clientIp)) return { action: 'forward' };
   const blockedCategory = checkBlocklist(queryName);
   if (!blockedCategory) return { action: 'forward' };
   return {
@@ -499,20 +550,36 @@ export function recordInboundBlock(verdict) {
 
 // Post-answer verdict: do the resolved IPs trip a GeoIP country block?
 // Allowlisted answer IPs are exempt before the country lookup; a allowlisted
-// query name overrides a would-be block.
-export function evaluateResolvedPolicy(queryName, ips, lookup = lookupCountry) {
-  if (!ips || ips.length === 0) return { action: 'forward' };
-  const countryCodes = ips
+// query name overrides a would-be block. Either way the verdict names a
+// destination (the first answer GeoIP placed) for the Resolution Map, so the
+// lookup runs even when filtering is paused or off for this client.
+export function evaluateResolvedPolicy(
+  queryName,
+  ips,
+  clientIp = null,
+  lookup = lookupCountry,
+  pointOf = cachedPoint,
+) {
+  if (!ips || ips.length === 0) return { action: 'forward', destination: null };
+  const placed = ips
     .filter((ip) => !isGeoipAllowed(ip))
-    .map((ip) => lookup(ip))
-    .filter((cc) => cc !== null);
-  const blocking = blockingCountryCodes(countryCodes);
+    .map((ip) => ({ ip, country: lookup(ip) }))
+    .filter((p) => p.country !== null);
+  const destinationOf = (p) => (p ? { country: p.country, point: pointOf(p.ip) } : null);
+  if (filteringBypass(clientIp))
+    return { action: 'forward', destination: destinationOf(placed[0]) };
+  const blocking = blockingCountryCodes(placed.map((p) => p.country));
   if (blocking.length > 0 && !isAllowlisted(queryName)) {
     // Report only the codes that actually matched. countryCodes feeds
     // recordResolvedBlock, which increments per-country hit counters.
-    return { action: 'block', blockReason: blocking[0], countryCodes: blocking };
+    return {
+      action: 'block',
+      blockReason: blocking[0],
+      countryCodes: blocking,
+      destination: destinationOf(placed.find((p) => p.country === blocking[0])),
+    };
   }
-  return { action: 'forward' };
+  return { action: 'forward', destination: destinationOf(placed[0]) };
 }
 
 export function recordResolvedBlock(verdict) {
@@ -547,9 +614,10 @@ function handleQuery(msg, rinfo, sock) {
     }
 
     // Blocklist check, intercept before forwarding to dnsmasq
-    const inbound = evaluateInboundPolicy(queryName);
+    const inbound = evaluateInboundPolicy(queryName, clientIp);
     if (inbound.action === 'block') {
       recordInboundBlock(inbound);
+      recordResolution({ kind: 'blocklist', name: queryName, type: queryType });
       const response = createBlockedResponse(query);
       sock.send(response, rinfo.port, rinfo.address);
       const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
@@ -659,7 +727,13 @@ function handleDnsmasqResponse(msg) {
       .filter((a) => a.type === 'A' || a.type === 'AAAA')
       .map((a) => a.data);
 
-    const resolved = evaluateResolvedPolicy(pending.queryName, ips);
+    const resolved = evaluateResolvedPolicy(pending.queryName, ips, pending.clientIp);
+    recordResolution({
+      kind: resolved.action === 'block' ? 'geoip' : 'answer',
+      name: pending.queryName,
+      type: pending.queryType,
+      destination: resolved.destination,
+    });
     if (resolved.action === 'block') {
       recordResolvedBlock(resolved);
       const nxResponse = createNxdomainResponse({
@@ -789,9 +863,10 @@ async function handleTcpQuery(msg, clientSock) {
   }
 
   // Blocklist intercept, no dnsmasq round-trip. Same verdict path as UDP.
-  const inbound = evaluateInboundPolicy(queryName);
+  const inbound = evaluateInboundPolicy(queryName, clientIp);
   if (inbound.action === 'block') {
     recordInboundBlock(inbound);
+    recordResolution({ kind: 'blocklist', name: queryName, type: queryType });
     writeTcpMessage(clientSock, createBlockedResponse(query));
     const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
     recordLatency(latencyUs);
@@ -847,7 +922,13 @@ async function handleTcpQuery(msg, clientSock) {
     : [];
 
   // Same verdict path as UDP's handleDnsmasqResponse.
-  const resolved = evaluateResolvedPolicy(queryName, ips);
+  const resolved = evaluateResolvedPolicy(queryName, ips, clientIp);
+  recordResolution({
+    kind: resolved.action === 'block' ? 'geoip' : 'answer',
+    name: queryName,
+    type: queryType,
+    destination: resolved.destination,
+  });
   if (resolved.action === 'block') {
     recordResolvedBlock(resolved);
     writeTcpMessage(clientSock, createNxdomainResponse(query));
@@ -1169,6 +1250,11 @@ export async function startProxyIfEnabled() {
   // excludes these at load time). Loaded regardless of which features are on.
   loadAllowlist();
 
+  loadFilteringOverrides();
+  clearInterval(filteringOverridesTimer);
+  filteringOverridesTimer = setInterval(loadFilteringOverrides, FILTERING_OVERRIDES_REFRESH_MS);
+  filteringOverridesTimer.unref?.();
+
   startProxy();
 }
 
@@ -1253,6 +1339,9 @@ export function getProxyStatus() {
     // Summed from the per-category counters the refresh already maintains.
     // A COUNT(*) here would scan the whole domains table on every status poll.
     blocklistDomainCount: blocklistCategories === null ? 0 : countEnabledDomains(),
+    filteringPausedUntil:
+      filteringPausedUntil > Date.now() ? new Date(filteringPausedUntil).toISOString() : null,
+    filteringExemptClients: exemptClients.size,
   };
 }
 

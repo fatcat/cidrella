@@ -12,6 +12,37 @@ was suggested.
 
 ---
 
+## Found building the Resolution Map (2026-10-09)
+
+#### GEOIP-01: Turning GeoIP off keeps blocking until a restart
+
+**high**, confirmed in the code. `server/src/routes/geoip.js:193` (`PUT /api/geoip/settings`),
+`server/src/utils/dns-proxy.js` (`evaluateResolvedPolicy`, `blockingCountryCodes`).
+
+- **What happens:** With GeoIP on and countries listed, switching Enabled off saves
+  `geoip_enabled = false`, and answers in the listed countries are still refused (NXDOMAIN,
+  logged `blocked_geoip`) until the service restarts.
+- **Why:** The route reloads the rules and loads the database only when GeoIP goes from off to
+  on. Going from on to off unloads nothing, and the proxy never reads `geoip_enabled` per
+  query: it blocks whenever the database is loaded and a rule matches.
+- **Fix:** On disable, drop the reader (a `unloadMmdb()` in dns-proxy.js that nulls
+  `mmdbReader` and `geoCache` and unloads the city table), or have `blockingCountryCodes`
+  return nothing while GeoIP is off. Test both directions without a restart.
+
+## Found adding the filtering pause (2026-10-09)
+
+#### UI-TOAST-01: Five views show every toast twice
+
+**low**, confirmed in the browser on the Filtering page (fixed there in the same change). Views:
+`client/src/views/RogueDhcp.vue:267`, `Users.vue:366`, `SubnetCalculator.vue:77`, `GeoIP.vue:200`,
+`SubnetDetail.vue:584`.
+
+- **What happens:** Any toast raised on these views appears twice, stacked.
+- **Why:** `App.vue` mounts the one global `<Toast>`, and each of these views mounts its own as
+  well; both render every message from the shared toast service.
+- **Fix:** Delete the `<Toast />` element and its import from each view. `Settings.vue` already
+  says the global one is the only one.
+
 ## Found building the Kea adapter (2026-10-07)
 
 #### DNSMASQ-08: dnsmasq sizes a DHCPv4 option it does not know by the value's shape

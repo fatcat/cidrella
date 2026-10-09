@@ -164,6 +164,9 @@
             @toggle-all="toggleAllRows"
             @row-menu="openRowMenu"
             @row-dragstart="startNetworkDrag"
+            :filtering-editable="can('dns:write')"
+            :filtering-busy="filteringBusy"
+            @toggle-filtering="toggleFiltering"
           />
           <footer class="table-footer">
             <span>{{ resultCountLabel }}</span>
@@ -416,6 +419,7 @@ import { useAutoRefresh } from '../../composables/useAutoRefresh.js';
 import { usePermissions } from '../../composables/usePermissions.js';
 import { useWorkspaceFontBump } from '../../composables/useWorkspaceUi.js';
 import { useSubnetStore } from '../../stores/subnets.js';
+import { useBlocklistStore } from '../../stores/blocklists.js';
 import NetworkDialogs from '../../components/NetworkDialogs.vue';
 import DnsPanel from '../../components/DnsPanel.vue';
 import DhcpPanel from '../../components/DhcpPanel.vue';
@@ -2887,6 +2891,8 @@ const MUTATION_REFRESH = {
   range: { scopes: true },
   dns: { tree: true, zones: true, applyStatus: true },
   dhcp: { tree: true, scopes: true, applyStatus: true },
+  // Filtering changes no tree, zone or scope; only the rows on screen.
+  filtering: {},
   apply: { tree: true, zones: true, scopes: true },
   refresh: { tree: true, zones: true, scopes: true },
 };
@@ -2917,6 +2923,30 @@ async function reloadSharedReads(kind) {
   if (contextKind.value === 'network') await loadNetworkContext({ silent: kind === 'refresh' });
   else await refreshAggregateTable();
   if (plan.applyStatus) await applyStatus.value?.refresh();
+}
+
+// The Filtering column's toggle. The rows of one device (its address, DHCP
+// and DNS rows, and a new address its lease moves it to) all follow, so the
+// table reloads rather than patching the one row.
+const blocklistStore = useBlocklistStore();
+const filteringBusy = ref([]);
+async function toggleFiltering(row, enabled) {
+  const ip = row.address;
+  if (!ip || filteringBusy.value.includes(ip)) return;
+  filteringBusy.value = [...filteringBusy.value, ip];
+  try {
+    await blocklistStore.setHostFiltering({
+      ip_address: ip,
+      subnet_id: row.raw?.subnet_id ?? null,
+      interface_id: row.raw?.interface_id ?? null,
+      enabled,
+    });
+    await refreshAfterMutation('filtering', `Filtering ${enabled ? 'on' : 'off'} for ${ip}`);
+  } catch (error) {
+    showLiveNotice(`Could not change filtering for ${ip}: ${apiError(error)}`);
+  } finally {
+    filteringBusy.value = filteringBusy.value.filter((busy) => busy !== ip);
+  }
 }
 
 async function refreshAfterMutation(kind, message = '') {

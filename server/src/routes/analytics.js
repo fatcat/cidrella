@@ -15,6 +15,11 @@ import {
   queryClientDomains,
   queryDomainClients,
 } from '../db/duckdb.js';
+import { getSetting } from '../db/init.js';
+import { resolutionSince } from '../utils/resolution-feed.js';
+import { isGeoipLoaded } from '../utils/dns-proxy.js';
+import { cityTableInfo } from '../utils/geo-cities.js';
+import { parseMapHome } from '../utils/validation.js';
 
 const router = Router();
 
@@ -210,5 +215,22 @@ router.get(
   auth,
   analyticsRoute(queryTopDomainsByAction, { fixedAction: 'blocked_geoip', defaultLimit: '10' }),
 );
+
+// GET /api/analytics/resolution-map?since=<seq>
+// The Resolution Map's live feed: decisions newer than the cursor, the last
+// minute's counts, where home is, and whether answers can be placed at all.
+router.get('/resolution-map', auth, (req, res) => {
+  const since = Number.parseInt(req.query.since, 10);
+  const cities = cityTableInfo();
+  res.json({
+    ...resolutionSince(Number.isSafeInteger(since) && since > 0 ? since : 0),
+    home: parseMapHome(getSetting('map_home')),
+    geoip: {
+      enabled: getSetting('geoip_enabled') === 'true',
+      loaded: isGeoipLoaded(),
+      cities: cities ? { month: cities.month, cellKm: cities.cellKm } : null,
+    },
+  });
+});
 
 export default router;

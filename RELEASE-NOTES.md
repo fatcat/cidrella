@@ -19,8 +19,9 @@ goes through one backend layer, with dnsmasq as its only adapter. A golden
 test snapshots every generated file and command for every apply path; the
 refactor left them byte for byte the same, and the fixes below are the only
 changes to what dnsmasq is given. It also signs people out after
-inactivity. Schema runs to 87 (migration 082, record names, and 087,
-sessions, both below).
+inactivity, and filtering can be paused or turned off for one host. Schema
+runs to 88 (migration 082, record names, 087, sessions, and 088, hosts with
+filtering off, all below).
 
 **Everyone signs in once after this update.** Sign-ins now have a session on
 the server, and a sign-in from before the update has none.
@@ -40,6 +41,32 @@ the server, and a sign-in from before the update has none.
   end is also in the audit log as `session_ended`. Ended sessions are kept as
   long as the audit log keeps its rows. An administrator can list them with
   `GET /api/auth/sessions` (`?live=1`, `?user_id=`); a screen comes later.
+- **Pause filtering.** Settings > Filtering has a **Disable filtering** choice:
+  5, 15 or 30 minutes, or an hour. Blocklists and GeoIP stop for every client
+  at once and start again by themselves when the time is up, even across a
+  restart. The page counts down and offers **Resume now**. Each pause and
+  resume is in the audit log.
+- **Turn filtering off for one host** (schema 88). The Addresses, DNS and DHCP
+  tables have a **Filtering** column (off by default; add it from the column
+  menu) with a toggle per address. Off stays off until someone turns it back
+  on. It follows the device: a host with a known MAC is kept by its MAC, so a
+  DHCP client stays unfiltered when its lease moves it to a new address, and
+  every row of that device changes together. A host with no MAC is kept by its
+  address. Both need `dns:write`, the permission the Filtering page already
+  uses. Each change is in the address's history and the audit log.
+- **Resolution Map.** A new Analytics section draws every answer the resolver
+  gives as a flight from this CIDRella to where GeoIP puts it, live. A GeoIP
+  block is shot down on the way and a blocklist block flashes a shield over
+  home; a panel counts the last minute and lists the top destinations and the
+  latest names. It switches between a flat map and a globe you can turn.
+  Answers land at their city, to about 100 km, from DB-IP's free City Lite
+  data, which ships with the release and is refreshed when the release build
+  takes routine updates. An admin sets this CIDRella's location by clicking
+  the map (**Set location**); until then flights leave from the middle of the
+  browser's country. It needs GeoIP on. Nothing is stored: the map shows the
+  server's last 2,000 decisions.
+- **DB-IP is credited** on the GeoIP page and the Resolution Map, as its free
+  databases' license (CC BY 4.0) asks.
 
 ### Changed
 

@@ -9,6 +9,9 @@ import {
   generateBlocklistConfig,
   SCHEDULE_HOURS,
 } from '../utils/blocklist.js';
+import { loadFilteringOverrides } from '../utils/dns-proxy.js';
+import { PAUSE_MINUTES } from '../utils/filtering-pause.js';
+import { setHostFiltering, exemptAddressSet } from '../models/filtering-exemption.js';
 import { validateOutboundUrl } from '../utils/url-guard.js';
 import { isValidIpv4, isValidDomain, isValidAddress } from '../utils/ip.js';
 import { addressFamily, canonicalizeIp } from '../utils/address.js';
@@ -192,7 +195,69 @@ router.get('/settings', requirePerm('dns:read'), (req, res) => {
   for (const key of keys) {
     settings[key] = getSetting(key) || '';
   }
+  settings.filtering_paused_until = pausedUntil();
   res.json(settings);
+});
+
+// When a filtering pause ends, or null when filtering is not paused.
+function pausedUntil() {
+  const until = Date.parse(getSetting('filtering_paused_until') || '');
+  return Number.isFinite(until) && until > Date.now() ? new Date(until).toISOString() : null;
+}
+
+
+// PUT /api/blocklists/pause { minutes }
+// Turns blocklists and GeoIP off for every client for 5, 15, 30 or 60 minutes;
+// 0 resumes now. The pause is a stored deadline the proxy compares against, so
+// it ends by itself and survives a restart.
+router.put('/pause', requirePerm('dns:write'), (req, res) => {
+  const minutes = req.body?.minutes;
+  if (minutes !== 0 && !PAUSE_MINUTES.includes(minutes)) {
+    return res
+      .status(400)
+      .json({ error: `minutes must be 0 (resume) or one of ${PAUSE_MINUTES.join(', ')}` });
+  }
+  // Resuming when nothing is paused is not an event worth auditing.
+  if (!minutes && !pausedUntil()) return res.json({ filtering_paused_until: null });
+  const until = minutes ? new Date(Date.now() + minutes * 60 * 1000).toISOString() : '';
+  Setting.upsertSetting(getDb(), 'filtering_paused_until', until);
+  loadFilteringOverrides();
+  audit(req.user.id, minutes ? 'filtering_paused' : 'filtering_resumed', 'filtering', null, {
+    minutes,
+    until: until || null,
+  });
+  res.json({ filtering_paused_until: pausedUntil() });
+});
+
+// PUT /api/blocklists/host-filtering { ip_address, subnet_id, interface_id, enabled }
+// Turns filtering on or off for the host at an address. The server finds the
+// host's MAC itself (models/filtering-exemption.js); a MAC from the client is
+// never trusted.
+router.put('/host-filtering', requirePerm('dns:write'), (req, res) => {
+  const { ip_address: rawIp, subnet_id: subnetId = null, interface_id: interfaceId = null } =
+    req.body || {};
+  const enabled = req.body?.enabled;
+  if (typeof enabled !== 'boolean') {
+    return res.status(400).json({ error: 'enabled must be true or false' });
+  }
+  const ip = typeof rawIp === 'string' ? canonicalizeIp(rawIp) : null;
+  if (!ip) return res.status(400).json({ error: 'ip_address must be a valid IP address' });
+  if (addressFamily(ip) === 6 && refuseIpv6Unless(res)) return;
+  if (subnetId !== null && !Number.isInteger(subnetId)) {
+    return res.status(400).json({ error: 'subnet_id must be an integer or null' });
+  }
+  if (interfaceId !== null && typeof interfaceId !== 'string') {
+    return res.status(400).json({ error: 'interface_id must be a string or null' });
+  }
+  const db = getDb();
+  const changed = db.transaction(() =>
+    setHostFiltering(db, { ip, subnetId, interfaceId }, enabled),
+  )();
+  if (changed) {
+    loadFilteringOverrides();
+    audit(req.user.id, 'filtering_changed', 'ip_address', subnetId, { ip, enabled });
+  }
+  res.json({ ip_address: ip, filtering_enabled: !exemptAddressSet(db).has(ip) });
 });
 
 // PUT /api/blocklists/settings

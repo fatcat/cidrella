@@ -36,6 +36,8 @@ export const DEFAULTS = {
   blocklist_enabled: 'true',
   blocklist_redirect_ip: '',
   blocklist_redirect_ip6: '',
+  // ISO time filtering resumes after a pause, '' when not paused (routes/blocklists.js).
+  filtering_paused_until: '',
   dnssec_enabled: 'false',
   // When 'true', dnsmasq is authoritative-only: it answers for local zones but
   // does not forward/recurse for external domains (no server= lines emitted).
@@ -77,6 +79,7 @@ export const DEFAULTS = {
   geoip_db_path: 'auto',
   geoip_last_updated: '',
   geoip_update_schedule: 'monthly',
+  map_home: '', // Resolution Map home point, "lat,lon"; '' = not set
   update_check_enabled: 'true',
   // v0.4.15 web-port settings. Empty string means "use the env var / fallback"
   //, the server resolves to DB value if set, env var if set, hardcoded

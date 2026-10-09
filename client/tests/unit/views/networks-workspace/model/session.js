@@ -6,6 +6,7 @@
 import { afterEach, beforeEach, expect, vi } from 'vitest';
 import api from '../../../../../src/api/client.js';
 import { createFakeApi } from './fake-estate.js';
+import { defaultWorkspaceColumnKeys } from '../../../../../src/views/networks-workspace/workspace-columns.js';
 import {
   freshSession,
   mountWorkspace,
@@ -27,6 +28,14 @@ export function useModelSession() {
     localStorage.clear();
     fake = createFakeApi();
     api.get.mockImplementation((url, config) => fake.get(url, config));
+    api.put.mockImplementation((url, body) => fake.put(url, body));
+    // Walks run with the Filtering column shown, so its toggles are in reach.
+    for (const context of ['estate', 'folder', 'network'])
+      for (const kind of ['addresses', 'dns', 'dhcp'])
+        localStorage.setItem(
+          `cidrella_workspace_columns_v1_admin_${context}_${kind}`,
+          JSON.stringify([...defaultWorkspaceColumnKeys(kind), 'filtering_enabled']),
+        );
     errors = [];
   }
 

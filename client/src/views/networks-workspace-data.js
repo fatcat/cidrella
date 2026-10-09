@@ -254,6 +254,8 @@ function ipRowFields(row, { dns = row.dns_record || null, dhcp = row.dhcp || nul
           : row.scan_enabled == null
             ? 'Off · inherited'
             : 'Off',
+    // Null on a row with no address (a CNAME, MX, TXT or SRV record).
+    filtering: row.filtering_enabled ?? null,
     network: row.subnet_name || row.subnet_cidr || dhcp?.subnet_name || null,
     dnsName: dns?.record_fqdn || null,
     recordType: dns?.record_type || null,

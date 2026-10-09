@@ -20,6 +20,7 @@
     "check:db-ownership": "node scripts/check-db-ownership.js",
     "check:db-ownership:report": "node scripts/check-db-ownership.js --report",
     "check:reuse": "node scripts/check-duplicate-exports.js && node scripts/check-scoped-css-dupes.js && node scripts/check-confirm-dialogs.js",
+    "geo:cities": "node scripts/build-geo-cities.js",
     "check:reuse:report": "node scripts/check-scoped-css-dupes.js --drift"
   },
   "devDependencies": {

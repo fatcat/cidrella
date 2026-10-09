@@ -17,6 +17,7 @@ vi.mock('../../../src/utils/dns-proxy.js', () => ({
   rebindProxy: vi.fn(),
   loadBlocklist: vi.fn(),
   loadAllowlist: vi.fn(),
+  loadFilteringOverrides: vi.fn(),
 }));
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 // A saved forwarder list reapplies the forwarder, which would listen on

@@ -198,7 +198,16 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
   `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default),
   `models/session.js` (every sign-in session rule: idle and 24 hour limits, ending sessions
-  with a reason; see ARCHITECTURE.md Sign-in sessions), client
+  with a reason; see ARCHITECTURE.md Sign-in sessions), `models/filtering-exemption.js`
+  (every rule for a host with DNS filtering off: keyed by MAC, else address; `exemptAddressSet`
+  is what the proxy and the reads both use) and `utils/filtering-pause.js` (the pause periods,
+  client through `@shared`), `utils/resolution-feed.js` (the Resolution Map's live event
+  buffer; the map never reads the proxy's `getAndReset*` counters) and `utils/geo-cities.js`
+  (the city table: coarsening, file format and lookup, shared with
+  `scripts/build-geo-cities.js`), client `components/analytics/ResolutionCanvas.vue` (the map and
+  globe renderer; its math is `utils/resolution-map-geometry.js`), `utils/country-geo.js` (each
+  country's landing point and atlas outline, generated) and `components/GeoAttribution.vue`
+  (the DB-IP credit every page showing GeoIP results carries), client
   `composables/useSessionActivity.js` (what counts as activity and the warnings, mounted once in
   `App.vue` with `SessionTimeoutDialog`) and `utils/session.js` (why the last session ended, for
   the sign-in page),

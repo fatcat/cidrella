@@ -104,6 +104,13 @@ const WORKSPACE_COLUMNS = [
     description: 'Whether the DHCP Reservation for the address is enabled.',
     field: 'reservation_enabled',
   },
+  {
+    key: 'filtering_enabled',
+    header: 'Filtering',
+    description:
+      'Whether DNS filtering (blocklists and GeoIP) applies to the host. Off follows the device by MAC.',
+    field: 'filtering_enabled',
+  },
 ];
 
 // Keys a stored preference may still hold from before the split, per table.
@@ -171,6 +178,7 @@ export function restoreWorkspaceColumnKeys(kind, stored) {
 const BOOLEAN_LABELS = {
   is_online: ['Online', 'Offline'],
   scanning_enabled: ['On', 'Off'],
+  filtering_enabled: ['On', 'Off'],
   record_enabled: ['Enabled', 'Disabled'],
   reservation_enabled: ['Enabled', 'Disabled'],
   enabled: ['Enabled', 'Disabled'],
