@@ -7,7 +7,7 @@ import { allocateStaticDns, deallocateStaticDns } from '../services/ip-lifecycle
 import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
-import { validateDnsmasqConfigValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
+import { validateConfigSafeValue, isValidRecordName } from '../utils/config-value-validation.js';
 import { addressFamily, canonicalizeIp, isValidIpv6 } from '../utils/address.js';
 import { findSubnetForIp } from '../utils/ip-sync.js';
 import { ipv6Enabled, IPV6_DISABLED_ERROR } from '../utils/ipv6-support.js';
@@ -126,11 +126,16 @@ function detectZoneName(hosts, cnames) {
   return zone;
 }
 
-/** Strip zone suffix from hostname to get record name */
+/**
+ * The record name for a Pi-hole host in `zoneName`. Pi-hole names are full
+ * names, so one outside the zone keeps a trailing dot (absolute under the
+ * zone-file rule); a bare label stays relative to the zone.
+ */
 function recordName(hostname, zoneName) {
   if (hostname === zoneName) return '@';
   const suffix = `.${zoneName}`;
-  return hostname.endsWith(suffix) ? hostname.slice(0, -suffix.length) : hostname;
+  if (hostname.endsWith(suffix)) return hostname.slice(0, -suffix.length);
+  return hostname.includes('.') && !hostname.endsWith('.') ? `${hostname}.` : hostname;
 }
 
 function validateImportArray(value, field) {
@@ -151,7 +156,7 @@ function validateImportArray(value, field) {
  */
 function validateImportRecord(record, zoneName, db = null, zone = null, batchFqdns = null) {
   if (!isValidRecordName(record.name)) return 'Invalid hostname';
-  const nameErr = validateDnsmasqConfigValue(record.name, { allowComma: false });
+  const nameErr = validateConfigSafeValue(record.name, { allowComma: false });
   if (nameErr) return `hostname ${nameErr}`;
   if (record.type === 'A') {
     if (!isValidIpv4(record.value)) return 'Invalid IPv4 address';
@@ -171,7 +176,7 @@ function validateImportRecord(record, zoneName, db = null, zone = null, batchFqd
     ) {
       return 'CNAME target cannot reference itself';
     }
-    const valueErr = validateDnsmasqConfigValue(record.value, { allowComma: false });
+    const valueErr = validateConfigSafeValue(record.value, { allowComma: false });
     if (valueErr) return `CNAME target ${valueErr}`;
     if (db && zone) {
       const targetErr = cnameTargetError(db, record.value, zone, batchFqdns);

@@ -20,6 +20,12 @@ export async function setupTestDb() {
   process.env.DATA_DIR = tmpDir;
 
   await initDb(tmpDir);
+  // index.js registers what the after-commit hooks run; do the same here.
+  // Imported now, after DATA_DIR is set, and through any vi.mock of
+  // backend-apply the test made (stubBackendApply supplies HOOK_HANDLERS).
+  const { registerHookHandlers } = await import('../../src/utils/after-commit.js');
+  const { HOOK_HANDLERS } = await import('../../src/services/backend-apply.js');
+  registerHookHandlers(HOOK_HANDLERS);
   return { db: getDb(), tmpDir };
 }
 

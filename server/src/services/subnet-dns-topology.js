@@ -1,4 +1,4 @@
-import { generateReverseNames, reverseZoneNetwork } from '../utils/dnsmasq.js';
+import { generateReverseNames, reverseZoneNetwork } from '../utils/reverse-zones.js';
 import { ipForPtrRecord, reconcileManagedReverseDns } from '../models/dns-record.js';
 import { networkContains, networksOverlap } from '../utils/ip.js';
 

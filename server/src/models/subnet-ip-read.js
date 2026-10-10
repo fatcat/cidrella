@@ -1,4 +1,4 @@
-import { infiniteLeaseFirstSql } from '../utils/lease-sql.js';
+import { reservedLeaseFirstSql } from '../utils/lease-sql.js';
 import { addressToBig, parseNetwork, parsedNetworkContains } from '../utils/ip.js';
 import { staticDnsClaimSql } from './dns-record.js';
 import { ADDRESS_TYPE, buildVirtualSubnetIpRow, enrichIpViewRows } from './ip-view.js';
@@ -73,7 +73,7 @@ export function projectPersistedSubnetIpRows(
         CASE WHEN dr.id IS NOT NULL THEN 1 ELSE 0 END as has_dhcp_reservation,
         (SELECT dl.expires_at FROM dhcp_leases dl
           WHERE dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address
-          ORDER BY ${infiniteLeaseFirstSql('dl')}, dl.expires_at DESC
+          ORDER BY ${reservedLeaseFirstSql('dl')}, dl.expires_at DESC
           LIMIT 1) as dhcp_expires_at,
         CASE WHEN ${staticDnsClaimSql('ip.ip_address')} THEN 1 ELSE 0 END as has_static_dns
       FROM ip_addresses ip

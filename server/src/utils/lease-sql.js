@@ -38,12 +38,23 @@ export function activeLeaseSql(alias = '') {
 }
 
 /**
- * ORDER BY fragment putting infinite leases first. A reservation reaches the
- * lease file as `expires_at = 'infinite'`, and where several leases exist for
- * one address the reserved one is the one to believe.
+ * ORDER BY fragment putting the reserved client's lease first, where several
+ * leases name one address (docs/ARCHITECTURE.md). dnsmasq writes a DHCP
+ * Reservation's lease with expires_at = 'infinite'; Kea reports its real
+ * expiry, so the reservation itself is matched too: an enabled one for the
+ * same subnet and address whose MAC (DHCPv4) or DUID (DHCPv6) is the lease's.
+ *
+ * @param {string} alias table alias, or '' for an unaliased dhcp_leases
  */
-export function infiniteLeaseFirstSql(alias = '') {
-  return `CASE WHEN ${col(alias)} = 'infinite' THEN 1 ELSE 0 END DESC`;
+export function reservedLeaseFirstSql(alias = '') {
+  const t = alias || 'dhcp_leases';
+  return `CASE WHEN ${t}.expires_at = 'infinite' OR EXISTS (
+      SELECT 1 FROM dhcp_reservations rsv
+      WHERE rsv.enabled = 1 AND rsv.subnet_id = ${t}.subnet_id
+        AND rsv.ip_address = ${t}.ip_address
+        AND (lower(rsv.mac_address) = lower(${t}.mac_address)
+          OR lower(rsv.duid) = lower(${t}.duid))
+    ) THEN 1 ELSE 0 END DESC`;
 }
 
 /** Parse dnsmasq ISO timestamps and SQLite's UTC datetime() text consistently. */
@@ -54,20 +65,6 @@ export function leaseExpiryMs(expiresAt) {
   const zoned =
     raw.includes('T') || /(?:Z|[+-]\d\d:\d\d)$/.test(raw) ? raw : `${raw.replace(' ', 'T')}Z`;
   return Date.parse(zoned);
-}
-
-/**
- * A dnsmasq lease-time value ("24h", "3600", "1d", "infinite") as milliseconds.
- * Infinity for infinite, NaN for anything unparseable. Bare numbers are
- * seconds, as dnsmasq reads them.
- */
-export function leaseDurationMs(text) {
-  const raw = String(text || '').trim().toLowerCase();
-  if (raw === 'infinite') return Infinity;
-  const match = /^(\d+)([smhdw]?)$/.exec(raw);
-  if (!match) return NaN;
-  const unit = { '': 1, s: 1, m: 60, h: 3600, d: 86400, w: 604800 }[match[2]];
-  return Number(match[1]) * unit * 1000;
 }
 
 export function isLeaseActive(expiresAt, now = Date.now()) {

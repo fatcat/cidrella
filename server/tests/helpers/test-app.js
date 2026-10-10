@@ -6,20 +6,24 @@ import { actorMiddleware } from '../../src/utils/request-actor.js';
  * Create a minimal Express app for testing a router with supertest.
  * Injects a fake admin user so routes pass auth checks.
  */
-export function createTestApp(router, prefix = '/api') {
+export function createTestApp(
+  router,
+  prefix = '/api',
+  user = { id: 1, role: 'admin', username: 'testadmin' },
+) {
   const app = express();
   app.use(express.json());
 
-  // Inject fake authenticated admin user
+  // Inject a fake authenticated user, an admin unless the test names another
   app.use((req, res, next) => {
-    req.user = { id: 1, role: 'admin', username: 'testadmin' };
+    req.user = { ...user };
     next();
   });
   app.use(actorMiddleware);
 
-  // Routes call req.afterCommit(hookName) to queue dnsmasq regens; the
-  // middleware attaches that method. In tests the hook bodies are mocked
-  // to no-ops via vi.mock on the dnsmasq/dhcp utils, but req.afterCommit
+  // Routes call req.afterCommit(hookName) to queue backend applies; the
+  // middleware attaches that method. Tests stub the apply ops themselves
+  // (stubBackendApply in helpers/fake-backends.js), but req.afterCommit
   // itself must exist so the route handlers don't throw.
   app.use(afterCommitMiddleware);
 

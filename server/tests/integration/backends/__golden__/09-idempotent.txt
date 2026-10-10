@@ -1,0 +1,174 @@
+##### files
+=== conf.d/dhcp-scope-1.conf ===
+# DHCP scope for 10.60.0.0/24 (10.60.0.100 - 10.60.0.199)
+dhcp-range=set:scope1,10.60.0.100,10.60.0.199,255.255.255.0,1h
+dhcp-option=tag:scope1,3,10.60.0.1
+dhcp-option=tag:scope1,6,10.60.0.2,9.9.9.9
+dhcp-option=tag:scope1,15,golden.test
+dhcp-option=tag:scope1,42,69.164.213.136,172.234.25.10,172.233.189.68,198.44.55.245
+dhcp-option=tag:scope1,66,tftp.golden.test
+dhcp-option=tag:scope1,119,golden.test
+
+=== conf.d/dhcp-scope-2.conf ===
+# DHCPv6 scope for fd00:61::/64 (slaac)
+enable-ra
+ra-param=*,0,0
+dhcp-range=set:scope2,fd00:61::,ra-only,64,1h
+
+=== conf.d/dhcp-scope-3.conf ===
+# DHCPv6 scope for fd00:62::/64 (stateless)
+enable-ra
+ra-param=*,0,0
+dhcp-range=set:scope3,fd00:62::,ra-stateless,ra-names,64,1h
+dhcp-option=tag:scope3,option6:ntp-server,[2602:fcac:0:7b::74],[2603:c020:0:8369:feed:feed:feed:feed],[2600:1702:4a73:e00f:c3ee:91f2:71d8:5243],[2607:f710:35::29c:0:6]
+
+=== conf.d/dhcp-scope-4.conf ===
+# DHCPv6 scope for fd00:63::/64 (stateful)
+enable-ra
+ra-param=*,0,0
+dhcp-range=set:scope4,fd00:63::1000,fd00:63::1fff,64,1h
+dhcp-option=tag:scope4,option6:domain-search,golden.test
+dhcp-option=tag:scope4,option6:ntp-server,[2602:fcac:0:7b::74],[2603:c020:0:8369:feed:feed:feed:feed],[2600:1702:4a73:e00f:c3ee:91f2:71d8:5243],[2607:f710:35::29c:0:6]
+
+=== conf.d/local-zones.conf ===
+local=/0.0.0.0.0.0.0.0.3.6.0.0.0.0.d.f.ip6.arpa/
+local=/0.60.10.in-addr.arpa/
+local=/golden.test/
+
+=== conf.d/zone-1.conf ===
+# SOA: ns1.localhost admin.localhost 4 3600 900 604800 86400
+ptr-record=12.0.60.10.in-addr.arpa,elsewhere.example.net
+
+=== conf.d/zone-2.conf ===
+# SOA: ns1.localhost admin.localhost 1 3600 900 604800 86400
+cname=www.golden.test,web.golden.test,300
+mx-host=golden.test,mail.golden.test,5
+txt-record=golden.test,"v=spf1 \"quoted\" -all"
+srv-host=_sip._tcp.golden.test,sip.golden.test,5060,1,2
+
+=== dhcp-hosts.d/reservations.hosts ===
+aa:bb:cc:00:00:01,10.60.0.50,printer,infinite
+aa:bb:cc:00:00:02,10.60.0.51,infinite
+id:00:01:00:01:2a:2b:2c:2d:aa:bb:cc:00:00:03,[fd00:63::50],nas,infinite
+
+=== dnsmasq.conf ===
+# CIDRella DNSmasq default configuration
+# This file is copied to /data/dnsmasq/dnsmasq.conf on first run
+
+# Don't read /etc/resolv.conf, and don't serve this host's /etc/hosts (it maps
+# the host's own name to 127.0.1.1). Local records get a 60 second TTL.
+# Managed by CIDRella.
+no-resolv
+no-hosts
+local-ttl=60
+local=/localhost/
+local=/invalid/
+local=/test/
+local=/onion/
+local=/resolver.arpa/
+local=/0.in-addr.arpa/
+local=/127.in-addr.arpa/
+local=/254.169.in-addr.arpa/
+local=/255.255.255.255.in-addr.arpa/
+local=/2.0.192.in-addr.arpa/
+local=/100.51.198.in-addr.arpa/
+local=/113.0.203.in-addr.arpa/
+local=/10.in-addr.arpa/
+local=/16.172.in-addr.arpa/
+local=/17.172.in-addr.arpa/
+local=/18.172.in-addr.arpa/
+local=/19.172.in-addr.arpa/
+local=/20.172.in-addr.arpa/
+local=/21.172.in-addr.arpa/
+local=/22.172.in-addr.arpa/
+local=/23.172.in-addr.arpa/
+local=/24.172.in-addr.arpa/
+local=/25.172.in-addr.arpa/
+local=/26.172.in-addr.arpa/
+local=/27.172.in-addr.arpa/
+local=/28.172.in-addr.arpa/
+local=/29.172.in-addr.arpa/
+local=/30.172.in-addr.arpa/
+local=/31.172.in-addr.arpa/
+local=/168.192.in-addr.arpa/
+local=/0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa/
+local=/1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa/
+local=/8.e.f.ip6.arpa/
+local=/9.e.f.ip6.arpa/
+local=/a.e.f.ip6.arpa/
+local=/b.e.f.ip6.arpa/
+local=/8.b.d.0.1.0.0.2.ip6.arpa/
+local=/home.arpa/
+local=/internal/
+local=/local/
+local=/d.f.ip6.arpa/
+
+# Upstream DNS servers
+
+# DNSSEC validation (managed by CIDRella, toggle via DNS settings UI).
+# When enabled, the server injects the block below automatically; do not edit
+# by hand. It validates answers against the root trust anchor and starts
+# lenient on signature timestamps (dnssec-no-timecheck) until the clock is
+# NTP-synced, at which point the backend SIGHUPs dnsmasq to enforce them.
+#dnssec
+#dnssec-check-unsigned
+#dnssec-no-timecheck
+#conf-file=/usr/share/dnsmasq/trust-anchors.conf
+
+# DNS listener (loopback only by default)
+
+# DHCP requires listening on a real interface IP.
+# Uncomment and set your server's IP to enable DHCP:
+#listen-address=192.168.1.1
+
+# bind-dynamic allows dnsmasq to bind to addresses that may appear later
+# and avoids conflicts with other DNS services (e.g. WSL2 DNS proxy)
+
+# Watched directories for hot-reload (no restart needed)
+hostsdir=/data/dnsmasq/hosts.d
+dhcp-hostsdir=/data/dnsmasq/dhcp-hosts.d
+
+# Additional config directory (requires dnsmasq restart for reload)
+conf-dir=/data/dnsmasq/conf.d
+
+# PID file for signaling
+pid-file=/data/dnsmasq/dnsmasq.pid
+
+# Log to file (tailed by the web UI)
+log-facility=/data/dnsmasq/dnsmasq.log
+
+# Log queries for debugging (can be toggled via UI later)
+log-queries
+
+# DHCP lease file
+dhcp-leasefile=/data/dnsmasq/dnsmasq.leases
+
+# Log DHCP transactions
+log-dhcp
+
+# Cache size
+cache-size=1000
+
+# Don't forward plain names (without a dot)
+domain-needed
+
+# Don't forward addresses in the non-routed address spaces
+bogus-priv
+
+bind-dynamic
+listen-address=127.0.0.1
+port=5353
+listen-address=::1
+interface=eth0
+no-dhcp-interface=eth0
+interface=eth1
+no-dhcp-interface=eth1
+=== hosts.d/records.hosts ===
+10.60.0.10 web.golden.test
+10.60.0.50 printer.golden.test
+10.60.0.120 laptop.golden.test
+fd00:63::10 web.golden.test
+fd00:63::50 nas.golden.test
+fd00:63::1020 phone.golden.test
+
+##### commands

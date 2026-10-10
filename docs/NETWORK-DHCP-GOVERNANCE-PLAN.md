@@ -51,7 +51,7 @@ Evidence:
 - [`subnet-dhcp-topology.js`](../server/src/services/subnet-dhcp-topology.js), `insertScopeOptionsFromDefaults`, snapshots router, mask, and broadcast into `dhcp_scope_options`.
 - `cloneParentScopesToChild` clips pool bounds but copies `dhcp_scopes.gateway` and all option rows verbatim. The lower `/25` can therefore inherit router `.254`, outside its network.
 - [`dhcp-scope.js`](../server/src/models/dhcp-scope.js), `saveScopeOptions`, omits some explicit values equal to inherited network values. Its create/update path differs from topology scope creation.
-- [`dhcp.js`](../server/src/utils/dhcp.js), `generateScopeConfig`, resolves global defaults, scope overrides, legacy columns, and network fallbacks itself. Global or explicit option 3 can override the network gateway.
+- [`dhcp.js`](../server/src/backends/dnsmasq/dhcp.js), `generateScopeConfig`, resolves global defaults, scope overrides, legacy columns, and network fallbacks itself. Global or explicit option 3 can override the network gateway.
 - The generator discards explicit mask/broadcast options 1 and 28 and computes the range netmask from the current CIDR. Stale stored masks are therefore a database/UI inconsistency, **not proof that the generated range uses the old mask**. The stale router option does reach the generator's option map.
 - [`ScopeDialog.vue`](../client/src/components/ScopeDialog.vue) reconstructs inherited options again. [`DhcpPanel.vue`](../client/src/components/DhcpPanel.vue), `scopeGateway`, chooses explicit option 3, then legacy scope gateway, then network gateway, without the generator's complete defaults logic.
 - [`dhcp-lease.js`](../server/src/models/dhcp-lease.js), `syncDhcpDnsRecords`, selects domains from legacy scope/network fields. It does not consume the option resolver used to advertise DHCP domains, and multiple scopes overwrite a subnet-keyed map.
@@ -70,7 +70,7 @@ Merge preview also reports that the selected child's gateway will be preserved, 
 
 - Divide moves reservations and IP rows, then `deleteDhcpStateForSubnet` deletes all parent lease rows, not just leases on newly unusable addresses.
 - Merge moves reservations and IP rows but not leases. The `dhcp_leases.subnet_id` foreign key uses `ON DELETE SET NULL`, so deleting child networks leaves lease rows detached. This differs from the scope cascade behavior.
-- [`dhcp.js`](../server/src/utils/dhcp.js), `syncLeases`, later assigns each lease to the first matching allocated subnet. Topology mutation must not depend on a later lease-file event to restore ownership.
+- [`dhcp-lease-sync.js`](../server/src/services/dhcp-lease-sync.js), `ingestLeases` (`syncLeases` before 0.5.1), later assigns each lease to the first matching allocated subnet. Topology mutation must not depend on a later lease-file event to restore ownership.
 - A database lease deletion is not a revocation of the client's lease. Existing route comments promising automatic renewal and “No connection drop” are not a safe operational guarantee.
 
 ### 1.6 Destructive conflict handling is incomplete and too broad

@@ -1501,10 +1501,7 @@ defineExpose({ openZoneDialog, openRecordEditor, confirmDeleteZone, confirmDelet
   font-size: var(--app-fs-md);
 }
 .field-help {
-  display: block;
   margin-top: 0.4rem;
-  font-size: var(--app-fs-xs);
-  color: var(--cid-text-muted-color);
 }
 
 .zone-group-header {

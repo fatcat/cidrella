@@ -3,44 +3,34 @@
  * every 60 seconds and persists them to the metrics tables.
  *
  * Blocklist and GeoIP block counts come from in-memory proxy counters.
- * DNS query and DHCP counts come from dnsmasq log parsing.
+ * DNS query counts come from the DNS backend's log (logSource()). DHCP counts
+ * come from the DHCP backend's own counters when it keeps them
+ * (dhcpCounters(), Kea), otherwise from its log; one file when one daemon
+ * fills both roles (dnsmasq).
  */
 
-import fs from 'fs';
-import path from 'path';
-import { readLogTail } from './log-reader.js';
+import { createLogFollower } from './log-reader.js';
 import {
   getBlockedDelta,
   getAndResetCountryHits,
   getAndResetPerformanceMetrics,
   getAndResetBlocklistHits,
 } from './dns-proxy.js';
+import { getDhcpBackend, getService, onBackendChanged } from '../backends/index.js';
 import { getAndResetForwarderMetrics } from './encrypted-forwarder.js';
-import { DATA_DIR } from '../config/defaults.js';
-const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
 
 const AGGREGATE_INTERVAL_MS = 60_000;
 const RETENTION_DAYS = 30;
 const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
-// Matches: "query[A] example.com from 192.168.1.100"
-const QUERY_RE = /\bquery\[.+?\]\s+\S+\s+from\s+/;
-// DHCP conversation halves. DHCPv4 clients send DISCOVER, REQUEST, RELEASE,
-// INFORM and DECLINE; the server answers with OFFER, ACK and NAK. DHCPv6
-// (RFC 8415, as dnsmasq's rfc3315.c logs it) has its own names: clients send
-// SOLICIT, REQUEST, RENEW, REBIND, CONFIRM, RELEASE, DECLINE and
-// INFORMATION-REQUEST, and the server answers with ADVERTISE and REPLY.
-// dnsmasq logs one line per message with the type as the first word after the
-// tag. The two counts are kept apart so the dashboard can show a request the
-// server never answered. dhcp_requests, the column older readers use, stays
-// as the sum.
-const DHCP_CLIENT_RE =
-  /\bDHCP(?:DISCOVER|REQUEST|RELEASE|INFORM|DECLINE|SOLICIT|RENEW|REBIND|CONFIRM|INFORMATION-REQUEST)\b/;
-const DHCP_SERVER_RE = /\bDHCP(?:OFFER|ACK|NAK|ADVERTISE|REPLY)\b/;
-
 let db = null;
 let timer = null;
-let logOffset = 0;
+// One follower per distinct log: { source, log, dns, dhcp }, where dns and
+// dhcp say which counts that log is read for.
+let logTails = [];
+// The DHCP backend's last counter totals, when it keeps counters.
+let lastDhcpCounters = null;
+let unsubscribeBackend = null;
 let cycleCount = 0;
 
 // CPU tracking for delta computation
@@ -62,36 +52,91 @@ let deleteOldForwarder = null;
 
 /**
  * Parse new log lines and return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs }.
+ * The two DHCP counts are kept apart so the dashboard can show a request the
+ * server never answered; dhcp_requests, the column older readers use, stays
+ * as the sum. `dns` and `dhcp` say which counts this log is read for.
  */
-export function parseLogLines(lines) {
+export function parseLogLines(
+  lines,
+  source = getService('dns').logSource(),
+  { dns = true, dhcp = true } = {},
+) {
+  if (!source) return { dnsQueries: 0, dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
   let dnsQueries = 0;
   let dhcpClientMsgs = 0;
   let dhcpServerMsgs = 0;
 
   for (const line of lines) {
-    if (QUERY_RE.test(line)) {
-      dnsQueries++;
-    } else if (DHCP_CLIENT_RE.test(line)) {
-      dhcpClientMsgs++;
-    } else if (DHCP_SERVER_RE.test(line)) {
-      dhcpServerMsgs++;
+    if (source.querySourceIp(line)) {
+      if (dns) dnsQueries++;
+    } else if (dhcp) {
+      const direction = source.dhcpDirection(line);
+      if (direction === 'client') dhcpClientMsgs++;
+      else if (direction === 'server') dhcpServerMsgs++;
     }
   }
 
   return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs };
 }
 
+// The logs to read: the DNS backend's for queries, and the DHCP backend's
+// for DHCP messages unless it counts them itself; once when they are the
+// same file.
+function selectLogTails(dhcpFromLog) {
+  const dns = getService('dns').logSource();
+  const dhcp = dhcpFromLog ? getService('dhcp').logSource() : null;
+  if (dns && dhcp && dns.path === dhcp.path) return [{ source: dns, dns: true, dhcp: true }];
+  return [
+    dns && { source: dns, dns: true, dhcp: false },
+    dhcp && { source: dhcp, dns: false, dhcp: true },
+  ].filter(Boolean);
+}
+
+/**
+ * DHCP messages since the last call from the backend's counters, which are
+ * totals since the daemon started: a total that went down means a restart,
+ * and the new total is all new. The first call sets the baseline.
+ */
+export function counterDelta(last, current) {
+  if (!last) return { dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
+  const delta = (key) => (current[key] >= last[key] ? current[key] - last[key] : current[key]);
+  return { dhcpClientMsgs: delta('received'), dhcpServerMsgs: delta('sent') };
+}
+
+async function dhcpCounterCounts() {
+  let current;
+  try {
+    current = await getDhcpBackend().dhcpCounters();
+  } catch (err) {
+    console.warn('[metrics-aggregator] DHCP counters unavailable:', err.message);
+    return { dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
+  }
+  const counts = counterDelta(lastDhcpCounters, current);
+  lastDhcpCounters = current;
+  return counts;
+}
+
+const backendCountsDhcp = () => typeof getDhcpBackend().dhcpCounters === 'function';
+
 /**
  * Single aggregation cycle.
  */
-function aggregate() {
+async function aggregate() {
   try {
     const ts = Math.floor(Date.now() / 60_000) * 60; // minute-aligned epoch seconds
 
-    // Parse dnsmasq log for DNS query and DHCP counts
-    const { lines, newOffset: newLogOffset } = readLogTail(LOG_FILE, logOffset);
-    logOffset = newLogOffset;
-    const { dnsQueries, dhcpClientMsgs, dhcpServerMsgs } = parseLogLines(lines);
+    let dnsQueries = 0;
+    let dhcpClientMsgs = 0;
+    let dhcpServerMsgs = 0;
+    for (const tail of logTails) {
+      const counts = parseLogLines(tail.log.read(), tail.source, tail);
+      dnsQueries += counts.dnsQueries;
+      dhcpClientMsgs += counts.dhcpClientMsgs;
+      dhcpServerMsgs += counts.dhcpServerMsgs;
+    }
+    if (backendCountsDhcp()) {
+      ({ dhcpClientMsgs, dhcpServerMsgs } = await dhcpCounterCounts());
+    }
 
     // Blocklist blocks from in-memory proxy counters
     const blocklistData = getAndResetBlocklistHits();
@@ -184,6 +229,19 @@ function aggregate() {
   }
 }
 
+// Start each log from its end (don't process historical lines), and take a
+// baseline of the DHCP backend's counters when it keeps them. Run again when
+// a role moves to another backend.
+function bindSources() {
+  const countsItself = backendCountsDhcp();
+  logTails = selectLogTails(!countsItself).map((tail) => ({
+    ...tail,
+    log: createLogFollower(tail.source),
+  }));
+  lastDhcpCounters = null;
+  if (countsItself) dhcpCounterCounts();
+}
+
 /**
  * Start the metrics aggregator.
  */
@@ -222,12 +280,9 @@ export function startMetricsAggregator(database) {
   );
   deleteOldForwarder = db.prepare('DELETE FROM metrics_forwarder WHERE ts < ?');
 
-  // Start from end of log file (don't process historical lines)
-  try {
-    logOffset = fs.statSync(LOG_FILE).size;
-  } catch {
-    /* file may not exist yet */
-  }
+  bindSources();
+  unsubscribeBackend?.();
+  unsubscribeBackend = onBackendChanged(bindSources);
 
   timer = setInterval(aggregate, AGGREGATE_INTERVAL_MS);
   console.log('[metrics-aggregator] Started (interval: 60s, retention: 30d)');
@@ -243,4 +298,6 @@ export function stopMetricsAggregator() {
     clearInterval(timer);
     timer = null;
   }
+  unsubscribeBackend?.();
+  unsubscribeBackend = null;
 }

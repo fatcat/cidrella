@@ -71,6 +71,25 @@ export const useBlocklistStore = defineStore('blocklists', () => {
     return res.data;
   }
 
+  // Pause filtering for everyone for `minutes` (utils/filtering-pause.js on
+  // the server), or 0 to resume. Returns when it ends, or null.
+  async function pauseFiltering(minutes) {
+    const res = await api.put('/blocklists/pause', { minutes });
+    if (settings.value) settings.value.filtering_paused_until = res.data.filtering_paused_until;
+    return res.data.filtering_paused_until;
+  }
+
+  // Filtering on or off for the host at one address; the server finds its MAC.
+  async function setHostFiltering({ ip_address, subnet_id = null, interface_id = null, enabled }) {
+    const res = await api.put('/blocklists/host-filtering', {
+      ip_address,
+      subnet_id,
+      interface_id,
+      enabled,
+    });
+    return res.data;
+  }
+
   async function fetchAllowlist() {
     const res = await api.get('/blocklists/allowlist');
     allowlist.value = res.data;
@@ -107,6 +126,8 @@ export const useBlocklistStore = defineStore('blocklists', () => {
     fetchStats,
     fetchSettings,
     updateSettings,
+    pauseFiltering,
+    setHostFiltering,
     fetchAllowlist,
     addAllowlist,
     removeAllowlist,

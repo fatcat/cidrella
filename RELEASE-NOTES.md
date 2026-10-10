@@ -6,6 +6,300 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.5.2 — 2026-10-07
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+
+Kea as a second DHCP backend, on a backend contract that describes what each
+backend can do. A development line: 0.5.2 and 0.5.3 get release candidates
+only, and ship together as 0.6.0, where a host runs either dnsmasq or the
+PowerDNS + Kea stack (0.5.3). Until that stack lands, Kea is not offered.
+
+### Added
+
+- **Choose the DHCP server** (not shown yet: the panel returns in 0.5.3 as
+  the stack choice, and `/api/dhcp/server` stays for testing). Settings >
+  DHCP > Server shows which server
+  hands out addresses, what switching to the other would add or lose, and
+  switches with the leases: every IPv4 and IPv6 lease moves, under the same
+  DHCPv6 server identity, so clients keep their addresses and renew as
+  usual. DHCP stops for a few seconds during the move and the DNS server
+  restarts once. If the new server does not start, the old one takes DHCP
+  back; a switch a crash interrupts is undone at the next boot. Admins only,
+  and audited. dnsmasq keeps DNS and the IPv6 Router Advertisements either
+  way.
+- **Kea ships with CIDRella.** A native install or update adds ISC's Kea 3.0
+  repository (its signing key checked by fingerprint), installs
+  `isc-kea-dhcp4`, `isc-kea-dhcp6` and `isc-kea-hooks`, masks ISC's own Kea
+  units so they never take ports 67 and 547, and adds the `cidrella`
+  account to group `_kea`. Kea stays off until you switch to it; CIDRella
+  then runs it as `cidrella-kea@dhcp4` and `cidrella-kea@dhcp6`. Updates
+  never restart it, the same rule as dnsmasq. Nothing switches to it while
+  it is hidden. If the install fails, the
+  update goes on and dnsmasq keeps serving. The Docker image carries
+  Alpine's Kea 3.0 and its hooks, down until switched to.
+- **Kea's audit log follows the audit log retention.** Kea's legal log
+  (one file a day) is pruned with the audit log, by the same setting.
+- A setting naming Kea on a host without it (a backup restored from another
+  host) falls back to dnsmasq at boot and says so in the log.
+
+### Changed
+
+- **Backend features.** `server/src/backends/features.js` lists every
+  feature CIDRella offers, or may offer, that depends on which DNS or DHCP
+  backend fills a role (60 of them, from the feature survey of 2026-10-07).
+  Each backend says which it supports, and `GET /api/features` reports them
+  with the reason a feature is off. A write that needs a feature the active
+  backend lacks gets 409 `BACKEND_FEATURE_UNSUPPORTED`. With dnsmasq nothing
+  that works today changes.
+- **Health and metrics.** `backends.<role>.features` carries the same
+  support per role. The 0.5.1 `capabilities` keys stay one more release,
+  derived from it. The `services.dnsmasq` field of `/api/health/system` and
+  the top-level `dnsmasq` field of `/api/metrics/services`, deprecated in
+  0.5.1, are gone: read `backends`.
+- **Lease times** are read by one parser shared by the server and the
+  client (`utils/lease-time.js`); the stored text ("12h", "3600") is
+  unchanged.
+
+- **Backups carry Kea's leases and server identity** (`kea/`), but not its
+  control password, logs, sockets or rendered config: a restore keeps the
+  host's password, and the next boot renders the config and restarts DNS
+  and DHCP on what was restored.
+- **Docker:** port 547/udp is listed with the others in the image.
+
+### Fixed
+
+- **The Docker image did not build.** Alpine's `arping` package now
+  conflicts with `iputils`, and the client build stage lacked the server
+  helpers the client shares. The image uses iputils' arping, and CI now
+  builds the image on every push.
+- **Docker: the scanner's ARP probe never ran.** arping runs as the
+  unprivileged `cidrella` account and had no capability to open its raw
+  socket, so every probe fell back to ICMP. The arping binary now carries
+  `CAP_NET_RAW`, which compose already grants.
+
+- **DHCPv6 Captive Portal (option 103) broke dnsmasq's config.** dnsmasq has
+  no name for option 103, so the line it was written as
+  (`option6:captive-portal`) failed its config check. It is written by number.
+- **The update preflight could restart DNS and DHCP.** The probe update.sh
+  runs before switching slots rendered config into its own directory, then
+  restarted the host's dnsmasq if it was down. It now starts nothing. This
+  takes effect from the update after 0.5.2: the first update into it still
+  runs the old script.
+
+### Developer notes
+
+- The DHCP option catalog no longer carries `dnsmasqName`; the dnsmasq
+  adapter spells options itself (`backends/dnsmasq/option-names.js`).
+- `releaseLease` takes a `BackendLease` and may return a promise;
+  `retireStaleDynamicAddresses` is async.
+- Where several leases name one address, the reserved client's is read
+  first by its DHCP Reservation as well as by dnsmasq's `infinite` expiry
+  (`reservedLeaseFirstSql`), so a backend that reports real expiries ranks
+  the same way.
+- **The Kea adapter** (`server/src/backends/kea/`) renders `kea-dhcp4.conf`
+  and `kea-dhcp6.conf` from the same scope model dnsmasq renders from
+  (`backends/shared/dhcp-scope-model.js`), reads and releases leases through
+  Kea's control API, and feeds fingerprinting from Kea's legal log. It passes
+  the backend contract, and every catalog option of both families passes
+  Kea 3.0's own config check.
+- **Selecting the DHCP backend.** `backends/index.js` chooses the DHCP
+  backend from the `dhcp_backend` setting (`selectDhcpBackend`, read at boot
+  by `selectDhcpBackendAtBoot`); DNS and RA stay with dnsmasq. The setting is
+  not editable through `/api/settings`: only the switch
+  (`services/dhcp-backend-switch.js`, `GET`/`POST /api/dhcp/server`) writes
+  it. `onBackendChanged` rebinds the lease watcher, the fingerprint watcher
+  and the metrics log tails when the role moves, and `holdLeaseSync` keeps
+  the lease sync still during a switch.
+- While Kea serves DHCP, dnsmasq renders only its DHCPv6 scope files, for the
+  Router Advertisements, plus `dhcp-ignore=tag:!nosuchtag` so it answers no
+  request (it binds UDP 547 beside Kea whenever an RA carries the M or O
+  flag). The RA role gained `applyRouterAdvertisements`, and `importLeases`
+  replaces a backend's leases and takes the server DUID.
+- The log readers follow a backend's log onto a new file
+  (`createLogFollower` in `utils/log-reader.js`), and the DHCP message counts
+  come from the DHCP backend's own counters where it keeps them
+  (`dhcpCounters`), from its log otherwise.
+- dnsmasq and Kea share their service control
+  (`backends/shared/unit-control.js`). Its `enableFile` keeps a daemon s6
+  supervises down until it is wanted: Kea's s6 run script waits for it.
+- A backend may prune its own audit log (`pruneLogs(days)`), called from the
+  daily audit log prune for every backend (`allBackends()`).
+- The integration harness gains `kea-switch`: install a candidate, switch to
+  Kea and back through the API.
+
+---
+
+## v0.5.1 — 2026-10-09
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+
+Groundwork for moving DHCP to Kea and DNS to PowerDNS. Every dnsmasq call now
+goes through one backend layer, with dnsmasq as its only adapter. A golden
+test snapshots every generated file and command for every apply path; the
+refactor left them byte for byte the same, and the fixes below are the only
+changes to what dnsmasq is given. It also signs people out after
+inactivity, and filtering can be paused or turned off for one host. Schema
+runs to 88 (migration 082, record names, 087, sessions, and 088, hosts with
+filtering off, all below).
+
+**Everyone signs in once after this update.** Sign-ins now have a session on
+the server, and a sign-in from before the update has none.
+
+### New
+
+- **Sign out after inactivity.** Settings > Access > Sessions sets how long a
+  sign-in survives without anyone using it: never, 15, 30 or 60 minutes. The
+  default is 60. Clicking, typing or scrolling in any CIDRella tab counts;
+  a dashboard refreshing on its own does not. A minute before the limit a
+  dialog counts down with **Stay signed in**. Every session also still ends
+  24 hours after sign-in, whatever the setting, and five minutes before that
+  a dialog offers to sign in again so nothing is lost. The sign-in page says
+  why the last session ended.
+- **Sessions are recorded** (schema 87): who signed in, from which address
+  and browser, when they were last active, and how the session ended. Each
+  end is also in the audit log as `session_ended`. Ended sessions are kept as
+  long as the audit log keeps its rows. An administrator can list them with
+  `GET /api/auth/sessions` (`?live=1`, `?user_id=`); a screen comes later.
+- **Pause filtering.** Settings > Filtering has a **Disable filtering** choice:
+  5, 15 or 30 minutes, or an hour. Blocklists and GeoIP stop for every client
+  at once and start again by themselves when the time is up, even across a
+  restart. The page counts down and offers **Resume now**. Each pause and
+  resume is in the audit log.
+- **Turn filtering off for one host** (schema 88). The Addresses, DNS and DHCP
+  tables have a **Filtering** column (off by default; add it from the column
+  menu) with a toggle per address. Off stays off until someone turns it back
+  on. It follows the device: a host with a known MAC is kept by its MAC, so a
+  DHCP client stays unfiltered when its lease moves it to a new address, and
+  every row of that device changes together. A host with no MAC is kept by its
+  address. Both need `dns:write`, the permission the Filtering page already
+  uses. Each change is in the address's history and the audit log.
+- **Resolution Map.** A new Analytics section draws every answer the resolver
+  gives as a flight from this CIDRella to where GeoIP puts it, live. A GeoIP
+  block flies red and bursts where it lands, and a blocklist block flashes a
+  shield over home; a panel counts the last minute and lists the top destinations and the
+  latest names. It switches between a flat map and a globe you can turn.
+  Answers land at their city, to about 100 km, from DB-IP's free City Lite
+  data, which ships with the release and is refreshed when the release build
+  takes routine updates. An admin sets this CIDRella's location by clicking
+  the map (**Set location**); until then flights leave from the middle of the
+  browser's country. It needs GeoIP on. Nothing is stored: the map shows the
+  server's last 2,000 decisions.
+- **DB-IP is credited** on the GeoIP page and the Resolution Map, as its free
+  databases' license (CC BY 4.0) asks.
+
+### Changed
+
+- **The address grid outlines every address in a Network Range with the range type's color**, whatever the address's status. Before, an assigned, reserved or DHCP address in a range showed only its status color and the range was invisible. The status keeps the fill and the range keeps the outline, in both grid densities.
+- **The Divide dialog says why it stops at 256 networks.** One divide makes at most 256, so the change and its preview stay reviewable. When that cap, not the network's size, stops the slider, a line under it says so and points to dividing one of the new networks again.
+- **Signing out ends only that browser's session.** It used to end every
+  session the account had, and the user menu's Sign out never told the server
+  at all, so the token stayed valid until it expired. A password change now
+  keeps the session it was made in and ends the account's others; an
+  administrator's password reset, a role change and deleting a user end all
+  of that account's sessions, as does a restore for every account.
+
+- **DNS/DHCP backend layer.** `server/src/backends/` holds a registry
+  (`index.js`), the contract every adapter keeps (`contract.js`) and the
+  dnsmasq adapter (`backends/dnsmasq/`, the code that used to live in
+  `utils/dnsmasq.js`, `utils/dhcp.js` and the lease and log helpers). Apply
+  operations are desired state: each reads the database and reports whether
+  the daemon changed and what it took to apply. Adapters never write the
+  database. The after-commit hooks, boot, the Interfaces save, the DNS proxy
+  bypass, lease sync and release, the DHCPv6 probe, the clock-sync signal
+  and the four log readers all go through it.
+- **Health reports backends by role.** `/api/health/system` and
+  `/api/metrics/services` add `backends`: for DNS, DHCP and Router
+  Advertisements, the daemon's name, whether it is running, whether a restart
+  is pending, and what it can do. The header chips, the Analytics status rail
+  and Needs attention read it, one chip or row per daemon. With dnsmasq the
+  screen looks the same.
+- Boot validates the listen and resolver changes as one `dnsmasq --test`.
+
+### Deprecated
+
+- `services.dnsmasq` on `/api/health/system` and the top-level `dnsmasq` on
+  `/api/metrics/services`. Read `backends` instead; both go in 0.6.0.
+- `dnsmasqName` in `GET /api/dhcp/options`. It moves into the dnsmasq adapter
+  with the Kea release.
+
+### Fixed
+
+- **Turning GeoIP off stops country blocking at once.** Before, answers in
+  blocked countries were still refused until the service restarted. A database
+  refresh while GeoIP is off also no longer turns blocking back on.
+
+- **Saving your preferences no longer signs you out.** Changing the time
+  format bumped the account's update time, which invalidated the token the
+  change was made with on its next request.
+
+- **SRV records answer under their zone.** An SRV record `_sip._tcp` in
+  `example.lan` was written as `srv-host=_sip._tcp,...`, so dnsmasq answered
+  `_sip._tcp` and a client asking for `_sip._tcp.example.lan` got nothing. It
+  is now qualified with its zone, and the DNS tables show the full name too.
+  Boot renders the zones once, so existing SRV records are corrected on the
+  upgrade without an edit (an unchanged install writes nothing and signals
+  nothing). DNSMASQ-04.
+- **The dnsmasq health check means CIDRella's dnsmasq.** It asked `pidof
+  dnsmasq`, which also finds the dnsmasq that libvirt, LXD or NetworkManager
+  run, so a stopped `cidrella-dnsmasq` could show as running in the header,
+  the Analytics rail and Needs attention. It now asks systemd about the
+  `cidrella-dnsmasq` unit, the same check the restart decision already used,
+  and falls back to `pidof` only where there is no systemctl (Docker).
+  DNSMASQ-05.
+- **A reboot with DNSSEC on no longer restarts dnsmasq for nothing.** The
+  interface and DNSSEC blocks in `dnsmasq.conf` swapped places on every
+  write, so each boot, and each Interfaces save that changed nothing,
+  validated the conf and restarted dnsmasq, dropping its cache. The interface
+  block now sits above the DNSSEC block, where both writers leave it. The
+  first boot after the upgrade may restart once if the last write before it
+  was an Interfaces save. DNSMASQ-03.
+- **One rule for dotted record names.** A record named `nas.home.lan` in
+  zone `example.lan` was served as `nas.home.lan`, while the CNAME target
+  check read it as `nas.home.lan.example.lan`, so a CNAME could point at a
+  name nothing answered. Names now follow the zone-file rule: a name ending
+  in `.` is absolute, every other name is relative to its zone (`www.sub`
+  is `www.sub.example.lan`). Migration 082 adds the dot to existing dotted
+  names outside their zone, so every record keeps serving the name it
+  served, and the Pi-hole import marks out-of-zone names the same way. A
+  full name is now shown without its trailing dot. DNS-NAME-01.
+- **Stopping CIDRella is no longer logged as a failure.** The launcher exits
+  with 143 after a SIGTERM, the shell convention, and systemd counted that as
+  a failed exit, so every stop, restart and update showed `Failed with result
+  'exit-code'` in the journal and in `systemctl status`. The unit now lists 143
+  as a clean exit. Restarts behave as before.
+
+### Developer notes
+
+- Only `server/src/backends/**` may import an adapter. ESLint refuses static
+  imports and `scripts/check-backend-imports.js` (part of `npm run lint`)
+  refuses `import()` calls and test `vi.mock` paths.
+- `tests/contract/backend-contract.js` runs one contract against the dnsmasq
+  adapter and an in-memory fake (`tests/helpers/fake-backends.js`). Caller
+  tests stub `services/backend-apply.js` with `stubBackendApply`.
+- `utils/after-commit.js` takes its hook handlers from `registerHookHandlers`
+  at boot instead of importing them. That removed the last server import
+  cycle; the CI madge baseline is now 0.
+- A DNS role op, `servedTtl(record)`, reports the TTL the backend answers a
+  record with; record reads carry it as `served_ttl` (the 60 second
+  `local-ttl` fix itself shipped in 0.5.0).
+- Neutral helpers moved out of the dnsmasq code: `utils/reverse-zones.js`,
+  `utils/config-value-validation.js` (was `utils/dnsmasq-escape.js`),
+  `listenableAddresses` in `utils/interface-config.js`, and
+  `syncServerDnsDefault` in `models/dhcp-option.js`.
+- `docs/DNSMASQ-COUPLING.md` maps the seams and what is left before Kea,
+  including the stored lease-time syntax (DNSMASQ-07).
+
+---
+
 ## v0.5.0 — 2026-10-08
 
 ```yaml

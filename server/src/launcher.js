@@ -16,6 +16,9 @@ const SAFE_MODE_THRESHOLD =
   Number.parseInt(process.env.CIDRELLA_SAFE_MODE_THRESHOLD || '3', 10) || 3;
 const OUTPUT_LINE_LIMIT = 40;
 const OUTPUT_CHAR_LIMIT = 8000;
+// The exit code after a stop by signal: 128 + signal number, the shell convention.
+// scripts/systemd/cidrella.service lists SIGTERM's as a success.
+const SIGNAL_EXIT_CODES = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
 function nowIso() {
   return new Date().toISOString();
@@ -119,8 +122,7 @@ writeStartupStatus(buildStartingStatus(child.pid));
 let forwardingSignal = false;
 function forwardSignal(signal) {
   if (child.exitCode !== null || child.signalCode !== null) {
-    const signalExitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
-    process.exit(signalExitCodes[signal] || 1);
+    process.exit(SIGNAL_EXIT_CODES[signal] || 1);
   }
   if (child.killed) return;
   forwardingSignal = true;
@@ -293,8 +295,7 @@ child.on('exit', (code, signal) => {
   }
 
   if (signal && forwardingSignal) {
-    const signalExitCodes = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
-    process.exit(signalExitCodes[signal] || 1);
+    process.exit(SIGNAL_EXIT_CODES[signal] || 1);
   }
 
   if (!forwardingSignal && failedStatus && failedStatus.failed_start_count >= SAFE_MODE_THRESHOLD) {

@@ -21,7 +21,7 @@ import * as RangeType from '../models/range-type.js';
 import * as Folder from '../models/folder.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
 import * as OperationMaintenance from '../services/operation-maintenance.js';
-import { syncServerDnsDefault } from '../utils/dhcp.js';
+import { syncServerDnsDefault } from '../models/dhcp-option.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 
 import { DATA_DIR } from '../config/defaults.js';

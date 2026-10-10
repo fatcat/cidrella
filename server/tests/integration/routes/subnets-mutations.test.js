@@ -17,25 +17,16 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateConfigs: vi.fn(),
-    applyInterfaceConfig: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    signalDnsmasq: vi.fn(),
-    restartDnsmasq: vi.fn(),
-  };
-});
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateDhcpConfigs: vi.fn(),
-    startLeaseWatcher: vi.fn(),
-  };
-});
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
@@ -476,15 +467,16 @@ describe('DNS address metadata sync', () => {
     expect(records.body.find((record) => record.id === fqdn.body.id)?.record_fqdn).toBe(
       'host-one.dns-normalize.test',
     );
+    // Absolute by its trailing dot; the FQDN is the name without it.
     expect(records.body.find((record) => record.id === external.body.id)?.record_fqdn).toBe(
-      'host-two.google.com.',
+      'host-two.google.com',
     );
 
     const ips = await request(app).get(`/api/subnets/${s.id}/ips?page=1&pageSize=256`);
     const one = ips.body.ips.find((r) => r.ip_address === '10.83.0.50');
     const two = ips.body.ips.find((r) => r.ip_address === '10.83.0.51');
     expect(one.hostname).toBe('host-one.dns-normalize.test');
-    expect(two.hostname).toBe('host-two.google.com.');
+    expect(two.hostname).toBe('host-two.google.com');
   });
 
   it('renaming a DNS A record updates the ip_addresses row hostname', async () => {
@@ -725,7 +717,7 @@ describe('PUT /api/dhcp/scopes/:id, pool resize guard (R4 #4)', () => {
 
 // The gateway-in-pool invariant used to be enforced on two of the four routes
 // that can write a scope's pool. dnsmasq builds dhcp-range= straight from the
-// ranges row (utils/dhcp.js), so an unguarded route hands the router's own
+// ranges row (backends/dnsmasq/dhcp.js), so an unguarded route hands the router's own
 // address out as a dynamic lease. One test per write path, so a future route
 // that skips the shared helper fails here.
 describe('gateway-in-pool invariant holds on every route that writes a pool', () => {
@@ -1186,8 +1178,8 @@ describe('canonical IP allocation endpoints', () => {
       gateway_address: '10.46.0.1',
     });
 
-    const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
-    regenerateDhcpConfigs.mockClear();
+    const { applyDhcp } = await import('../../../src/services/backend-apply.js');
+    applyDhcp.mockClear();
 
     const reserve = await request(app)
       .put(`/api/subnets/${s.id}/ips/10.46.0.50/allocation`)
@@ -1198,7 +1190,7 @@ describe('canonical IP allocation endpoints', () => {
       allocation_state: 'reserved',
       reservation_note: 'printer hold',
     });
-    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(applyDhcp).toHaveBeenCalledTimes(1));
 
     const { getDb } = await import('../../../src/db/init.js');
     expect(
@@ -1228,7 +1220,7 @@ describe('canonical IP allocation endpoints', () => {
       .put(`/api/subnets/${s.id}/ips/10.46.0.50/allocation`)
       .send({ allocation_state: 'unassigned' });
     expect(release.status).toBe(200);
-    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(2));
+    await vi.waitFor(() => expect(applyDhcp).toHaveBeenCalledTimes(2));
     expect(
       getDb()
         .prepare(
@@ -1264,8 +1256,8 @@ describe('canonical IP allocation endpoints', () => {
       gateway_address: '10.47.0.1',
     });
 
-    const { regenerateDhcpConfigs } = await import('../../../src/utils/dhcp.js');
-    regenerateDhcpConfigs.mockClear();
+    const { applyDhcp } = await import('../../../src/services/backend-apply.js');
+    applyDhcp.mockClear();
 
     const reserve = await request(app).put(`/api/subnets/${s.id}/ips/bulk-allocation`).send({
       start_ip: '10.47.0.0',
@@ -1274,7 +1266,7 @@ describe('canonical IP allocation endpoints', () => {
     });
     expect(reserve.status).toBe(200);
     expect(reserve.body).toMatchObject({ count: 2, skipped: 2, allocation_state: 'reserved' });
-    await vi.waitFor(() => expect(regenerateDhcpConfigs).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(applyDhcp).toHaveBeenCalledTimes(1));
 
     const { getDb } = await import('../../../src/db/init.js');
     expect(

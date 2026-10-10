@@ -46,21 +46,14 @@ export function changePassword(db, userId, passwordHash) {
   return db.prepare('SELECT * FROM users WHERE id = ?').get(userId);
 }
 
-export function bumpTokenVersion(db, userId) {
-  return db
-    .prepare("UPDATE users SET updated_at = datetime('now','+1 second') WHERE id = ?")
-    .run(userId);
-}
-
 export function updatePreferences(db, userId, preferences) {
   return db
-    .prepare("UPDATE users SET preferences = ?, updated_at = datetime('now') WHERE id = ?")
+    .prepare('UPDATE users SET preferences = ? WHERE id = ?')
     .run(JSON.stringify(preferences), userId);
 }
 
-// Two-factor. None of these touch updated_at: the middleware treats a bump
-// as "every token before this instant is dead", and the wizard enabling TOTP
-// mid-session must keep its session.
+// Two-factor. Signing in again is the session table's business
+// (models/session.js); none of these end a session.
 export function setPendingTotpSecret(db, userId, secret) {
   return db
     .prepare(

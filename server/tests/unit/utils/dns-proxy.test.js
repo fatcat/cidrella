@@ -1,10 +1,9 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 
-// Mock dnsmasq.js before importing dns-proxy (avoids circular dep issues)
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
-  applyInterfaceConfig: vi.fn(),
-  restartDnsmasq: vi.fn(),
-}));
+// Fake backend registry before importing dns-proxy (no dnsmasq writes or restarts)
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 // Mock duckdb.js to avoid DuckDB dependency in unit tests
 vi.mock('../../../src/db/duckdb.js', () => ({

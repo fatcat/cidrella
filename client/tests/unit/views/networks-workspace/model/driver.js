@@ -8,6 +8,7 @@
 //   zone <id> · pick-zone <id> · pick-network <id> · scope <id>
 //   search "<text>" · table-search "<text>"
 //   row <n> [ctrl|shift] · check <n> · check-all · row-menu <n> · close-details
+//   filtering <n>
 //   filter <column> <n> · filter-text <column> "<text>" · clear-filter <column>
 //   sort <column> · page next|prev · page-size <n>
 //
@@ -80,6 +81,8 @@ export function candidates() {
   for (let index = 0; index < Math.min(rows, 6); index += 1) {
     out.push(`row ${index}`, `row ${index} ctrl`, `row ${index} shift`, `row-menu ${index}`);
     if (rowAt(index).querySelector('.check-cell input')) out.push(`check ${index}`);
+    if (rowAt(index).querySelector('[data-track="ip-filtering-toggle"] input:not([disabled])'))
+      out.push(`filtering ${index}`);
   }
   if (one('thead .check-cell input')) out.push('check-all');
   if (one('.available-switch input')) out.push('available');
@@ -202,6 +205,9 @@ export async function perform(session, label) {
       break;
     case 'check':
       click(rowAt(Number(arg)).querySelector('.check-cell input'));
+      break;
+    case 'filtering':
+      click(rowAt(Number(arg)).querySelector('[data-track="ip-filtering-toggle"] input'));
       break;
     case 'check-all':
       click(one('thead .check-cell input'));

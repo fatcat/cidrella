@@ -3,10 +3,9 @@ import dnsPacket from 'dns-packet';
 import net from 'net';
 
 // dns-proxy is imported transitively (framing helpers); stub its side-effecting deps.
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
-  applyInterfaceConfig: vi.fn(),
-  restartDnsmasq: vi.fn(),
-}));
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
 const {

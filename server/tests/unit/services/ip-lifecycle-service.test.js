@@ -374,7 +374,7 @@ describe('one-hour continuous-offline retirement', () => {
     ).run(reverseZoneId);
   }
 
-  it('keeps dynamic observations at 59 minutes and retires them at 60 minutes', () => {
+  it('keeps dynamic observations at 59 minutes and retires them at 60 minutes', async () => {
     const lease = seedDynamic();
     seedDynamicDns(lease.ip);
     db.prepare(
@@ -386,7 +386,7 @@ describe('one-hour continuous-offline retirement', () => {
     setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
     const releaseLease = vi.fn(() => ({ released: true }));
 
-    const beforeBoundary = retireStaleDynamicAddresses(db, {
+    const beforeBoundary = await retireStaleDynamicAddresses(db, {
       now: new Date('2031-05-20T11:59:00.000Z'),
       releaseLease,
     });
@@ -398,7 +398,7 @@ describe('one-hour continuous-offline retirement', () => {
     });
     expect(releaseLease).not.toHaveBeenCalled();
 
-    const atBoundary = retireStaleDynamicAddresses(db, { now: baseTime, releaseLease });
+    const atBoundary = await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease });
     expect(atBoundary).toEqual({
       retired: 1,
       deferred: 0,
@@ -408,9 +408,10 @@ describe('one-hour continuous-offline retirement', () => {
     });
     expect(releaseLease).toHaveBeenCalledWith(
       expect.objectContaining({
-        ip_address: lease.ip,
-        mac_address: lease.mac,
-        client_id: lease.clientId,
+        ip: lease.ip,
+        mac: lease.mac.toLowerCase(),
+        clientId: lease.clientId,
+        dhcpVersion: 4,
       }),
     );
     expect(address(lease.ip)).toMatchObject({
@@ -428,11 +429,13 @@ describe('one-hour continuous-offline retirement', () => {
     expect(db.prepare('SELECT id FROM dns_records WHERE value = ?').all(lease.ip)).toEqual([]);
     expect(db.prepare("SELECT id FROM dns_records WHERE type = 'PTR'").all()).toEqual([]);
 
-    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease }).retired).toBe(0);
+    expect((await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease })).retired).toBe(
+      0,
+    );
     expect(releaseLease).toHaveBeenCalledTimes(1);
   });
 
-  it('cancels retirement when activity resumes before the boundary', () => {
+  it('cancels retirement when activity resumes before the boundary', async () => {
     const lease = seedDynamic();
     setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
 
@@ -444,9 +447,9 @@ describe('one-hour continuous-offline retirement', () => {
     });
     expect(address(lease.ip).offline_since_at).toBeNull();
 
-    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired).toBe(
-      0,
-    );
+    expect(
+      (await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() })).retired,
+    ).toBe(0);
     expect(address(lease.ip)).toMatchObject({ is_online: 1, allocation_state: 'dynamic_dhcp' });
   });
 
@@ -459,9 +462,9 @@ describe('one-hour continuous-offline retirement', () => {
     `,
     ).run(subnetId, lease.ip);
 
-    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired).toBe(
-      0,
-    );
+    expect(
+      (await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() })).retired,
+    ).toBe(0);
     expect(address(lease.ip).offline_since_at).toBe('2031-05-20 12:00:00');
 
     db.close();
@@ -469,33 +472,39 @@ describe('one-hour continuous-offline retirement', () => {
     db = getDb();
 
     expect(
-      retireStaleDynamicAddresses(db, {
-        now: new Date('2031-05-20T12:59:00.000Z'),
-        releaseLease: vi.fn(),
-      }).retired,
+      (
+        await retireStaleDynamicAddresses(db, {
+          now: new Date('2031-05-20T12:59:00.000Z'),
+          releaseLease: vi.fn(),
+        })
+      ).retired,
     ).toBe(0);
 
     // A backwards clock step leaves the persisted edge in the future and must
     // never turn into a negative elapsed interval or immediate retirement.
     expect(
-      retireStaleDynamicAddresses(db, {
-        now: new Date('2031-05-20T10:00:00.000Z'),
-        releaseLease: vi.fn(),
-      }).retired,
+      (
+        await retireStaleDynamicAddresses(db, {
+          now: new Date('2031-05-20T10:00:00.000Z'),
+          releaseLease: vi.fn(),
+        })
+      ).retired,
     ).toBe(0);
     expect(
-      retireStaleDynamicAddresses(db, {
-        now: new Date('2031-05-20T13:00:00.000Z'),
-        releaseLease: vi.fn(() => ({ released: true })),
-      }).retired,
+      (
+        await retireStaleDynamicAddresses(db, {
+          now: new Date('2031-05-20T13:00:00.000Z'),
+          releaseLease: vi.fn(() => ({ released: true })),
+        })
+      ).retired,
     ).toBe(1);
   });
 
-  it('defers database cleanup when an active sticky lease cannot be released', () => {
+  it('defers database cleanup when an active sticky lease cannot be released', async () => {
     const lease = seedDynamic();
     setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
 
-    const result = retireStaleDynamicAddresses(db, {
+    const result = await retireStaleDynamicAddresses(db, {
       now: baseTime,
       releaseLease: vi.fn(() => ({ released: false, error: 'network unavailable' })),
     });
@@ -516,7 +525,7 @@ describe('one-hour continuous-offline retirement', () => {
     ).toBeTruthy();
   });
 
-  it('retains rogue evidence for the full offline window', () => {
+  it('retains rogue evidence for the full offline window', async () => {
     db.prepare(
       `
       INSERT INTO ip_addresses
@@ -530,10 +539,12 @@ describe('one-hour continuous-offline retirement', () => {
     ).run(subnetId);
 
     expect(
-      retireStaleDynamicAddresses(db, {
-        now: new Date('2031-05-20T11:59:00.000Z'),
-        releaseLease: vi.fn(),
-      }).retired,
+      (
+        await retireStaleDynamicAddresses(db, {
+          now: new Date('2031-05-20T11:59:00.000Z'),
+          releaseLease: vi.fn(),
+        })
+      ).retired,
     ).toBe(0);
     expect(address('10.99.0.39')).toMatchObject({
       hostname: 'observed-host',
@@ -542,9 +553,9 @@ describe('one-hour continuous-offline retirement', () => {
       rogue_reason: 'Address is not allocated',
     });
 
-    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired).toBe(
-      1,
-    );
+    expect(
+      (await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() })).retired,
+    ).toBe(1);
     expect(address('10.99.0.39')).toMatchObject({
       hostname: null,
       mac_address: null,
@@ -552,7 +563,7 @@ describe('one-hour continuous-offline retirement', () => {
     });
   });
 
-  it('retires rogue and expired SLAAC observations but preserves live authority', () => {
+  it('retires rogue and expired SLAAC observations but preserves live authority', async () => {
     db.prepare(
       `
       INSERT INTO ip_addresses
@@ -582,9 +593,9 @@ describe('one-hour continuous-offline retirement', () => {
     });
     setOfflineAt('fe80::43', '2031-05-20T11:00:00.000Z');
 
-    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired).toBe(
-      3,
-    );
+    expect(
+      (await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() })).retired,
+    ).toBe(3);
     expect(address('10.99.0.40')).toMatchObject({ hostname: null, allocation_state: 'unassigned' });
     expect(address('2001:db8::41')).toMatchObject({
       valid_until: null,
@@ -600,7 +611,7 @@ describe('one-hour continuous-offline retirement', () => {
     });
   });
 
-  it('preserves observations for every administrative and protected state', () => {
+  it('preserves observations for every administrative and protected state', async () => {
     for (const [index, state] of [
       'static_dns',
       'static_dhcp',
@@ -619,9 +630,9 @@ describe('one-hour continuous-offline retirement', () => {
       ).run(subnetId, ip, `${state}-host`, `aa:bb:cc:dd:ef:${50 + index}`, state);
     }
 
-    expect(retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() }).retired).toBe(
-      0,
-    );
+    expect(
+      (await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() })).retired,
+    ).toBe(0);
     for (const state of ['static_dns', 'static_dhcp', 'reserved', 'system', 'gateway']) {
       expect(
         db

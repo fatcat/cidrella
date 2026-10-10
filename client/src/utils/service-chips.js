@@ -1,6 +1,8 @@
 // The service chips of an Analytics status rail, from /api/metrics/services:
-// dnsmasq, the DNS proxy, and how many forwarders answer. The Dashboard and
-// Performance both lead their rail with these.
+// each DNS/DHCP backend by name, the DNS proxy, and how many forwarders
+// answer. The Dashboard and Performance both lead their rail with these.
+
+import { backendUnits } from './backend-status.js';
 
 const PROTOCOL_LABELS = { dot: 'DoT', doh: 'DoH' };
 
@@ -20,12 +22,12 @@ export function serviceChips(services) {
   const fw = s.forwarders || [];
   const up = fw.filter((f) => f.reachable).length;
   return [
-    {
-      key: 'dnsmasq',
-      label: 'dnsmasq',
-      value: s.dnsmasq ? 'Running' : 'Stopped',
-      tone: s.dnsmasq ? 'ok' : 'err',
-    },
+    ...backendUnits(s).map((unit) => ({
+      key: unit.key,
+      label: unit.name,
+      value: unit.running ? 'Running' : 'Stopped',
+      tone: unit.running ? 'ok' : 'err',
+    })),
     {
       key: 'proxy',
       label: 'DNS proxy',

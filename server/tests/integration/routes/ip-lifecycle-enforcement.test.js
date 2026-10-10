@@ -4,20 +4,16 @@ import { createMultiRouterApp } from '../../helpers/test-app.js';
 import { setManualReservation } from '../../../src/services/ip-lifecycle-service.js';
 import { invalidateSubnetCache } from '../../../src/utils/ip-sync.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateConfigs: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    restartDnsmasq: vi.fn(),
-    signalDnsmasq: vi.fn(),
-  };
-});
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return { ...original, regenerateDhcpConfigs: vi.fn() };
-});
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
 const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');

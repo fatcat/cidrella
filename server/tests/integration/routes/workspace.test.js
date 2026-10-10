@@ -6,6 +6,7 @@ import workspaceRouter from '../../../src/routes/workspace.js';
 import dnsRouter from '../../../src/routes/dns.js';
 import dhcpRouter from '../../../src/routes/dhcp.js';
 import subnetRouter from '../../../src/routes/subnets.js';
+import { setHostFiltering } from '../../../src/models/filtering-exemption.js';
 
 let app;
 let db;
@@ -673,6 +674,44 @@ describe('one IP table model', () => {
 
     expect(addressRow.subnet_name).toBe('Alpha LAN');
     expect(dhcpRow.subnet_name).toBe('Alpha LAN');
+  });
+
+  it('shows a host with filtering off as off in all three reads, either family', async () => {
+    // 10.20.0.11 holds a lease, so it is keyed by that device's MAC.
+    setHostFiltering(db, { ip: '10.20.0.11', subnetId: subnetA }, false);
+    db.prepare(
+      `INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
+       VALUES (?, 'filter-v6', 'AAAA', '2001:db8::77', 'manual', 1)`,
+    ).run(zoneId);
+    setHostFiltering(db, { ip: '2001:DB8::77' }, false);
+    try {
+      const dhcp = await request(app)
+        .get('/api/workspace/dhcp-addresses')
+        .query({ subnet_id: subnetA, table_q: '10.20.0.11' });
+      const addresses = await request(app)
+        .get(`/api/subnets/${subnetA}/ips`)
+        .query({ table_search: '10.20.0', pageSize: 64 });
+      const dns = await request(app).get('/api/workspace/dns-records').query({ zone_id: zoneId });
+
+      const at = (rows, ip) => rows.find((row) => row.ip_address === ip)?.filtering_enabled;
+      expect(at(dhcp.body.items, '10.20.0.11')).toBe(false);
+      expect(at(addresses.body.ips, '10.20.0.11')).toBe(false);
+      expect(at(addresses.body.ips, '10.20.0.40')).toBe(true);
+      expect(at(dns.body.items, '10.20.0.10')).toBe(true);
+      expect(at(dns.body.items, '2001:db8::77')).toBe(false);
+      // A record with no address has no host to filter.
+      const cname = dns.body.items.find((row) => row.record_type === 'CNAME');
+      expect(cname.filtering_enabled ?? null).toBeNull();
+
+      // The column filters like any other.
+      const off = await request(app)
+        .get(`/api/subnets/${subnetA}/ips`)
+        .query({ filters: JSON.stringify({ filtering_enabled: [false] }), pageSize: 64 });
+      expect(off.body.ips.map((row) => row.ip_address)).toEqual(['10.20.0.11']);
+    } finally {
+      db.prepare("DELETE FROM dns_records WHERE name = 'filter-v6'").run();
+      db.prepare('DELETE FROM filtering_exemptions').run();
+    }
   });
 
   it('attaches nothing to an address no record or lease names', async () => {

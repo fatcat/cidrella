@@ -27,6 +27,7 @@ import {
   recordRow,
   subnetTree,
   unallocatedLeaves,
+  filteringOn,
 } from './fake-estate.js';
 
 export const STORAGE_KEY = 'cidrella_workspace_v1_admin';
@@ -153,6 +154,12 @@ export function observe() {
     showDomainNames: domainNames ? domainNames.checked : null,
     dnsCells: dnsCells(),
     rows: all('tbody tr[data-row-id]').map((row) => row.dataset.rowId),
+    filtering: all('tbody tr[data-row-id] [data-track="ip-filtering-toggle"] input').map(
+      (input) => ({
+        address: input.getAttribute('aria-label').replace('Filtering for ', ''),
+        on: input.checked,
+      }),
+    ),
     checked: all('tbody tr[data-row-id]')
       .filter((row) => row.querySelector('.check-cell input')?.checked)
       .map((row) => row.dataset.rowId),
@@ -384,6 +391,14 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
           `explorer marks ${key} [${shown[key]}] as current in ${context.kind} context, expected [${want}]`,
         );
     }
+  }
+
+  // 1b. Every Filtering toggle shows what the estate holds for its address,
+  // so all of a device's rows (it is keyed by MAC) agree after a flip.
+  for (const toggle of state.filtering || []) {
+    const want = filteringOn(toggle.address);
+    if (toggle.on !== want)
+      out.push(`Filtering toggle for ${toggle.address} shows ${toggle.on}, expected ${want}`);
   }
 
   // 2. Each place has its tabs, and one of them is open.

@@ -2,13 +2,9 @@
 import path from 'path';
 import Database from 'better-sqlite3';
 import { DATA_DIR } from './config/defaults.js';
-import { upsertSettings } from './models/setting.js';
+import { readSetting, upsertSettings } from './models/setting.js';
 
 const dbPath = process.env.CIDRELLA_DB || path.join(DATA_DIR, 'cidrella.db');
-
-function readSetting(db, key) {
-  return db.prepare('SELECT value FROM settings WHERE key = ?').get(key)?.value ?? null;
-}
 
 const db = new Database(dbPath);
 try {

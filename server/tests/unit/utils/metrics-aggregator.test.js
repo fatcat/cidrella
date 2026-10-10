@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { parseLogLines } from '../../../src/utils/metrics-aggregator.js';
+import { counterDelta, parseLogLines } from '../../../src/utils/metrics-aggregator.js';
 
 describe('parseLogLines', () => {
   it('counts both halves of a DHCPv6 conversation', () => {
@@ -37,5 +37,25 @@ describe('parseLogLines', () => {
 
   it('returns zeros for an empty tail', () => {
     expect(parseLogLines([])).toEqual({ dnsQueries: 0, dhcpClientMsgs: 0, dhcpServerMsgs: 0 });
+  });
+});
+
+describe('counterDelta', () => {
+  it('counts nothing on the first read, then the change since the last', () => {
+    expect(counterDelta(null, { received: 40, sent: 30 })).toEqual({
+      dhcpClientMsgs: 0,
+      dhcpServerMsgs: 0,
+    });
+    expect(counterDelta({ received: 40, sent: 30 }, { received: 52, sent: 41 })).toEqual({
+      dhcpClientMsgs: 12,
+      dhcpServerMsgs: 11,
+    });
+  });
+
+  it('takes a total that went down as a restarted daemon, all of it new', () => {
+    expect(counterDelta({ received: 40, sent: 30 }, { received: 5, sent: 4 })).toEqual({
+      dhcpClientMsgs: 5,
+      dhcpServerMsgs: 4,
+    });
   });
 });

@@ -18,14 +18,14 @@ import {
 } from '../utils/ip.js';
 import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
-import { syncSettledLeases } from '../utils/dhcp.js';
+import { syncLeasesNow } from '../services/dhcp-lease-sync.js';
 import {
   DHCP_OPTION_GROUPS,
   optionCatalogFor,
   builtInCodeReason,
   isOptionCodeAllowed,
 } from '../utils/dhcp-options.js';
-import { validateDnsmasqConfigValue } from '../utils/dnsmasq-escape.js';
+import { validateConfigSafeValue } from '../utils/config-value-validation.js';
 import { normalizeDuid } from '../utils/duid.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
@@ -54,9 +54,9 @@ import {
 import { bulkChangeScopeOptions } from '../models/dhcp-bulk-options.js';
 import { scopeMatches } from '../models/workspace-view.js';
 import { UNGROUPED } from '../utils/validation.js';
+import { isValidLeaseTime } from '../utils/lease-time.js';
 
 const router = Router();
-const LEASE_TIME_RE = /^\d+[smhd]?$/;
 // A DHCPv6 DUID as dnsmasq prints it: colon-separated hex bytes, at least
 // the two-byte type prefix, at most the 130 bytes RFC 8415 allows.
 
@@ -79,7 +79,7 @@ function resolveV6Mode(subnet, requested, current = null) {
 }
 
 // v0.4.15: validate each scope option value before it reaches the scope-
-// options table. The config writer (utils/dhcp.js) already drops bad rows
+// options table. The config writer (backends/dnsmasq/dhcp.js) already drops bad rows
 // so a malformed row is non-exploitable, but catching it at write-time
 // surfaces a clear error and keeps the DB clean.
 // The family an option request is about. Only 4 and 6 exist; anything else
@@ -120,10 +120,10 @@ function validateScopeOption(opt, family = 4) {
   if (typeof value !== 'string') return 'value must be a string';
   const optDef = optionCatalogFor(family).byCode[code];
   const type = optDef?.type || 'text';
-  if (family === 4 && code === 51 && !LEASE_TIME_RE.test(value))
+  if (family === 4 && code === 51 && !isValidLeaseTime(value))
     return 'lease time must look like 3600, 1h, 30m, or 1d';
   const allowComma = type === 'ip-list' || type === 'text-list';
-  return validateDnsmasqConfigValue(value, { allowComma });
+  return validateConfigSafeValue(value, { allowComma });
 }
 
 function validateDefaultOption(opt, family = 4) {
@@ -302,14 +302,14 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   // directives; route them through the shared sanitizer.
   if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
     if (!isValidDomain(domain_name)) return res.status(400).json({ error: 'Invalid domain_name' });
-    if (validateDnsmasqConfigValue(domain_name) != null) {
+    if (validateConfigSafeValue(domain_name) != null) {
       return res.status(400).json({ error: 'domain_name contains disallowed characters' });
     }
   }
   if (domain_search !== undefined && domain_search !== null && domain_search !== '') {
     if (typeof domain_search !== 'string')
       return res.status(400).json({ error: 'domain_search must be a string' });
-    if (validateDnsmasqConfigValue(domain_search, { allowComma: true }) != null) {
+    if (validateConfigSafeValue(domain_search, { allowComma: true }) != null) {
       return res.status(400).json({ error: 'domain_search contains disallowed characters' });
     }
   }
@@ -366,7 +366,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   if (existing) return res.status(409).json({ error: 'A scope already exists for this range' });
 
   // Validate lease time format
-  if (lease_time && !LEASE_TIME_RE.test(lease_time)) {
+  if (lease_time && !isValidLeaseTime(lease_time)) {
     return res.status(400).json({ error: 'Invalid lease time format (e.g., 24h, 3600, 1d)' });
   }
 
@@ -460,14 +460,14 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   // v0.4.15 type + injection guards, symmetric to POST.
   if (domain_name !== undefined && domain_name !== null && domain_name !== '') {
     if (!isValidDomain(domain_name)) return res.status(400).json({ error: 'Invalid domain_name' });
-    if (validateDnsmasqConfigValue(domain_name) != null) {
+    if (validateConfigSafeValue(domain_name) != null) {
       return res.status(400).json({ error: 'domain_name contains disallowed characters' });
     }
   }
   if (domain_search !== undefined && domain_search !== null && domain_search !== '') {
     if (typeof domain_search !== 'string')
       return res.status(400).json({ error: 'domain_search must be a string' });
-    if (validateDnsmasqConfigValue(domain_search, { allowComma: true }) != null) {
+    if (validateConfigSafeValue(domain_search, { allowComma: true }) != null) {
       return res.status(400).json({ error: 'domain_search contains disallowed characters' });
     }
   }
@@ -479,7 +479,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     return res.status(400).json({ error: 'lease_time must be a string' });
   }
 
-  if (lease_time && !LEASE_TIME_RE.test(lease_time)) {
+  if (lease_time && !isValidLeaseTime(lease_time)) {
     return res.status(400).json({ error: 'Invalid lease time format' });
   }
 
@@ -1262,7 +1262,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
 // POST /api/dhcp/sync-leases
 router.post('/sync-leases', requirePerm('dhcp:write'), async (req, res) => {
   const db = getDb();
-  const result = await syncSettledLeases(db);
+  const result = await syncLeasesNow(db);
   res.json({ message: 'Leases synced', ...result });
 });
 
@@ -1345,7 +1345,6 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
     name: r.name,
     label: r.label,
     type: r.type,
-    dnsmasqName: family === 6 ? `option6:${r.code}` : String(r.code),
     group: 'Custom',
     rfc: null,
     rfcUrl: null,

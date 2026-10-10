@@ -1,6 +1,6 @@
 {
   "name": "cidrella",
-  "version": "0.5.0",
+  "version": "0.5.2",
   "private": true,
   "description": "CIDRella: IP Address Management system with DNS and DHCP via DNSmasq",
   "scripts": {
@@ -14,12 +14,13 @@
     "hunt:workspace": "cd client && MODEL_SEEDS=${MODEL_SEEDS:-300} MODEL_STEPS=${MODEL_STEPS:-30} npx vitest run tests/unit/views/networks-workspace/model/workspace-model.test.js",
     "test:sidecar": "python3 -m unittest discover -s server/anomaly/tests",
     "test:watch": "cd server && npx vitest",
-    "lint": "eslint .",
+    "lint": "eslint . && node scripts/check-backend-imports.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:db-ownership": "node scripts/check-db-ownership.js",
     "check:db-ownership:report": "node scripts/check-db-ownership.js --report",
     "check:reuse": "node scripts/check-duplicate-exports.js && node scripts/check-scoped-css-dupes.js && node scripts/check-confirm-dialogs.js",
+    "geo:cities": "node scripts/build-geo-cities.js",
     "check:reuse:report": "node scripts/check-scoped-css-dupes.js --drift"
   },
   "devDependencies": {

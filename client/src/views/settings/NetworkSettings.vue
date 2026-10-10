@@ -451,12 +451,6 @@ onMounted(async () => {
   font-size: var(--app-fs-sm);
   font-weight: 500;
 }
-.field-help {
-  display: block;
-  margin-top: 0.25rem;
-  font-size: var(--app-fs-xs);
-  color: var(--cid-text-muted-color);
-}
 .template-preview {
   margin-top: 0.5rem;
   padding: 0.4rem 0.75rem;

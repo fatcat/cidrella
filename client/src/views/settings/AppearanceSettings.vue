@@ -108,8 +108,4 @@ function getThemeLabel(t) {
   font-size: var(--app-fs-md);
   flex-shrink: 0;
 }
-.field-help {
-  font-size: var(--app-fs-xs);
-  color: var(--cid-text-muted-color);
-}
 </style>

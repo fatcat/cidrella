@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import { isValidDomain } from '../../../src/utils/ip.js';
-import { isValidRecordName } from '../../../src/utils/dnsmasq-escape.js';
+import { isValidRecordName } from '../../../src/utils/config-value-validation.js';
 
 /**
  * Duplicate-logic audit #7 (two domain validators) and #20 (one record-name

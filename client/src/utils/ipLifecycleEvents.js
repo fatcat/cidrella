@@ -35,6 +35,7 @@ const EVENT_LABELS = {
   mac_changed: 'MAC changed',
   allocation_changed: 'Allocation changed',
   scan_enabled_changed: 'Scan setting changed',
+  filtering_changed: 'DNS filtering changed',
   // Scope-only addresses lose learned metadata through retirement while their
   // current status stays DHCP Scope. History says the metadata expired, not
   // that the address was released.

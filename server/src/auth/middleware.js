@@ -1,6 +1,7 @@
 import jwt from 'jsonwebtoken';
 import { getDb } from '../db/init.js';
 import { looksLikeApiToken, resolveApiToken } from './tokens.js';
+import * as Session from '../models/session.js';
 
 // Paths that don't require authentication.
 //
@@ -25,7 +26,14 @@ const PUBLIC_PATHS = [
 // setup state: the step markers, the password policy, and the switch that
 // makes complexity optional. Those are markers and one setting, nothing the
 // gate exists to protect, and the PUT still needs system:write.
-const PASSWORD_CHANGE_PATHS = ['/api/auth/change-password', '/api/auth/me', '/api/setup/state'];
+const PASSWORD_CHANGE_PATHS = [
+  '/api/auth/change-password',
+  '/api/auth/me',
+  '/api/auth/logout',
+  '/api/auth/activity',
+  '/api/auth/session',
+  '/api/setup/state',
+];
 
 // Cached JWT secret, loaded on first use, cleared on key rotation
 let _cachedJwtSecret = null;
@@ -97,23 +105,33 @@ export function authMiddleware(req, res, next) {
       return res.status(401).json({ error: 'Invalid token' });
     }
 
-    // Re-validate user from DB to catch deletions/role changes
+    // The session row, not the token, decides whether the login still works:
+    // signed out, idle, past 24 hours, or ended by an account change. A token
+    // from before sessions existed has no sid and is refused the same way.
+    const session = decoded.sid ? Session.getSession(db, decoded.sid) : null;
+    const ended = Session.sessionEndReason(session);
+    if (ended) {
+      if (session && !session.ended_at) Session.endSession(db, session.id, ended);
+      return res.status(401).json({
+        error: 'Your session has ended. Please sign in again.',
+        code: 'SESSION_ENDED',
+        reason: session ? ended : null,
+      });
+    }
+
     const user = db
-      .prepare('SELECT id, role, must_change_password, updated_at FROM users WHERE id = ?')
+      .prepare('SELECT id, role, must_change_password FROM users WHERE id = ?')
       .get(decoded.id);
-    if (!user) {
+    if (!user || session.user_id !== user.id) {
       return res.status(401).json({ error: 'User no longer exists' });
     }
 
-    // Check if token was issued before last user update (password change, role change, etc.)
-    if (user.updated_at) {
-      const updatedAt = Math.floor(new Date(user.updated_at + 'Z').getTime() / 1000);
-      if (decoded.iat < updatedAt) {
-        return res.status(401).json({ error: 'Token invalidated. Please log in again.' });
-      }
-    }
-
-    req.user = { ...decoded, role: user.role, must_change_password: !!user.must_change_password };
+    req.user = {
+      ...decoded,
+      role: user.role,
+      must_change_password: !!user.must_change_password,
+      sessionId: session.id,
+    };
 
     // If user must change password, only allow specific endpoints
     if (req.user.must_change_password && !PASSWORD_CHANGE_PATHS.includes(normalizedPath)) {
@@ -125,8 +143,15 @@ export function authMiddleware(req, res, next) {
 
     next();
   } catch (err) {
+    // The token's exp is the session's 24 hour limit, so the library may
+    // notice it first. The row stays unended until it is pruned; listings
+    // already treat it as over.
     if (err.name === 'TokenExpiredError') {
-      return res.status(401).json({ error: 'Token expired' });
+      return res.status(401).json({
+        error: 'Your session has ended. Please sign in again.',
+        code: 'SESSION_ENDED',
+        reason: 'expired',
+      });
     }
     return res.status(401).json({ error: 'Invalid token' });
   }

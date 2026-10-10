@@ -11,7 +11,7 @@
  */
 import { getScopePools, isAddressPoolScope } from './dhcp-scope.js';
 import { fqdnForRecordName } from './dns-record.js';
-import { servedRecordTtl } from '../utils/dnsmasq.js';
+import { getDnsBackend } from '../backends/index.js';
 import { addressInRange, isValidAddress } from '../utils/ip.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
 
@@ -154,7 +154,7 @@ function recordFact(record) {
     record_type: record.type,
     value: record.value,
     ttl: record.ttl,
-    served_ttl: servedRecordTtl(record),
+    served_ttl: getDnsBackend().servedTtl(record),
     priority: record.priority,
     port: record.port,
     enabled: record.enabled,

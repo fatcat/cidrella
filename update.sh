@@ -1114,11 +1114,14 @@ if ! PREFLIGHT_NODE=$(resolve_node "$TARGET_SLOT"); then
   write_progress "failed" 5 "Update failed" "No usable node runtime found"
   exit 1
 fi
+# CIDRELLA_PREFLIGHT keeps the probe off the host's DNS and DHCP services: it
+# renders config into its own data dir but never starts or restarts a unit.
 sudo -u cidrella env \
   HTTPS_PORT=$PREFLIGHT_PORT \
   HTTP_PORT=$((PREFLIGHT_PORT + 1)) \
   DATA_DIR="$PREFLIGHT_DATA" \
   NODE_ENV=production \
+  CIDRELLA_PREFLIGHT=1 \
   "$PREFLIGHT_NODE" "$TARGET_SLOT/server/src/index.js" \
   > "$TMPDIR/preflight.log" 2>&1 &
 PREFLIGHT_PID=$!
@@ -1456,6 +1459,20 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-update@.service" ]; then
   if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-update@.service" /etc/systemd/system/cidrella-update@.service)" = "changed" ]; then
     ok "Updated cidrella-update@.service"
     emit_event switchover pass "unit=cidrella-update@.service"
+  fi
+fi
+
+# v0.5.2+: Kea, installed on hosts that predate it, and its unit refreshed.
+# Never restarted here: CIDRella restarts it when it serves DHCP, the same
+# rule as dnsmasq. Optional, so a failure warns and the update goes on.
+if [ -f "$TARGET_SLOT/scripts/lib/kea-install.sh" ]; then
+  # shellcheck source=scripts/lib/kea-install.sh
+  source "$TARGET_SLOT/scripts/lib/kea-install.sh"
+  if install_kea "$TARGET_SLOT"; then
+    emit_event switchover pass kea=installed
+  else
+    warn "Kea could not be installed; dnsmasq keeps serving DHCP"
+    emit_event switchover warn kea=install-failed
   fi
 fi
 

@@ -10,7 +10,7 @@ import {
   IpLifecycleConflictError,
 } from '../services/ip-lifecycle-service.js';
 import { testDnsForwarder } from '../utils/dns-test.js';
-import { dnsmasqSupportsDnssec, servedRecordTtl } from '../utils/dnsmasq.js';
+import { getDnsBackend, supports } from '../backends/index.js';
 import { ensureNtpEnabled, getNtpStatus, armDnssecTimecheckWhenSynced } from '../utils/timesync.js';
 import {
   applyEncryptedForwarder,
@@ -28,6 +28,7 @@ import {
   reconcileManagedReverseDns,
   ipForPtrRecord,
 } from '../models/dns-record.js';
+import { normalizeDnsName } from '../utils/dns-names.js';
 import { createZone, updateZone, deleteZone } from '../models/dns-zone.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import { getWorkspaceDnsZones } from '../models/workspace-view.js';
@@ -54,14 +55,18 @@ import {
   cancelBenchmark,
 } from '../services/resolver-benchmark.js';
 import { isBlockedAddress } from '../utils/url-guard.js';
-import { isValidPtrName, validateTxtValue, isValidRecordName } from '../utils/dnsmasq-escape.js';
+import {
+  isValidPtrName,
+  validateTxtValue,
+  isValidRecordName,
+} from '../utils/config-value-validation.js';
 import { validateSoaFields, isIntInRange, UNGROUPED } from '../utils/validation.js';
 const SRV_NAME_RE = /^_[a-zA-Z0-9-]+\._[a-zA-Z]+$/;
 
 function enrichDnsAddressRecords(db, records, zoneName) {
   for (const record of records) {
     record.record_fqdn = fqdnForRecordName(record.name, zoneName);
-    record.served_ttl = servedRecordTtl(record);
+    record.served_ttl = getDnsBackend().servedTtl(record);
     if (record.type === 'PTR') {
       record.ip_address = ipForPtrRecord(record.name, zoneName);
       if (record.ip_address) {
@@ -75,13 +80,6 @@ function enrichDnsAddressRecords(db, records, zoneName) {
     { fillFromIpAddress: true },
   );
   return records;
-}
-
-function normalizeDnsName(name) {
-  return String(name || '')
-    .trim()
-    .replace(/\.$/, '')
-    .toLowerCase();
 }
 
 // The value as stored. A target name (CNAME, MX, SRV) may be written as a
@@ -1082,7 +1080,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
 router.get('/dnssec', requirePerm('dns:read'), (req, res) => {
   res.json({
     enabled: getSetting('dnssec_enabled') === 'true',
-    supported: dnsmasqSupportsDnssec(),
+    supported: supports('rec-dnssec-validate'),
     ntp: getNtpStatus(),
   });
 });
@@ -1095,7 +1093,7 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'enabled must be a boolean' });
   }
-  if (enabled && !dnsmasqSupportsDnssec()) {
+  if (enabled && !supports('rec-dnssec-validate')) {
     return res
       .status(400)
       .json({ error: 'dnsmasq on this host was not built with DNSSEC support' });

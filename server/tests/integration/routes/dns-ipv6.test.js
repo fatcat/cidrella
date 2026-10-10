@@ -6,21 +6,16 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateConfigs: vi.fn(),
-    applyInterfaceConfig: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    signalDnsmasq: vi.fn(),
-    restartDnsmasq: vi.fn(),
-  };
-});
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return { ...original, regenerateDhcpConfigs: vi.fn(), startLeaseWatcher: vi.fn() };
-});
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 vi.mock('../../../src/utils/encrypted-forwarder.js', () => ({
   applyEncryptedForwarder: vi.fn(),
   getEncryptedForwarderStatus: vi.fn(() => ({ running: false })),
@@ -172,13 +167,11 @@ describe('IPv6 DNS', () => {
       .post('/api/dns/zones')
       .send({ name: '8.b.d.0.1.0.0.2.ip6.arpa', type: 'reverse' });
     expect(zone.status).toBe(201);
-    const ptr = await request(app)
-      .post(`/api/dns/zones/${zone.body.id}/records`)
-      .send({
-        name: '1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0',
-        type: 'PTR',
-        value: 'doc.example.net',
-      });
+    const ptr = await request(app).post(`/api/dns/zones/${zone.body.id}/records`).send({
+      name: '1.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0',
+      type: 'PTR',
+      value: 'doc.example.net',
+    });
     expect(ptr.status).toBe(201);
     const junk = await request(app)
       .post(`/api/dns/zones/${zone.body.id}/records`)

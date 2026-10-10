@@ -35,7 +35,7 @@
     <Column :header="valueHeader" style="min-width: 14rem">
       <template #body="{ data }">
         <div :class="{ 'option-changed': changedCodes.has(data.code) }">
-          <!-- A built-in option (DHCPv6 Rapid Commit) is dnsmasq's to send:
+          <!-- A built-in option (DHCPv6 Rapid Commit) is the DHCP server's to send:
                nothing to set, so it reads as always on. -->
           <span v-if="data.builtIn" class="text-sm muted" data-track="dhcp-option-built-in">
             Always on

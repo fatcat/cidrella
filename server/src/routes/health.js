@@ -6,7 +6,7 @@ import bcrypt from 'bcryptjs';
 import { getDb, getSetting } from '../db/init.js';
 import { queryRaw } from '../db/duckdb.js';
 import { APP_VERSION } from '../utils/version.js';
-import { isDnsmasqRunning, dnsmasqSupportsDnssec } from '../utils/dnsmasq.js';
+import { backendStatuses } from '../backends/index.js';
 import { getNtpStatus } from '../utils/timesync.js';
 import { getEncryptedForwarderStatus } from '../utils/encrypted-forwarder.js';
 import { getProbeState } from '../utils/dhcp-probe.js';
@@ -190,15 +190,15 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
     }
   }
 
-  // Services
-  const dnsmasqRunning = isDnsmasqRunning();
+  // Services. One status per backend daemon, keyed by role.
+  const backends = backendStatuses();
 
   // DNSSEC + clock sync. "validating" means dnsmasq is actually enforcing
   // signature validation with trustworthy timestamps (enabled + supported +
   // clock synced). Before NTP sync, dnsmasq runs lenient (dnssec-no-timecheck).
   const ntp = getNtpStatus();
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
-  const dnssecSupported = dnsmasqSupportsDnssec();
+  const dnssecSupported = backends.dns.features['rec-dnssec-validate'];
 
   // Rogue DHCP detection, `unacknowledged > 0` drives the header Ops chip's
   // yellow warning state (red is reserved for an actual service-down condition).
@@ -238,7 +238,7 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
     memory,
     disk,
     uptime: { system: systemUptime, process: processUptime },
-    services: { dnsmasq: dnsmasqRunning },
+    backends,
     service: getBootServiceHealth(),
     dnssec: {
       enabled: dnssecEnabled,

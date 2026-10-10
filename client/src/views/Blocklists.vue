@@ -30,6 +30,38 @@
           ><ToggleSwitch v-model="blocklistEnabledDisplay" :disabled="noRecursion"
         /></span>
       </div>
+      <!-- Takes effect at once, apart from Save: blocklists and GeoIP stop for
+           every client and start again by themselves when the period ends. -->
+      <div class="schedule-group">
+        <label class="schedule-label">Disable filtering:</label>
+        <template v-if="pausedUntil">
+          <span class="pause-state" data-track="filtering-paused"
+            >Paused until {{ formatTimeOnly(pausedUntil) }} ({{ pauseLeft }} left)</span
+          >
+          <Button
+            label="Resume now"
+            size="small"
+            severity="secondary"
+            :disabled="!canWrite || pausing"
+            data-track="filtering-resume"
+            @click="pauseFiltering(0)"
+          />
+        </template>
+        <Select
+          v-else
+          :model-value="null"
+          :options="pauseOptions"
+          optionLabel="label"
+          optionValue="value"
+          placeholder="Choose a period"
+          size="small"
+          style="width: 10rem"
+          :disabled="!canWrite || pausing"
+          aria-label="Disable filtering for"
+          data-track="filtering-pause"
+          @update:model-value="pauseFiltering"
+        />
+      </div>
       <div class="schedule-group">
         <label class="schedule-label">Update Schedule:</label>
         <Select
@@ -265,15 +297,16 @@
       </Column>
     </DataTable>
 
-    <Toast />
   </div>
 </template>
 
 <script setup>
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, onUnmounted } from 'vue';
 import { useFeatures } from '../composables/useFeatures.js';
 import { isValidIpv4, isValidIpv6 } from '../utils/ip.js';
-import { formatDateTime } from '../utils/dateFormat.js';
+import { formatDateTime, formatTimeOnly } from '../utils/dateFormat.js';
+import { usePermissions } from '../composables/usePermissions.js';
+import { PAUSE_MINUTES } from '@shared/filtering-pause.js';
 import { formatNumber, apiError, EMPTY_CELL } from '../utils/format.js';
 import { useToast } from '../ui/useToast.js';
 import EmptyState from '../components/EmptyState.vue';
@@ -282,7 +315,6 @@ import InputText from '../ui/InputText.js';
 import Select from '../ui/Select.js';
 import DataTable from '../ui/DataTable.js';
 import Column from '../ui/Column.js';
-import Toast from '../ui/Toast.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import { useBlocklistStore } from '../stores/blocklists.js';
 import { useDnsStore } from '../stores/dns.js';
@@ -519,13 +551,56 @@ async function doSaveSettings() {
   }
 }
 
+// Pausing filtering: a stored deadline on the server, counted down here.
+const { can } = usePermissions();
+const canWrite = computed(() => can('dns:write'));
+const pauseOptions = PAUSE_MINUTES.map((minutes) => ({
+  label: minutes === 60 ? '1 hour' : `${minutes} minutes`,
+  value: minutes,
+}));
+const pausedUntil = ref(null);
+const pausing = ref(false);
+const now = ref(Date.now());
+const pauseLeft = computed(() => {
+  const seconds = Math.max(0, Math.ceil((Date.parse(pausedUntil.value) - now.value) / 1000));
+  return seconds < 60 ? `${seconds} s` : `${Math.ceil(seconds / 60)} min`;
+});
+let pauseTimer = null;
+function tickPause() {
+  now.value = Date.now();
+  // The server ends the pause on its own; drop the countdown when it does.
+  if (pausedUntil.value && Date.parse(pausedUntil.value) <= now.value) pausedUntil.value = null;
+}
+async function pauseFiltering(minutes) {
+  if (minutes == null) return;
+  pausing.value = true;
+  try {
+    pausedUntil.value = await store.pauseFiltering(minutes);
+    toast.add({
+      severity: minutes ? 'warn' : 'success',
+      summary: minutes ? 'Filtering paused' : 'Filtering resumed',
+      detail: minutes
+        ? `Blocklists and GeoIP are off for every client until ${formatTimeOnly(pausedUntil.value)}.`
+        : 'Blocklists and GeoIP apply again.',
+      life: 5000,
+    });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally {
+    pausing.value = false;
+  }
+}
+onUnmounted(() => clearInterval(pauseTimer));
+
 onMounted(async () => {
+  pauseTimer = setInterval(tickPause, 1000);
   const [, fetchedSettings] = await Promise.all([
     store.fetchCategories(),
     store.fetchSettings(),
     refreshStats(),
   ]);
   Object.assign(settings, fetchedSettings);
+  pausedUntil.value = fetchedSettings.filtering_paused_until || null;
   blocklistEnabled.value = fetchedSettings.blocklist_enabled !== 'false';
   savedBlocklistEnabled.value = blocklistEnabled.value;
   savedSchedule.value = settings.blocklist_update_schedule;
@@ -552,6 +627,11 @@ onMounted(async () => {
 }
 .blocklists-page h2 {
   margin: 0 0 1rem 0;
+}
+
+.pause-state {
+  font-size: 0.85rem;
+  font-weight: 600;
 }
 
 .page-info {

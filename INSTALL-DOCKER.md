@@ -112,8 +112,12 @@ The compose file also grants:
 | Capability | Why it is needed |
 |------------|------------------|
 | `NET_ADMIN` | Allows dnsmasq/network operations commonly required by DHCP service in containers. |
-| `NET_RAW` | Allows ARP and ICMP liveness probes. |
+| `NET_RAW` | Allows ARP and ICMP liveness probes, and Kea's raw DHCPv4 socket. |
 | `NET_BIND_SERVICE` | Allows binding DNS/DHCP/web listeners on privileged ports when configured. |
+
+Kea, the optional second DHCP server (Settings > DHCP > Server), needs
+`NET_RAW` and `NET_BIND_SERVICE` from that list and nothing more. Keep both:
+its binaries carry those as file capabilities and will not start without them.
 
 ### DHCP Reachability
 
@@ -142,6 +146,7 @@ host:
 ```bash
 # nftables examples; adapt interface name and policy style to your host
 sudo nft add rule inet filter input udp dport 67 accept
+sudo nft add rule inet filter input udp dport 547 accept
 sudo nft add rule inet filter input udp dport 53 accept
 sudo nft add rule inet filter input tcp dport 53 accept
 sudo nft add rule inet filter input tcp dport 8443 accept
@@ -154,6 +159,7 @@ nftables rules:
 ```bash
 # ufw example
 sudo ufw allow 67/udp
+sudo ufw allow 547/udp   # DHCPv6
 sudo ufw allow 53
 sudo ufw allow 8443/tcp
 sudo ufw allow 8080/tcp

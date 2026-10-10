@@ -1,4 +1,6 @@
+import os from 'os';
 import { DHCP_DEFAULT_NTP_SERVERS, DHCP6_DEFAULT_NTP_SERVERS } from '../config/defaults.js';
+import { FALLBACK_SECONDARY_DNS } from '../utils/dhcp-network-options.js';
 
 // DHCPv4 and DHCPv6 option codes are separate namespaces, so every table here
 // is keyed by (address_family, code). Callers that never learned about
@@ -247,4 +249,35 @@ export function upsertServerDnsDefault(db, value) {
   `,
   ).run(value, value);
   return true;
+}
+
+/**
+ * Detect the server's primary IPv4 address and update the DNS Servers
+ * global default (option 6) to "<server_ip>, <secondary>".
+ * Runs at startup so a host IP change is always reflected.
+ */
+export function syncServerDnsDefault(db) {
+  // Find the first non-internal IPv4 address
+  const ifaces = os.networkInterfaces();
+  let serverIp = null;
+  for (const addrs of Object.values(ifaces)) {
+    for (const addr of addrs) {
+      if (addr.family === 'IPv4' && !addr.internal) {
+        serverIp = addr.address;
+        break;
+      }
+    }
+    if (serverIp) break;
+  }
+
+  if (!serverIp) {
+    console.warn('Could not detect server IPv4 address for DNS default');
+    return;
+  }
+
+  const newValue = `${serverIp},${FALLBACK_SECONDARY_DNS}`;
+
+  if (upsertServerDnsDefault(db, newValue)) {
+    console.log(`DNS Servers default updated: ${newValue}`);
+  }
 }

@@ -91,6 +91,7 @@ export const IP_COLUMNS = Object.freeze({
   last_seen_at: { kind: 'none', get: (row) => str(row.last_seen_at) },
   last_scanned_at: { kind: 'none', get: (row) => str(row.last_scanned_at) },
   scanning_enabled: { kind: 'enum', get: (row) => bool(row.scanning_enabled) },
+  filtering_enabled: { kind: 'enum', get: (row) => bool(row.filtering_enabled) },
   lease: { kind: 'enum', get: (row) => str(row.dhcp_lease_state) },
   network: {
     kind: 'enum',

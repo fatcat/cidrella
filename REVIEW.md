@@ -12,6 +12,20 @@ was suggested.
 
 ---
 
+## Found adding the filtering pause (2026-10-09)
+
+#### UI-TOAST-01: Five views show every toast twice
+
+**low**, confirmed in the browser on the Filtering page (fixed there in the same change). Views:
+`client/src/views/RogueDhcp.vue:267`, `Users.vue:366`, `SubnetCalculator.vue:77`, `GeoIP.vue:200`,
+`SubnetDetail.vue:584`.
+
+- **What happens:** Any toast raised on these views appears twice, stacked.
+- **Why:** `App.vue` mounts the one global `<Toast>`, and each of these views mounts its own as
+  well; both render every message from the shared toast service.
+- **Fix:** Delete the `<Toast />` element and its import from each view. `Settings.vue` already
+  says the global one is the only one.
+
 ## Found building the Kea adapter (2026-10-07)
 
 #### DNSMASQ-08: dnsmasq sizes a DHCPv4 option it does not know by the value's shape
@@ -37,7 +51,7 @@ number: `server/src/utils/dhcp.js:188` on 0.5.0, the dnsmasq backend on 0.5.1 an
 
 #### DNSMASQ-02: A reservation change reaches dnsmasq twice and logs a duplicate per line
 
-**low**, confirmed from prod's dnsmasq log (2026-10-06). `server/src/utils/dhcp.js:466`
+**low**, confirmed from prod's dnsmasq log (2026-10-06). `server/src/backends/dnsmasq/dhcp.js:418`
 (`regenerateReservations`)
 
 - **What happens:** Changing a DHCP Reservation logs `duplicate dhcp-host IP address ... at

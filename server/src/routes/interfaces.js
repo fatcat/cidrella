@@ -3,13 +3,7 @@ import os from 'os';
 import fs from 'fs';
 import { getDb, getSetting, audit } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
-import {
-  applyInterfaceConfig,
-  restartDnsmasq,
-  isCidrellaDnsmasqRunning,
-  dnsmasqRestartPending,
-  withValidatedDnsmasqUpdate,
-} from '../utils/dnsmasq.js';
+import { getDnsBackend, getService } from '../backends/index.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
 import {
   applyHttpRedirectConfig,
@@ -238,7 +232,7 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
         Setting.upsertSettingWithConflict(db, 'ipv6_enabled', ipv6_enabled ? 'true' : 'false');
       }
       return dnsmasqSettingsChanged
-        ? withValidatedDnsmasqUpdate(() => applyInterfaceConfig(db))
+        ? getDnsBackend().applyListen(db, { activate: false }).changed
         : false;
     })();
   } catch (err) {
@@ -286,21 +280,17 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   }
 
   // Regenerate dnsmasq config and restart (interface changes require full
-  // restart, not just SIGHUP). Must be synchronous: restartDnsmasq on the
+  // restart, not just SIGHUP). Must be synchronous: the activation on the
   // next line needs to pick up the freshly-written conf. Don't route this
   // through queueRegen, the hook fires in a microtask AFTER the restart,
   // which would leave dnsmasq running the old conf until the next regen.
   // A no-op save (nothing effectively changed, our unit healthy) skips the
   // restart so clicking Save can't blip DNS/DHCP for the whole LAN.
-  let dnsmasqStatus = 'restarted';
-  if (ifaceChanged || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
-    try {
-      restartDnsmasq();
-    } catch {
-      dnsmasqStatus = 'restart_failed';
-    }
-  } else {
-    dnsmasqStatus = 'unchanged';
+  let dnsmasqStatus;
+  try {
+    dnsmasqStatus = getService('dns').activate({ force: ifaceChanged });
+  } catch {
+    dnsmasqStatus = 'restart_failed';
   }
 
   // Rebind proxy sockets to updated interface addresses

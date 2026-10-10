@@ -2,12 +2,15 @@ import { Router } from 'express';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
-import { DATA_DIR } from '../config/defaults.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
+import { getService } from '../backends/index.js';
 
 const router = Router();
-const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
+// The DNS backend's log; null when it keeps none, and the endpoints say so.
+const LOG_SOURCE = getService('dns').logSource();
+const LOG_FILE = LOG_SOURCE?.path ?? null;
+const NO_LOG = { error: 'The DNS backend keeps no log to show' };
 
 // Short-lived SSE stream tickets, key: token string, value: expiry timestamp
 const streamTickets = new Map();
@@ -21,13 +24,6 @@ setInterval(() => {
   }
 }, 60_000);
 
-const DHCP_RE =
-  /\b(?:DHCPDISCOVER|DHCPOFFER|DHCPREQUEST|DHCPACK|DHCPNAK|DHCPRELEASE|DHCPINFORM|DHCPDECLINE)\b|available DHCP|dnsmasq-dhcp\[\d+\]:|\bsent size:\s+\d+\s+option:|\brequested options:|\bnext server:|\bclient provides name:|\bvendor class:|\btags:\s+scope/i;
-
-export function isDhcpLine(line) {
-  return DHCP_RE.test(line);
-}
-
 function ensureLogFile() {
   fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
   // Append nothing: creates the file if missing without truncating one that
@@ -37,7 +33,7 @@ function ensureLogFile() {
 
 function matchesFilter(line, filter) {
   if (filter === 'all') return true;
-  const isDhcp = isDhcpLine(line);
+  const isDhcp = LOG_SOURCE.isDhcpLine(line);
   if (filter === 'dhcp') return isDhcp;
   if (filter === 'dns') return !isDhcp;
   return true;
@@ -85,7 +81,7 @@ router.post('/stream-token', requirePerm('dns:read'), (req, res) => {
 
 /**
  * GET /api/logs/stream?filter=all|dns|dhcp&ticket=<one-time-token>
- * SSE endpoint that watches the dnsmasq log file.
+ * SSE endpoint that watches the DNS backend's log file.
  * Auth via JWT (req.user set by authMiddleware) OR a valid ?ticket= param.
  */
 router.get('/stream', (req, res) => {
@@ -102,6 +98,7 @@ router.get('/stream', (req, res) => {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
+  if (!LOG_FILE) return res.status(404).json(NO_LOG);
   const filter = req.query.filter || 'all';
 
   try {
@@ -198,6 +195,7 @@ router.get('/stream', (req, res) => {
  * Truncate the log file.
  */
 router.post('/clear', requireRole('admin'), (req, res) => {
+  if (!LOG_FILE) return res.status(404).json(NO_LOG);
   try {
     fs.writeFileSync(LOG_FILE, '');
     res.json({ ok: true });

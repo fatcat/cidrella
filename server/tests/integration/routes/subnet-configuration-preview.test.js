@@ -2,8 +2,16 @@ import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import { cleanupTestDb, setupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', () => ({ regenerateDnsmasqConfig: vi.fn() }));
-vi.mock('../../../src/utils/dhcp.js', () => ({ regenerateDhcpConfig: vi.fn() }));
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: request } = await import('supertest');
 const { default: subnetsRouter } = await import('../../../src/routes/subnets.js');

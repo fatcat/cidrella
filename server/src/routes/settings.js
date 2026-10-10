@@ -8,7 +8,9 @@ import {
   validateInterfaceConfig,
   validPortOrError,
   isIntInRangeCoercing,
+  parseMapHome,
 } from '../utils/validation.js';
+import { IDLE_TIMEOUT_CHOICES } from '../models/session.js';
 
 const router = Router();
 
@@ -129,6 +131,13 @@ const SETTING_SCHEMA = {
     validate: (v) => (isIntInRangeCoercing(v, 0, 1024) ? null : 'must be an integer 0-1024'),
     normalize: (v) => String(parseInt(v, 10)),
   },
+  session_idle_timeout_minutes: {
+    validate: (v) =>
+      /^\d+$/.test(String(v)) && IDLE_TIMEOUT_CHOICES.includes(Number(v))
+        ? null
+        : `must be one of ${IDLE_TIMEOUT_CHOICES.join(', ')}`,
+    normalize: (v) => String(Number(v)),
+  },
   password_require_mixed_case: {
     validate: (v) => (isBoolStr(v) ? null : 'must be true or false'),
     normalize: (v) => toBoolStr(v),
@@ -192,6 +201,15 @@ const SETTING_SCHEMA = {
   http_port: {
     validate: (v) => (v === '' || v === null ? null : validPortOrError(v, 'http_port')),
     normalize: (v) => (v === '' || v === null ? '' : String(v)),
+  },
+  // The Resolution Map's home point, "lat,lon" or '' (not set).
+  map_home: {
+    validate: (v) =>
+      v === '' || parseMapHome(v) ? null : 'must be "lat,lon" in degrees, or empty',
+    normalize: (v) => {
+      const home = parseMapHome(v);
+      return home ? `${home.lat},${home.lon}` : '';
+    },
   },
   ip_history_retention_days: {
     validate: (v) => (isIntInRangeCoercing(v, 1, 3650) ? null : 'must be an integer 1-3650'),

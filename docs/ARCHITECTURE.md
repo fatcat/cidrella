@@ -13,7 +13,7 @@ guardrails to prevent new ad hoc writers.
 | UI | Vue 3, PrimeVue, Pinia, Vue Router |
 | Primary storage | SQLite via `better-sqlite3`, WAL mode |
 | Analytics storage | DuckDB |
-| DNS/DHCP | dnsmasq, generated config/state files |
+| DNS/DHCP | dnsmasq behind the backend layer (`server/src/backends/`), generated config/state files |
 | DNS filtering | Node DNS proxy for blocklist and GeoIP decisions |
 | Anomaly detection | Python sidecar using DuckDB features and SQLite status/scores |
 | Native process manager | systemd |
@@ -29,6 +29,7 @@ installs.
 | --- | --- |
 | `server/src/db/` | Connection lifecycle, migrations, low-level initialization, DB adapters. |
 | `server/src/models/` | Table or aggregate ownership. Models own write semantics and local invariants. |
+| `server/src/backends/` | DNS/DHCP backend adapters behind one contract (`contract.js`) and a registry (`index.js`). Adapters render, activate and read their daemon; they never write the database. |
 | `server/src/services/` | Cross-model workflows, transactions, audit coordination, queued side effects, process/file coordination. |
 | `server/src/routes/` | Auth, permission checks, input parsing, request validation, response shaping. |
 | `server/src/utils/` | Pure helpers or external process/file utilities. DB-writing utilities must be explicit exceptions. |
@@ -96,11 +97,34 @@ safely converge when their source changes. Every path that creates, changes,
 removes, imports, migrates, or reconciles one of those facts must converge on
 the same PTR result through the shared DNS/IP lifecycle boundary.
 
+A record name follows the zone-file rule. A name ending in `.` is absolute:
+its FQDN is the name without the dot. Every other name is relative to its
+zone, dotted or not (`www.sub` in `example.lan` is `www.sub.example.lan`,
+and an SRV name `_sip._tcp` is `_sip._tcp.example.lan`). Names are stored
+lowercase; `@`, the zone name itself, and a name ending in `.<zone>` (with or
+without the dot) are stored relative (`@`, or the part before the zone).
+`normalizeRecordNameForZone` is the one write sink for that form and
+`fqdnForRecordName` the one reader, and any SQL that builds an FQDN must give
+the same answer (`@` is the zone, a trailing dot is absolute, anything else
+gets `.<zone>`). Importers whose names are absolute by meaning, the Pi-hole
+import, mark an out-of-zone name with the trailing dot. Before 0.5.1 a dotted
+name without the dot was served as absolute; migration 082 added the dot to
+those so they kept serving the same name.
+
 A DHCP lease's name is its effective name (ADR 005), decided when leases are
 read from dnsmasq and before they are stored: unique within its forward zone
 and sticky to the address that holds it. A client whose name another address
 holds gets the first free suffix `-00` through `-FF`; a client that sends no
 name keeps the name its address holds before any vendor fallback applies.
+
+Leases reach CIDRella from the DHCP backend in one shape (`BackendLease` in
+`backends/contract.js`). Only dnsmasq writes a DHCP Reservation's lease with
+the expiry `infinite`; Kea reports its real expiry. Where several stored
+leases name one address, the one whose name and expiry are shown is the
+reserved client's: a lease that is `infinite`, or whose MAC (DHCPv4) or DUID
+(DHCPv6) matches an enabled DHCP Reservation for that address
+(`reservedLeaseFirstSql` in `utils/lease-sql.js`). That ranking chooses which
+lease to read; it decides no allocation, which stays with `allocation_state`.
 
 dnsmasq serves the PTR result from its hosts file: every A and AAAA name is
 written to `hosts.d/records.hosts` with each address's canonical PTR name
@@ -288,8 +312,21 @@ not a conflict on every scan after. `macIsAuthoritative` in
 
 ## DNS/DHCP Config Generation
 
-dnsmasq files are generated from database state using atomic writes. Different
-file classes have different reload behavior:
+Everything that changes what DNS or DHCP serve goes through the backend layer:
+an after-commit hook (`regenerate_dns`, `regenerate_dhcp`,
+`regenerate_dnsmasq_conf`) runs `services/backend-apply.js`, which calls the
+adapter for each role from `backends/index.js`. Apply operations are desired
+state: they read the database, make the daemon match it, and report
+`{changed, activation, activated}`. Adapters never write the database
+(`check-db-ownership` refuses it); neutral work such as `syncDhcpDnsRecords`
+and lease ingestion (`services/dhcp-lease-sync.js`) stays in services. Only
+`backends/**` imports an adapter, enforced by ESLint and
+`scripts/check-backend-imports.js`. `docs/DNSMASQ-COUPLING.md` maps the seams
+and what is left for Kea and PowerDNS.
+
+The dnsmasq adapter (`backends/dnsmasq/`) generates its files from database
+state using atomic writes. Different file classes have different reload
+behavior:
 
 - hosts-style files can usually be hot-read by dnsmasq
 - CNAME/MX/TXT/SRV and other `conf.d` changes require reload/SIGHUP
@@ -416,6 +453,69 @@ not supported.
 
 Outbound URL fetches must use the guarded/pinned URL helper in
 `utils/url-guard.js` when the URL is operator supplied.
+
+### Sign-in sessions
+
+A login JWT names a row in `sessions` (`sid`), and that row, not the token,
+decides whether the login still works. `models/session.js` holds every rule:
+
+- A session ends after `session_idle_timeout_minutes` without activity (0, 15,
+  30 or 60; 0 is no inactivity limit), and always 24 hours after sign-in. The
+  JWT's `exp` matches the 24 hours.
+- Activity is a person using the page. The client reports input with
+  `POST /api/auth/activity` at most once a minute
+  (`composables/useSessionActivity.js`), and only that and sign-in move
+  `last_activity_at`. Ordinary requests never do: the dashboards poll on
+  timers.
+- Signing out, a password change or reset, a role change, deleting a user and
+  a restore end sessions through the model, with the reason stored on the row
+  and written to the audit log. `users.updated_at` is no longer a revocation
+  signal.
+- API tokens (`cidr_pat_`) are not sessions and never go idle.
+
+### Filtering pause and hosts with filtering off
+
+Before either filtering check (the blocklist before forwarding, GeoIP on the
+answer), the DNS proxy asks `filteringBypass(clientIp)` in `utils/dns-proxy.js`.
+Filtering is skipped for every client while `filtering_paused_until` is in the
+future, and for one client whose address is in the exempt set. Bypassed
+queries log as `allowed`.
+
+- The pause is a stored deadline (`PUT /api/blocklists/pause`, 5, 15, 30 or 60
+  minutes from `utils/filtering-pause.js`, 0 resumes). It needs no timer to
+  end, and a restart mid-pause keeps it.
+- A host is exempt through `filtering_exemptions`, which
+  `models/filtering-exemption.js` alone writes. A host is keyed by its device's
+  MAC when the address has one (stored, seen by a scan, or on an active lease)
+  and by its address otherwise, so a DHCP client keeps the exemption on a new
+  lease. The table stands apart from `ip_addresses`, so it outlives that row.
+- The proxy holds the exempt addresses in memory (`exemptAddressSet`) and
+  rebuilds the set when an exemption or the blocklist settings change, after
+  each lease sync, and every minute. The Addresses, DNS and DHCP reads show
+  the same answer as `filtering_enabled`, through `enrichIpViewRows`.
+
+### Resolution Map feed
+
+Each filtering decision the proxy makes (a permitted answer, a GeoIP block, a
+blocklist block) is recorded once in `utils/resolution-feed.js`, a ring buffer
+of the last 2,000 events held in memory and never stored. The Analytics map
+polls it (`GET /api/analytics/resolution-map?since=`) with a sequence cursor.
+It is separate from the `getAndReset*` counters on purpose: those belong to the
+per-minute aggregator, and a second reader would steal its counts.
+
+- An event's place comes from the GeoIP lookup the policy already does.
+  `evaluateResolvedPolicy` names a `destination` (country plus city point) for
+  every verdict, so it looks answers up even when filtering is paused or off
+  for the client; such answers are still never blocked.
+- City points come from `server/assets/geo-cities.bin`, built from DB-IP City
+  Lite by `scripts/build-geo-cities.js` at release build time and never
+  committed. `utils/geo-cities.js` owns its coarsening (cells of about 100 km,
+  one place per IPv4 /22 and IPv6 /40 block), its format and its lookup. The
+  point is found on a GeoIP cache miss and kept in `geoCache` beside the
+  country, so a hit costs nothing extra; a cell naming a different country than
+  the country database is ignored. Without the file, answers land at their
+  country's middle (`client/src/utils/country-geo.js`, generated by
+  `scripts/gen-country-geo.js`).
 
 ## Guardrails
 

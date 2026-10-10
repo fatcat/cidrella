@@ -10,6 +10,9 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 // ─── Data directory (single source of truth) ─────────────
 export const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
+// Left by a restore: the next boot restarts every DNS/DHCP backend, so the
+// daemons load the restored leases instead of writing theirs over them.
+export const BACKEND_RESTART_MARKER = path.join(DATA_DIR, 'runtime', 'restart-backends-on-boot');
 
 // ─── DB-seeded settings (user-configurable via UI / API) ─────────
 
@@ -36,6 +39,8 @@ export const DEFAULTS = {
   blocklist_enabled: 'true',
   blocklist_redirect_ip: '',
   blocklist_redirect_ip6: '',
+  // ISO time filtering resumes after a pause, '' when not paused (routes/blocklists.js).
+  filtering_paused_until: '',
   dnssec_enabled: 'false',
   // When 'true', dnsmasq is authoritative-only: it answers for local zones but
   // does not forward/recurse for external domains (no server= lines emitted).
@@ -64,6 +69,9 @@ export const DEFAULTS = {
   password_require_mixed_case: 'true',
   password_require_number: 'true',
   password_require_symbol: 'false',
+  // Minutes without activity before a sign-in session ends: 0, 15, 30 or 60,
+  // 0 for no inactivity limit. Every session also ends 24 hours after sign-in.
+  session_idle_timeout_minutes: '60',
   // Migration 033 seeds this row as 'true' and 076 flips a fresh database to
   // 'false', so this default only matters if the row is ever deleted.
   dhcp_enabled: 'false',
@@ -74,6 +82,7 @@ export const DEFAULTS = {
   geoip_db_path: 'auto',
   geoip_last_updated: '',
   geoip_update_schedule: 'monthly',
+  map_home: '', // Resolution Map home point, "lat,lon"; '' = not set
   update_check_enabled: 'true',
   // v0.4.15 web-port settings. Empty string means "use the env var / fallback"
   //, the server resolves to DB value if set, env var if set, hardcoded
@@ -193,7 +202,7 @@ export function resolveDnsmasqInternalPort(lanListenPort) {
  * The LAN-facing DNS port, from a stored `dns_listen_port` value, falling back
  * to 53 for anything that is not a usable port.
  *
- * Two callers resolved this differently. `utils/dnsmasq.js` range-checked and
+ * Two callers resolved this differently. `backends/dnsmasq/dnsmasq.js` range-checked and
  * fell back to 53; `utils/dns-proxy.js` used `Number(value) || 53`, which
  * accepts anything non-zero, so a stored 70000 became a bind attempt on 70000
  * while the dnsmasq config it is supposed to sit in front of stayed on 53.

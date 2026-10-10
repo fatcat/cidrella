@@ -65,11 +65,6 @@ const BASELINE = {
     'views/settings/NetworkSettings.vue',
     'views/settings/VlanSettings.vue',
   ],
-  'field-help': [
-    'views/settings/BackupSettings.vue',
-    'views/settings/CertificateSettings.vue',
-    'views/settings/NetworkSettings.vue',
-  ],
   'form-grid': [
     'components/DhcpPanel.vue',
     'components/NetworkDialogs.vue',

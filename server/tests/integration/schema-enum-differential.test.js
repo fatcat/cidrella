@@ -19,7 +19,7 @@
  * that fails when the two drift. See REVIEW.md, duplicate-logic audit #40.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { setupTestDb, cleanupTestDb } from './../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
 import { ROLES } from '../../src/auth/roles.js';
 
 let db;

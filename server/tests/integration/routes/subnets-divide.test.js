@@ -13,26 +13,16 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
 // Mock the filesystem-writing regen utilities so dnsmasq configs aren't touched.
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateConfigs: vi.fn(),
-    applyInterfaceConfig: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    signalDnsmasq: vi.fn(),
-    restartDnsmasq: vi.fn(),
-  };
-});
-
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateDhcpConfigs: vi.fn(),
-    startLeaseWatcher: vi.fn(),
-  };
-});
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
@@ -372,6 +362,22 @@ describe('POST /api/subnets/:id/divide, data preservation', () => {
     expect(
       records.body.find((r) => r.name === 'survivor' && r.value === '10.11.0.50'),
     ).toBeDefined();
+  });
+});
+
+describe('POST /api/subnets/:id/divide, the 256 network cap', () => {
+  it('previews and divides into 256 networks but refuses 512', async () => {
+    const parent = await createSubnet({ cidr: '100.64.0.0/10', name: 'CGNAT cap' });
+
+    const atCap = await dividePreview(parent.id, { new_prefix: 18 });
+    expect(atCap.status).toBe(200);
+    expect(atCap.body.count).toBe(256);
+
+    for (const send of [dividePreview, divide]) {
+      const tooMany = await send(parent.id, { new_prefix: 19 });
+      expect(tooMany.status).toBe(400);
+      expect(tooMany.body.error).toMatch(/more than 256 networks/);
+    }
   });
 });
 

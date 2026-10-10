@@ -49,6 +49,19 @@ const STRICT_TABLE_RULES = [
     },
   })),
   {
+    table: 'filtering_exemptions',
+    ownerLabel: 'server/src/models/filtering-exemption.js',
+    writePattern:
+      /\b(?:INSERT\s+(?:OR\s+\w+\s+)?INTO|UPDATE|DELETE\s+FROM)\s+[`'"]?filtering_exemptions\b/gi,
+    allow(file) {
+      const rel = relPath(file);
+      return (
+        rel === 'server/src/models/filtering-exemption.js' ||
+        rel.startsWith('server/src/db/migrations/')
+      );
+    },
+  },
+  {
     table: 'network_scans',
     ownerLabel: 'server/src/models/scan-run.js',
     writePattern:

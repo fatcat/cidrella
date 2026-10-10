@@ -261,7 +261,7 @@ table's own fields never collide with them:
 
 | Field | On | Meaning |
 | --- | --- | --- |
-| `dns_record` | Addresses, DHCP rows | The forward A/AAAA record behind the address: the one the allocation names, else the lowest-id served record, else the lowest-id record. `record_fqdn`, `record_type`, `value`, `ttl`, `served_ttl`, `priority`, `port`, `enabled`, `dns_source`, `zone_soa_minimum_ttl`; null when none. `ttl` is what the operator stored; `served_ttl` is what dnsmasq answers with (`servedRecordTtl` in `utils/dnsmasq.js`), which is what a TTL display shows. DNS record reads carry `served_ttl` too. |
+| `dns_record` | Addresses, DHCP rows | The forward A/AAAA record behind the address: the one the allocation names, else the lowest-id served record, else the lowest-id record. `record_fqdn`, `record_type`, `value`, `ttl`, `served_ttl`, `priority`, `port`, `enabled`, `dns_source`, `zone_soa_minimum_ttl`; null when none. `ttl` is what the operator stored; `served_ttl` is what the DNS backend answers with (`servedTtl` in `backends/contract.js`), which is what a TTL display shows. DNS record reads carry `served_ttl` too. |
 | `dns_record_count` | Addresses, DHCP rows | How many forward address records name the address. |
 | `dhcp` | Addresses, DNS rows | The DHCP Reservation, else the active lease, else the newest lease for the address: `dhcp_assignment_type`, `lease_status`, `enabled`, `duid`, `iaid`, `subnet_name`, `related_scope_ids`; null when none. |
 
@@ -311,7 +311,7 @@ DNS read rows add DNS-specific fields:
 | --- | --- |
 | `record_type` | DNS RR type: `A`, `AAAA`, `CNAME`, `PTR`, `MX`, `TXT`, `SRV`. |
 | `dns_source` | DNS row provenance: `manual`, `dns`, `dhcp`, `reservation`, or `placeholder`. The internal `reservation` value identifies a generated DHCP Reservation PTR. Generated PTR rows use the latter four values; an operator-created PTR remains `manual`. |
-| `record_fqdn` | Fully qualified owner name derived from the record name and its zone. This is a DNS record fact and is distinct from the canonical IP `hostname`. |
+| `record_fqdn` | Fully qualified owner name derived from the record name and its zone by the zone-file rule (`docs/ARCHITECTURE.md`, Canonical IP Model): a name ending in `.` is absolute and is returned without the dot, any other name gets `.<zone>`. This is a DNS record fact and is distinct from the canonical IP `hostname`. |
 
 DNS write APIs still accept `type` because the submitted form is a DNS record
 write model. UI read paths should use `record_type` and `dns_source`; form

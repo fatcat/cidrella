@@ -1,16 +1,14 @@
 /**
- * Passive host liveness detection from dnsmasq logs.
+ * Passive host liveness detection from the DNS backend's query log.
  *
- * Tails the dnsmasq log file for DNS query lines ("query[...] ... from <ip>")
- * and marks the source IP as online in ip_addresses. Also runs a periodic
+ * Tails the log for DNS queries (logSource().querySourceIp) and marks the
+ * source IP as online in ip_addresses. Also runs a periodic
  * staleness sweep to mark hosts offline when no signal has been seen.
  *
  * DHCP lease liveness is handled separately in ip-sync.js (syncLeasesToIps).
  */
 
-import fs from 'fs';
-import path from 'path';
-import { readLogTail } from './log-reader.js';
+import { createLogFollower } from './log-reader.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import {
   markStalePassiveAddresses,
@@ -18,43 +16,30 @@ import {
   retireStaleDynamicAddresses,
 } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from './after-commit.js';
-import {
-  DATA_DIR,
-  PASSIVE_LIVENESS_POLL_MS,
-  PASSIVE_LIVENESS_STALE_MS,
-} from '../config/defaults.js';
-const LOG_FILE = path.join(DATA_DIR, 'dnsmasq', 'dnsmasq.log');
-// Matches: "query[A] example.com from 192.168.1.100"
-//      and: "query[AAAA] example.com from fd00:a::1600"
-const QUERY_FROM_RE = /\bquery\[.+?\]\s+\S+\s+from\s+([0-9a-fA-F.:]+)/;
+import { PASSIVE_LIVENESS_POLL_MS, PASSIVE_LIVENESS_STALE_MS } from '../config/defaults.js';
+import { getDhcpBackend, getService } from '../backends/index.js';
 
 /**
  * Start the passive liveness watcher.
- * Polls the dnsmasq log for DNS query source IPs and updates ip_addresses.
+ * Polls the DNS backend's log for query source IPs and updates ip_addresses.
+ * Without a log to read, only the staleness sweep runs.
  */
 export function startPassiveLivenessWatcher(db) {
-  let offset = 0;
+  const source = getService('dns').logSource();
+  const log = createLogFollower(source);
   let lastStaleCheck = Date.now();
-
-  // Start from end of file (don't process historical lines)
-  try {
-    offset = fs.statSync(LOG_FILE).size;
-  } catch {
-    /* file may not exist yet */
-  }
+  let sweeping = false;
 
   function poll() {
-    const { lines, newOffset } = readLogTail(LOG_FILE, offset);
-    offset = newOffset;
+    const lines = log.read();
 
     // Extract unique source IPs from DNS query lines
     const now = Date.now();
     const ipsThisCycle = new Set();
 
     for (const line of lines) {
-      const m = line.match(QUERY_FROM_RE);
-      if (!m) continue;
-      const ip = m[1];
+      const ip = source.querySourceIp(line);
+      if (!ip) continue;
       if (ip === '127.0.0.1' || ip === '::1') continue;
       ipsThisCycle.add(ip);
     }
@@ -65,27 +50,40 @@ export function startPassiveLivenessWatcher(db) {
       recordDnsQueryLiveness(db, ip, { createRogue: false, source: 'passive' });
     }
 
-    // Staleness sweep (every ~60 seconds), also clears rogue on stale IPs
-    if (now - lastStaleCheck >= 60000) {
-      const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
-      markStalePassiveAddresses(db, staleMinutes);
-      pruneLifecycleEvents(db);
-      const retirement = retireStaleDynamicAddresses(db);
-      if (retirement.dnsRecordsRemoved > 0) queueRegen('regenerate_dns');
-      if (retirement.retired > 0 || retirement.deferred > 0) {
-        console.log(
-          `[ip-retirement] retired=${retirement.retired} deferred=${retirement.deferred} ` +
-            `dns=${retirement.dnsRecordsRemoved} leases=${retirement.leasesRemoved} ` +
-            `sticky_skipped=${retirement.stickyRelease.skipped} sticky_failed=${retirement.stickyRelease.failed}`,
-        );
-      }
+    // Staleness sweep (every ~60 seconds), also clears rogue on stale IPs.
+    // The release half is async (a backend may release over its API), so a
+    // sweep runs beside the polls, one at a time.
+    if (!sweeping && now - lastStaleCheck >= 60000) {
       lastStaleCheck = now;
+      sweeping = true;
+      staleSweep()
+        .catch((err) => console.warn('[ip-retirement] sweep failed:', err.message))
+        .finally(() => {
+          sweeping = false;
+        });
+    }
+  }
+
+  async function staleSweep() {
+    const staleMinutes = Math.round(PASSIVE_LIVENESS_STALE_MS / 60000);
+    markStalePassiveAddresses(db, staleMinutes);
+    pruneLifecycleEvents(db);
+    const retirement = await retireStaleDynamicAddresses(db, {
+      releaseLease: (lease) => getDhcpBackend().releaseLease(lease),
+    });
+    if (retirement.dnsRecordsRemoved > 0) queueRegen('regenerate_dns');
+    if (retirement.retired > 0 || retirement.deferred > 0) {
+      console.log(
+        `[ip-retirement] retired=${retirement.retired} deferred=${retirement.deferred} ` +
+          `dns=${retirement.dnsRecordsRemoved} leases=${retirement.leasesRemoved} ` +
+          `sticky_skipped=${retirement.stickyRelease.skipped} sticky_failed=${retirement.stickyRelease.failed}`,
+      );
     }
   }
 
   const interval = setInterval(poll, PASSIVE_LIVENESS_POLL_MS);
   console.log(
-    `[passive-liveness] Watching ${LOG_FILE} (poll ${PASSIVE_LIVENESS_POLL_MS / 1000}s, stale ${PASSIVE_LIVENESS_STALE_MS / 60000}min)`,
+    `[passive-liveness] Watching ${log.path || 'no DNS log'} (poll ${PASSIVE_LIVENESS_POLL_MS / 1000}s, stale ${PASSIVE_LIVENESS_STALE_MS / 60000}min)`,
   );
 
   return interval; // for cleanup in tests

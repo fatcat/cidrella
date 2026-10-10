@@ -24,9 +24,13 @@ import {
   dropUnallocatedIpv6Ptr,
   fqdnForRecordName,
 } from '../models/dns-record.js';
-import { deleteLeasesByAddress, findLeasesByAddress } from '../models/dhcp-lease-queries.js';
-import { releaseDnsmasqLease } from '../utils/dhcp-release.js';
-import { leaseExpiryMs, leaseDurationMs } from '../utils/lease-sql.js';
+import {
+  backendLeaseFromRow,
+  deleteLeasesByAddress,
+  findLeasesByAddress,
+} from '../models/dhcp-lease-queries.js';
+import { activeLeaseSql, leaseExpiryMs } from '../utils/lease-sql.js';
+import { leaseDurationMs } from '../utils/lease-time.js';
 import { parseIp } from '../utils/address.js';
 
 export const OFFLINE_RETIREMENT_MS = 60 * 60 * 1000;
@@ -654,7 +658,7 @@ export function reconcileExpiredDhcpAllocations(db) {
         FROM dhcp_leases dl
         WHERE dl.subnet_id = ip.subnet_id
           AND dl.ip_address = ip.ip_address
-          AND (dl.expires_at = 'infinite' OR datetime(dl.expires_at) > datetime('now'))
+          AND ${activeLeaseSql('dl')}
       )
       AND (
         ip.dhcp_version = 4
@@ -721,10 +725,17 @@ export function markStalePassiveAddresses(db, staleMinutes) {
   return IpAddress.bulkMarkStale(db, staleMinutes);
 }
 
-export function retireStaleDynamicAddresses(
+// `releaseLease` tells the DHCP backend to drop a sticky lease
+// (getDhcpBackend().releaseLease, given a BackendLease, sync or async); it is
+// passed in so this service does not depend on the backend layer. The
+// releases are awaited between the two transactions: a client that leases
+// the address again in that gap is put back by the next lease sync, since
+// the backend, not dhcp_leases, holds the lease.
+export async function retireStaleDynamicAddresses(
   db,
-  { now = new Date(), limit = 500, releaseLease = releaseDnsmasqLease } = {},
+  { now = new Date(), limit = 500, releaseLease } = {},
 ) {
+  if (typeof releaseLease !== 'function') throw new TypeError('releaseLease is required');
   const nowDate = now instanceof Date ? now : new Date(now);
   if (!Number.isFinite(nowDate.getTime())) throw new Error('Invalid retirement clock');
   const nowIso = nowDate.toISOString();
@@ -760,7 +771,7 @@ export function retireStaleDynamicAddresses(
 
       let result;
       try {
-        result = releaseLease(lease);
+        result = await releaseLease(backendLeaseFromRow(lease));
       } catch (err) {
         result = { released: false, error: err?.message || String(err) };
       }

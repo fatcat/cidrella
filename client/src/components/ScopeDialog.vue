@@ -1293,10 +1293,8 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   font-weight: 600;
 }
 .field-help {
-  display: block;
   margin-top: 0.15rem;
   font-size: 0.75rem;
-  color: var(--cid-text-muted-color);
 }
 .or-divider {
   display: flex;

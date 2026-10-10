@@ -10,6 +10,7 @@ import {
   longToIp,
 } from '../utils/ip.js';
 import { canonicalizeIp } from '../utils/address.js';
+import { activeLeaseSql } from '../utils/lease-sql.js';
 import { resolveGatewayAddress } from './subnet-topology.js';
 import { defaultDhcpPoolForSubnet, defaultV6ScopeForTarget } from './subnet-dhcp-topology.js';
 
@@ -240,7 +241,7 @@ function gatewayClaimConflicts(db, targets, sourceIds) {
     `
     SELECT id, ip_address, mac_address FROM dhcp_leases
     WHERE subnet_id IN (:ids)
-      AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+      AND ${activeLeaseSql()}
     ORDER BY id
   `,
     ids,

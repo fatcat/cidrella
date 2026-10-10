@@ -89,3 +89,34 @@ describe('readInterfaceConfig', () => {
     expect(readInterfaceConfig()).toEqual({ eth0: { dns: true } });
   });
 });
+
+describe('listenableAddresses', () => {
+  it('binds IPv4 and global or unique-local IPv6, never link-local', async () => {
+    const { listenableAddresses } = await import('../../../src/utils/interface-config.js');
+    expect(
+      listenableAddresses(
+        [
+          { family: 'IPv4', address: '10.0.1.2' },
+          { family: 'IPv6', address: 'fe80::1' },
+          { family: 'IPv6', address: 'fd00:a::2' },
+          { family: 'IPv6', address: '2001:db8::2' },
+        ],
+        { ipv6: true },
+      ),
+    ).toEqual(['10.0.1.2', 'fd00:a::2', '2001:db8::2']);
+    expect(listenableAddresses(undefined, { ipv6: true })).toEqual([]);
+  });
+
+  it('binds IPv4 only while IPv6 support is off', async () => {
+    const { listenableAddresses } = await import('../../../src/utils/interface-config.js');
+    expect(
+      listenableAddresses(
+        [
+          { family: 'IPv4', address: '10.0.1.2' },
+          { family: 'IPv6', address: 'fd00:a::2' },
+        ],
+        { ipv6: false },
+      ),
+    ).toEqual(['10.0.1.2']);
+  });
+});

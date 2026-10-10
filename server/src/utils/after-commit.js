@@ -21,18 +21,13 @@
  * Exceptions inside a hook are logged; they do not propagate (the client has
  * already received its 2xx).
  *
- * Registry: add new hook names in HOOK_REGISTRY below. Keep them idempotent
- * so dedup is safe regardless of call order.
+ * Hook names are fixed here (HOOK_ORDER; migration 065 CHECKs them too). What
+ * each one runs is registered at boot with registerHookHandlers, so this
+ * queue does not import the backend layer. Keep handlers idempotent so dedup
+ * is safe regardless of call order.
  */
 
 import { getDb } from '../db/init.js';
-import {
-  regenerateConfigs as regenDnsConfigs,
-  regenerateDnsmasqConf,
-  restartDnsmasq,
-  withValidatedDnsmasqUpdate,
-} from './dnsmasq.js';
-import { regenerateDhcpConfigs } from './dhcp.js';
 import {
   enqueueGeneration,
   listGenerations,
@@ -41,25 +36,32 @@ import {
   markFailed,
 } from '../models/configuration-generation.js';
 
-// Hook name → function(db). All hooks must accept a db handle and return void.
+// Hook name → function(db), registered by index.js (and the test helpers)
+// from services/backend-apply.js HOOK_HANDLERS. All hooks must accept a db
+// handle and return void.
 // Ordering matters when one artifact depends on another: DHCP scope emit reads
 // freshly synced reservations, so run DNS-side regen first, then DHCP. The
-// main dnsmasq.conf regen fires last and restarts dnsmasq after.
+// resolver config (dnsmasq.conf) fires last and restarts the backend after.
 //
 // Note on ordering: hooks fire via queueMicrotask, AFTER res.on('finish').
 // Callers that must observe the hook's effect synchronously (e.g. before a
 // dnsmasq restart) MUST call the underlying function inline instead.
 // queueRegen is not a synchronous-completion primitive.
-const HOOK_REGISTRY = {
-  regenerate_dns: (db) => regenDnsConfigs(db),
-  regenerate_dhcp: (db) => regenerateDhcpConfigs(db),
-  regenerate_dnsmasq_conf: (db) => {
-    const changed = withValidatedDnsmasqUpdate(() => regenerateDnsmasqConf(db));
-    if (changed) restartDnsmasq();
-  },
-};
-
 const HOOK_ORDER = ['regenerate_dns', 'regenerate_dhcp', 'regenerate_dnsmasq_conf'];
+const handlers = {};
+
+/** Set what each hook runs: `{ regenerate_dns: (db) => ..., ... }`. */
+export function registerHookHandlers(map) {
+  for (const [name, handler] of Object.entries(map)) {
+    if (!HOOK_ORDER.includes(name)) throw new Error(`Unknown afterCommit hook: ${name}`);
+    if (typeof handler !== 'function') throw new Error(`afterCommit hook ${name} needs a function`);
+    handlers[name] = handler;
+  }
+}
+
+function assertKnownHook(name) {
+  if (!HOOK_ORDER.includes(name)) throw new Error(`Unknown afterCommit hook: ${name}`);
+}
 
 // Per-hook single-flight state. Under concurrent writes to DNS/DHCP, the old
 // design had each request's res.on('finish') handler race independently, so
@@ -88,7 +90,10 @@ function fireHook(name) {
     const db = getDb();
     const generation = markApplying(db, name)?.desired_generation || 0;
     try {
-      HOOK_REGISTRY[name](db);
+      // A known hook with nothing registered is a wiring bug at boot. Failing
+      // the generation keeps the work pending for resumePendingRegeneration.
+      if (!handlers[name]) throw new Error(`No handler registered for ${name}`);
+      handlers[name](db);
       markApplied(db, name, generation);
     } catch (err) {
       markFailed(db, name, err?.message || err);
@@ -105,9 +110,7 @@ function fireHook(name) {
 export function afterCommitMiddleware(req, res, next) {
   const queue = new Set();
   req.afterCommit = (hookName) => {
-    if (!HOOK_REGISTRY[hookName]) {
-      throw new Error(`Unknown afterCommit hook: ${hookName}`);
-    }
+    assertKnownHook(hookName);
     queue.add(hookName);
   };
 
@@ -133,16 +136,17 @@ export function afterCommitMiddleware(req, res, next) {
  * can race a request-triggered hook firing from queueMicrotask.
  */
 export function queueRegen(hookName) {
-  if (!HOOK_REGISTRY[hookName]) {
-    throw new Error(`Unknown afterCommit hook: ${hookName}`);
-  }
+  assertKnownHook(hookName);
   enqueueGeneration(getDb(), hookName);
   fireHook(hookName);
 }
 
 export function resumePendingRegeneration() {
   for (const row of listGenerations(getDb())) {
-    if (row.desired_generation > row.applied_generation || row.status !== 'applied') {
+    if (
+      HOOK_ORDER.includes(row.hook_name) &&
+      (row.desired_generation > row.applied_generation || row.status !== 'applied')
+    ) {
       fireHook(row.hook_name);
     }
   }

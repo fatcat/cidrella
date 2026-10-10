@@ -27,6 +27,7 @@ import { initDb, getDb, getSetting } from './db/init.js';
 import * as Range from './models/range.js';
 import { reconcileManagedReverseDns } from './models/dns-record.js';
 import * as AuditLog from './models/audit-log.js';
+import * as Session from './models/session.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
 import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
 import { sanitizeForLog } from './utils/validation.js';
@@ -35,11 +36,14 @@ import { actorMiddleware } from './utils/request-actor.js';
 import {
   afterCommitMiddleware,
   queueRegen,
+  registerHookHandlers,
   resumePendingRegeneration,
 } from './utils/after-commit.js';
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import featuresRoutes from './routes/features.js';
+import dhcpBackendRoutes from './routes/dhcp-backend.js';
+import { BackendFeatureError } from './utils/backend-features.js';
 import subnetRoutes from './routes/subnets.js';
 import rangeTypeRoutes from './routes/range-types.js';
 import rangeRoutes from './routes/ranges.js';
@@ -61,7 +65,8 @@ import piholeRoutes from './routes/pihole.js';
 import interfaceRoutes from './routes/interfaces.js';
 import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js';
 import { ensureCerts, setHttpsServer } from './utils/cert.js';
-import { startLeaseWatcher, syncServerDnsDefault } from './utils/dhcp.js';
+import { startLeaseSync } from './services/dhcp-lease-sync.js';
+import { syncServerDnsDefault } from './models/dhcp-option.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
 import { startBlocklistScheduler } from './utils/blocklist.js';
@@ -73,14 +78,9 @@ import {
 import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
-import {
-  applyInterfaceConfig,
-  regenerateDnsmasqConf,
-  restartDnsmasq,
-  isCidrellaDnsmasqRunning,
-  dnsmasqRestartPending,
-  withValidatedDnsmasqUpdate,
-} from './utils/dnsmasq.js';
+import { allBackends, uniqueServices } from './backends/index.js';
+import { selectDhcpBackendAtBoot } from './services/dhcp-backend-switch.js';
+import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
@@ -107,18 +107,13 @@ async function main() {
   captureBootServiceHealth();
 
   // Ensure data directories exist
-  const dataDirs = [
-    'certs',
-    'backups',
-    'dnsmasq/hosts.d',
-    'dnsmasq/dhcp-hosts.d',
-    'dnsmasq/conf.d',
-    'blocklists',
-    'geoip',
-  ];
+  const dataDirs = ['certs', 'backups', 'blocklists', 'geoip'];
   for (const dir of dataDirs) {
     fs.mkdirSync(path.join(DATA_DIR, dir), { recursive: true });
   }
+  // What each after-commit hook runs. Registered before anything can queue
+  // one (the pending-work resume below, request handlers, the lease watcher).
+  registerHookHandlers(HOOK_HANDLERS);
 
   // Initialize database
   await initDb(DATA_DIR);
@@ -132,9 +127,18 @@ async function main() {
     console.error('Restore carry-over failed:', err.message);
   }
   console.log('Database initialized');
+
+  // Which backend serves DHCP comes from the database, so the services are
+  // prepared once it is open and before any hook renders their config. A
+  // switch a crash interrupted is undone: the DHCP files go back to the
+  // backend the setting names.
+  const { recovered } = selectDhcpBackendAtBoot(getDb());
+  for (const service of uniqueServices()) service.prepare();
+  if (recovered && !recovered.finished) queueRegen('regenerate_dhcp');
+
   resumePendingRegeneration();
   // Render the zones once per boot, so a release that changes what the
-  // generator writes (0.5.0 local zones in conf.d/local-zones.conf) reaches
+  // generator writes (0.5.0 local zones, 0.5.1 qualifying SRV names) reaches
   // existing installs without waiting for a DNS edit. Unchanged files are not
   // rewritten and nothing is signaled.
   queueRegen('regenerate_dns');
@@ -221,7 +225,7 @@ async function main() {
   }
 
   // Start DHCP lease file watcher
-  startLeaseWatcher(getDb());
+  startLeaseSync(getDb());
 
   // Start passive liveness watcher (DNS query log → is_online)
   startPassiveLivenessWatcher(getDb());
@@ -236,31 +240,7 @@ async function main() {
   // doubles as "make sure DNS is up" and change-detection must not lose that.
   // (The blocklist scheduler's one-time legacy blocklist.conf blanking ~10s
   // in has its own restart guard and stays separate on purpose.)
-  let ifaceChanged = false;
-  let confChanged = false;
-  try {
-    ({ ifaceChanged, confChanged } = withValidatedDnsmasqUpdate(() => {
-      const ifaceChanged = applyInterfaceConfig(getDb());
-      const confChanged = regenerateDnsmasqConf(getDb());
-      return { ifaceChanged, confChanged, changed: ifaceChanged || confChanged };
-    }));
-  } catch (err) {
-    // The validated writer restored the last config. Keep the management API
-    // available so the operator can correct the stored setting or record.
-    console.error('dnsmasq config generation failed; retained previous config:', err.message);
-  }
-  try {
-    // Restart when the config changed, when OUR unit is down (the specific
-    // unit, not any dnsmasq on the host), or when a previous restart failed
-    // and the running process may have loaded a stale config.
-    if (ifaceChanged || confChanged || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
-      restartDnsmasq();
-    } else {
-      console.log('dnsmasq config unchanged and service running, skipping boot restart');
-    }
-  } catch {
-    console.warn('dnsmasq restart failed (may not be installed)');
-  }
+  applyAtBoot(getDb());
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,
@@ -271,7 +251,7 @@ async function main() {
   }
 
   // Encrypted DNS forwarders: start the in-Node DoT/DoH stub if enabled
-  // (dnsmasq's server= already points at it via regenerateDnsmasqConf above).
+  // (dnsmasq's server= already points at it via applyAtBoot above).
   applyEncryptedForwarder();
 
   // 2. Initialize DuckDB analytics
@@ -312,6 +292,15 @@ async function main() {
       const result = AuditLog.pruneAuditLog(getDb(), days);
       if (result.changes > 0) {
         console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
+      }
+      // A backend's own audit log (Kea's legal log) keeps as long.
+      for (const backend of allBackends()) {
+        const files = backend.pruneLogs?.(Number(days)) || 0;
+        if (files > 0) console.log(`${backend.name} audit log: ${files} file(s) older than ${days} days removed`);
+      }
+      const sessions = Session.pruneSessions(getDb(), days);
+      if (sessions.changes > 0) {
+        console.log(`Sessions pruned: ${sessions.changes} older than ${days} days removed`);
       }
     } catch (err) {
       console.error('Audit log prune error:', err.message);
@@ -451,6 +440,7 @@ async function main() {
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dns', dnsRoutes);
   app.use('/api/dhcp/rogue', rogueDhcpRoutes);
+  app.use('/api/dhcp/server', dhcpBackendRoutes);
   app.use('/api/devices', deviceRoutes);
   app.use('/api/dhcp', dhcpRoutes);
   app.use('/api/workspace', workspaceRoutes);
@@ -534,6 +524,9 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
       return res.status(413).json({ error: 'Request body too large' });
     }
     // 4xx errors, route code already wrote a clean message; trust it.
+    if (err instanceof BackendFeatureError) {
+      return res.status(status).json({ error: msg, code: err.code, feature: err.feature });
+    }
     res.status(status).json({ error: msg });
   });
 

@@ -26,6 +26,9 @@ Environment=HTTP_PORT=8080
 # the retry rate so a genuinely-broken startup doesn't flap forever.
 Restart=always
 RestartSec=5
+# The launcher exits 128 + signal, the shell convention, so a clean stop
+# by SIGTERM is 143. Without this systemd logs every stop as a failure.
+SuccessExitStatus=143
 
 # ─── Security hardening ─────────────────────────────────
 #

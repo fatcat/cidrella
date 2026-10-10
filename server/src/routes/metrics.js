@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db/init.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getProxyStatus } from '../utils/dns-proxy.js';
-import { isDnsmasqRunning } from '../utils/dnsmasq.js';
+import { backendStatuses } from '../backends/index.js';
 import { forwarderHealth } from '../utils/forwarder-health.js';
 import { VALID_RANGE_KEYS } from '../config/defaults.js';
 import { getIpLifecycleDiagnostics } from '../utils/ip-lifecycle-diagnostics.js';
@@ -118,8 +118,7 @@ router.get('/configuration-generation', requirePerm('analytics:read'), (req, res
 
 // GET /api/metrics/services
 router.get('/services', requirePerm('analytics:read'), async (req, res) => {
-  // dnsmasq status
-  const dnsmasq = isDnsmasqRunning();
+  const backends = backendStatuses();
 
   // GeoIP proxy status
   const geoipStatus = getProxyStatus();
@@ -129,7 +128,7 @@ router.get('/services', requirePerm('analytics:read'), async (req, res) => {
   const forwarders = await forwarderHealth();
 
   res.json({
-    dnsmasq,
+    backends,
     geoip_proxy: geoipStatus.running,
     geoip_bypassed: geoipStatus.bypassed,
     geoip_port: geoipStatus.port,

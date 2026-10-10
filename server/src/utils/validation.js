@@ -123,6 +123,20 @@ export function isIntInRangeCoercing(v, lo, hi) {
   return Number.isInteger(n) && n >= lo && n <= hi;
 }
 
+/**
+ * The Resolution Map's home point, stored as "lat,lon" (decimal degrees) or
+ * '' for not set. Returns { lat, lon }, or null for unset or malformed.
+ */
+export function parseMapHome(value) {
+  if (typeof value !== 'string') return null;
+  const m = /^\s*(-?\d+(?:\.\d+)?)\s*,\s*(-?\d+(?:\.\d+)?)\s*$/.exec(value);
+  if (!m) return null;
+  const lat = Number(m[1]);
+  const lon = Number(m[2]);
+  if (lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return { lat, lon };
+}
+
 export function validateSoaFields(fields = {}) {
   const { soa_primary_ns, soa_admin_email, soa_refresh, soa_retry, soa_expire, soa_minimum_ttl } =
     fields;

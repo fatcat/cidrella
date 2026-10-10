@@ -51,15 +51,19 @@
         <span class="status-chip-label">{{ scanChipText }}</span>
       </button>
       <button
+        v-for="unit in backendChips"
+        :key="unit.key"
         class="status-chip status-chip-wide"
-        :class="dnsChipClass"
-        data-track="header-chip-dnsmasq"
+        :class="backendChipClass(unit)"
+        :data-track="`header-chip-${unit.key}`"
         @click="toggleOpsPopover"
-        :title="dnsTitle"
+        :title="backendTitle(unit)"
       >
-        <StatusDot :kind="dnsDotKind" :label="hostDotLabel(dnsDotKind)" />
-        <span class="status-chip-label">dnsmasq</span>
-        <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
+        <StatusDot :kind="backendDotKind(unit)" :label="hostDotLabel(backendDotKind(unit))" />
+        <span class="status-chip-label">{{ unit.name }}</span>
+        <span v-if="rogueDhcpCount > 0 && unit.roles.includes('dhcp')" class="status-chip-badge">{{
+          rogueDhcpCount
+        }}</span>
       </button>
       <button
         class="status-chip status-chip-wide"
@@ -117,13 +121,13 @@
 
     <Popover ref="opsPopoverRef">
       <div class="status-popover-panel">
-        <div class="status-popover-row">
+        <div v-for="unit in backendChips" :key="unit.key" class="status-popover-row">
           <StatusDot
-            :kind="healthKnown ? dnsKnownKind : 'muted'"
-            :label="hostDotLabel(dnsKnownKind)"
+            :kind="healthKnown ? backendKnownKind(unit) : 'muted'"
+            :label="hostDotLabel(backendKnownKind(unit))"
           />
-          <span class="status-popover-label">DNSmasq</span>
-          <span class="status-popover-val">{{ dnsDisplay }}</span>
+          <span class="status-popover-label">{{ unit.name }}</span>
+          <span class="status-popover-val">{{ backendDisplay(unit) }}</span>
         </div>
         <div
           class="status-popover-row status-popover-clickable"
@@ -348,6 +352,7 @@ import { useRouter, useRoute } from 'vue-router';
 import Popover from '../ui/Popover.js';
 import Select from '../ui/Select.js';
 import StatusDot from './StatusDot.vue';
+import { anyBackendDown, backendUnits } from '../utils/backend-status.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
 import { useAnomalyStore } from '../stores/anomalies.js';
@@ -452,7 +457,8 @@ const userInitials = computed(() => {
 
 const opsIssue = computed(
   () =>
-    !health.value?.services?.dnsmasq ||
+    !backendUnits(health.value).length ||
+    anyBackendDown(health.value) ||
     !!serviceCrash.value ||
     cpuStatusClass.value === 'card-err' ||
     ramStatusClass.value === 'card-err' ||
@@ -506,9 +512,9 @@ async function onTimeFormatChange(event) {
   }
 }
 
-function handleLogout() {
+async function handleLogout() {
   userMenuRef.value.hide();
-  auth.logout();
+  await auth.signOut();
   router.push('/login');
 }
 
@@ -551,10 +557,17 @@ const diskPercentText = computed(() =>
   healthKnown.value ? `${health.value?.disk?.percent ?? 0}%` : EMPTY_CELL,
 );
 
-const dnsDisplay = computed(() =>
-  !healthKnown.value ? 'Unknown' : health.value?.services?.dnsmasq ? 'Running' : 'Down',
-);
-const dnsKnownKind = computed(() => (health.value?.services?.dnsmasq ? 'ok' : 'err'));
+// One chip per DNS/DHCP backend daemon. Before the first health read there
+// is nothing to name, so a placeholder holds the slot.
+const backendChips = computed(() => {
+  const units = backendUnits(health.value);
+  return units.length
+    ? units
+    : [{ key: 'backend', name: 'DNS/DHCP', roles: ['dns', 'dhcp'], running: false }];
+});
+const backendDisplay = (unit) =>
+  !healthKnown.value ? 'Unknown' : unit.running ? 'Running' : 'Down';
+const backendKnownKind = (unit) => (unit.running ? 'ok' : 'err');
 
 const cpuStatusClass = computed(() => {
   if (cpuPercent.value >= 100) return 'card-err';
@@ -631,27 +644,25 @@ function resourceChip(statusClass) {
   return 'chip-ok';
 }
 
-// The dnsmasq chip is the DHCP/DNS service chip shown on wide layouts (the Ops
-// chip is the narrow-screen aggregate and is display:none on desktop). It's
-// where the rogue-DHCP warning surfaces on desktop: red if dnsmasq is down
-// (wins), else yellow if an unacknowledged rogue is present, else green.
-const dnsChipClass = computed(() => {
-  if (!healthKnown.value) return 'chip-idle';
-  if (!health.value?.services?.dnsmasq) return 'chip-err';
-  if (rogueDhcpCount.value > 0) return 'chip-warn';
-  return 'chip-ok';
-});
-const dnsDotKind = computed(() => {
+// The backend chips are the DNS/DHCP service chips shown on wide layouts (the
+// Ops chip is the narrow-screen aggregate and is display:none on desktop). The
+// DHCP backend's chip is where the rogue-DHCP warning surfaces on desktop: red
+// if it is down (wins), else yellow if an unacknowledged rogue is present,
+// else green.
+function backendDotKind(unit) {
   if (!healthKnown.value) return 'muted';
-  if (!health.value?.services?.dnsmasq) return 'err';
-  if (rogueDhcpCount.value > 0) return 'warn';
+  if (!unit.running) return 'err';
+  if (rogueDhcpCount.value > 0 && unit.roles.includes('dhcp')) return 'warn';
   return 'ok';
-});
-const dnsTitle = computed(() =>
-  rogueDhcpCount.value > 0
-    ? `DNSmasq: ${dnsDisplay.value}, ${rogueDhcpCount.value} rogue DHCP server(s) detected`
-    : `DNSmasq: ${dnsDisplay.value}`,
-);
+}
+const BACKEND_CHIP_CLASS = { muted: 'chip-idle', err: 'chip-err', warn: 'chip-warn', ok: 'chip-ok' };
+const backendChipClass = (unit) => BACKEND_CHIP_CLASS[backendDotKind(unit)];
+function backendTitle(unit) {
+  const base = `${unit.name}: ${backendDisplay(unit)}`;
+  return rogueDhcpCount.value > 0 && unit.roles.includes('dhcp')
+    ? `${base}, ${rogueDhcpCount.value} rogue DHCP server(s) detected`
+    : base;
+}
 const cpuChipClass = computed(() => resourceChip(cpuStatusClass.value));
 const ramChipClass = computed(() => resourceChip(ramStatusClass.value));
 const diskChipClass = computed(() => resourceChip(diskStatusClass.value));

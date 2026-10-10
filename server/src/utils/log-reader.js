@@ -1,6 +1,7 @@
 /**
- * Shared log-tail reader utility.
- * Used by metrics-aggregator.js and passive-liveness.js to tail dnsmasq.log.
+ * Shared log-tail reader utility: the pollers that read a backend's log
+ * (metrics-aggregator.js, passive-liveness.js, dhcp-fingerprint.js) follow
+ * it with createLogFollower.
  */
 
 import fs from 'fs';
@@ -64,4 +65,38 @@ export function readLogTail(filePath, offset, maxBytes = DEFAULT_MAX_READ_BYTES)
     .split('\n')
     .filter((l) => l.trim());
   return { lines, newOffset: offset + lastNewline + 1 };
+}
+
+/**
+ * Follow a backend's log (a logSource() from backends/contract.js) from its
+ * current end. `read()` returns the complete lines written since the last
+ * call. `source.path` is read on every call: a backend whose log moves to a
+ * new file (Kea's legal log starts one each day) is followed onto it, read
+ * from its start. Without a source, read() returns nothing.
+ */
+export function createLogFollower(source) {
+  let file = source?.path ?? null;
+  let offset = 0;
+  try {
+    if (file) offset = fs.statSync(file).size;
+  } catch {
+    /* not created yet */
+  }
+  return {
+    get path() {
+      return file;
+    },
+    read() {
+      if (!source) return [];
+      const current = source.path;
+      if (current !== file) {
+        file = current;
+        offset = 0;
+      }
+      if (!file) return [];
+      const tail = readLogTail(file, offset);
+      offset = tail.newOffset;
+      return tail.lines;
+    },
+  };
 }

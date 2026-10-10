@@ -450,7 +450,7 @@ const ACTION_DEFINITIONS = [
   {
     id: 'dhcp.leases.sync',
     label: 'Sync leases now',
-    note: 'Refresh dnsmasq lease state',
+    note: 'Refresh lease state from the DHCP server',
     icon: 'pi pi-sync',
     capability: 'dhcp:write',
     targetKind: ['dhcp-scope', 'workspace'],

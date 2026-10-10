@@ -5,6 +5,7 @@ import { getDb, audit } from '../db/init.js';
 import { ROLES, requireRole } from '../auth/roles.js';
 import { generateToken, expiryFromDays } from '../auth/tokens.js';
 import * as User from '../models/user.js';
+import * as Session from '../models/session.js';
 
 const router = Router();
 
@@ -117,6 +118,8 @@ router.put('/:id', requireAdmin, (req, res) => {
   }
 
   const updated = User.updateRole(db, user.id, role);
+  // Permissions travel in the token, so the user signs in again to get the new ones.
+  Session.endUserSessions(db, user.id, 'role_changed', { actorId: req.user.id });
   audit(req.user.id, 'user_updated', 'user', user.id, {
     username: user.username,
     old_role: user.role,
@@ -137,6 +140,7 @@ router.delete('/:id', requireAdmin, (req, res) => {
   }
 
   try {
+    Session.endUserSessions(db, user.id, 'user_deleted', { actorId: req.user.id });
     User.deleteUser(db, user.id);
     audit(req.user.id, 'user_deleted', 'user', user.id, { username: user.username });
     res.json({ ok: true });
@@ -157,6 +161,7 @@ router.post('/:id/reset-password', requireAdmin, async (req, res) => {
     const hash = await bcrypt.hash(password, 10);
 
     User.resetPassword(db, user.id, hash);
+    Session.endUserSessions(db, user.id, 'password_reset', { actorId: req.user.id });
 
     audit(req.user.id, 'user_password_reset', 'user', user.id, { username: user.username });
     res.json({ password });

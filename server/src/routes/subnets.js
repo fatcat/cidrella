@@ -58,6 +58,7 @@ import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
 import * as DhcpTopology from '../services/subnet-dhcp-topology.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
 import * as DnsTopology from '../services/subnet-dns-topology.js';
+import { activeLeaseSql } from '../utils/lease-sql.js';
 import {
   buildDividePlan,
   buildMergePlan,
@@ -991,11 +992,9 @@ router.post(
         if (targetPrefix <= parentParsed.prefix || targetPrefix > parentParsed.bits) {
           return res.status(400).json({ error: 'Invalid target prefix' });
         }
+        // splitNetwork refuses more than 256 children (the divide cap).
         const subnets = splitNetwork(parent.cidr, targetPrefix, 256);
         const count = subnets.length;
-        if (count > 256) {
-          return res.status(400).json({ error: 'Cannot divide into more than 256 subnets' });
-        }
         let gatewaySubnet = null;
         if (parent.gateway_address) {
           gatewaySubnet = subnets.find((s) => parsedNetworkContains(s, parent.gateway_address));
@@ -1175,7 +1174,7 @@ function detectLossyIpsForDivision(db, parentId, childCidrs) {
     SELECT id, ip_address, mac_address, hostname, expires_at
     FROM dhcp_leases
     WHERE subnet_id = ?
-      AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+      AND ${activeLeaseSql()}
   `,
     )
     .all(parentId);
@@ -1456,10 +1455,8 @@ router.post(
         if (targetPrefix <= parentParsed.prefix || targetPrefix > parentParsed.bits) {
           return res.status(400).json({ error: 'Invalid target prefix' });
         }
+        // splitNetwork refuses more than 256 children (the divide cap).
         let subnets = splitNetwork(parent.cidr, targetPrefix, 256);
-        if (subnets.length > 256) {
-          return res.status(400).json({ error: 'Cannot divide into more than 256 subnets' });
-        }
 
         // Validate selected CIDRs, but retain every result as explicit ownership
         // so a partial selection cannot strand or delete the remainder.

@@ -4,22 +4,12 @@ import { createTestApp } from '../../helpers/test-app.js';
 import { ADDRESS_TYPE } from '../../../src/models/ip-view.js';
 
 // Stub filesystem-dependent utilities so they don't write dnsmasq/dhcp configs
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateConfigs: vi.fn(),
-    generateReverseNames: original.generateReverseNames,
-  };
-});
-
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateDhcpConfigs: vi.fn(),
-  };
-});
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+  ]),
+);
 
 // Import after mocks are set up
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');

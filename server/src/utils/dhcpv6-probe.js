@@ -28,10 +28,7 @@ import { localAddressSet } from './local-addresses.js';
 import { findNeighbor, readNdCache } from './nd-cache.js';
 import { canonicalizeIp, formatIp, IPV6_BITS } from './address.js';
 import { duidFromBytes } from './duid.js';
-import { LEASE_FILE, readServerDuid } from './dnsmasq-lease-file.js';
-
-// Re-exported for the callers that found it here first.
-export { readServerDuid };
+import { getDhcpBackend } from '../backends/index.js';
 import { upsertRogueEvent, authorizedSets } from '../models/rogue-dhcp.js';
 
 const DHCPV6_SERVER_PORT = 547;
@@ -236,8 +233,8 @@ export function parseAdvertise(buf) {
 }
 
 // Decide whether an advertisement comes from an unauthorized server. `selfIps`
-// holds this host's own addresses, `selfDuid` is dnsmasq's DUID from the lease
-// file (null when it has never written one), `authorized` is the allowlist as
+// holds this host's own addresses, `selfDuid` is the DHCP backend's own DUID
+// (null before it has served DHCPv6), `authorized` is the allowlist as
 // { ips, duids, macs }. `mac` is what the neighbor table knows about the source.
 export function classifyAdvertise(adv, { selfIps, selfDuid, authorized, mac = null }) {
   const source = adv.sourceIp ? String(adv.sourceIp).toLowerCase() : null;
@@ -302,7 +299,7 @@ export function runProbe6(
     serverPort = DHCPV6_SERVER_PORT,
     clientPort = DHCPV6_CLIENT_PORT,
     interfaces = null,
-    leaseFile = LEASE_FILE,
+    serverDuid,
   } = {},
 ) {
   if (probeInProgress) {
@@ -331,7 +328,7 @@ export function runProbe6(
   try {
     ifaces = interfaces || getProbeInterfaces();
     selfIps = localAddressSet();
-    selfDuid = readServerDuid({ leaseFile });
+    selfDuid = serverDuid !== undefined ? serverDuid : getDhcpBackend().serverIdentity().duid;
     authorized = authorizedSets(db);
   } catch (err) {
     probeInProgress = false;

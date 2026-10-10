@@ -3,10 +3,9 @@ import net from 'net';
 import dnsPacket from 'dns-packet';
 
 // Avoid pulling in real dnsmasq / DuckDB side effects on import.
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
-  applyInterfaceConfig: vi.fn(),
-  restartDnsmasq: vi.fn(),
-}));
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 vi.mock('../../../src/db/duckdb.js', () => ({
   logDnsQuery: vi.fn(),
 }));

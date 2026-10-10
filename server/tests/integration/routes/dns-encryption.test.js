@@ -2,16 +2,17 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateConfigs: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    restartDnsmasq: vi.fn(),
-    dnsmasqSupportsDnssec: vi.fn(() => true),
-  };
-});
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyResolver',
+  ]),
+);
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule({
+    capabilities: { 'rec-dnssec-validate': true },
+  }),
+);
 vi.mock('../../../src/utils/timesync.js', () => ({
   getNtpStatus: vi.fn(() => ({ available: true, ntpEnabled: true, synchronized: true })),
   ensureNtpEnabled: vi.fn(),

@@ -3,19 +3,16 @@ import { cleanupTestDb, setupTestDb } from '../helpers/test-db.js';
 import { createMultiRouterApp } from '../helpers/test-app.js';
 import { expectedIpv4Split } from '../helpers/network-dhcp-oracle.js';
 
-vi.mock('../../src/utils/dnsmasq.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  regenerateConfigs: vi.fn(),
-  applyInterfaceConfig: vi.fn(),
-  regenerateDnsmasqConf: vi.fn(),
-  signalDnsmasq: vi.fn(),
-  restartDnsmasq: vi.fn(),
-}));
-vi.mock('../../src/utils/dhcp.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  regenerateDhcpConfigs: vi.fn(),
-  startLeaseWatcher: vi.fn(),
-}));
+vi.mock('../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
+vi.mock('../../src/backends/index.js', async () =>
+  (await import('../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: subnetRouter } = await import('../../src/routes/subnets.js');
 const { default: dhcpRouter } = await import('../../src/routes/dhcp.js');

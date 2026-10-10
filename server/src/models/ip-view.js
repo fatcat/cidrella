@@ -1,5 +1,6 @@
 import { lookupVendorBatch } from '../utils/mac-vendor.js';
 import { lookupFingerprintBatch } from './device-fingerprint.js';
+import { attachFilteringFacts } from './filtering-exemption.js';
 import { ALLOCATION_STATE, displayStatusFor } from './ip-lifecycle.js';
 import { addressFamily, canonicalizeIp, parseIp, sortKey } from '../utils/address.js';
 import { resolveScanningEnabled } from '../utils/scan-coverage.js';
@@ -297,6 +298,8 @@ export function enrichIpViewRows(db, rows, { fillFromIpAddress = false } = {}) {
 
     applyIpView(row);
   }
+
+  attachFilteringFacts(db, rows);
 
   const allMacs = [...new Set(rows.map((r) => r.mac_address || r.last_seen_mac).filter(Boolean))];
   const vendorMap = lookupVendorBatch(allMacs);

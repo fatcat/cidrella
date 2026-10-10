@@ -6,10 +6,27 @@
     errorIcon="pi pi-ban"
   />
   <router-view />
+  <SessionTimeoutDialog
+    :idle-warning="session.idleWarning.value"
+    :expiry-warning="session.expiryWarning.value"
+    :idle-seconds-left="session.idleSecondsLeft.value"
+    :expiry-seconds-left="session.expirySecondsLeft.value"
+    @stay="session.stay"
+    @sign-out="session.signOutNow"
+    @dismiss="session.dismissExpiry"
+  />
 </template>
 
 <script setup>
+import { useRouter } from 'vue-router';
 import Toast from './ui/Toast.js';
+import SessionTimeoutDialog from './components/SessionTimeoutDialog.vue';
+import { useSessionActivity } from './composables/useSessionActivity.js';
+
+// Every signed-in page, the first-run wizard included: it counts down to the
+// session's deadlines and warns before either. Idle while signed out.
+const router = useRouter();
+const session = useSessionActivity({ onSignedOut: () => router.push('/login') });
 </script>
 
 <style>

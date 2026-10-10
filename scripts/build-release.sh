@@ -475,6 +475,7 @@ run_release_health_check() {
       if [ "$package_routine" = "true" ]; then
         apply_npm_updates routine
       fi
+      refresh_geo_cities "routine updates accepted"
       if [ "$docker_routine" = "true" ]; then
         local docker_target_tag s6_target
         docker_target_tag=$(health_json '(r.docker.nodeImages.find(i => i.nodeLtsUpdateAvailable) || {}).fixTargetTag || ""')
@@ -553,6 +554,44 @@ refresh_ntp_defaults() {
       echo "Build stopped so DHCP NTP defaults can be refreshed."
       exit 1
     fi
+  fi
+}
+
+# City places for the Resolution Map (server/assets/geo-cities.bin, built
+# from DB-IP City Lite, never committed). Refreshed when routine updates are
+# accepted, built when missing; otherwise the cached file ships as it is.
+GEO_CITIES_FILE="$PROJECT_DIR/server/assets/geo-cities.bin"
+
+refresh_geo_cities() {
+  local reason="$1"
+  if [ "$DRY_RUN" = true ]; then
+    echo "[DRY RUN] Would download DB-IP City Lite and rebuild server/assets/geo-cities.bin ($reason)."
+    return 0
+  fi
+  echo "Building Resolution Map city places ($reason)..."
+  set +e
+  node "$PROJECT_DIR/scripts/build-geo-cities.js"
+  local rc=$?
+  set -e
+  if [ "$rc" -ne 0 ]; then
+    echo ""
+    if [ -f "$GEO_CITIES_FILE" ]; then
+      echo "WARNING: Could not refresh the city places; the existing file will ship."
+    else
+      echo "WARNING: Could not build the city places. The Resolution Map will place answers by country only."
+      if ! confirm_yn "Proceed without city places?" "n"; then
+        echo "Build stopped so the city places can be built (scripts/build-geo-cities.js)."
+        exit 1
+      fi
+    fi
+  fi
+}
+
+ensure_geo_cities() {
+  if [ -f "$GEO_CITIES_FILE" ]; then
+    echo "Resolution Map city places: using the cached server/assets/geo-cities.bin."
+  else
+    refresh_geo_cities "missing"
   fi
 }
 
@@ -671,6 +710,7 @@ fi
 run_release_health_check
 refresh_ntp_defaults
 check_dns_providers
+ensure_geo_cities
 
 # Check minisign is installed (needed for all modes)
 if ! command -v minisign &>/dev/null; then

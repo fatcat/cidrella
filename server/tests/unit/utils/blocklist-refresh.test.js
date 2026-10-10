@@ -5,11 +5,9 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 // blocklist.js reaches dns-proxy and dnsmasq at import time. Stub the effect
 // modules; the refresh path itself is what we are testing, for real, against
 // real SQLite.
-vi.mock('../../../src/utils/dnsmasq.js', () => ({
-  atomicWrite: vi.fn(),
-  restartDnsmasq: vi.fn(),
-  applyInterfaceConfig: vi.fn(),
-}));
+vi.mock('../../../src/backends/index.js', async () =>
+  (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
 // The one thing we fake is the network.

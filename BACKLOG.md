@@ -238,6 +238,47 @@ the DHCP leases table columns for DUID/IAID default to hidden. No IPv6 NTP defau
 
 ## Deferred design work
 
+### PowerDNS + Kea stack (0.5.2, 0.5.3, ships as 0.6.0), in flight
+
+Decided 2026-10-07: a host runs one of two stacks, **dnsmasq** (DNS, DHCP, RAs) or
+**PowerDNS + Kea**, never a mix. The switch moves between stacks both ways, from the setup
+wizard at install and from Settings afterward. `install.sh` and `update.sh` install both
+stacks' packages, since the app cannot install anything itself. 0.5.2 and 0.5.3 are dev
+branches with release candidates only; the release is 0.6.0. Why stacks and not one-way: the
+mixed mode is what needs dnsmasq's not-serving render and two daemons on UDP 547, while
+one-way switching saved three lines of lease import and broke restoring a pre-switch backup.
+
+0.5.2 (plan `~/.claude/plans/tender-moseying-pascal.md`, design in `docs/DNSMASQ-COUPLING.md`):
+the Kea adapter, the DHCP switch with its lease handover, and Kea's packaging are in. Kea is
+hidden: Settings > DHCP > Server is out of the menu, and `/api/dhcp/server` stays, admin-only,
+for the harness and testerella.
+
+0.5.3, to plan:
+
+- **PowerDNS adapter** for the DNS role: Authoritative for the local zones, and Recursor behind
+  CIDRella's proxy in dnsmasq's place (decided 2026-10-09; the proxy and the in-Node forwarder
+  stay on both stacks, see DNSMASQ-COUPLING.md "Resolver on the PowerDNS stack"). Spike first:
+  Recursor's memory, cold-cache latency, and forward zones to Authoritative and the forwarder.
+- **An RA sender for the PowerDNS + Kea stack.** Kea sends none and dnsmasq is not running
+  there: radvd, as the `ra` role's adapter.
+- **One stack setting and one switch** in place of `dhcp_backend` and the DHCP-only switch,
+  the setup wizard's "what the appliance does" step offering it, and Settings > DHCP > Server
+  back as the stack panel.
+- **Remove the mixed mode:** dnsmasq's not-serving render (`dhcp-ignore`, the RA-only v6
+  scope files, the emptied reservations) and the shared-547 notes in DNSMASQ-COUPLING.md.
+- **Log viewer per role.** `routes/logs.js` reads the DNS backend's log and filters DHCP lines out
+  of it; under the new stack, DNS and DHCP logs come from two daemons, each with its own offset
+  in the SSE stream.
+- **Run the native packaging on a systemd host.** `install_kea` ran in a `node:22-trixie`
+  container (repository, key fingerprint, packages, `_kea`, the unit file), and the KEA_LIVE
+  test there starts both daemons on the rendered estate. Not yet run: the `cidrella-kea@` unit
+  and polkit under systemd (the `kea-switch` harness scenario on testerella, from a release
+  candidate). The Docker image switched dnsmasq to Kea and back, and kept Kea across a restart.
+- **Verify on hardware** (testerella, both directions, v4 and v6 clients): Renew and Rebind
+  across a switch; that dnsmasq loads a handed-over lease file on the restart that makes it
+  serve; how long a lease handed out between Kea's SIGHUP and the final lease read could be
+  missed.
+
 ### Resolver instrumentation: what the 2026-10-08 pass left out
 
 The resolver pass (failed-answer causes, `metrics_forwarder`, the probing

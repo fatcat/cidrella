@@ -22,25 +22,16 @@ import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
 import { createTestApp, createMultiRouterApp } from '../helpers/test-app.js';
 import { getDb } from '../../src/db/init.js';
 
-vi.mock('../../src/utils/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateConfigs: vi.fn(),
-    applyInterfaceConfig: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    signalDnsmasq: vi.fn(),
-    restartDnsmasq: vi.fn(),
-  };
-});
-vi.mock('../../src/utils/dhcp.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateDhcpConfigs: vi.fn(),
-    startLeaseWatcher: vi.fn(),
-  };
-});
+vi.mock('../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../helpers/fake-backends.js')).stubBackendApply(await importOriginal(), [
+    'applyDns',
+    'applyDhcp',
+    'applyResolver',
+  ]),
+);
+vi.mock('../../src/backends/index.js', async () =>
+  (await import('../helpers/fake-backends.js')).fakeBackendsModule(),
+);
 
 const { default: authRouter } = await import('../../src/auth/routes.js');
 const { default: setupRouter } = await import('../../src/routes/setup.js');
@@ -184,7 +175,8 @@ describe('L6: unknown-user login attempts audited', () => {
 });
 
 // -----------------------------------------------------------------------------
-// L2, logout invalidates the caller's token (via updated_at bump)
+// L2, logout ends the caller's session (tests/integration/sessions.test.js
+// covers it through the real middleware)
 // -----------------------------------------------------------------------------
 
 describe("L2: logout invalidates the caller's token", () => {
@@ -196,8 +188,6 @@ describe("L2: logout invalidates the caller's token", () => {
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(true);
 
-    // Audit row confirms the mechanism fired, the actual updated_at bump
-    // happens via SQL we can't easily diff at sub-second resolution.
     const row = db
       .prepare(
         "SELECT * FROM audit_log WHERE user_id = 1 AND action = 'logout' ORDER BY id DESC LIMIT 1",

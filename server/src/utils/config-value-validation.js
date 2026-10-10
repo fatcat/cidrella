@@ -1,0 +1,79 @@
+// Shared belt-and-suspenders sanitizer for values that land in dnsmasq
+// config files. The individual route-level validators (isValidDomain,
+// isValidIpv4, isValidPtrName, etc.) are the primary defense; this one
+// catches anything that slips past them before string-interpolating into
+// a config line.
+//
+// dnsmasq parses its config line by line. A raw `\n` inside a field lets
+// an attacker append arbitrary directives (address=, server=, dhcp-option=),
+// which was the C2/C3/H2 class in the v0.4.14 pentest.
+
+/**
+ * Return null if the value is safe to inline into a dnsmasq directive,
+ * or a short error string describing the rejection.
+ *
+ * @param {string} value
+ * @param {object} [opts]
+ * @param {boolean} [opts.allowComma=false]  Option-list fields (e.g. DNS servers) legitimately contain commas.
+ * @param {boolean} [opts.allowEquals=false]  Rare, used only when the value is itself a quoted TXT record payload.
+ */
+export function validateConfigSafeValue(value, opts = {}) {
+  const { allowComma = false, allowEquals = false } = opts;
+  if (typeof value !== 'string') return 'must be a string';
+  if (value.length === 0) return 'must not be empty';
+  if (value.length > 4096) return 'is too long';
+  if (/[\r\n]/.test(value)) return 'must not contain newlines';
+  if (/[\x00-\x08\x0b-\x1f\x7f]/.test(value)) return 'must not contain control characters';
+  if (!allowEquals && value.includes('=')) return 'must not contain =';
+  if (!allowComma && value.includes(',')) return 'must not contain ,';
+  return null;
+}
+
+/**
+ * PTR record `name` column is the unreversed octet list (in-addr.arpa) or
+ * nibble list (ip6.arpa) BEFORE it's joined with the reverse-zone name.
+ * Restricting to hex digits and dots means the generated
+ * `ptr-record=<name>.<zone>,<value>` line is safe by construction. 32 nibbles
+ * joined by dots is 63 characters, so the length cap covers both families.
+ */
+export function isValidPtrName(name) {
+  return (
+    typeof name === 'string' &&
+    name.length > 0 &&
+    name.length <= 63 &&
+    /^[0-9a-f]+(\.[0-9a-f]+)*$/.test(name)
+  );
+}
+
+/**
+ * DNS record `name` column: the label or labels to the LEFT of the zone name,
+ * so "www", "mail.eu", or "@" for the zone apex.
+ *
+ * Underscores are allowed, because _acme-challenge and friends are ordinary
+ * record names. A trailing dot is tolerated and ignored: that is normal FQDN
+ * spelling and shows up in imported files.
+ *
+ * This was two byte-identical copies, `isValidHostname` in routes/dns.js and
+ * `isValidRecordName` in routes/pihole.js (duplicate-logic audit #20). It lives
+ * here beside isValidPtrName because both answer the same question: is this
+ * safe to interpolate into a dnsmasq directive.
+ */
+export function isValidRecordName(name) {
+  if (name === '@') return true;
+  if (typeof name !== 'string' || name.length === 0 || name.length > 253) return false;
+  return /^[a-zA-Z0-9]([a-zA-Z0-9._-]*[a-zA-Z0-9])?$/.test(name.replace(/\.$/, ''));
+}
+
+/**
+ * TXT record `value` column lands inside `txt-record=<fqdn>,"..."`. The
+ * writer escapes `"` but nothing else, we must refuse anything that would
+ * terminate the line prematurely or emit a new directive.
+ */
+export function validateTxtValue(value) {
+  if (typeof value !== 'string') return 'must be a string';
+  if (value.length === 0) return 'must not be empty';
+  if (value.length > 4096) return 'is too long';
+  if (/[\r\n]/.test(value)) return 'must not contain newlines';
+  if (/[\x00-\x08\x0b-\x1f\x7f]/.test(value)) return 'must not contain control characters';
+  return null;
+}
