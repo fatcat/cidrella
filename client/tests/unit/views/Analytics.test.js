@@ -28,6 +28,10 @@ vi.mock('../../../src/views/AnomaliesWorkspace.vue', () => ({
   default: { template: '<div />' },
   __isTeleport: false,
 }));
+vi.mock('../../../src/views/ResolutionMap.vue', () => ({
+  default: { template: '<div />' },
+  __isTeleport: false,
+}));
 
 const { default: Analytics } = await import('../../../src/views/Analytics.vue');
 
@@ -59,6 +63,7 @@ describe('Analytics workspace shell', () => {
     const wrapper = shallowMount(Analytics);
     const current = wrapper.findAll('nav button').find((b) => b.attributes('aria-current'));
     expect(current.attributes('data-track')).toBe('ana-tab-map');
+    await flushPromises();
     wrapper.unmount();
   });
 

@@ -4,6 +4,8 @@ import { requirePerm } from '../auth/require-perm.js';
 import {
   getProxyStatus,
   loadMmdb,
+  unloadMmdb,
+  isGeoipLoaded,
   loadGeoipRules,
   loadGeoipAllowlist,
   downloadMmdb,
@@ -190,13 +192,13 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     setSetting('geoip_enabled', nowEnabled ? 'true' : 'false');
   }
 
-  // Proxy always runs, just load/unload MMDB data and refresh rule + allowlist caches
+  // The proxy always runs. The loaded reader is what blocks, so it follows the
+  // setting both ways: loaded while on, dropped the moment GeoIP goes off.
   try {
     loadGeoipRules();
     loadGeoipAllowlist();
-    if (nowEnabled && !wasEnabled) {
-      await loadMmdb();
-    }
+    if (!nowEnabled) unloadMmdb();
+    else if (!isGeoipLoaded()) await loadMmdb();
   } catch (err) {
     return res.status(500).json({ error: 'Failed to load GeoIP database: ' + err.message });
   }

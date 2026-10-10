@@ -12,23 +12,6 @@ was suggested.
 
 ---
 
-## Found building the Resolution Map (2026-10-09)
-
-#### GEOIP-01: Turning GeoIP off keeps blocking until a restart
-
-**high**, confirmed in the code. `server/src/routes/geoip.js:193` (`PUT /api/geoip/settings`),
-`server/src/utils/dns-proxy.js` (`evaluateResolvedPolicy`, `blockingCountryCodes`).
-
-- **What happens:** With GeoIP on and countries listed, switching Enabled off saves
-  `geoip_enabled = false`, and answers in the listed countries are still refused (NXDOMAIN,
-  logged `blocked_geoip`) until the service restarts.
-- **Why:** The route reloads the rules and loads the database only when GeoIP goes from off to
-  on. Going from on to off unloads nothing, and the proxy never reads `geoip_enabled` per
-  query: it blocks whenever the database is loaded and a rule matches.
-- **Fix:** On disable, drop the reader (a `unloadMmdb()` in dns-proxy.js that nulls
-  `mmdbReader` and `geoCache` and unloads the city table), or have `blockingCountryCodes`
-  return nothing while GeoIP is off. Test both directions without a restart.
-
 ## Found adding the filtering pause (2026-10-09)
 
 #### UI-TOAST-01: Five views show every toast twice
