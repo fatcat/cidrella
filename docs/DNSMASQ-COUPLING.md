@@ -33,7 +33,9 @@ CIDRella renders it through that adapter, not when the daemon merely has the dir
 | -------------------------------------------------------------- | ----------------------- | --------------------------------------------------------------- |
 | DHCP (subnets, pools, DHCP Reservations, leases)               | dnsmasq DHCP            | **Kea** (Control Agent REST)                                    |
 | Local DNS zones/records (A/CNAME/MX/TXT/SRV/PTR, SOA)          | dnsmasq host/conf files | **PowerDNS Authoritative** (REST zones/rrsets)                  |
-| Recursion / forwarding / filtering / DNSSEC-validate / DoT-DoH | custom proxy + dnsmasq  | **PowerDNS Recursor** (forward-zones, RPZ, Lua, native DoT/DoH) |
+| Filtering, query logging, liveness, the Resolution Map feed     | custom proxy            | **the custom proxy**, unchanged on both stacks                  |
+| Caching, DNSSEC validation, routing local zones                 | dnsmasq                 | **PowerDNS Recursor**, behind the proxy                         |
+| Forwarding to upstreams (plain, DoT, DoH; failover, balance)    | in-Node forwarder       | **the in-Node forwarder**, unchanged on both stacks             |
 
 ## The backend layer (0.5.1)
 
@@ -87,11 +89,11 @@ What enforces it:
 | 3   | **Lease ingestion**                 | `dhcp.readLeases`, `dhcp.watchLeases`                                   | `backends/dnsmasq/lease-file.js` reads `dnsmasq.leases` once it settles; `fs.watchFile`                                                                                                               | Kea (0.5.2): `lease4/6-get-page`; `watchLeases` polls the lease statistics | a page scan is not atomic, so a scan during which Kea handed out an address reads as unsettled |
 | 4   | **Lease release**                   | `dhcp.releaseLease`                                                     | `backends/dnsmasq/lease-release.js` (`dhcp_release`/`dhcp_release6`)                                                                                                                                  | Kea (0.5.2): `lease4-del` / `lease6-del`                         | none                                                                                        |
 | 5   | **DHCP fingerprint capture**        | `logSource().createDhcpParser`                                          | `backends/dnsmasq/dhcp-log-parser.js` parses `log-dhcp` text (opt55/60/hostname)                                                                                                                      | Kea (0.5.2): the `legal_log` hook, formatted to one line per committed lease (`backends/kea/legal-log-parser.js`) | Kea logs committed leases only, so DHCP message counts come from `dhcpCounters()` instead |
-| 6   | **Query log readers**               | `logSource()` (`path`, `querySourceIp`, `dhcpDirection`, `isDhcpLine`)  | `backends/dnsmasq/log-format.js` regexes, read by passive liveness, the metrics aggregator and the log viewer                                                                                         | PowerDNS Recursor protobuf / dnstap; Kea logs                    | a null `logSource()` turns those readers off; they need a structured feed instead           |
-| 7   | **Recursion + filtering proxy**     | none (stays in `utils/dns-proxy.js`)                                    | bespoke UDP/TCP proxy in front of dnsmasq (blocklist, GeoIP, DNSSEC TCP relay, EDNS, bypass)                                                                                                          | Recursor **RPZ** (blocklist), **Lua** (GeoIP), native validation | the whole proxy becomes Recursor features                                                   |
+| 6 | **Query log readers** | `logSource()` (`path`, `querySourceIp`, `dhcpDirection`, `isDhcpLine`) | `backends/dnsmasq/log-format.js` regexes, read by passive liveness, the metrics aggregator and the log viewer | PowerDNS: none needed for queries, since the proxy already records every client query; Recursor's own log for the log viewer. Kea logs | what reads dnsmasq's log must read the proxy's records or the new daemons' logs; a null `logSource()` turns those readers off |
+| 7 | **Recursion + filtering proxy** | none (stays in `utils/dns-proxy.js`) | bespoke UDP/TCP proxy in front of dnsmasq (blocklist, GeoIP, DNSSEC TCP relay, EDNS, bypass) | unchanged: the proxy stays on port 53 and forwards to Recursor instead of dnsmasq (decided 2026-10-09, see "Resolver on the PowerDNS stack") | the proxy's upstream address becomes a DNS-backend fact rather than `resolveDnsmasqInternalPort` |
 | 8   | **DNSSEC**                          | `dns.applyResolver`, `capabilities().dnssec`, `dns.onClockSynchronized` | `dnssec`/`trust-anchor` directives, `dnssec-no-timecheck` until NTP sync, then SIGHUP                                                                                                                 | Recursor `dnssec=validate` (+ Auth signing)                      | validate only, no online signing                                                            |
-| 9   | **Forwarders / upstreams**          | `dns.applyResolver`                                                     | one `server=127.0.0.1#5356` line at the in-Node forwarder, which sends to the primary and backup over plain DNS, DoT or DoH                                                                           | Recursor `forward-zones` + native DoT/DoH upstream               | dnsmasq has no DoT/DoH (`encryptedUpstream: false`)                                         |
-| 10  | **Listen addresses and interfaces** | `dns.applyListen`, `activate`                                           | `interface=`/`listen-address=`/`no-dhcp-interface=` in `dnsmasq.conf`; restart                                                                                                                        | PowerDNS `local-address`; Kea `interfaces-config`                | one daemon today, two to configure after the split                                          |
+| 9 | **Forwarders / upstreams** | `dns.applyResolver` | one `server=127.0.0.1#5356` line at the in-Node forwarder, which sends to the primary and backup over plain DNS, DoT or DoH | Recursor `forward-zones-recurse` for `.` at the same in-Node forwarder; Recursor has outgoing DoT but no DoH | none: the forwarder stays for both stacks |
+| 10 | **Listen addresses and interfaces** | `dns.applyListen`, `activate` | `interface=`/`listen-address=`/`no-dhcp-interface=` in `dnsmasq.conf`; restart | PowerDNS Recursor and Authoritative on 127.0.0.1 only (the proxy keeps the LAN addresses); Kea `interfaces-config` | one daemon today, three on the PowerDNS + Kea stack |
 | 11  | **Process control and health**      | `status`, `activate`, `restart`, `applyActivation`, `prepare`           | systemd `cidrella-dnsmasq` unit (s6 in Docker); health and restart ask systemd, `pidof` only without systemctl                                                                                                               | REST is live; health is the API answering                        | no SIGHUP/restart once the adapter is REST                                                  |
 
 **DHCP to DNS derivation and PTR sync** (`utils/ip-sync.js`, `services/subnet-dns-topology.js`,
@@ -104,8 +106,9 @@ before Kea lands.
 Deliberate, each with a reason:
 
 - `utils/dns-proxy.js` and `utils/encrypted-forwarder.js`: the proxy forwards to dnsmasq's
-  internal port (`resolveDnsmasqInternalPort` in `config/defaults.js`). They go when the
-  Recursor replaces them (seam 7).
+  internal port (`resolveDnsmasqInternalPort` in `config/defaults.js`). Both stay on the
+  PowerDNS stack (seam 7); only that port becomes the DNS backend's to report, so the proxy
+  forwards to Recursor there.
 - `DATA_DIR/dnsmasq`: backups carry it, and the paths are defined once in
   `backends/dnsmasq/paths.js`.
 - Ops files: `scripts/systemd/cidrella-dnsmasq.service`, polkit rules, the s6 service, the
@@ -133,14 +136,16 @@ Deliberate, each with a reason:
    `backends/features.js` id; the server asks `supports(id)` (or `refuseUnlessSupported` in a
    route) and the client `useFeatures().supports(id)`, which says why it is off.
 4. **Build new features adapter-swappable.** E.g. forwarders are a self-contained in-Node
-   forwarder (plain, DoT or DoH, primary and backup) that dnsmasq points `server=` at. When
-   Recursor lands, delete the forwarder and point the upstreams at Recursor's native DoT/DoH.
+   forwarder (plain, DoT or DoH, primary and backup) that dnsmasq points `server=` at, and
+   Recursor will point `forward-zones-recurse` at. Filtering and query analytics belong in the
+   proxy, which both stacks keep, never in one backend's hooks.
 
 ## Migration approach
 
-1. **Spike PowerDNS Recursor + RPZ** against the blocklist and GeoIP needs to confirm it can
-   retire `dns-proxy.js`. Let the real second implementation correct the API boundary rather
-   than finalizing it from dnsmasq alone.
+1. ~~Spike PowerDNS Recursor + RPZ to retire `dns-proxy.js`.~~ Decided against on 2026-10-09:
+   the proxy stays and Recursor sits behind it (see "Resolver on the PowerDNS stack"). Still to
+   spike: Recursor in that slot (memory, cold-cache latency, forward zones to Authoritative and
+   the forwarder).
 2. ~~Introduce the backend API as a thin facade over today's dnsmasq code.~~ Done in 0.5.1.
 3. **Kea first** (DHCP role, 0.5.2): the adapter is in `backends/kea/` and passes the contract
    test. DNSMASQ-06 and -07 are fixed, and DDNS stays with CIDRella (no Kea D2). The
@@ -148,6 +153,34 @@ Deliberate, each with a reason:
    packaging.
 4. **PowerDNS** (DNS role) after that; deprecate dnsmasq over one release, no permanent dual
    stack.
+
+## Resolver on the PowerDNS stack (decided 2026-10-09)
+
+On the PowerDNS + Kea stack, CIDRella's proxy keeps port 53 and PowerDNS Recursor takes the
+place dnsmasq has behind it today:
+
+```
+client ─► CIDRella proxy :53 ─► Recursor (127.0.0.1) ─┬─► Authoritative (127.0.0.1)   local zones
+          blocklists, GeoIP,    cache, DNSSEC         └─► in-Node forwarder :5356     everything else
+          pause, exemptions,    validation,                plain, DoT or DoH,
+          query log, liveness,  forward-zones              primary and backup
+          Resolution Map feed
+```
+
+Two alternatives were weighed and rejected:
+
+- **Recursor replaces the proxy** (what this page used to plan, with RPZ and Lua). Filtering,
+  the pause and per-host exemptions, the query log, liveness, failure causes and the
+  Resolution Map would all be rebuilt in Lua or from a protobuf/dnstap consumer, and the two
+  stacks would filter and log in different code. Recursor also cannot forward over DoH (it has
+  outgoing DoT only), so DoH upstreams and the forwarder's failover, balancing and metrics would
+  be lost. The gain is one localhost hop.
+- **The proxy does everything, no Recursor.** It would need its own cache and a DNSSEC
+  validator in Node; dnsmasq does both today, and a validator is the part not worth owning.
+
+What the Recursor adapter does, then, is dnsmasq's resolver half: forward zones for each local
+zone to Authoritative, `.` to the forwarder, the trust anchor and validation mode, the clock
+gate, cache flushes, and a listen address on 127.0.0.1 that the proxy reads from the backend.
 
 ## Kea (0.5.2)
 
