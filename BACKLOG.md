@@ -274,6 +274,15 @@ for the harness and testerella.
   test there starts both daemons on the rendered estate. Not yet run: the `cidrella-kea@` unit
   and polkit under systemd (the `kea-switch` harness scenario on testerella, from a release
   candidate). The Docker image switched dnsmasq to Kea and back, and kept Kea across a restart.
+- **Before 0.6.0: keep the pre-release-only versions out of `releases.json`.** 0.5.1, 0.5.2
+  and 0.5.3 are published only as pre-releases (decided 2026-10-10; closed into main at
+  `1188313`), but `scripts/build-releases-manifest.js` turns every `## vX.Y.Z` heading in
+  RELEASE-NOTES.md into a release, and nothing reads the optional `[tag]` after the date. A
+  final 0.6.0 build would publish all three in the signed manifest, and the update checker
+  could offer one as a step on the way to 0.6.0 when 0.6.0's `min_from` is above the running
+  version, though none has a final tarball. Fix: fold their notes into the 0.6.0 section, or
+  mark the headings (for example `[pre-release]`) and have the manifest skip them. Either way
+  the version guard must still find 0.6.0 as the newest heading.
 - **Verify on hardware** (testerella, both directions, v4 and v6 clients): Renew and Rebind
   across a switch; that dnsmasq loads a handed-over lease file on the restart that makes it
   serve; how long a lease handed out between Kea's SIGHUP and the final lease read could be
