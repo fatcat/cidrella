@@ -257,8 +257,10 @@ for the harness and testerella.
 
 - **PowerDNS adapter** for the DNS role: Authoritative for the local zones, and Recursor behind
   CIDRella's proxy in dnsmasq's place (decided 2026-10-09; the proxy and the in-Node forwarder
-  stay on both stacks, see DNSMASQ-COUPLING.md "Resolver on the PowerDNS stack"). Spike first:
-  Recursor's memory, cold-cache latency, and forward zones to Authoritative and the forwarder.
+  stay on both stacks, see DNSMASQ-COUPLING.md "Resolver on the PowerDNS stack"). Spiked
+  2026-10-10: it works, faster than dnsmasq and about 40 MB; the seven things the adapter
+  must do (negative trust anchors, timeouts, no throttling of loopback, cache wipes, zone
+  reloads, API-only zone writes, YAML) are in DNSMASQ-COUPLING.md "Recursor spike".
 - **An RA sender for the PowerDNS + Kea stack.** Kea sends none and dnsmasq is not running
   there: radvd, as the `ra` role's adapter.
 - **One stack setting and one switch** in place of `dhcp_backend` and the DHCP-only switch,

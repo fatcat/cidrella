@@ -143,9 +143,9 @@ Deliberate, each with a reason:
 ## Migration approach
 
 1. ~~Spike PowerDNS Recursor + RPZ to retire `dns-proxy.js`.~~ Decided against on 2026-10-09:
-   the proxy stays and Recursor sits behind it (see "Resolver on the PowerDNS stack"). Still to
-   spike: Recursor in that slot (memory, cold-cache latency, forward zones to Authoritative and
-   the forwarder).
+   the proxy stays and Recursor sits behind it (see "Resolver on the PowerDNS stack"). Recursor
+   in that slot was spiked on 2026-10-10 and works; the results and what the adapter must do are
+   under "Recursor spike" below.
 2. ~~Introduce the backend API as a thin facade over today's dnsmasq code.~~ Done in 0.5.1.
 3. **Kea first** (DHCP role, 0.5.2): the adapter is in `backends/kea/` and passes the contract
    test. DNSMASQ-06 and -07 are fixed, and DDNS stays with CIDRella (no Kea D2). The
@@ -181,6 +181,66 @@ Two alternatives were weighed and rejected:
 What the Recursor adapter does, then, is dnsmasq's resolver half: forward zones for each local
 zone to Authoritative, `.` to the forwarder, the trust anchor and validation mode, the clock
 gate, cache flushes, and a listen address on 127.0.0.1 that the proxy reads from the backend.
+
+### Recursor spike (2026-10-10)
+
+A throwaway Debian 13 container (2 cores, 2 GB) ran the option C chain with Debian's packages,
+Recursor 5.2.13 and Authoritative 4.9.17 (gsqlite3 backend, HTTP API on). Authoritative listened
+on 127.0.0.1:5300, Recursor in dnsmasq's slot on 127.0.0.1:5353, and a no-cache dnsmasq with
+`--proxy-dnssec` stood in for the in-Node forwarder on :5356, forwarding to 1.1.1.1 and 9.9.9.9.
+The baseline was dnsmasq as CIDRella runs it today: default cache, DNSSEC on, `server=` the same
+stand-in. Queries came from a timing script, top names from the Tranco list.
+
+**It works.** A, AAAA, a CNAME inside a local zone, a CNAME out to public DNS, NXDOMAIN, and IPv4
+and IPv6 PTRs all answered through the forward zones; public DNSSEC still validated
+(`dnssec-failed.org` SERVFAIL, signed names fine). Recursor accepts a forwarder on 127.0.0.1 even
+though its default `dont_query` covers 127.0.0.0/8: an explicit forwarder overrides it.
+
+**Measured** (cold means neither cache had the names; the upstreams were warmer for whichever ran
+second):
+
+| Run | Recursor p50 / p90 / p99 | dnsmasq p50 / p90 / p99 |
+|---|---|---|
+| 1000 names, 20 in flight, cold | 17.5 / 133 / 344 ms | 49.2 / 302 / 1252 ms |
+| same 1000 again, warm | 0.3 / 0.8 / 16.1 ms | 46.2 / 260 / 1169 ms |
+| 5000 new names, 20 in flight, cold, timeout fixed | 23.8 / 231 / 870 ms, 10 SERVFAIL | 72.0 / 425 / 1419 ms, 21 failed |
+
+dnsmasq barely improves warm because its default cache holds 150 entries. Recursor's memory:
+28 MB idle, 40 MB after 11,000 names (cache 10,804 entries); the container never went above
+100 MB in use.
+
+**What the adapter must do**, each found by the spike failing without it:
+
+- **A negative trust anchor per local zone**, forward and reverse. Recursor validates forwarded
+  answers too, and the root proves securely that `test.` (or any made-up TLD) does not exist, so
+  every unsigned local answer was Bogus and SERVFAIL. `10.in-addr.arpa` passed only because it is
+  delegated insecurely; do not rely on that. `rec_control add-nta` applies one at runtime.
+- **`outgoing.network_timeout` between the forwarder's budget and the proxy's.** At Recursor's
+  default 1.5 s, 109 of 10,000 cold lookups timed out and became SERVFAIL while the forwarder was
+  still trying; the forwarder allows 2.5 s per attempt and 4.5 s in all
+  (`ENCRYPTED_FORWARDER_TIMEOUT_MS`, `_BUDGET_MS`), and the proxy waits 5 s
+  (`PROXY_UDP_TIMEOUT_MS`). 4.6 s fixed it. Keep the three in that order.
+- **`outgoing.dont_throttle_netmasks` for 127.0.0.1 and ::1.** Recursor throttles a server that
+  refused or failed, per name, for about a minute. After Authoritative refused a zone it had not
+  loaded yet, local names stayed SERVFAIL after it recovered.
+- **Wipe Recursor's cache under a zone after every DNS write** (`rec_control wipe-cache
+  'zone$'`). An edited record kept its old answer until its TTL ran out, and a newly added name
+  kept the cached NXDOMAIN.
+- **New forward zones**: `rec_control reload-zones` re-reads them from the config files without a
+  restart.
+- **Write zones and records through Authoritative's HTTP API only.** The API refreshes its zone
+  cache and clears its packet cache, so a change answers at once. `pdnsutil` or direct SQL does
+  not: a zone made that way was REFUSED until a restart (the zone cache refreshes every 300 s, and
+  `pdns_control rediscover` did not help). Even through the API, a zone deleted and recreated
+  within 20 s answers REFUSED until the packet cache (`cache-ttl`) expires, and the sqlite backend
+  reuses domain ids.
+- **YAML configuration.** Recursor 5 reads `recursor.conf` as YAML and the files in
+  `recursor.d/` as `.yml`; quote any value with a colon, such as `"::1/128"`.
+
+Not covered: PowerDNS's own repositories (Recursor 5.3, Authoritative 5.0) rather than Debian's;
+DoT straight from Recursor (not used under option C); TCP and large answers through the chain;
+Recursor's packet cache settings and `max_cache_entries` for a small appliance; how
+`serve_rfc1918` interacts with a local reverse zone for a network outside 10/8.
 
 ## Kea (0.5.2)
 
