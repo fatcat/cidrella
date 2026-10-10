@@ -11,7 +11,7 @@ PROMPT.md
 tmp/
 .mcp.json
 .playwright-mcp
-screenshots/
+/screenshots/
 __pycache__/
 # Local backup tarballs and integration harness output.
 /backup/
