@@ -342,7 +342,12 @@ async function main() {
       },
       crossOriginEmbedderPolicy: false,
       referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-      strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true },
+      // No HSTS. The certificate is self-signed until someone uploads one, and
+      // HSTS on a self-signed host makes the browser's certificate warning
+      // impossible to click past, locking the user out by name for a year.
+      // max-age=0 clears an entry an older release left, on a visit where the
+      // browser trusts the certificate (it ignores the header otherwise).
+      strictTransportSecurity: { maxAge: 0, includeSubDomains: false },
     }),
   );
   app.use((req, res, next) => {
