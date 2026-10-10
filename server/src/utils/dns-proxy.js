@@ -166,6 +166,15 @@ export async function loadMmdb() {
   }
 }
 
+// Drop the reader and everything derived from it. With no reader no answer
+// gets a country, so nothing is GeoIP-blocked: this is what turning GeoIP off
+// means, at once rather than at the next restart.
+export function unloadMmdb() {
+  mmdbReader = null;
+  geoCache = null;
+  unloadCityTable();
+}
+
 // Lookup country code for an IP. The cache keeps the city point beside the
 // country, found on the same miss, so the map costs a hit nothing.
 export function lookupCountry(ip) {
@@ -1299,8 +1308,8 @@ export async function downloadMmdb() {
     setSetting('geoip_last_updated', new Date().toISOString());
     proxyLog('info', 'GeoIP database downloaded successfully');
 
-    // Reload the MMDB reader
-    await loadMmdb();
+    // Load the fresh file only while GeoIP is on: a reader is what blocks.
+    if (getSetting('geoip_enabled') === 'true') await loadMmdb();
 
     return true;
   } catch (err) {

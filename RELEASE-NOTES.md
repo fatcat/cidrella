@@ -233,6 +233,10 @@ the server, and a sign-in from before the update has none.
 
 ### Fixed
 
+- **Turning GeoIP off stops country blocking at once.** Before, answers in
+  blocked countries were still refused until the service restarted. A database
+  refresh while GeoIP is off also no longer turns blocking back on.
+
 - **Saving your preferences no longer signs you out.** Changing the time
   format bumped the account's update time, which invalidated the token the
   change was made with on its next request.
