@@ -5,8 +5,8 @@
     <div class="setting-group">
       <h3>Sign out after inactivity</h3>
       <p class="field-help">
-        You will receive a warning 1 minute before being logged out. Session cookies expire after 24
-        hours regardless of the setting here.
+        You will receive a warning 1 minute before being logged out. Every session ends 24 hours
+        after sign-in regardless of the setting here.
       </p>
 
       <div v-if="minutes === null" class="muted">Loading</div>

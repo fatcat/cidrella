@@ -18,3 +18,5 @@ __pycache__/
 scripts/test-harness/results/
 # Resolution Map city places, built from DB-IP City Lite (npm run geo:cities).
 server/assets/geo-cities.bin
+# Local graphify knowledge graph of the repo (/graphify .).
+/graphify-out/
