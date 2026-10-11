@@ -18,4 +18,17 @@ describe('reservedLocalDomains', () => {
       expect(reservedLocalDomains({ addresses })).toEqual([...RESERVED_LOCAL_DOMAINS]);
     }
   });
+
+  it('answers the carrier-grade NAT reverse zones as a site name (RFC 7793, IPv4 only)', () => {
+    const cgnat = Array.from({ length: 64 }, (_, i) => `${64 + i}.100.in-addr.arpa`);
+    expect(SITE_LOCAL_DOMAINS).toEqual(expect.arrayContaining(cgnat));
+    expect(SITE_LOCAL_DOMAINS).not.toContain('63.100.in-addr.arpa');
+    expect(SITE_LOCAL_DOMAINS).not.toContain('128.100.in-addr.arpa');
+    expect(reservedLocalDomains({ addresses: ['9.9.9.9'] })).toEqual(
+      expect.arrayContaining(cgnat),
+    );
+    expect(reservedLocalDomains({ addresses: ['100.64.0.53'] })).not.toContain(
+      '64.100.in-addr.arpa',
+    );
+  });
 });

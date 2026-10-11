@@ -137,4 +137,26 @@ describe('reserved names', () => {
       'ns1.example.test.',
     );
   });
+
+  it('keeps the PTR zone of a network inside an empty reserved zone, IPv4 (RFC 7793)', () => {
+    // 100.64.0.0/10 has no IPv6 counterpart; the ULA case is d.f.ip6.arpa below.
+    const zones = desiredZones(
+      {
+        zones: [LAB],
+        records: [record(LAB, 'cgn', 'A', '100.64.0.5'), record(LAB, 'ula', 'AAAA', 'fd00:5::5')],
+        networks: ['100.64.0.0/24', 'fd00:5::/64'],
+      },
+      { reserved: ['64.100.in-addr.arpa', 'd.f.ip6.arpa'] },
+    );
+    expect(ptrOf(zones, '0.64.100.in-addr.arpa.', '5.0.64.100.in-addr.arpa.')).toEqual([
+      'cgn.lab.test.',
+    ]);
+    expect([...zones.get('64.100.in-addr.arpa.').rrsets.keys()]).toEqual([
+      '64.100.in-addr.arpa.|SOA',
+      '64.100.in-addr.arpa.|NS',
+    ]);
+    const v6Zone = '0.0.0.0.0.0.0.0.5.0.0.0.0.0.d.f.ip6.arpa.';
+    expect(ptrOf(zones, v6Zone, `5.${'0.'.repeat(15)}${v6Zone}`)).toEqual(['ula.lab.test.']);
+    expect([...zones.get('d.f.ip6.arpa.').rrsets.keys()]).toHaveLength(2);
+  });
 });

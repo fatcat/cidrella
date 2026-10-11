@@ -41,10 +41,19 @@ export const RESERVED_LOCAL_DOMAINS = Object.freeze([
 ]);
 
 // Reserved for sites rather than for nobody: an office resolver may serve
-// corp.internal or an AD domain under .local, a homenet router home.arpa, and
-// either the PTRs of a ULA prefix. These stay local only while every upstream
-// is a public address, so CIDRella never hides a private resolver's zone.
-export const SITE_LOCAL_DOMAINS = Object.freeze(['home.arpa', 'internal', 'local', 'd.f.ip6.arpa']);
+// corp.internal or an AD domain under .local, a homenet router home.arpa,
+// either the PTRs of a ULA prefix, and an ISP's resolver the PTRs of its
+// carrier-grade NAT space (RFC 7793: 100.64.0.0/10, IPv4 only, the 64 zones
+// 64.100.in-addr.arpa to 127.100.in-addr.arpa). These stay local only while
+// every upstream is a public address, so CIDRella never hides a private
+// resolver's zone.
+export const SITE_LOCAL_DOMAINS = Object.freeze([
+  'home.arpa',
+  'internal',
+  'local',
+  'd.f.ip6.arpa',
+  ...Array.from({ length: 64 }, (_, i) => `${64 + i}.100.in-addr.arpa`),
+]);
 
 export const MANAGED_LOCAL_DOMAINS = new Set([...RESERVED_LOCAL_DOMAINS, ...SITE_LOCAL_DOMAINS]);
 
@@ -52,7 +61,9 @@ export const MANAGED_LOCAL_DOMAINS = new Set([...RESERVED_LOCAL_DOMAINS, ...SITE
  * The addresses forwarded queries end up at: the encrypted forwarder's
  * upstreams when it is on, the plain servers otherwise, none with recursion off.
  */
-export function forwardedAddresses({ noRecursion = getSetting('dns_no_recursion') === 'true' } = {}) {
+export function forwardedAddresses({
+  noRecursion = getSetting('dns_no_recursion') === 'true',
+} = {}) {
   if (noRecursion) return [];
   const encryption = getSetting('forwarder_encryption') || 'off';
   if (encryption !== 'tls' && encryption !== 'https') return plainUpstreams();

@@ -30,7 +30,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 [![A network's addresses in CIDRella's IP Management workspace](docs/screenshots/ip-table.png)](docs/screenshots/ip-table.md)
 
-**[Browse all ten screenshots →](docs/screenshots/ip-table.md)** Each page has Previous and Next links.
+**[Browse all ten screenshots →](docs/screenshots/ip-table.md)** 
 
 ---
 
@@ -51,8 +51,6 @@ Developer notes: shared IP state returned to the UI follows the canonical read/w
 ### Option 1: Automated install (Debian/Ubuntu)
 
 Generally speaking performing an install of any software including CIDRella in this manner is a terrible idea and should only be done to a host that is completely isolated and you're willing to sacrifice. Consult the [**INSTALL-NATIVE.md**](INSTALL-NATIVE.md) for full details on alternate installation methods that afford an opportunity to review the code *before* installation.
-
-
 
 Download and review the install script, then run it:
 
@@ -80,8 +78,6 @@ See [**INSTALL-DOCKER.md**](INSTALL-DOCKER.md) for full details. Note: in-app up
 
 The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password (the appliance-wide rule is set here too: a minimum length, mixed case, a number, a symbol, each on its own), optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes, choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start.
 
-
-
 Nothing but the password and the second factor is applied until the last step, and an interrupted setup resumes where it stopped. Upgraded installs never see it. Two-factor can be turned on, off, or given fresh backup codes later under Settings > Access > Two-factor, and the password rule under Settings > Access > Password rule. A restore carries the restoring operator's two-factor enrolment into the restored data.
 
 ## Upgrading
@@ -94,43 +90,28 @@ Navigate to **System > Updates** and click **Install Update**. CIDRella will dow
 **Command line:**
 
 ```bash
-
 # update to latest
 sudo cidrella-update
-
 ```
 
-
-
 ```bash
-
 # update to specific version
 sudo cidrella-update --version 0.5.0
 ```
 
-
-
 ```bash
-
 # install a local signed build
-
 sudo cidrella-update --tarball /root/cidrella-v0.5.0-linux-x64.tar.gz
 ```
 
-
-
 The update script (`/opt/cidrella/update.sh`) backs up the current installation, downloads and verifies the signed release tarball, installs dependencies, and restarts services. Database migrations run automatically on startup.
 
-
-
 Native updates also refresh the installed systemd units, sudoers/polkit helpers, logrotate configuration, and recovery scripts. Hosts installed before the ambient-capability change receive the updated systemd capability configuration when the installer/update path refreshes the unit files.
-
-
 
 **Docker:**
 
 ```bash
-docker compose pull && docker compose up -d
+docker compose pull && docker compose up -d 
 ```
 
 > **Do not apply updates using tarballs downloaded from sources other than the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Manually extracting an unverified tarball bypasses signature verification and could compromise your network infrastructure.
@@ -151,29 +132,27 @@ This clears the stored web port overrides, re-enables the HTTP redirect, and res
 
 ## Architecture
 
-|Layer|Technology|
-|-|-|
-|DNS/DHCP|DNSmasq; ISC Kea 3.0 for DHCP when chosen|
-|Backend|Node.js + Express|
-|Frontend|Vue 3 + PrimeVue|
-|Database|SQLite (better-sqlite3)|
-|Database|DuckDB (for analytics and anomaly detection)|
-|Custom|DNS proxy (for domain and country blocking)|
-|Anomaly Detection|Python sidecar|
-|Process Manager|s6-overlay (Docker), systemd (native)|
-
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership boundaries, model/service responsibilities, and guardrails.
+
+| Layer             | Technology                                   |
+| ----------------- | -------------------------------------------- |
+| DHCP              | DNSmasq or Kea<br/>                          |
+| DNS               | DNSmasq or PowerDNS<br/>                     |
+| Backend           | Node.js + Express                            |
+| Frontend          | Vue 3 + PrimeVue                             |
+| Database          | SQLite (better-sqlite3)                      |
+| Database          | DuckDB (for analytics and anomaly detection) |
+| Custom            | DNS proxy (for domain and country blocking)  |
+| Anomaly Detection | Python sidecar                               |
+| Process Manager   | s6-overlay (Docker), systemd (native)        |
 
 ## Roles
 
-|Role|Description|
-|-|-|
-|admin|Full access to all features|
-|dns_admin|Manage DNS records and zones|
-|dhcp_admin|Manage DHCP Scopes and DHCP Reservations|
-|readonly_dns|View DNS configuration|
-|readonly_dhcp|View DHCP configuration|
-|readonly|View all configuration|
-
-
-
+| Role          | Description                              |
+| ------------- | ---------------------------------------- |
+| admin         | Full access to all features              |
+| dns_admin     | Manage DNS records and zones             |
+| dhcp_admin    | Manage DHCP Scopes and DHCP Reservations |
+| readonly_dns  | View DNS configuration                   |
+| readonly_dhcp | View DHCP configuration                  |
+| readonly      | View all configuration                   |

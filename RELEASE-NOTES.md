@@ -91,6 +91,13 @@ upgrade changes nothing until someone switches.
   usable yet when CIDRella started (still in Duplicate Address Detection).
   It used to log `EADDRNOTAVAIL` and never try again, so IPv6 clients got no
   DNS until CIDRella restarted. It now binds again, for about a minute.
+- A reverse lookup for an address in 100.64.0.0/10 (carrier-grade NAT
+  space) now answers NXDOMAIN, on either stack. With DNSSEC on it answered
+  SERVFAIL: Quad9 and Cloudflare make up those answers with no DNSSEC proof,
+  as they do for the private ranges CIDRella already answered itself. Like
+  `home.arpa`, the range stays forwarded while an upstream is a private
+  address, since an ISP's own resolver may serve it. An address CIDRella has
+  a record for is answered with its name, as before.
 
 ### Upgrade notes
 

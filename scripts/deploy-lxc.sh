@@ -355,14 +355,20 @@ sleep 2
 
 # Verify
 CIDRELLA_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella 2>/dev/null || echo failed")
-DNSMASQ_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-dnsmasq 2>/dev/null || echo failed")
+# On the PowerDNS + Kea stack dnsmasq stays off: its unit's condition skips the
+# start while the stop flag exists, which is the expected state, not a failure.
+DNSMASQ_STATUS=$(ssh "$SSH_TARGET" "
+  if [ -f /var/lib/cidrella/runtime/dnsmasq.disabled ]; then echo 'off (stack: PowerDNS + Kea)'
+  else systemctl is-active cidrella-dnsmasq 2>/dev/null || echo failed; fi")
+DNSMASQ_OK=false
+case "$DNSMASQ_STATUS" in active | off*) DNSMASQ_OK=true ;; esac
 ANOMALY_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-anomaly 2>/dev/null || echo failed")
 
-if [ "$CIDRELLA_STATUS" = "active" ] && [ "$DNSMASQ_STATUS" = "active" ]; then
+if [ "$CIDRELLA_STATUS" = "active" ] && $DNSMASQ_OK; then
   ok "Core services running."
 else
   [ "$CIDRELLA_STATUS" != "active" ] && warn "cidrella: ${CIDRELLA_STATUS}"
-  [ "$DNSMASQ_STATUS" != "active" ] && warn "cidrella-dnsmasq: ${DNSMASQ_STATUS}"
+  $DNSMASQ_OK || warn "cidrella-dnsmasq: ${DNSMASQ_STATUS}"
   warn "Check logs: ssh ${SSH_TARGET} journalctl -u cidrella -n 30"
 fi
 

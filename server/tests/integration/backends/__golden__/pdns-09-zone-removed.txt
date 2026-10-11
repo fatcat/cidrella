@@ -41,6 +41,70 @@ GET /api/v1/servers/localhost/zones/home.arpa.
 GET /api/v1/servers/localhost/zones/internal.
 GET /api/v1/servers/localhost/zones/local.
 GET /api/v1/servers/localhost/zones/d.f.ip6.arpa.
+GET /api/v1/servers/localhost/zones/64.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/65.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/66.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/67.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/68.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/69.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/70.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/71.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/72.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/73.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/74.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/75.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/76.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/77.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/78.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/79.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/80.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/81.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/82.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/83.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/84.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/85.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/86.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/87.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/88.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/89.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/90.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/91.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/92.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/93.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/94.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/95.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/96.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/97.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/98.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/99.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/100.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/101.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/102.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/103.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/104.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/105.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/106.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/107.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/108.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/109.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/110.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/111.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/112.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/113.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/114.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/115.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/116.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/117.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/118.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/119.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/120.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/121.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/122.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/123.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/124.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/125.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/126.100.in-addr.arpa.
+GET /api/v1/servers/localhost/zones/127.100.in-addr.arpa.
 PATCH /api/v1/servers/localhost/zones/0.0.0.0.0.0.0.0.3.6.0.0.0.0.d.f.ip6.arpa.
 {
   "rrsets": [
@@ -114,10 +178,94 @@ recursor:
     - zone: "10.in-addr.arpa"
       forwarders:
         - "127.0.0.1:5300"
+    - zone: "100.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
     - zone: "100.51.198.in-addr.arpa"
       forwarders:
         - "127.0.0.1:5300"
+    - zone: "101.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "102.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "103.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "104.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "105.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "106.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "107.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "108.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "109.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "110.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "111.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "112.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
     - zone: "113.0.203.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "113.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "114.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "115.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "116.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "117.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "118.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "119.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "120.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "121.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "122.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "123.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "124.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "125.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "126.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "127.100.in-addr.arpa"
       forwarders:
         - "127.0.0.1:5300"
     - zone: "16.172.in-addr.arpa"
@@ -180,13 +328,121 @@ recursor:
     - zone: "31.172.in-addr.arpa"
       forwarders:
         - "127.0.0.1:5300"
+    - zone: "64.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "65.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "66.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "67.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "68.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "69.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "70.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "71.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "72.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "73.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "74.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "75.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "76.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "77.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "78.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "79.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
     - zone: "8.b.d.0.1.0.0.2.ip6.arpa"
       forwarders:
         - "127.0.0.1:5300"
     - zone: "8.e.f.ip6.arpa"
       forwarders:
         - "127.0.0.1:5300"
+    - zone: "80.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "81.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "82.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "83.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "84.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "85.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "86.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "87.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "88.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "89.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
     - zone: "9.e.f.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "90.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "91.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "92.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "93.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "94.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "95.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "96.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "97.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "98.100.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "99.100.in-addr.arpa"
       forwarders:
         - "127.0.0.1:5300"
     - zone: "a.e.f.ip6.arpa"
@@ -235,9 +491,65 @@ dnssec:
       reason: "CIDRella local zone"
     - name: "10.in-addr.arpa"
       reason: "CIDRella local zone"
+    - name: "100.100.in-addr.arpa"
+      reason: "CIDRella local zone"
     - name: "100.51.198.in-addr.arpa"
       reason: "CIDRella local zone"
+    - name: "101.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "102.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "103.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "104.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "105.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "106.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "107.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "108.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "109.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "110.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "111.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "112.100.in-addr.arpa"
+      reason: "CIDRella local zone"
     - name: "113.0.203.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "113.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "114.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "115.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "116.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "117.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "118.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "119.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "120.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "121.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "122.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "123.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "124.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "125.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "126.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "127.100.in-addr.arpa"
       reason: "CIDRella local zone"
     - name: "16.172.in-addr.arpa"
       reason: "CIDRella local zone"
@@ -279,11 +591,83 @@ dnssec:
       reason: "CIDRella local zone"
     - name: "31.172.in-addr.arpa"
       reason: "CIDRella local zone"
+    - name: "64.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "65.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "66.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "67.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "68.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "69.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "70.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "71.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "72.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "73.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "74.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "75.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "76.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "77.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "78.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "79.100.in-addr.arpa"
+      reason: "CIDRella local zone"
     - name: "8.b.d.0.1.0.0.2.ip6.arpa"
       reason: "CIDRella local zone"
     - name: "8.e.f.ip6.arpa"
       reason: "CIDRella local zone"
+    - name: "80.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "81.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "82.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "83.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "84.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "85.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "86.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "87.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "88.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "89.100.in-addr.arpa"
+      reason: "CIDRella local zone"
     - name: "9.e.f.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "90.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "91.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "92.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "93.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "94.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "95.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "96.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "97.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "98.100.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "99.100.in-addr.arpa"
       reason: "CIDRella local zone"
     - name: "a.e.f.ip6.arpa"
       reason: "CIDRella local zone"
