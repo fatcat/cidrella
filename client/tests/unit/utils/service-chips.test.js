@@ -49,3 +49,19 @@ describe('serviceChips: forwarders', () => {
     expect(forwarders({ ...base, forwarders: [] })).toMatchObject({ value: 'none', tone: 'muted' });
   });
 });
+
+describe('serviceChips: backends', () => {
+  it('shows each daemon of the PowerDNS + Kea stack by its label, radvd idle when unneeded', () => {
+    const backends = {
+      dns: { name: 'pdns', label: 'PowerDNS', running: true },
+      dhcp: { name: 'kea', label: 'Kea', running: false },
+      ra: { name: 'radvd', label: 'radvd', running: false, idle: true },
+    };
+    const chips = serviceChips({ ...base, backends }).slice(0, 3);
+    expect(chips.map((c) => [c.label, c.value, c.tone])).toEqual([
+      ['PowerDNS', 'Running', 'ok'],
+      ['Kea', 'Stopped', 'err'],
+      ['radvd', 'Idle', 'muted'],
+    ]);
+  });
+});

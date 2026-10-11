@@ -192,31 +192,37 @@ ok "Services stopped."
 
 info "Syncing files to LXC..."
 
+# INSTALL_DIR is the A/B slot symlink on an installed host. Sync into the slot
+# it points at: rsync 3.5 refuses to follow a symlink a non-root user owns, and
+# chown -R on the link would change the link rather than the code.
+SYNC_DIR=$(ssh "$SSH_TARGET" "readlink -f ${INSTALL_DIR}")
+[ -n "$SYNC_DIR" ] || err "Could not resolve ${INSTALL_DIR} on ${LXC_HOST}."
+
 # Server source
 rsync -az --delete \
   --exclude='node_modules' \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   --exclude='*.pyo' \
-  "$PROJECT_DIR/server/" "${SSH_TARGET}:${INSTALL_DIR}/server/"
+  "$PROJECT_DIR/server/" "${SSH_TARGET}:${SYNC_DIR}/server/"
 
 # Client source, manifest, and built output. Preserve remote node_modules so
 # local deploys do not force a client dependency reinstall.
 rsync -az --delete \
   --exclude='node_modules' \
-  "$PROJECT_DIR/client/" "${SSH_TARGET}:${INSTALL_DIR}/client/"
+  "$PROJECT_DIR/client/" "${SSH_TARGET}:${SYNC_DIR}/client/"
 
 # dnsmasq config templates
 rsync -az --delete \
-  "$PROJECT_DIR/dnsmasq/" "${SSH_TARGET}:${INSTALL_DIR}/dnsmasq/"
+  "$PROJECT_DIR/dnsmasq/" "${SSH_TARGET}:${SYNC_DIR}/dnsmasq/"
 
 # Scripts
 rsync -az --delete \
-  "$PROJECT_DIR/scripts/" "${SSH_TARGET}:${INSTALL_DIR}/scripts/"
+  "$PROJECT_DIR/scripts/" "${SSH_TARGET}:${SYNC_DIR}/scripts/"
 
 # Root files used by the deployed app and maintenance commands.
-rsync -az "$PROJECT_DIR/package.json" "${SSH_TARGET}:${INSTALL_DIR}/package.json"
-rsync -az "$PROJECT_DIR/update.sh" "${SSH_TARGET}:${INSTALL_DIR}/update.sh"
+rsync -az "$PROJECT_DIR/package.json" "${SSH_TARGET}:${SYNC_DIR}/package.json"
+rsync -az "$PROJECT_DIR/update.sh" "${SSH_TARGET}:${SYNC_DIR}/update.sh"
 
 ok "Files synced."
 
@@ -251,7 +257,9 @@ ok "Python dependencies installed."
 # ═══════════════════════════════════════════════════════════
 
 info "Fixing code permissions..."
-ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${INSTALL_DIR}"
+# The slot's contents, and the slot symlink back to root as install.sh makes it
+# (an earlier version of this script handed the link to cidrella).
+ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${SYNC_DIR} && { [ ! -L ${INSTALL_DIR} ] || chown -h root:root ${INSTALL_DIR}; }"
 ok "Permissions set."
 
 # Native/LXC systemd deployments use cidrella.service AmbientCapabilities.

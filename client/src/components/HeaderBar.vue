@@ -566,7 +566,7 @@ const backendChips = computed(() => {
     : [{ key: 'backend', name: 'DNS/DHCP', roles: ['dns', 'dhcp'], running: false }];
 });
 const backendDisplay = (unit) =>
-  !healthKnown.value ? 'Unknown' : unit.running ? 'Running' : 'Down';
+  !healthKnown.value ? 'Unknown' : unit.idle ? 'Idle' : unit.running ? 'Running' : 'Down';
 const backendKnownKind = (unit) => (unit.running ? 'ok' : 'err');
 
 const cpuStatusClass = computed(() => {

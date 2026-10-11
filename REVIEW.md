@@ -67,3 +67,17 @@ number: `server/src/utils/dhcp.js:188` on 0.5.0, the dnsmasq backend on 0.5.1 an
   `dhcp-hostsdir`), which also drops the inotify path.
 - **Decided 2026-10-08: leave it.** The fix rewrites every managed install's live dnsmasq.conf
   and cannot reach include-mode installs, for log noise only.
+### 2026-10-10 17:50:27 (ce740fc) — .gitignore, README.md, client/public/networks.png, docs/screenshots/README.md, docs/screenshots/anomalies.md, docs/screenshots/anomalies.png, docs/screenshots/dashboard.md, docs/screenshots/dashboard.png, docs/screenshots/dhcp-settings.md, docs/screenshots/dhcp-settings.png, docs/screenshots/dhcp-table.md, docs/screenshots/dhcp-table.png, docs/screenshots/dns-settings.md, docs/screenshots/dns-settings.png, docs/screenshots/dns-table.md, docs/screenshots/dns-table.png, docs/screenshots/filtering.md, docs/screenshots/filtering.png, docs/screenshots/grid-view.md, docs/screenshots/grid-view.png, docs/screenshots/ip-table.md, docs/screenshots/ip-table.png, docs/screenshots/performance.md, docs/screenshots/performance.png
+
+**[MEDIUM]** README.md:154-163 — The Architecture table still says "ISC Kea 3.0 for DHCP when chosen". The Features list (line 20) now says choosing a DHCP and DNS server is "coming in 0.6.0". The two sections contradict each other, and a reader will think Kea is available today. Reword the table row to match, or drop the Kea mention until 0.6.0.
+
+**[LOW]** README.md:95-117 — The command-line upgrade block is split into three fenced blocks, each with stray blank lines and a comment inside. The `--tarball` block has a blank line before and after its comment. Merge them back into one block, which reads and copies better.
+
+**[LOW]** README.md:31 — The Anomaly detection bullet ends with trailing whitespace. The same bullet also dropped the sidecar and evidence-triage description, so the Features list no longer mentions the Anomalies triage page that now has its own screenshot.
+
+**[LOW]** README.md:53-56 — The new warning paragraph about the automated install is followed by three blank lines. There are more extra blank lines near lines 82-85 and 169-179. Prettier ignores Markdown, so these won't be cleaned up automatically.
+
+The rest is fine. `client/public/networks.png` has no remaining references, so deleting it is safe. The `/screenshots/` anchor in `.gitignore` is correct, and it is what lets `docs/screenshots/` be tracked. The screenshot pages' Previous and Next links are consistent with each other.
+
+---
+

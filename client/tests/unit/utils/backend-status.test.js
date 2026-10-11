@@ -17,9 +17,28 @@ describe('backendUnits', () => {
         name: 'dnsmasq',
         roles: ['dns', 'dhcp', 'ra'],
         running: true,
+        idle: false,
         restartPending: false,
       },
     ]);
+  });
+
+  it('names each unit by its server label, and counts an idle one as running', () => {
+    const units = backendUnits({
+      backends: {
+        dns: { ...status('pdns'), label: 'PowerDNS' },
+        dhcp: { ...status('kea'), label: 'Kea' },
+        ra: { ...status('radvd', false), label: 'radvd', idle: true },
+      },
+    });
+    expect(units.map((u) => [u.key, u.name, u.running, u.idle])).toEqual([
+      ['pdns', 'PowerDNS', true, false],
+      ['kea', 'Kea', true, false],
+      ['radvd', 'radvd', true, true],
+    ]);
+    expect(anyBackendDown({ backends: { ra: { ...status('radvd', false), idle: true } } })).toBe(
+      false,
+    );
   });
 
   it('gives DNS and DHCP their own units when different daemons fill them', () => {

@@ -18,3 +18,6 @@ export const LEASE_FILE = path.join(DNSMASQ_DIR, 'dnsmasq.leases');
 export const LOG_FILE = path.join(DNSMASQ_DIR, 'dnsmasq.log');
 // Left by a restart that failed, so the next boot restarts regardless.
 export const RESTART_PENDING = path.join(DATA_DIR, 'runtime', 'dnsmasq-restart-pending');
+// Present while another stack serves DNS: the systemd unit's start condition
+// and the s6 run script both keep dnsmasq down while it exists.
+export const DISABLE_FILE = path.join(DATA_DIR, 'runtime', 'dnsmasq.disabled');

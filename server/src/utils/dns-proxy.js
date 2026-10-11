@@ -14,6 +14,7 @@ import { listenableAddresses, selectInterfaceNames } from './interface-config.js
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyListenNow } from '../services/backend-apply.js';
+import { switchInProgress } from './switch-state.js';
 import { canonicalizeIp } from './address.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import { exemptAddressSet } from '../models/filtering-exemption.js';
@@ -37,9 +38,12 @@ import {
   PROXY_TCP_IDLE_TIMEOUT_MS,
   PROXY_MAX_TCP_CONNECTIONS,
   PROXY_TCP_RELAY_TIMEOUT_MS,
+  ENCRYPTED_FORWARDER_PORT,
   resolveDnsmasqInternalPort,
   resolveDnsListenPort,
 } from '../config/defaults.js';
+import { getDnsBackend } from '../backends/index.js';
+import { plainUdpQuery } from './plain-dns.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
 
@@ -601,6 +605,63 @@ export function recordResolvedBlock(verdict) {
 }
 
 // Handle a DNS query from any proxy socket
+// ─── Forward-unknown zones on a backend that cannot ─────────────
+// A zone with forward_unknown set sends the names CIDRella has no record for
+// upstream (split horizon). dnsmasq does that itself; PowerDNS answers them
+// NXDOMAIN from Authoritative, so the proxy asks the forwarder again for an
+// NXDOMAIN under such a zone. The second answer is not validated by
+// Recursor, and with bypass on the proxy is not in the path at all.
+const FORWARD_UNKNOWN_CACHE_MS = 5000;
+let forwardUnknownZones = { at: 0, names: [] };
+let loggedForwardUnknownRetry = false;
+
+function underForwardUnknownZone(queryName) {
+  const now = Date.now();
+  if (now - forwardUnknownZones.at > FORWARD_UNKNOWN_CACHE_MS) {
+    forwardUnknownZones = {
+      at: now,
+      names: getDb()
+        .prepare('SELECT name FROM dns_zones WHERE enabled = 1 AND forward_unknown = 1')
+        .all()
+        .map((row) => normalizeZoneName(row.name)),
+    };
+  }
+  const name = normalizeZoneName(queryName);
+  return forwardUnknownZones.names.some((zone) => name === zone || name.endsWith(`.${zone}`));
+}
+
+const normalizeZoneName = (name) =>
+  String(name || '')
+    .toLowerCase()
+    .replace(/\.$/, '');
+
+/** Should this answer be asked again of the forwarder? See above. */
+export function wantsUnknownRetry(response, queryName) {
+  if (response?.rcode !== 'NXDOMAIN' || !queryName) return false;
+  if (getDnsBackend().forwardsUnknownItself !== false) return false;
+  if (getSetting('dns_no_recursion') === 'true') return false;
+  return underForwardUnknownZone(queryName);
+}
+
+function noteUnknownRetry(queryName) {
+  if (loggedForwardUnknownRetry) return;
+  loggedForwardUnknownRetry = true;
+  proxyLog('info', 'Asking the forwarder for names a forward-unknown zone does not hold', {
+    example: queryName,
+  });
+}
+
+// The forwarder's answer to `query` (raw bytes), or null.
+async function askForwarder(query, { tcp = false, timeoutMs }) {
+  if (timeoutMs <= 0) return null;
+  if (tcp) return relayQueryOverTcp(query, '127.0.0.1', ENCRYPTED_FORWARDER_PORT, timeoutMs);
+  const { answer } = await plainUdpQuery('127.0.0.1', query, {
+    timeoutMs,
+    port: ENCRYPTED_FORWARDER_PORT,
+  });
+  return answer;
+}
+
 function handleQuery(msg, rinfo, sock) {
   try {
     const startNs = process.hrtime.bigint();
@@ -704,6 +765,7 @@ function handleQuery(msg, rinfo, sock) {
       queryType,
       checkingDisabled: !!query.flag_cd,
       opt: getQueryOpt(query), // echoed on a synthesized GeoIP-block response
+      query: msg, // asked again of the forwarder for a forward-unknown zone
       timer,
       startNs,
     });
@@ -731,6 +793,32 @@ function handleDnsmasqResponse(msg) {
     pendingQueries.delete(response.id);
     clearTimeout(pending.timer);
 
+    if (wantsUnknownRetry(response, pending.queryName)) {
+      noteUnknownRetry(pending.queryName);
+      const elapsedMs = Number(process.hrtime.bigint() - pending.startNs) / 1e6;
+      askForwarder(pending.query, { timeoutMs: PROXY_UDP_TIMEOUT_MS - elapsedMs })
+        .then((answer) => {
+          let retried = null;
+          try {
+            retried = answer && dnsPacket.decode(answer);
+          } catch {
+            /* keep the first answer */
+          }
+          if (retried) deliverResponse(pending, answer, retried);
+          else deliverResponse(pending, msg, response);
+        })
+        .catch((err) => proxyLog('error', 'Response processing error', { error: err.message }));
+      return;
+    }
+    deliverResponse(pending, msg, response);
+  } catch (err) {
+    proxyLog('error', 'Response processing error', { error: err.message });
+  }
+}
+
+// Send the client its answer: GeoIP checked, query ID restored, logged.
+function deliverResponse(pending, msg, response) {
+  try {
     // GeoIP check, inspect resolved IPs
     const ips = response.answers
       .filter((a) => a.type === 'A' || a.type === 'AAAA')
@@ -893,12 +981,24 @@ async function handleTcpQuery(msg, clientSock) {
 
   // Relay to dnsmasq over TCP (same internal port it serves UDP on).
   const internalPort = resolveDnsmasqInternalPort(getSetting('dns_listen_port'));
-  const respMsg = await relayQueryOverTcp(
-    msg,
-    '127.0.0.1',
-    internalPort,
-    PROXY_TCP_RELAY_TIMEOUT_MS,
-  );
+  let respMsg = await relayQueryOverTcp(msg, '127.0.0.1', internalPort, PROXY_TCP_RELAY_TIMEOUT_MS);
+  if (respMsg) {
+    let first = null;
+    try {
+      first = dnsPacket.decode(respMsg);
+    } catch {
+      /* relayed raw below */
+    }
+    if (wantsUnknownRetry(first, queryName)) {
+      noteUnknownRetry(queryName);
+      const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      const retried = await askForwarder(msg, {
+        tcp: true,
+        timeoutMs: PROXY_TCP_RELAY_TIMEOUT_MS - elapsedMs,
+      });
+      if (retried) respMsg = retried;
+    }
+  }
   const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
   recordLatency(latencyUs);
 
@@ -1023,6 +1123,7 @@ export function startProxy() {
   }
 
   proxyStartedAt = Date.now();
+  cancelBindRetries();
 
   // Create socket for forwarding to dnsmasq
   dnsmasqSocket = dgram.createSocket('udp4');
@@ -1043,71 +1144,129 @@ export function startProxy() {
   // See REVIEW.md, duplicate-logic audit #10.
   const listenPort = resolveDnsListenPort(getSetting('dns_listen_port'));
 
-  let bindCount = 0;
   for (const addr of addresses) {
-    const sock = dgram.createSocket({
-      type: net.isIP(addr) === 6 ? 'udp6' : 'udp4',
-      reuseAddr: true,
-    });
-
-    sock.on('message', (msg, rinfo) => handleQuery(msg, rinfo, sock));
-
-    sock.on('error', (err) => {
-      proxyLog('error', 'Proxy socket error', {
-        address: addr,
-        error: err.message,
-        code: err.code,
-      });
-      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
-        proxyLog('error', `Cannot bind port ${listenPort}`, { address: addr });
-      }
-    });
-
-    sock.on('close', () => {
-      // Remove from proxyServers array
-      const idx = proxyServers.findIndex((s) => s.socket === sock);
-      if (idx >= 0) proxyServers.splice(idx, 1);
-      if (proxyServers.length === 0) {
-        proxyLog('warn', 'All proxy sockets closed');
-      }
-    });
-
-    sock.bind(listenPort, addr, () => {
-      bindCount++;
-      proxyLog('info', 'Proxy socket bound', { address: `${addr}:${listenPort}` });
-      if (bindCount === addresses.length) {
-        proxyStartupMs = Date.now() - proxyStartedAt;
-        proxyLog('info', 'Proxy fully started', { sockets: bindCount, startupMs: proxyStartupMs });
-        if (!healthTimer) startHealthMonitor();
-      }
-    });
-
-    proxyServers.push({ socket: sock, address: addr });
+    bindUdp(addr, listenPort, addresses.length);
+    bindTcp(addr, listenPort);
   }
+}
 
-  // Bind a TCP listener per LAN address on the same port. TCP is additive and
-  // best-effort: a TCP bind failure is logged but does NOT tear down the UDP
-  // path or trip the bypass health monitor (which tracks UDP sockets), UDP
-  // DNS keeps working even if TCP can't bind. In practice they bind or fail
-  // together since they share the address/port.
-  for (const addr of addresses) {
-    const tcpServer = net.createServer(onTcpConnection);
-    tcpServer.on('error', (err) => {
-      proxyLog('error', 'Proxy TCP server error', {
-        address: addr,
-        error: err.message,
-        code: err.code,
-      });
+// An address can be on the interface but not usable yet: an IPv6 address
+// waits out Duplicate Address Detection after boot, and a bind to it fails
+// with EADDRNOTAVAIL. Such a bind is tried again, a second apart and then
+// further, for about a minute, so the proxy is not left deaf on that address
+// until the next restart. Any other bind error stays final, as before.
+const BIND_RETRY_DELAYS_MS = [1000, 2000, 3000, 5000, 5000, 10000, 10000, 10000, 15000];
+const bindRetries = new Set();
+
+function retryBind(err, addr, attempt, bind) {
+  if (err.code !== 'EADDRNOTAVAIL' || attempt >= BIND_RETRY_DELAYS_MS.length) return false;
+  const delayMs = BIND_RETRY_DELAYS_MS[attempt];
+  proxyLog('warn', 'Address not usable yet, binding again', {
+    address: addr,
+    error: err.message,
+    delayMs,
+  });
+  const timer = setTimeout(() => {
+    bindRetries.delete(timer);
+    bind(attempt + 1);
+  }, delayMs);
+  timer.unref?.();
+  bindRetries.add(timer);
+  return true;
+}
+
+function cancelBindRetries() {
+  for (const timer of bindRetries) clearTimeout(timer);
+  bindRetries.clear();
+}
+
+function bindUdp(addr, listenPort, total, attempt = 0) {
+  const sock = dgram.createSocket({
+    type: net.isIP(addr) === 6 ? 'udp6' : 'udp4',
+    reuseAddr: true,
+  });
+  let bound = false;
+
+  sock.on('message', (msg, rinfo) => handleQuery(msg, rinfo, sock));
+
+  sock.on('error', (err) => {
+    // A socket that never bound answers nothing: drop it, so the status and
+    // the health monitor do not count it, and try again when that may help
+    // (retryBind logs that, so a retried bind is a warning, not an error).
+    if (!bound) {
+      try {
+        sock.close();
+      } catch {
+        /* already closed */
+      }
+      if (retryBind(err, addr, attempt, (next) => bindUdp(addr, listenPort, total, next))) return;
+    }
+    proxyLog('error', 'Proxy socket error', {
+      address: addr,
+      error: err.message,
+      code: err.code,
     });
-    tcpServer.listen(listenPort, addr, () => {
-      proxyLog('info', 'Proxy TCP listener bound', { address: `${addr}:${listenPort}` });
+    if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+      proxyLog('error', `Cannot bind port ${listenPort}`, { address: addr });
+    }
+  });
+
+  sock.on('close', () => {
+    // Remove from proxyServers array
+    const idx = proxyServers.findIndex((s) => s.socket === sock);
+    if (idx >= 0) proxyServers.splice(idx, 1);
+    if (proxyServers.length === 0 && bound) {
+      proxyLog('warn', 'All proxy sockets closed');
+    }
+  });
+
+  sock.bind(listenPort, addr, () => {
+    bound = true;
+    const entry = proxyServers.find((s) => s.socket === sock);
+    if (entry) entry.bound = true;
+    proxyLog('info', 'Proxy socket bound', { address: `${addr}:${listenPort}` });
+    if (proxyServers.filter((s) => s.bound).length === total) {
+      proxyStartupMs = Date.now() - proxyStartedAt;
+      proxyLog('info', 'Proxy fully started', { sockets: total, startupMs: proxyStartupMs });
+    }
+    // Watch from the first bound socket on, not only once every address has
+    // bound: one address still waiting must not leave the rest unwatched.
+    if (!healthTimer) startHealthMonitor();
+  });
+
+  proxyServers.push({ socket: sock, address: addr, bound: false });
+}
+
+// Bind a TCP listener per LAN address on the same port. TCP is additive and
+// best-effort: a TCP bind failure is logged but does NOT tear down the UDP
+// path or trip the bypass health monitor (which tracks UDP sockets), UDP
+// DNS keeps working even if TCP can't bind. In practice they bind or fail
+// together since they share the address/port.
+function bindTcp(addr, listenPort, attempt = 0) {
+  const tcpServer = net.createServer(onTcpConnection);
+  let listening = false;
+  tcpServer.on('error', (err) => {
+    if (!listening) {
+      const idx = tcpServers.findIndex((t) => t.server === tcpServer);
+      if (idx >= 0) tcpServers.splice(idx, 1);
+      if (retryBind(err, addr, attempt, (next) => bindTcp(addr, listenPort, next))) return;
+    }
+    proxyLog('error', 'Proxy TCP server error', {
+      address: addr,
+      error: err.message,
+      code: err.code,
     });
-    tcpServers.push({ server: tcpServer, address: addr });
-  }
+  });
+  tcpServer.listen(listenPort, addr, () => {
+    listening = true;
+    proxyLog('info', 'Proxy TCP listener bound', { address: `${addr}:${listenPort}` });
+  });
+  tcpServers.push({ server: tcpServer, address: addr });
 }
 
 // Stop the DNS proxy
 export function stopProxy() {
+  cancelBindRetries();
   for (const { socket } of proxyServers) {
     try {
       socket.close();
@@ -1206,6 +1365,9 @@ function stopHealthMonitor() {
 // through queueRegen without solving the synchrony requirement first.
 function activateBypass() {
   if (bypassMode) return;
+  // A server stack switch is moving the DNS backend; the next health check
+  // tries again once it is done.
+  if (switchInProgress()) return;
   bypassMode = true;
   proxyLog('error', 'All restart attempts failed, activating bypass mode (dnsmasq takes port 53)');
   try {
@@ -1331,10 +1493,10 @@ export function getProxyStatus() {
   const dbExists = fs.existsSync(dbPath);
 
   return {
-    running: proxyServers.length > 0,
+    running: proxyServers.some((s) => s.bound),
     bypassed: bypassMode,
     port: 53,
-    listenAddresses: proxyServers.map((s) => s.address),
+    listenAddresses: proxyServers.filter((s) => s.bound).map((s) => s.address),
     tcpListeners: tcpServers.length,
     activeTcpConnections,
     dbLoaded: mmdbReader !== null,

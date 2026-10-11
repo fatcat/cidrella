@@ -1,0 +1,257 @@
+##### api
+##### files
+=== auth/pdns.conf ===
+# Written by CIDRella. Edits here are overwritten.
+launch=gsqlite3
+gsqlite3-database=<DATA_DIR>/pdns/auth/pdns.sqlite3
+local-address=127.0.0.1
+local-port=5300
+socket-dir=<DATA_DIR>/pdns/run
+api=yes
+api-key=<API_KEY>
+webserver=yes
+webserver-address=127.0.0.1
+webserver-port=<API_PORT>
+webserver-allow-from=127.0.0.1/32,::1/128
+security-poll-suffix=
+
+=== recursor/recursor.yml ===
+# fixed: <digest>
+# zones: <digest>
+# Written by CIDRella from its database. Edits here are overwritten.
+incoming:
+  listen:
+    - "127.0.0.1"
+    - "::1"
+  port: 5353
+  allow_from:
+    - "0.0.0.0/0"
+    - "::/0"
+outgoing:
+  network_timeout: 4600
+  dont_throttle_netmasks:
+    - "127.0.0.1/32"
+    - "::1/128"
+  dont_query:
+    - "0.0.0.0/0"
+    - "::/0"
+recursor:
+  socket_dir: "<DATA_DIR>/pdns/run"
+  security_poll_suffix: ""
+  forward_zones_recurse:
+    - zone: "."
+      forwarders:
+        - "127.0.0.1:5356"
+  forward_zones:
+    - zone: "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "0.0.0.0.0.0.0.0.3.6.0.0.0.0.d.f.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "0.60.10.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "0.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "10.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "100.51.198.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "113.0.203.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "16.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "168.192.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "17.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "18.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "19.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "2.0.192.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "20.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "21.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "22.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "23.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "24.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "25.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "254.169.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "255.255.255.255.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "26.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "27.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "28.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "29.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "30.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "31.172.in-addr.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "8.b.d.0.1.0.0.2.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "8.e.f.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "9.e.f.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "a.e.f.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "b.e.f.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "d.f.ip6.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "golden.test"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "home.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "internal"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "invalid"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "local"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "onion"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "resolver.arpa"
+      forwarders:
+        - "127.0.0.1:5300"
+    - zone: "test"
+      forwarders:
+        - "127.0.0.1:5300"
+dnssec:
+  validation: "process"
+  negative_trustanchors:
+    - name: "0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.0.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "0.0.0.0.0.0.0.0.3.6.0.0.0.0.d.f.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "0.60.10.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "0.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "10.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "100.51.198.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "113.0.203.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "16.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "168.192.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "17.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "18.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "19.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "2.0.192.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "20.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "21.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "22.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "23.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "24.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "25.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "254.169.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "255.255.255.255.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "26.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "27.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "28.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "29.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "30.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "31.172.in-addr.arpa"
+      reason: "CIDRella local zone"
+    - name: "8.b.d.0.1.0.0.2.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "8.e.f.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "9.e.f.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "a.e.f.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "b.e.f.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "d.f.ip6.arpa"
+      reason: "CIDRella local zone"
+    - name: "golden.test"
+      reason: "CIDRella local zone"
+    - name: "home.arpa"
+      reason: "CIDRella local zone"
+    - name: "internal"
+      reason: "CIDRella local zone"
+    - name: "invalid"
+      reason: "CIDRella local zone"
+    - name: "local"
+      reason: "CIDRella local zone"
+    - name: "onion"
+      reason: "CIDRella local zone"
+    - name: "resolver.arpa"
+      reason: "CIDRella local zone"
+    - name: "test"
+      reason: "CIDRella local zone"
+
+##### commands
+pdns_recursor --config-dir=<DATA_DIR>/pdns/recursor --config=check
+systemctl restart cidrella-pdns-recursor

@@ -1,0 +1,11 @@
+#!/bin/sh
+# radvd sends the Router Advertisements only while the PowerDNS + Kea stack
+# serves: until then this waits for the enable file CIDRella writes
+# (backends/radvd/paths.js ENABLE_FILE) and removes on stop. It runs as
+# cidrella; the binary carries CAP_NET_RAW (Dockerfile).
+while [ ! -f /data/runtime/radvd.enabled ]; do
+  sleep 1
+done
+install -d -m 0750 -o cidrella -g cidrella /data/radvd
+exec s6-setuidgid cidrella radvd --nodaemon --logmethod=stderr_clean \
+  --config=/data/radvd/radvd.conf --pidfile=/data/radvd/radvd.pid

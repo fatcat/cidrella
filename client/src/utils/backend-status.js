@@ -1,7 +1,9 @@
 // The DNS and DHCP backends from a health payload (/api/health/system or
 // /api/metrics/services), as one unit per daemon with the roles it fills:
-// dnsmasq today is one unit doing DNS, DHCP and Router Advertisements, and
-// after the move to Kea and PowerDNS each will be its own unit.
+// dnsmasq is one unit doing DNS, DHCP and Router Advertisements; on the
+// PowerDNS + Kea stack each role is its own unit. `name` is the server's
+// display label (PowerDNS, Kea, radvd). A unit stopped on purpose (radvd with
+// nothing to advertise) is `idle` and counts as running: nothing is missing.
 //
 // A server older than 0.5.1 sends only a dnsmasq flag (`services.dnsmasq` on
 // health, top-level `dnsmasq` on metrics). That reads as one dnsmasq unit.
@@ -12,18 +14,20 @@ const ROLE_OUTAGE = {
   ra: 'Router Advertisements',
 };
 
-/** [{ key, name, roles, running, restartPending }], in role order. */
+/** [{ key, name, roles, running, idle, restartPending }], in role order. */
 export function backendUnits(payload) {
   if (!payload) return [];
   if (payload.backends) {
     const units = new Map();
     for (const [role, status] of Object.entries(payload.backends)) {
       if (!status?.name) continue;
+      const idle = status.idle === true && status.running !== true;
       const unit = units.get(status.name) || {
         key: status.name,
-        name: status.name,
+        name: status.label || status.name,
         roles: [],
-        running: status.running === true,
+        running: status.running === true || idle,
+        idle,
         restartPending: status.restartPending === true,
       };
       unit.roles.push(role);
@@ -34,7 +38,14 @@ export function backendUnits(payload) {
   const running = payload.services?.dnsmasq ?? payload.dnsmasq;
   if (typeof running !== 'boolean') return [];
   return [
-    { key: 'dnsmasq', name: 'dnsmasq', roles: ['dns', 'dhcp', 'ra'], running, restartPending: false },
+    {
+      key: 'dnsmasq',
+      name: 'dnsmasq',
+      roles: ['dns', 'dhcp', 'ra'],
+      running,
+      idle: false,
+      restartPending: false,
+    },
   ];
 }
 

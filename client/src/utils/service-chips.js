@@ -25,8 +25,8 @@ export function serviceChips(services) {
     ...backendUnits(s).map((unit) => ({
       key: unit.key,
       label: unit.name,
-      value: unit.running ? 'Running' : 'Stopped',
-      tone: unit.running ? 'ok' : 'err',
+      value: unit.idle ? 'Idle' : unit.running ? 'Running' : 'Stopped',
+      tone: unit.idle ? 'muted' : unit.running ? 'ok' : 'err',
     })),
     {
       key: 'proxy',

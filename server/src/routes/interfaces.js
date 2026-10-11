@@ -16,6 +16,8 @@ import {
 } from '../utils/http-server.js';
 import { validPortOrError, validateInterfaceConfig } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
+import { switchInProgress } from '../utils/switch-state.js';
+import { queueRegen } from '../utils/after-commit.js';
 import { ipv6Enabled } from '../utils/ipv6-support.js';
 
 const router = Router();
@@ -127,6 +129,10 @@ router.get('/config', requirePerm('system:read'), (req, res) => {
 
 // PUT /api/interfaces/config: save interface config and apply
 router.put('/config', requirePerm('system:write'), async (req, res) => {
+  // The switch renders the listen config for the stack it moves to.
+  if (switchInProgress()) {
+    return res.status(409).json({ error: 'A server switch is running; try again when it is done' });
+  }
   const body = req.body || {};
   const {
     interfaces,
@@ -236,8 +242,10 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
         : false;
     })();
   } catch (err) {
-    console.warn('Failed to validate dnsmasq interface config:', err.message);
-    return res.status(500).json({ error: `dnsmasq configuration update failed: ${err.message}` });
+    console.warn('Failed to validate the DNS server interface config:', err.message);
+    return res
+      .status(500)
+      .json({ error: `${getDnsBackend().label} configuration update failed: ${err.message}` });
   }
 
   // Live-apply the HTTP listener toggle + port changes. Order matters:
@@ -291,6 +299,11 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     dnsmasqStatus = getService('dns').activate({ force: ifaceChanged });
   } catch {
     dnsmasqStatus = 'restart_failed';
+  }
+  // dnsmasq takes its DHCP interfaces with the listen file above. A separate
+  // DHCP server (Kea, and radvd with it) renders them with its scopes.
+  if (dnsmasqSettingsChanged && getService('dhcp') !== getService('dns')) {
+    queueRegen('regenerate_dhcp');
   }
 
   // Rebind proxy sockets to updated interface addresses

@@ -1,7 +1,8 @@
 /**
- * Which backend fills each role (DNS, DHCP, Router Advertisements). dnsmasq
- * fills DNS and the Router Advertisements; DHCP is dnsmasq or Kea, chosen by
- * the `dhcp_backend` setting and changed only by services/dhcp-backend-switch.js.
+ * Which backend fills each role (DNS, DHCP, Router Advertisements). A host
+ * runs one stack, never a mix: dnsmasq for all three, or PowerDNS for DNS,
+ * Kea for DHCP and radvd for the Router Advertisements. The `backend_stack`
+ * setting names it; only services/stack-switch.js and boot change it.
  * Only server/src/backends/** may import an adapter directly (enforced by
  * ESLint and scripts/check-backend-imports.js).
  *
@@ -10,26 +11,36 @@
 import { ROLES, featureReportFor, featureSupported, roleStatuses } from './contract.js';
 import { createDnsmasqBackend } from './dnsmasq/index.js';
 import { createKeaBackend } from './kea/index.js';
+import { createPdnsBackend } from './pdns/index.js';
+import { createRadvdBackend } from './radvd/index.js';
 
-const FACTORIES = { dnsmasq: createDnsmasqBackend, kea: createKeaBackend };
+const FACTORIES = {
+  dnsmasq: createDnsmasqBackend,
+  kea: createKeaBackend,
+  pdns: createPdnsBackend,
+  radvd: createRadvdBackend,
+};
 
-/** The backends that can fill the DHCP role, as the setting names them. */
-export const DHCP_BACKENDS = Object.freeze(Object.keys(FACTORIES));
-export const DEFAULT_DHCP_BACKEND = 'dnsmasq';
+/** The stacks, as the setting names them, and the backend in each role. */
+export const STACKS = Object.freeze({
+  dnsmasq: Object.freeze({ dns: 'dnsmasq', dhcp: 'dnsmasq', ra: 'dnsmasq' }),
+  'pdns-kea': Object.freeze({ dns: 'pdns', dhcp: 'kea', ra: 'radvd' }),
+});
+export const DEFAULT_STACK = 'dnsmasq';
 
 const instances = {};
-let dhcpName = DEFAULT_DHCP_BACKEND;
+let stack = DEFAULT_STACK;
 // Backends told to answer no DHCP while a switch moves the leases.
 const quiesced = new Set();
 const listeners = new Set();
 
 /**
- * Does `name` answer DHCP right now? Only the selected DHCP backend does, and
+ * Does `name` answer DHCP right now? Only the stack's DHCP backend does, and
  * not while a switch holds it quiet. A backend not answering still renders
  * its configuration, with no addresses to hand out.
  */
 export function servesDhcp(name) {
-  return dhcpName === name && !quiesced.has(name);
+  return STACKS[stack].dhcp === name && !quiesced.has(name);
 }
 
 /** The adapter instance by name, whatever role it fills now. */
@@ -41,29 +52,36 @@ export function getBackend(name) {
 /** The backend service filling `role`: its status, capabilities and activation. */
 export function getService(role) {
   if (!ROLES.includes(role)) throw new Error(`Unknown backend role: ${role}`);
-  return getBackend(role === 'dhcp' ? dhcpName : 'dnsmasq');
+  return getBackend(STACKS[stack][role]);
 }
 
 export const getDnsBackend = () => getService('dns').dns;
 export const getDhcpBackend = () => getService('dhcp').dhcp;
 /** The service sending Router Advertisements. */
 export const getRaBackend = () => getService('ra');
-/** The name of the backend filling the DHCP role. */
-export const dhcpBackendName = () => dhcpName;
+/** The stack serving now. */
+export const stackName = () => stack;
+
+/** Each backend of `name`'s stack once, however many roles it fills. */
+export const stackServices = (name) => [...new Set(Object.values(STACKS[name]))].map(getBackend);
 
 /**
- * Make `name` the DHCP backend. Boot sets it from the setting; the switch
- * moves it. Listeners (onBackendChanged) hear of a change.
+ * Make `name` the stack. Boot sets it from the setting; the switch moves it.
+ * Listeners (onBackendChanged) hear of each role that moved.
  */
-export function selectDhcpBackend(name) {
-  if (!FACTORIES[name]) throw new Error(`Unknown DHCP backend: ${name}`);
-  if (name === dhcpName) return;
-  dhcpName = name;
-  for (const listener of listeners) {
-    try {
-      listener('dhcp');
-    } catch (err) {
-      console.warn('Backend change listener failed:', err.message);
+export function selectStack(name) {
+  if (!STACKS[name]) throw new Error(`Unknown backend stack: ${name}`);
+  if (name === stack) return;
+  const before = STACKS[stack];
+  stack = name;
+  for (const role of ROLES) {
+    if (before[role] === STACKS[name][role]) continue;
+    for (const listener of listeners) {
+      try {
+        listener(role);
+      } catch (err) {
+        console.warn('Backend change listener failed:', err.message);
+      }
     }
   }
 }

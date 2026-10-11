@@ -18,9 +18,13 @@ mkdir -p /data/dnsmasq/dhcp-hosts.d
 mkdir -p /data/dnsmasq/conf.d
 mkdir -p /data/blocklists
 mkdir -p /data/anomaly/models
-mkdir -p /data/kea /data/runtime
-# A Kea left enabled by the last run starts only once CIDRella asks again.
-rm -f /data/runtime/kea-dhcp4.enabled /data/runtime/kea-dhcp6.enabled
+mkdir -p /data/kea /data/pdns /data/radvd /data/runtime
+# A Kea, PowerDNS or radvd left enabled by the last run starts only once
+# CIDRella asks again. dnsmasq's disable flag is kept: it says which stack
+# serves, and dnsmasq must stay down across a restart while PowerDNS does.
+rm -f /data/runtime/kea-dhcp4.enabled /data/runtime/kea-dhcp6.enabled \
+  /data/runtime/pdns-auth.enabled /data/runtime/pdns-recursor.enabled \
+  /data/runtime/radvd.enabled
 
 # Copy default dnsmasq config if not present
 if [ ! -f /data/dnsmasq/dnsmasq.conf ]; then

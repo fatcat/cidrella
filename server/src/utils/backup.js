@@ -119,6 +119,9 @@ export function createBackup(db) {
 
   // Kea's leases and server DUID, when Kea has ever served here.
   if (fs.existsSync(path.join(DATA_DIR, 'kea'))) includes.push('kea');
+  // Not pdns/: PowerDNS's database and configuration are derived from
+  // cidrella.db (backends/pdns). A restore leaves the host's copy; while
+  // PowerDNS serves DNS, the restart after a restore resyncs its zones.
 
   if (includes.length === 0) {
     throw new Error('No data files found to backup');

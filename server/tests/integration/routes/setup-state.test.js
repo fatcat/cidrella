@@ -155,6 +155,7 @@ describe('PUT /api/setup/state', () => {
         'dns must be boolean',
       ],
       [{ deployment: { role: 'both', gateway_position: 'middle' } }, 'deployment.gateway_position'],
+      [{ deployment: { role: 'both', stack: 'bind' } }, 'deployment.stack'],
       [{ import: { kind: 'csv' } }, 'import.kind'],
       [{ password: 'yes' }, 'password must be a boolean'],
       [{ done: 1 }, 'done must be a boolean'],
@@ -166,6 +167,14 @@ describe('PUT /api/setup/state', () => {
       expect(res.body.error).toContain(message);
     }
     expect(getSetupState(db).deployment.role).toBe('dns');
+  });
+
+  it('remembers the server stack with the deployment, without switching', async () => {
+    const res = await request(app)
+      .put('/api/setup/state')
+      .send({ deployment: { role: 'both', interfaces: {}, stack: 'pdns-kea' } });
+    expect(res.status).toBe(200);
+    expect(res.body.deployment).toEqual({ role: 'both', interfaces: {}, stack: 'pdns-kea' });
   });
 
   it('remembers the gateway position for new networks with the deployment', async () => {

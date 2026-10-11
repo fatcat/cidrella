@@ -18,6 +18,8 @@ cd / 2>/dev/null || true
 #   cidrella-rollback              # interactive
 #   cidrella-rollback --yes        # non-interactive (for scripts)
 #   cidrella-rollback --list       # show what would be restored
+#   cidrella-rollback --force      # roll back to a release without the
+#                                  # PowerDNS + Kea stack while it serves
 #
 # This script is copied from the CURRENTLY RUNNING version into
 # /usr/local/bin/ at the start of every update, so it's always
@@ -91,19 +93,24 @@ resolve_node() {
 
 AUTO_YES=false
 LIST_ONLY=false
+FORCE=false
 
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --yes|-y) AUTO_YES=true; shift ;;
     --list|-l) LIST_ONLY=true; shift ;;
+    --force) FORCE=true; shift ;;
     -h|--help)
       cat <<USAGE
-Usage: cidrella-rollback [--yes|--list]
+Usage: cidrella-rollback [--yes|--list|--force]
 
 Restores the previous CIDRella slot and the pre-update database snapshot.
 
   --yes, -y   Non-interactive, assume yes
   --list, -l  Show what would be restored without doing anything
+  --force     Roll back to a release that predates the PowerDNS + Kea stack
+              while that stack serves: it is stopped and dnsmasq started,
+              and the leases Kea holds are lost
 USAGE
       exit 0
       ;;
@@ -161,6 +168,25 @@ read_version() {
 
 ACTIVE_VERSION=$(read_version "$ACTIVE_SLOT")
 INACTIVE_VERSION=$(read_version "$INACTIVE_SLOT")
+
+# The stack serving now (written by CIDRella at boot and on a switch). A
+# release older than the stack setting knows only dnsmasq and would leave
+# DNS and DHCP down, so rolling back to one from the PowerDNS + Kea stack
+# needs --force, which hands the host back to dnsmasq first.
+STACK_FILE="$DATA_DIR/runtime/backend-stack"
+CURRENT_STACK=dnsmasq
+[ -f "$STACK_FILE" ] && CURRENT_STACK=$(head -n 1 "$STACK_FILE")
+STACK_HANDBACK=false
+if [ "$CURRENT_STACK" = "pdns-kea" ] && [ ! -f "$INACTIVE_SLOT/server/src/services/stack-switch.js" ]; then
+  if [ "$FORCE" != true ] && [ "$LIST_ONLY" != true ]; then
+    err "PowerDNS + Kea serves DNS and DHCP, and v${INACTIVE_VERSION} only knows dnsmasq."
+    err "Switch back to dnsmasq first (Settings > General > Servers), then roll back,"
+    err "or run again with --force: dnsmasq takes over and the leases Kea holds are lost."
+    emit_event rollback fail reason=stack-unsupported "to=$INACTIVE_VERSION"
+    exit 1
+  fi
+  STACK_HANDBACK=true
+fi
 
 # Check snapshot availability
 HAS_SNAPSHOT=false
@@ -225,6 +251,16 @@ emit_event rollback pass phase=symlink-swap "active_slot=$INACTIVE_SLOT"
 
 info "Reloading systemd..."
 systemctl daemon-reload
+
+if [ "$STACK_HANDBACK" = true ]; then
+  info "Handing DNS and DHCP back to dnsmasq..."
+  for unit in cidrella-pdns-recursor cidrella-pdns-auth cidrella-kea@dhcp4 cidrella-kea@dhcp6 cidrella-radvd; do
+    systemctl stop "$unit" 2>/dev/null || true
+  done
+  rm -f "$DATA_DIR/runtime/dnsmasq.disabled" "$STACK_FILE"
+  systemctl start cidrella-dnsmasq || warn "cidrella-dnsmasq did not start; see journalctl -u cidrella-dnsmasq"
+  emit_event rollback pass phase=stack-handback stack=dnsmasq
+fi
 
 info "Starting CIDRella..."
 # Clear the start-limit counter first. This script is run precisely when the

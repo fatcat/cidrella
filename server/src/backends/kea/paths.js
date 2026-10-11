@@ -29,6 +29,14 @@ export const enableFlagPath = (family) =>
 
 export const confPath = (family) => path.join(KEA_DIR, `kea-dhcp${family}.conf`);
 export const leaseFilePath = (family) => path.join(KEA_DIR, `kea-leases${family}.csv`);
+// Every file holding one family's leases, oldest first: a finished lease file
+// cleanup (.completed, else its input .1), one in progress (.2), then the
+// file Kea appends to.
+export function memfilePaths(family) {
+  const base = leaseFilePath(family);
+  const done = fs.existsSync(`${base}.completed`) ? `${base}.completed` : `${base}.1`;
+  return [done, `${base}.2`, base];
+}
 export const logFilePath = (family) => path.join(KEA_LOG_DIR, `kea-dhcp${family}.log`);
 export const legalLogBaseName = (family) => `kea-legal${family}`;
 

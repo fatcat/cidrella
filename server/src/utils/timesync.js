@@ -15,27 +15,11 @@
 import { execFileSync } from 'child_process';
 import { getSetting } from '../db/init.js';
 import { getDnsBackend } from '../backends/index.js';
+import { getNtpStatus } from './ntp-status.js';
+
+export { getNtpStatus };
 
 let timecheckTimer = null;
-
-// Read NTP enable + sync state via timedatectl. Read-only, needs no privilege.
-export function getNtpStatus() {
-  try {
-    const out = execFileSync(
-      'timedatectl',
-      ['show', '-p', 'NTP', '-p', 'NTPSynchronized', '--value'],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    const [ntp = '', sync = ''] = out.split('\n');
-    return {
-      available: true,
-      ntpEnabled: ntp.trim() === 'yes',
-      synchronized: sync.trim() === 'yes',
-    };
-  } catch {
-    return { available: false, ntpEnabled: false, synchronized: false };
-  }
-}
 
 // Turn on NTP if it isn't already. At runtime the `timedatectl set-ntp true`
 // call is polkit-gated for the cidrella service account (49-cidrella.rules);

@@ -44,10 +44,11 @@ export function runBackendContract(label, makeHarness) {
       expect(result.changed).toBe(result.activation !== 'none');
     };
 
-    // Apply ops read the database and never write it.
-    const noWrites = (op) => {
+    // Apply ops read the database and never write it. applyZones may answer
+    // with a Promise.
+    const noWrites = async (op) => {
       const before = h.db.prepare('SELECT total_changes() AS n').get().n;
-      const result = op();
+      const result = await op();
       expect(h.db.prepare('SELECT total_changes() AS n').get().n).toBe(before);
       return result;
     };
@@ -93,34 +94,44 @@ export function runBackendContract(label, makeHarness) {
       ['IPv4', 'A', '10.250.0.10'],
       ['IPv6', 'AAAA', 'fd00:250::10'],
     ]) {
-      it(`applies a ${family} record, is idempotent, and applies its removal`, (ctx) => {
+      it(`applies a ${family} record, is idempotent, and applies its removal`, async (ctx) => {
         if (skipUnless('dns', ctx)) return;
         const dns = h.backend.dns;
-        expectApplyResult(noWrites(() => dns.applyZones(h.db, { activate: false })));
-        expect(noWrites(() => dns.applyZones(h.db, { activate: false })).changed).toBe(false);
+        expectApplyResult(await noWrites(() => dns.applyZones(h.db, { activate: false })));
+        expect((await noWrites(() => dns.applyZones(h.db, { activate: false }))).changed).toBe(
+          false,
+        );
 
         const id = h.db
           .prepare(
             "INSERT INTO dns_records (zone_id, name, type, value, source, enabled) VALUES (?, 'host', ?, ?, 'manual', 1)",
           )
           .run(zoneId, type, value).lastInsertRowid;
-        const added = noWrites(() => dns.applyZones(h.db, { activate: false }));
+        const added = await noWrites(() => dns.applyZones(h.db, { activate: false }));
         expectApplyResult(added);
         expect(added.changed).toBe(true);
         expect(added.activated).toBe(false);
-        expect(noWrites(() => dns.applyZones(h.db, { activate: false })).changed).toBe(false);
+        expect((await noWrites(() => dns.applyZones(h.db, { activate: false }))).changed).toBe(
+          false,
+        );
 
         h.db.prepare('DELETE FROM dns_records WHERE id = ?').run(id);
-        expect(noWrites(() => dns.applyZones(h.db, { activate: false })).changed).toBe(true);
-        expect(noWrites(() => dns.applyZones(h.db, { activate: false })).changed).toBe(false);
+        expect((await noWrites(() => dns.applyZones(h.db, { activate: false }))).changed).toBe(
+          true,
+        );
+        expect((await noWrites(() => dns.applyZones(h.db, { activate: false }))).changed).toBe(
+          false,
+        );
       });
     }
 
-    it('applies the resolver and listen settings idempotently', (ctx) => {
+    it('applies the resolver and listen settings idempotently', async (ctx) => {
       if (skipUnless('dns', ctx)) return;
       for (const op of ['applyResolver', 'applyListen']) {
-        expectApplyResult(noWrites(() => h.backend.dns[op](h.db, { activate: false })));
-        expect(noWrites(() => h.backend.dns[op](h.db, { activate: false })).changed).toBe(false);
+        expectApplyResult(await noWrites(() => h.backend.dns[op](h.db, { activate: false })));
+        expect((await noWrites(() => h.backend.dns[op](h.db, { activate: false }))).changed).toBe(
+          false,
+        );
       }
     });
 
@@ -128,7 +139,7 @@ export function runBackendContract(label, makeHarness) {
       ['IPv4', '10.250.0.0/24', 'aa:bb:cc:00:25:01', null, '10.250.0.30'],
       ['IPv6', 'fd00:250::/64', null, '00:01:00:01:aa:bb:cc:dd:00:25:00:02', 'fd00:250::30'],
     ]) {
-      it(`applies an ${family} reservation and its removal`, (ctx) => {
+      it(`applies an ${family} reservation and its removal`, async (ctx) => {
         if (skipUnless('dhcp', ctx)) return;
         const dhcp = h.backend.dhcp;
         // A reservation is served on a network with a DHCP scope.
@@ -143,18 +154,26 @@ export function runBackendContract(label, makeHarness) {
                 },
               }),
         });
-        expectApplyResult(noWrites(() => dhcp.applyScopes(h.db, { activate: false })));
+        expectApplyResult(await noWrites(() => dhcp.applyScopes(h.db, { activate: false })));
         const id = h.db
           .prepare(
             `INSERT INTO dhcp_reservations (subnet_id, mac_address, duid, iaid, ip_address, hostname, address_family)
              VALUES (?, ?, ?, ?, ?, 'held', ?)`,
           )
           .run(subnetId, mac, duid, duid ? 1 : null, ip, family === 'IPv4' ? 4 : 6).lastInsertRowid;
-        expect(noWrites(() => dhcp.applyScopes(h.db, { activate: false })).changed).toBe(true);
-        expect(noWrites(() => dhcp.applyScopes(h.db, { activate: false })).changed).toBe(false);
+        expect((await noWrites(() => dhcp.applyScopes(h.db, { activate: false }))).changed).toBe(
+          true,
+        );
+        expect((await noWrites(() => dhcp.applyScopes(h.db, { activate: false }))).changed).toBe(
+          false,
+        );
         h.db.prepare('UPDATE dhcp_reservations SET enabled = 0 WHERE id = ?').run(id);
-        expect(noWrites(() => dhcp.applyScopes(h.db, { activate: false })).changed).toBe(true);
-        expect(noWrites(() => dhcp.applyScopes(h.db, { activate: false })).changed).toBe(false);
+        expect((await noWrites(() => dhcp.applyScopes(h.db, { activate: false }))).changed).toBe(
+          true,
+        );
+        expect((await noWrites(() => dhcp.applyScopes(h.db, { activate: false }))).changed).toBe(
+          false,
+        );
       });
     }
 
@@ -224,6 +243,14 @@ export function runBackendContract(label, makeHarness) {
       if (h.backend.roles.includes('ra')) {
         expect(h.backend.capabilities().ra).toBe(true);
       }
+    });
+
+    it('applies the Router Advertisements idempotently, never writing the database', async (ctx) => {
+      if (skipUnless('ra', ctx)) return;
+      const ra = h.backend.ra;
+      expectApplyResult(await noWrites(() => ra.applyRouterAdvertisements(h.db, { activate: false })));
+      const again = await noWrites(() => ra.applyRouterAdvertisements(h.db, { activate: false }));
+      expect(again.changed).toBe(false);
     });
   });
 }

@@ -130,6 +130,39 @@ export function buildServfail(reqBuf, ede = null) {
   });
 }
 
+/**
+ * The answer as it may go back over UDP to the client that sent `reqBuf`: as
+ * is when it fits the client's EDNS buffer (512 bytes without EDNS), else
+ * the question alone with TC set, so the client asks again over TCP (RFC 1035
+ * 4.2.1, RFC 6891 7). An encrypted upstream answers at any size, and PowerDNS
+ * Recursor drops a UDP answer larger than the buffer it offered, which made
+ * every DNSKEY over 1232 bytes fail and DNSSEC validation SERVFAIL.
+ */
+export function fitToUdp(reqBuf, resp) {
+  let limit = 512;
+  try {
+    const opt = dnsPacket.decode(reqBuf).additionals?.find((a) => a.type === 'OPT');
+    if (opt) limit = Math.max(512, opt.udpPayloadSize || 512);
+  } catch {
+    /* an undecodable query keeps the classic limit */
+  }
+  if (resp.length <= limit) return resp;
+  try {
+    const answer = dnsPacket.decode(resp);
+    return dnsPacket.encode({
+      id: answer.id,
+      type: 'response',
+      flags: (answer.flags || 0) | dnsPacket.TRUNCATED_RESPONSE,
+      questions: answer.questions || [],
+      answers: [],
+      authorities: [],
+      additionals: (answer.additionals || []).filter((a) => a.type === 'OPT'),
+    });
+  } catch {
+    return resp;
+  }
+}
+
 // Every upstream failed this query (RFC 8914 code 22).
 const NO_UPSTREAM_ANSWER = { code: 22, text: 'no upstream answered' };
 
@@ -352,7 +385,7 @@ function startListeners() {
     const resp = await handleQuery(msg);
     if (resp) {
       try {
-        udpSocket.send(resp, rinfo.port, rinfo.address);
+        udpSocket.send(fitToUdp(msg, resp), rinfo.port, rinfo.address);
       } catch {
         /* ignore */
       }

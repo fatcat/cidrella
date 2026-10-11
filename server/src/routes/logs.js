@@ -7,10 +7,29 @@ import { requireRole } from '../auth/roles.js';
 import { getService } from '../backends/index.js';
 
 const router = Router();
-// The DNS backend's log; null when it keeps none, and the endpoints say so.
-const LOG_SOURCE = getService('dns').logSource();
-const LOG_FILE = LOG_SOURCE?.path ?? null;
-const NO_LOG = { error: 'The DNS backend keeps no log to show' };
+const ROLES = ['dns', 'dhcp'];
+
+/**
+ * The log to show for `role` (dns or dhcp, default dns), asked of the
+ * backend filling it now, so a stack switch moves the viewer with it.
+ * `filter` keeps the role's lines when one log serves both (dnsmasq).
+ * null when the backend keeps no log.
+ */
+function logFor(role) {
+  const service = getService(role);
+  const source = service.logSource();
+  const file = source?.path ?? null;
+  if (!file) return null;
+  const shared = getService('dns') === getService('dhcp');
+  return { source, file, label: service.label || service.name, shared };
+}
+
+function noLog(role) {
+  const service = getService(role);
+  return {
+    error: `${service.label || service.name} keeps no ${role.toUpperCase()} log to show`,
+  };
+}
 
 // Short-lived SSE stream tickets, key: token string, value: expiry timestamp
 const streamTickets = new Map();
@@ -24,16 +43,16 @@ setInterval(() => {
   }
 }, 60_000);
 
-function ensureLogFile() {
-  fs.mkdirSync(path.dirname(LOG_FILE), { recursive: true });
+function ensureLogFile(file) {
+  fs.mkdirSync(path.dirname(file), { recursive: true });
   // Append nothing: creates the file if missing without truncating one that
   // dnsmasq created (and started writing) between a check and a write.
-  fs.writeFileSync(LOG_FILE, '', { flag: 'a' });
+  fs.writeFileSync(file, '', { flag: 'a' });
 }
 
-function matchesFilter(line, filter) {
+function matchesFilter(source, line, filter) {
   if (filter === 'all') return true;
-  const isDhcp = LOG_SOURCE.isDhcpLine(line);
+  const isDhcp = source.isDhcpLine(line);
   if (filter === 'dhcp') return isDhcp;
   if (filter === 'dns') return !isDhcp;
   return true;
@@ -43,10 +62,10 @@ function matchesFilter(line, filter) {
  * Read new bytes appended to the log file since the given offset.
  * Returns { lines, newOffset }. Handles truncation (reset to 0).
  */
-function readNewLines(offset) {
+function readNewLines(file, offset) {
   let size;
   try {
-    size = fs.statSync(LOG_FILE).size;
+    size = fs.statSync(file).size;
   } catch {
     return { lines: [], newOffset: 0 };
   }
@@ -56,7 +75,7 @@ function readNewLines(offset) {
   if (size === offset) return { lines: [], newOffset: offset };
 
   const buf = Buffer.alloc(size - offset);
-  const fd = fs.openSync(LOG_FILE, 'r');
+  const fd = fs.openSync(file, 'r');
   try {
     fs.readSync(fd, buf, 0, buf.length, offset);
   } finally {
@@ -80,8 +99,32 @@ router.post('/stream-token', requirePerm('dns:read'), (req, res) => {
 });
 
 /**
- * GET /api/logs/stream?filter=all|dns|dhcp&ticket=<one-time-token>
- * SSE endpoint that watches the DNS backend's log file.
+ * GET /api/logs/sources
+ * One entry per role: the backend filling it, whether it keeps a log to show
+ * (and why not), and whether the log may be cleared. The viewer builds its
+ * tabs from this.
+ */
+router.get('/sources', requirePerm('dns:read'), (req, res) => {
+  res.json(
+    ROLES.map((role) => {
+      const service = getService(role);
+      const log = logFor(role);
+      return {
+        role,
+        label: service.label || service.name,
+        available: Boolean(log),
+        clearable: Boolean(log) && log.source.clearable !== false,
+        message: log ? null : noLog(role).error,
+      };
+    }),
+  );
+});
+
+/**
+ * GET /api/logs/stream?role=dns|dhcp&filter=all|dns|dhcp&ticket=<one-time-token>
+ * SSE endpoint that watches the log of the backend filling `role` (default
+ * dns). Without a role, `filter` picks lines from the DNS backend's log as
+ * before; with one, the role's lines are kept where one log serves both.
  * Auth via JWT (req.user set by authMiddleware) OR a valid ?ticket= param.
  */
 router.get('/stream', (req, res) => {
@@ -98,11 +141,15 @@ router.get('/stream', (req, res) => {
     return res.status(401).json({ error: 'Authentication required' });
   }
 
-  if (!LOG_FILE) return res.status(404).json(NO_LOG);
-  const filter = req.query.filter || 'all';
+  const role = req.query.role || 'dns';
+  if (!ROLES.includes(role)) return res.status(400).json({ error: 'role must be dns or dhcp' });
+  const log = logFor(role);
+  if (!log) return res.status(404).json(noLog(role));
+  const { source, file } = log;
+  const filter = req.query.role ? (log.shared ? role : 'all') : req.query.filter || 'all';
 
   try {
-    ensureLogFile();
+    ensureLogFile(file);
   } catch {
     // Keep the SSE connection usable even if the runtime log path cannot be
     // created. The stream will stay open and report an empty backlog.
@@ -132,12 +179,12 @@ router.get('/stream', (req, res) => {
   // output (~150-200 bytes/line) with headroom.
   let offset = 0;
   try {
-    const stat = fs.statSync(LOG_FILE);
+    const stat = fs.statSync(file);
     const size = stat.size;
     const tailBytes = Math.min(64 * 1024, size);
     const tailStart = size - tailBytes;
     const buf = Buffer.alloc(tailBytes);
-    const fd = fs.openSync(LOG_FILE, 'r');
+    const fd = fs.openSync(file, 'r');
     try {
       fs.readSync(fd, buf, 0, tailBytes, tailStart);
     } finally {
@@ -153,7 +200,7 @@ router.get('/stream', (req, res) => {
     const lines = usable.split('\n').filter((l) => l.trim());
     const backlog = lines.slice(-200);
     for (const line of backlog) {
-      if (matchesFilter(line, filter)) {
+      if (matchesFilter(source, line, filter)) {
         res.write(`data: ${line}\n\n`);
       }
     }
@@ -165,11 +212,11 @@ router.get('/stream', (req, res) => {
   // Watch the log file for new writes
   let watcher;
   try {
-    watcher = fs.watch(LOG_FILE, () => {
-      const { lines, newOffset } = readNewLines(offset);
+    watcher = fs.watch(file, () => {
+      const { lines, newOffset } = readNewLines(file, offset);
       offset = newOffset;
       for (const line of lines) {
-        if (matchesFilter(line, filter)) {
+        if (matchesFilter(source, line, filter)) {
           res.write(`data: ${line}\n\n`);
         }
       }
@@ -191,13 +238,20 @@ router.get('/stream', (req, res) => {
 });
 
 /**
- * POST /api/logs/clear
- * Truncate the log file.
+ * POST /api/logs/clear?role=dns|dhcp
+ * Truncate the log of the backend filling `role` (default dns). An audit
+ * log (Kea's legal log) is kept for the audit retention, never cleared here.
  */
 router.post('/clear', requireRole('admin'), (req, res) => {
-  if (!LOG_FILE) return res.status(404).json(NO_LOG);
+  const role = req.query.role || 'dns';
+  if (!ROLES.includes(role)) return res.status(400).json({ error: 'role must be dns or dhcp' });
+  const log = logFor(role);
+  if (!log) return res.status(404).json(noLog(role));
+  if (log.source.clearable === false) {
+    return res.status(409).json({ error: `${log.label} keeps this log as an audit trail` });
+  }
   try {
-    fs.writeFileSync(LOG_FILE, '');
+    fs.writeFileSync(log.file, '');
     res.json({ ok: true });
   } catch {
     res.status(500).json({ error: 'Failed to clear log file' });

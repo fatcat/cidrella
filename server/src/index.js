@@ -42,7 +42,7 @@ import {
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import featuresRoutes from './routes/features.js';
-import dhcpBackendRoutes from './routes/dhcp-backend.js';
+import backendStackRoutes from './routes/backend-stack.js';
 import { BackendFeatureError } from './utils/backend-features.js';
 import subnetRoutes from './routes/subnets.js';
 import rangeTypeRoutes from './routes/range-types.js';
@@ -79,7 +79,7 @@ import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { allBackends, uniqueServices } from './backends/index.js';
-import { selectDhcpBackendAtBoot } from './services/dhcp-backend-switch.js';
+import { selectStackAtBoot } from './services/stack-switch.js';
 import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
@@ -128,11 +128,11 @@ async function main() {
   }
   console.log('Database initialized');
 
-  // Which backend serves DHCP comes from the database, so the services are
-  // prepared once it is open and before any hook renders their config. A
-  // switch a crash interrupted is undone: the DHCP files go back to the
-  // backend the setting names.
-  const { recovered } = selectDhcpBackendAtBoot(getDb());
+  // Which stack serves DNS and DHCP comes from the database, so the services
+  // are prepared once it is open and before any hook renders their config.
+  // A switch a crash interrupted is undone: the files go back to the stack
+  // the setting names.
+  const { recovered } = await selectStackAtBoot(getDb());
   for (const service of uniqueServices()) service.prepare();
   if (recovered && !recovered.finished) queueRegen('regenerate_dhcp');
 
@@ -296,7 +296,10 @@ async function main() {
       // A backend's own audit log (Kea's legal log) keeps as long.
       for (const backend of allBackends()) {
         const files = backend.pruneLogs?.(Number(days)) || 0;
-        if (files > 0) console.log(`${backend.name} audit log: ${files} file(s) older than ${days} days removed`);
+        if (files > 0)
+          console.log(
+            `${backend.name} audit log: ${files} file(s) older than ${days} days removed`,
+          );
       }
       const sessions = Session.pruneSessions(getDb(), days);
       if (sessions.changes > 0) {
@@ -445,7 +448,7 @@ async function main() {
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dns', dnsRoutes);
   app.use('/api/dhcp/rogue', rogueDhcpRoutes);
-  app.use('/api/dhcp/server', dhcpBackendRoutes);
+  app.use('/api/backend-stack', backendStackRoutes);
   app.use('/api/devices', deviceRoutes);
   app.use('/api/dhcp', dhcpRoutes);
   app.use('/api/workspace', workspaceRoutes);

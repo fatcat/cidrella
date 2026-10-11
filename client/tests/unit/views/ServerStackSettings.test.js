@@ -1,7 +1,7 @@
 /**
- * Settings > DHCP > Server: shows which server serves DHCP and what a switch
- * gains and loses, asks before switching, and refreshes the feature switches
- * after one.
+ * Settings > General > Servers: shows which stack serves DNS and DHCP, each
+ * stack's daemons and whether they are installed, what a switch gains and
+ * loses, asks before switching, and refreshes the feature switches after one.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
@@ -32,17 +32,26 @@ vi.mock('../../../src/components/ConfirmDialog.vue', () => ({
   },
 }));
 
-const DhcpServerSettings = (await import('../../../src/views/settings/DhcpServerSettings.vue'))
+const ServerStackSettings = (await import('../../../src/views/settings/ServerStackSettings.vue'))
   .default;
 
 const STATE = {
   current: 'dnsmasq',
   label: 'dnsmasq',
   switching: false,
+  stacks: [
+    { name: 'dnsmasq', label: 'dnsmasq', daemons: ['dnsmasq'], installed: { ok: true } },
+    {
+      name: 'pdns-kea',
+      label: 'PowerDNS + Kea',
+      daemons: ['PowerDNS', 'Kea', 'radvd'],
+      installed: { ok: true },
+    },
+  ],
   targets: [
     {
-      name: 'kea',
-      label: 'Kea',
+      name: 'pdns-kea',
+      label: 'PowerDNS + Kea',
       blocked: null,
       gained: [
         { id: 'dhcp-relay', label: 'Subnets behind a DHCP relay' },
@@ -59,14 +68,18 @@ beforeEach(() => {
   api.get.mockResolvedValue({ data: STATE });
 });
 
-const switchButton = (w) => w.findAll('button').find((b) => b.text() === 'Switch to Kea');
+const switchButton = (w) =>
+  w.findAll('button').find((b) => b.text() === 'Switch to PowerDNS + Kea');
 
-describe('DhcpServerSettings', () => {
-  it('names the server and what Kea would add', async () => {
-    const w = mount(DhcpServerSettings);
+describe('ServerStackSettings', () => {
+  it('shows both stacks, the one serving, and what PowerDNS + Kea would add', async () => {
+    const w = mount(ServerStackSettings);
     await flushPromises();
-    expect(api.get).toHaveBeenCalledWith('/dhcp/server');
-    expect(w.text()).toContain('dnsmasq serves DHCP');
+    expect(api.get).toHaveBeenCalledWith('/backend-stack');
+    const cards = w.findAll('[data-track="server-stack-card"]');
+    expect(cards.map((c) => c.attributes('data-stack'))).toEqual(['dnsmasq', 'pdns-kea']);
+    expect(cards[0].text()).toContain('Serving now');
+    expect(cards[1].text()).toContain('PowerDNS, Kea, radvd');
     expect(w.text()).toContain('Adds Subnets behind a DHCP relay, DHCP audit log');
     expect(w.text()).not.toContain('Loses');
     expect(switchButton(w).attributes('disabled')).toBeUndefined();
@@ -77,21 +90,29 @@ describe('DhcpServerSettings', () => {
       data: {
         ...STATE,
         targets: [
-          { ...STATE.targets[0], blocked: 'Kea is not installed: kea-dhcp4 was not found' },
+          { ...STATE.targets[0], blocked: 'radvd is not installed: radvd was not found' },
+        ],
+        stacks: [
+          STATE.stacks[0],
+          {
+            ...STATE.stacks[1],
+            installed: { ok: false, reason: 'radvd is not installed: radvd was not found' },
+          },
         ],
       },
     });
-    const w = mount(DhcpServerSettings);
+    const w = mount(ServerStackSettings);
     await flushPromises();
-    expect(w.find('[data-track="dhcp-server-blocked"]').text()).toBe(
-      'Kea is not installed: kea-dhcp4 was not found',
+    expect(w.find('[data-track="server-stack-blocked"]').text()).toBe(
+      'radvd is not installed: radvd was not found',
     );
+    expect(w.findAll('[data-track="server-stack-card"]')[1].text()).toContain('Not installed');
     expect(switchButton(w).attributes('disabled')).toBeDefined();
   });
 
   it('lets only an administrator switch', async () => {
     auth.isAdmin = false;
-    const w = mount(DhcpServerSettings);
+    const w = mount(ServerStackSettings);
     await flushPromises();
     expect(switchButton(w).attributes('disabled')).toBeDefined();
     expect(w.text()).toContain('Only an administrator can switch.');
@@ -99,24 +120,26 @@ describe('DhcpServerSettings', () => {
 
   it('asks first, switches, then reloads the server and the features', async () => {
     api.post.mockResolvedValue({
-      data: { from: 'dnsmasq', to: 'kea', leases: 3, added: 3, failed: [], missing: [] },
+      data: { from: 'dnsmasq', to: 'pdns-kea', leases: 3, added: 3, failed: [], missing: [] },
     });
-    const w = mount(DhcpServerSettings);
+    const w = mount(ServerStackSettings);
     await flushPromises();
     await switchButton(w).trigger('click');
-    expect(w.find('.confirm h2').text()).toBe('Switch DHCP to Kea?');
+    expect(w.find('.confirm h2').text()).toBe('Switch to PowerDNS + Kea?');
     expect(api.post).not.toHaveBeenCalled();
 
-    api.get.mockResolvedValue({ data: { ...STATE, current: 'kea', label: 'Kea', targets: [] } });
+    api.get.mockResolvedValue({
+      data: { ...STATE, current: 'pdns-kea', label: 'PowerDNS + Kea', targets: [] },
+    });
     await w.find('.go').trigger('click');
     await flushPromises();
-    expect(api.post).toHaveBeenCalledWith('/dhcp/server', { target: 'kea' });
+    expect(api.post).toHaveBeenCalledWith('/backend-stack', { stack: 'pdns-kea' });
     expect(features.reload).toHaveBeenCalled();
-    expect(w.text()).toContain('Kea serves DHCP');
+    expect(w.text()).toContain('PowerDNS + Kea serves DNS and DHCP');
     expect(toast.add).toHaveBeenCalledWith(
       expect.objectContaining({
         severity: 'success',
-        detail: 'Kea serves DHCP. 3 of 3 lease(s) moved.',
+        detail: 'PowerDNS + Kea serves DNS and DHCP. 3 of 3 lease(s) moved.',
       }),
     );
   });
@@ -131,22 +154,22 @@ describe('DhcpServerSettings', () => {
         snapshot: '/var/lib/cidrella/handover/x.json',
       },
     });
-    const w = mount(DhcpServerSettings);
+    const w = mount(ServerStackSettings);
     await flushPromises();
     await switchButton(w).trigger('click');
     await w.find('.go').trigger('click');
     await flushPromises();
-    const outcome = w.find('[data-track="dhcp-server-outcome"]').text();
-    expect(outcome).toContain('Kea refused 1 lease(s): 10.0.0.9 (no subnet)');
+    const outcome = w.find('[data-track="server-stack-outcome"]').text();
+    expect(outcome).toContain('PowerDNS + Kea refused 1 lease(s): 10.0.0.9 (no subnet)');
     expect(outcome).toContain('/var/lib/cidrella/handover/x.json');
     expect(toast.add).toHaveBeenCalledWith(expect.objectContaining({ severity: 'warn' }));
   });
 
   it('says why a switch stopped', async () => {
     api.post.mockRejectedValue({
-      response: { data: { error: 'The switch to Kea stopped (serve): no sockets.' } },
+      response: { data: { error: 'The switch to PowerDNS + Kea stopped (start): no sockets.' } },
     });
-    const w = mount(DhcpServerSettings);
+    const w = mount(ServerStackSettings);
     await flushPromises();
     await switchButton(w).trigger('click');
     await w.find('.go').trigger('click');

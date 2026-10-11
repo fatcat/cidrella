@@ -1,0 +1,44 @@
+# PowerDNS Recursor, in dnsmasq's place behind CIDRella's DNS proxy: it sends
+# CIDRella's zones to Authoritative and everything else to CIDRella's
+# forwarder. Not enabled: it runs only while PowerDNS is CIDRella's DNS
+# server, and CIDRella starts and stops it itself (backends/pdns,
+# polkit-gated systemctl). The paths below must agree with
+# server/src/backends/pdns/paths.js.
+[Unit]
+Description=CIDRella PowerDNS Recursor
+After=network-online.target cidrella-pdns-auth.service
+Wants=network-online.target
+Documentation=https://github.com/fatcat/cidrella
+
+[Service]
+Type=notify
+User=cidrella
+Group=cidrella
+ExecStartPre=/bin/mkdir -p /var/lib/cidrella/pdns/run
+ExecStart=/usr/sbin/pdns_recursor --config-dir=/var/lib/cidrella/pdns/recursor --daemon=no --write-pid=no --disable-syslog --log-timestamp=no
+Restart=on-failure
+RestartSec=3
+UMask=0027
+
+# Capabilities required:
+#   CAP_NET_BIND_SERVICE - bind port 53 on the LAN in proxy bypass mode
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+CapabilityBoundingSet=CAP_NET_BIND_SERVICE
+
+# Same sandbox as cidrella-kea@.service.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cidrella/pdns
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectClock=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+NoNewPrivileges=true
+RemoveIPC=true

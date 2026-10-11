@@ -175,6 +175,16 @@ async function start() {
       return;
     }
 
+    // The servers first: interfaces are then written for the stack that
+    // serves them (a switch refuses interface changes while it runs).
+    if (setup.draft.stack) {
+      const servers = await setup.loadServers();
+      if (servers && servers.current !== setup.draft.stack) {
+        progress.value = `Switching to ${setup.stackLabelOf(setup.draft.stack)}`;
+        await api.post('/backend-stack', { stack: setup.draft.stack });
+      }
+    }
+
     progress.value = 'Applying the deployment';
     await api.put('/interfaces/config', setup.deploymentPayload);
     await subnets.updateSetting('default_gateway_position', setup.draft.gatewayPosition);
@@ -415,6 +425,13 @@ async function start() {
 .fr-card[aria-pressed='true'] {
   border-color: var(--cid-primary-color);
   background: color-mix(in srgb, var(--cid-primary-color) 12%, var(--cid-surface-card));
+}
+.fr-card:disabled {
+  cursor: not-allowed;
+  opacity: 0.6;
+}
+.fr-card:disabled:hover {
+  border-color: var(--cid-surface-border);
 }
 .fr-card:focus-visible {
   outline: 2px solid var(--cid-primary-color);

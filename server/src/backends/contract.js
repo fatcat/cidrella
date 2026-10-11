@@ -42,7 +42,8 @@ export const ROLES = Object.freeze(['dns', 'dhcp', 'ra']);
 
 /**
  * DNS role.
- * - applyZones(db, opts) -> ApplyResult: zones and records
+ * - applyZones(db, opts) -> ApplyResult, or a Promise of it: zones and
+ *   records (PowerDNS writes them over HTTP)
  * - applyResolver(db, opts) -> ApplyResult: forwarders, recursion, DNSSEC
  * - applyListen(db, opts) -> ApplyResult: listen addresses, ports, interfaces
  * - onClockSynchronized() -> void: the system clock is now trustworthy
@@ -51,6 +52,9 @@ export const ROLES = Object.freeze(['dns', 'dhcp', 'ra']);
  *   it serves instead, so the UI never shows a TTL nobody receives.
  * - retireLegacyArtifacts?() -> boolean: optional; clear files an older
  *   release left that would serve stale data
+ * - forwardsUnknownItself: boolean property; whether a zone set to forward
+ *   unknown names sends them upstream without help (dnsmasq), or answers
+ *   them NXDOMAIN and leaves the DNS proxy to ask again (PowerDNS)
  */
 export const DNS_OPS = Object.freeze([
   'applyZones',
@@ -94,8 +98,9 @@ export const DHCP_OPS = Object.freeze([
 export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
 
 /**
- * Per process (a backend filling two roles is one service).
- * - status() -> { name, running, restartPending }
+ * Per process (a backend filling two roles is one service). Each also
+ * carries `label`, its name as the UI shows it (dnsmasq, Kea, PowerDNS).
+ * - status() -> { name, label, running, restartPending }
  * - capabilities() -> { [featureId]: boolean } for every feature of the roles
  *   it fills (backends/features.js; build it with declareSupport)
  * - capabilityNotes?() -> { [featureId]: string }: optional; why a feature is
@@ -113,14 +118,20 @@ export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
  *   `path` is read on every poll, so a log that moves to a new file is
  *   followed (createLogFollower in utils/log-reader.js). dhcpDirection
  *   answers 'client', 'server' or null. Readers take the DNS role's log for
- *   queries and the DHCP role's for DHCP.
+ *   queries and the DHCP role's for DHCP. `clearable: false` marks an audit
+ *   log the log viewer must not truncate.
  *
  * Optional, for a backend that can be switched to and from
- * (services/dhcp-backend-switch.js):
+ * (services/stack-switch.js):
  * - installed?() -> { ok, reason? }: can it run on this host; absent means yes
+ * - stage?(db) -> Promise: before the other stack stops, write and check the
+ *   whole configuration and start whatever binds no port the other stack
+ *   holds; activate() starts the rest once it has stopped
  * - awaitRunning?() -> Promise: resolves once it runs its configuration and,
  *   when it serves, answers on its sockets; rejects with the reason
  * - stop?() -> void: stop a daemon that fills no role any more
+ * - awaitStopped?(opts) -> Promise: resolves once every daemon has exited, so
+ *   another backend can bind its ports; rejects naming one that has not
  * - pruneLogs?(days) -> number: delete audit logs of its own (Kea's legal
  *   log) older than the audit retention; how many files went
  */
@@ -233,12 +244,13 @@ export function featureReportFor(serviceFor) {
     const { supported, notes } = answers(service);
     const ok = supported[f.id] === true;
     const note = notes[f.id] || null;
-    const base = `${f.label} is not available with ${service.name}.`;
+    const base = `${f.label} is not available with ${service.label || service.name}.`;
     return {
       id: f.id,
       role: f.role,
       label: f.label,
       backend: service.name,
+      backendLabel: service.label || service.name,
       supported: ok,
       note,
       reason: ok ? null : note ? `${base} ${note}` : base,

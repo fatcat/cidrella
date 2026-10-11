@@ -12,8 +12,10 @@ import fs from 'fs';
 import { syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { BACKEND_RESTART_MARKER } from '../config/defaults.js';
 
+// A Promise when the backend writes zones over HTTP (PowerDNS); the
+// after-commit runner waits for it.
 export function applyDns(db) {
-  getDnsBackend().applyZones(db);
+  return getDnsBackend().applyZones(db);
 }
 
 export function applyResolver(db) {
@@ -34,8 +36,8 @@ function renderDhcp(db) {
 // scope files are written and before the backend takes them, so a failed
 // write or validation leaves the records alone. Stored leases already carry
 // their effective names (ADR 005), the vendor fallback included. When another
-// backend sends the Router Advertisements (Kea serving DHCP, dnsmasq the RA),
-// the DHCPv6 scopes go to it too.
+// backend sends the Router Advertisements (radvd beside Kea), the DHCPv6
+// scopes go to it too.
 export function applyDhcp(db) {
   const { dhcp, result, ra, raResult } = renderDhcp(db);
   const leases = db

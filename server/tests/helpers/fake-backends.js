@@ -162,7 +162,8 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
         'restart',
       ),
     },
-    status: () => ({ name, running: true, restartPending: false }),
+    label: name,
+    status: () => ({ name, label: name, running: true, restartPending: false }),
     // Only the features of the roles it fills, so a test may narrow `roles`.
     capabilities: () =>
       declareSupport(backend.roles, {
@@ -209,11 +210,15 @@ export function fakeBackendsModule(options) {
     getDhcpBackend: () => backend.dhcp,
     getRaBackend: () => backend,
     getBackend: () => backend,
-    DHCP_BACKENDS: ['dnsmasq', 'kea'],
-    DEFAULT_DHCP_BACKEND: 'dnsmasq',
-    dhcpBackendName: () => 'dnsmasq',
+    STACKS: {
+      dnsmasq: { dns: 'dnsmasq', dhcp: 'dnsmasq', ra: 'dnsmasq' },
+      'pdns-kea': { dns: 'pdns', dhcp: 'kea', ra: 'radvd' },
+    },
+    DEFAULT_STACK: 'dnsmasq',
+    stackName: () => 'dnsmasq',
+    stackServices: () => [backend],
     servesDhcp: () => true,
-    selectDhcpBackend: () => {},
+    selectStack: () => {},
     setDhcpServing: () => {},
     onBackendChanged: () => () => {},
     uniqueServices: () => [backend],

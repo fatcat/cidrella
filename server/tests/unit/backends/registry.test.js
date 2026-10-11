@@ -1,10 +1,11 @@
 import { describe, it, expect, afterEach, vi } from 'vitest';
 import {
-  DHCP_BACKENDS,
-  dhcpBackendName,
+  STACKS,
   getBackend,
   onBackendChanged,
-  selectDhcpBackend,
+  selectStack,
+  stackName,
+  stackServices,
   servesDhcp,
   setDhcpServing,
   getService,
@@ -51,46 +52,56 @@ describe('backend registry', () => {
   });
 });
 
-describe('choosing the DHCP backend', () => {
+describe('choosing the stack', () => {
   afterEach(() => {
-    selectDhcpBackend('dnsmasq');
-    for (const name of DHCP_BACKENDS) setDhcpServing(name, true);
+    selectStack('dnsmasq');
+    setDhcpServing('kea', true);
   });
 
-  it('moves only the DHCP role; dnsmasq keeps DNS and the RAs', () => {
-    selectDhcpBackend('kea');
-    expect(dhcpBackendName()).toBe('kea');
+  it('moves every role: PowerDNS for DNS, Kea for DHCP, radvd for the RAs', () => {
+    selectStack('pdns-kea');
+    expect(stackName()).toBe('pdns-kea');
+    expect(getService('dns')).toBe(getBackend('pdns'));
     expect(getService('dhcp')).toBe(getBackend('kea'));
-    expect(getService('dns')).toBe(getBackend('dnsmasq'));
-    expect(getRaBackend()).toBe(getBackend('dnsmasq'));
-    expect(uniqueServices()).toEqual([getBackend('dnsmasq'), getBackend('kea')]);
+    expect(getRaBackend()).toBe(getBackend('radvd'));
+    expect(uniqueServices()).toEqual([getBackend('pdns'), getBackend('kea'), getBackend('radvd')]);
+    expect(stackServices('pdns-kea')).toEqual(uniqueServices());
+    expect(stackServices('dnsmasq')).toEqual([getBackend('dnsmasq')]);
     expect(supports('forensic-log')).toBe(true);
     expect(supports('ra')).toBe(true);
+    expect(supports('dns-record-ttl')).toBe(true);
   });
 
-  it('serves DHCP from the selected backend only, and not while held quiet', () => {
+  it('names a backend for every role in every stack', () => {
+    for (const roles of Object.values(STACKS)) {
+      expect(Object.keys(roles).sort()).toEqual(['dhcp', 'dns', 'ra']);
+    }
+  });
+
+  it("serves DHCP from the stack's DHCP backend only, and not while held quiet", () => {
     expect(servesDhcp('dnsmasq')).toBe(true);
     expect(servesDhcp('kea')).toBe(false);
-    setDhcpServing('dnsmasq', false);
+    selectStack('pdns-kea');
     expect(servesDhcp('dnsmasq')).toBe(false);
-    selectDhcpBackend('kea');
     expect(servesDhcp('kea')).toBe(true);
+    setDhcpServing('kea', false);
+    expect(servesDhcp('kea')).toBe(false);
   });
 
-  it('tells listeners when the role moves, and only then', () => {
+  it('tells listeners of each role that moved, and only then', () => {
     const heard = vi.fn();
     const stop = onBackendChanged(heard);
-    selectDhcpBackend('dnsmasq');
+    selectStack('dnsmasq');
     expect(heard).not.toHaveBeenCalled();
-    selectDhcpBackend('kea');
-    expect(heard).toHaveBeenCalledWith('dhcp');
+    selectStack('pdns-kea');
+    expect(heard.mock.calls.map(([role]) => role)).toEqual(['dns', 'dhcp', 'ra']);
     stop();
-    selectDhcpBackend('dnsmasq');
-    expect(heard).toHaveBeenCalledTimes(1);
+    selectStack('dnsmasq');
+    expect(heard).toHaveBeenCalledTimes(3);
   });
 
-  it('refuses a backend it does not know', () => {
-    expect(() => selectDhcpBackend('isc-dhcpd')).toThrow('Unknown DHCP backend: isc-dhcpd');
-    expect(dhcpBackendName()).toBe('dnsmasq');
+  it('refuses a stack it does not know', () => {
+    expect(() => selectStack('bind-isc')).toThrow('Unknown backend stack: bind-isc');
+    expect(stackName()).toBe('dnsmasq');
   });
 });

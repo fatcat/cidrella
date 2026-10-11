@@ -6,7 +6,125 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
-## v0.5.2 — 2026-10-07
+## v0.5.3 — 2026-10-10 [pre-release]
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+
+The PowerDNS + Kea stack, selectable. A development line, like 0.5.2:
+release candidates only, shipped as 0.6.0. dnsmasq stays the default; an
+upgrade changes nothing until someone switches.
+
+### New
+
+- **Choose the servers: dnsmasq, or PowerDNS + Kea.** Settings > General >
+  Servers shows which stack answers DNS and DHCP, whether each is
+  installed, and what a switch adds and loses. Switch moves every role at
+  once, with the leases (IPv4 and IPv6, the DHCPv6 server DUID kept, so
+  clients keep their addresses). DNS and DHCP stop for a few seconds while
+  the servers change over; every zone must answer on the new stack before
+  the switch commits (any lease it does not show is reported), and if it does not come
+  up the old one takes over again. The setup wizard offers the same choice
+  and switches before it writes the interfaces. `/api/backend-stack` is the
+  API (admin only, audited).
+- **Router Advertisements on the PowerDNS + Kea stack come from radvd**,
+  with the flags, lifetimes and DNS options dnsmasq sends. It runs only
+  while a DHCPv6 scope has something to advertise. Native installs and
+  updates install Debian's `radvd`, mask its own unit and add
+  `cidrella-radvd` (off); the Docker image carries Alpine's.
+- **A PowerDNS backend for DNS.** CIDRella's zones go to PowerDNS
+  Authoritative through its HTTP API, and PowerDNS Recursor takes dnsmasq's
+  place behind the DNS proxy: local zones to Authoritative, everything else
+  to CIDRella's forwarder, so encrypted upstreams, the blocklist and query
+  logging work as they do now. Records keep their own TTLs, and zones answer
+  SOA and NS. An edit answers at once: Recursor's cache under a changed zone
+  is wiped. DNSSEC validation works as with dnsmasq, lenient on signature
+  times until the clock is synchronized. Authoritative's database is
+  rebuilt from CIDRella's and is not part of a backup.
+- **PowerDNS answers what dnsmasq answered without being told.** A reverse
+  lookup for an address an A or AAAA record names inside a CIDRella network
+  gets that name, in the CIDRella reverse zone covering it, or in a zone
+  PowerDNS keeps for the network (private space) or for that one address
+  (public space, so the rest still resolves upstream). A stored PTR wins.
+  The reserved names (`localhost`, `invalid`, the private reverse zones and
+  the like) answer locally, and `home.arpa`, `internal` and `local` too
+  while every upstream is public. A zone set to forward unknown names
+  upstream works: on NXDOMAIN the DNS proxy asks the forwarder.
+- **PowerDNS ships with CIDRella.** A native install or update adds
+  PowerDNS's repository (Authoritative 5.0 and Recursor 5.3, the signing
+  key checked by fingerprint), installs `pdns-server`,
+  `pdns-backend-sqlite3` and `pdns-recursor`, masks their own units so they
+  never take port 53, and adds `cidrella-pdns-auth` and
+  `cidrella-pdns-recursor`, which stay off. If the install fails, the update
+  goes on and dnsmasq keeps serving. The Docker image carries Alpine's
+  PowerDNS (Authoritative 5.0, Recursor 5.4), down until switched to.
+- **Settings > Logs has a tab per role**, named for the server filling it.
+  A server that keeps no log to show (PowerDNS) says so, and Kea's DHCP
+  audit log cannot be cleared from there.
+- The header and Analytics chips name each server (PowerDNS, Kea, radvd),
+  and radvd shows Idle rather than Stopped when it has nothing to
+  advertise.
+
+### Fixed
+
+- CIDRella no longer sends HSTS. Its certificate is self-signed until you upload one, and HSTS on a
+  self-signed host turned the browser's certificate warning into one you cannot click past,
+  so the appliance could only be reached by IP address. It now sends `max-age=0`. A browser
+  that already holds an entry from an earlier release drops it only on a visit with a trusted
+  certificate; otherwise clear it by hand (`chrome://net-internals/#hsts` in Chrome or Brave,
+  "Forget About This Site" in Firefox).
+- Docker: dnsmasq now runs as the `cidrella` account. It used to drop to its
+  default user, so every reload and stop signal from CIDRella was refused and
+  a configuration change never reached the running dnsmasq until the
+  container restarted.
+- On a stack where DHCP has its own server, an interface change now reaches
+  it (and radvd) as well as the DNS server.
+- The encrypted forwarder now truncates a UDP answer larger than the buffer
+  the asker offered (TC set, so it asks again over TCP). It used to send the
+  whole answer, and PowerDNS Recursor drops one that size: every DNSKEY over
+  1232 bytes failed, so with DNSSEC on every outside name answered SERVFAIL
+  on the PowerDNS + Kea stack.
+- After a reboot the DNS proxy now listens on an IPv6 address that was not
+  usable yet when CIDRella started (still in Duplicate Address Detection).
+  It used to log `EADDRNOTAVAIL` and never try again, so IPv6 clients got no
+  DNS until CIDRella restarted. It now binds again, for about a minute.
+
+### Upgrade notes
+
+- The DHCP-only switch of 0.5.2 (Kea answering DHCP beside dnsmasq's DNS,
+  and `/api/dhcp/server`) is gone. An install left on it comes back on
+  dnsmasq for both at boot, with Kea's leases carried over; switch to
+  PowerDNS + Kea from Settings > General > Servers to run Kea again.
+- `cidrella-dnsmasq.service` gains a start condition: it does not start
+  while `/var/lib/cidrella/runtime/dnsmasq.disabled` exists, which the
+  switch to PowerDNS + Kea writes. The update installs the new unit file
+  and never restarts dnsmasq.
+- Rolling back to a release without the stack switch while PowerDNS + Kea
+  serves is refused; `cidrella-rollback --force` stops PowerDNS, Kea and
+  radvd and starts dnsmasq first, and the leases Kea holds are lost. Switch
+  back to dnsmasq in Settings first to keep them.
+
+### Known issues
+
+These work with dnsmasq and not yet with PowerDNS + Kea:
+
+- A reverse lookup for an address outside every CIDRella network (dnsmasq
+  answers it from its hosts file).
+- Names only dnsmasq knows: SLAAC hosts (`ra-names`) and bare DHCP
+  hostnames.
+- A record named outside its zone (an absolute name ending in a dot) is
+  not served.
+- A name under a zone that forwards unknown names upstream is not retried
+  in bypass mode, and the retried answer is not DNSSEC-validated.
+- Not yet verified on hardware: a client's Renew and Rebind across a
+  switch in each direction.
+
+---
+
+## v0.5.2 — 2026-10-07 [pre-release]
 
 ```yaml
 min_from: "0.4.17"
@@ -134,7 +252,7 @@ PowerDNS + Kea stack (0.5.3). Until that stack lands, Kea is not offered.
 
 ---
 
-## v0.5.1 — 2026-10-09
+## v0.5.1 — 2026-10-09 [pre-release]
 
 ```yaml
 min_from: "0.4.17"

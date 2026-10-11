@@ -38,7 +38,7 @@ import {
 
 // Hook name → function(db), registered by index.js (and the test helpers)
 // from services/backend-apply.js HOOK_HANDLERS. All hooks must accept a db
-// handle and return void.
+// handle, and return nothing or a Promise.
 // Ordering matters when one artifact depends on another: DHCP scope emit reads
 // freshly synced reservations, so run DNS-side regen first, then DHCP. The
 // resolver config (dnsmasq.conf) fires last and restarts the backend after.
@@ -75,35 +75,53 @@ const hookState = Object.fromEntries(
   HOOK_ORDER.map((name) => [name, { running: false, pending: false }]),
 );
 
+// holdHooks() count: while above zero no hook starts; each one asked for is
+// remembered (pending) and runs when the last hold is released.
+let holds = 0;
+
 function fireHook(name) {
   const st = hookState[name];
-  if (st.running) {
+  if (st.running || holds > 0) {
     st.pending = true;
     return;
   }
   st.running = true;
   st.pending = false;
-  // Do the work synchronously, hooks are synchronous SQLite + dnsmasq calls.
+  // Do the work synchronously, hooks are synchronous SQLite + dnsmasq calls,
+  // except one that writes over the network (PowerDNS zones), which returns
+  // a Promise: the hook stays running until it settles, so two never overlap.
   // queueMicrotask lets the res.on('finish') handler return before we start,
   // so the hook never delays flushing the HTTP response.
   queueMicrotask(() => {
     const db = getDb();
     const generation = markApplying(db, name)?.desired_generation || 0;
-    try {
-      // A known hook with nothing registered is a wiring bug at boot. Failing
-      // the generation keeps the work pending for resumePendingRegeneration.
-      if (!handlers[name]) throw new Error(`No handler registered for ${name}`);
-      handlers[name](db);
-      markApplied(db, name, generation);
-    } catch (err) {
+    const fail = (err) => {
       markFailed(db, name, err?.message || err);
       console.error(`[afterCommit] ${name} failed:`, err?.message || err);
-    } finally {
+    };
+    const finish = () => {
       st.running = false;
       // If a new request registered while we were running, run once more so
       // it's guaranteed visible before anyone sees the "quiet" state.
       if (st.pending) fireHook(name);
+    };
+    try {
+      // A known hook with nothing registered is a wiring bug at boot. Failing
+      // the generation keeps the work pending for resumePendingRegeneration.
+      if (!handlers[name]) throw new Error(`No handler registered for ${name}`);
+      const result = handlers[name](db);
+      if (typeof result?.then === 'function') {
+        result
+          .then(() => markApplied(db, name, generation))
+          .catch(fail)
+          .finally(finish);
+        return;
+      }
+      markApplied(db, name, generation);
+    } catch (err) {
+      fail(err);
     }
+    finish();
   });
 }
 
@@ -139,6 +157,29 @@ export function queueRegen(hookName) {
   assertKnownHook(hookName);
   enqueueGeneration(getDb(), hookName);
   fireHook(hookName);
+}
+
+/**
+ * Keep every hook from running, for a backend stack switch: it waits for the
+ * hooks already running (a PowerDNS zone write included) and resolves with
+ * the release. Hooks asked for meanwhile run once the last hold is released,
+ * against whatever backend serves then.
+ */
+export async function holdHooks({ intervalMs = 50 } = {}) {
+  holds++;
+  while (HOOK_ORDER.some((name) => hookState[name].running)) {
+    await new Promise((resolve) => setTimeout(resolve, intervalMs));
+  }
+  let released = false;
+  return () => {
+    if (released) return;
+    released = true;
+    holds--;
+    if (holds > 0) return;
+    for (const name of HOOK_ORDER) {
+      if (hookState[name].pending) fireHook(name);
+    }
+  };
 }
 
 export function resumePendingRegeneration() {

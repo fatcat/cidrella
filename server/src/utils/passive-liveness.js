@@ -17,7 +17,7 @@ import {
 } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from './after-commit.js';
 import { PASSIVE_LIVENESS_POLL_MS, PASSIVE_LIVENESS_STALE_MS } from '../config/defaults.js';
-import { getDhcpBackend, getService } from '../backends/index.js';
+import { getDhcpBackend, getService, onBackendChanged } from '../backends/index.js';
 
 /**
  * Start the passive liveness watcher.
@@ -25,8 +25,18 @@ import { getDhcpBackend, getService } from '../backends/index.js';
  * Without a log to read, only the staleness sweep runs.
  */
 export function startPassiveLivenessWatcher(db) {
-  const source = getService('dns').logSource();
-  const log = createLogFollower(source);
+  // Follows the DNS role to another backend after a stack switch. PowerDNS
+  // keeps no query log; the DNS proxy records liveness for every query itself.
+  let source;
+  let log;
+  const bind = () => {
+    source = getService('dns').logSource();
+    log = createLogFollower(source);
+  };
+  bind();
+  onBackendChanged((role) => {
+    if (role === 'dns') bind();
+  });
   let lastStaleCheck = Date.now();
   let sweeping = false;
 
@@ -38,7 +48,7 @@ export function startPassiveLivenessWatcher(db) {
     const ipsThisCycle = new Set();
 
     for (const line of lines) {
-      const ip = source.querySourceIp(line);
+      const ip = source?.querySourceIp(line);
       if (!ip) continue;
       if (ip === '127.0.0.1' || ip === '::1') continue;
       ipsThisCycle.add(ip);

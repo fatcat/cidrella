@@ -37,6 +37,8 @@ cidrella-break-glass.pub
 # Shared shell libraries sourced by install/update/rollback
 lib/dnsmasq-perms.sh
 lib/kea-install.sh
+lib/pdns-install.sh
+lib/radvd-install.sh
 lib/log.sh
 lib/preflight.sh
 lib/rotation.sh
@@ -52,5 +54,8 @@ sudoers/cidrella
 systemd/cidrella.service
 systemd/cidrella-dnsmasq.service
 systemd/cidrella-kea@.service
+systemd/cidrella-pdns-auth.service
+systemd/cidrella-pdns-recursor.service
+systemd/cidrella-radvd.service
 systemd/cidrella-anomaly.service
 systemd/cidrella-update@.service

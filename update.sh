@@ -1451,7 +1451,15 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" ] && [ -f /etc/s
     emit_event switchover pass unit=cidrella-anomaly.service
   fi
 fi
-# Note: cidrella-dnsmasq.service is deliberately NOT touched (dnsmasq keeps running).
+# cidrella-dnsmasq.service is refreshed (v0.5.3 added its start condition,
+# which keeps it down while the PowerDNS + Kea stack serves) but never
+# restarted: dnsmasq keeps running. Only where it is ours (install.sh's
+# "own" mode installed it).
+if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-dnsmasq.service" ] && [ -f /etc/systemd/system/cidrella-dnsmasq.service ]; then
+  if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-dnsmasq.service" /etc/systemd/system/cidrella-dnsmasq.service)" = "changed" ]; then
+    emit_event switchover pass unit=cidrella-dnsmasq.service
+  fi
+fi
 
 # v0.4.11+ templated update worker unit. install_systemd_unit is idempotent
 # so running this on every update is free.
@@ -1476,6 +1484,34 @@ if [ -f "$TARGET_SLOT/scripts/lib/kea-install.sh" ]; then
   fi
 fi
 
+# v0.5.3+: PowerDNS, installed on hosts that predate it, and its units
+# refreshed. Never restarted here, the same rule as dnsmasq and Kea.
+# Optional, so a failure warns and the update goes on.
+if [ -f "$TARGET_SLOT/scripts/lib/pdns-install.sh" ]; then
+  # shellcheck source=scripts/lib/pdns-install.sh
+  source "$TARGET_SLOT/scripts/lib/pdns-install.sh"
+  if install_pdns "$TARGET_SLOT"; then
+    emit_event switchover pass pdns=installed
+  else
+    warn "PowerDNS could not be installed; dnsmasq keeps serving DNS"
+    emit_event switchover warn pdns=install-failed
+  fi
+fi
+
+# v0.5.3+: radvd, which sends the Router Advertisements on the PowerDNS + Kea
+# stack. Never restarted here. Optional, so a failure warns and the update
+# goes on.
+if [ -f "$TARGET_SLOT/scripts/lib/radvd-install.sh" ]; then
+  # shellcheck source=scripts/lib/radvd-install.sh
+  source "$TARGET_SLOT/scripts/lib/radvd-install.sh"
+  if install_radvd "$TARGET_SLOT"; then
+    emit_event switchover pass radvd=installed
+  else
+    warn "radvd could not be installed; the PowerDNS + Kea stack cannot be selected"
+    emit_event switchover warn radvd=install-failed
+  fi
+fi
+
 # Update sudoers if present
 if [ -f "$TARGET_SLOT/scripts/sudoers/cidrella" ]; then
   cp "$TARGET_SLOT/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella
@@ -1497,7 +1533,7 @@ emit_event switchover pass "active_slot=$TARGET_SLOT"
 systemctl daemon-reload
 
 track_progress "switching" 90 "Restarting CIDRella..."
-info "Restarting cidrella service (dnsmasq stays running)..."
+info "Restarting cidrella service (DNS and DHCP daemons stay running)..."
 # Deliberately NOT fatal. This script runs under `set -euo pipefail` with
 # `trap on_error ERR`, so a bare `systemctl restart` that fails aborted the
 # whole update HERE, before PHASE 7, which is the only caller of the

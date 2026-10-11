@@ -1,9 +1,7 @@
 /**
- * dnsmasq while another backend (Kea) serves DHCP: it keeps sending the
- * Router Advertisements and answers no DHCP request. DHCPv6 ranges stay so
- * the RAs keep their M and O flags (a range is never rewritten as ra-only,
- * which dnsmasq still serves), DHCPv4 ranges go, and dhcp-ignore covers the
- * rest. Also the lease file a handover writes for dnsmasq to load.
+ * dnsmasq's side of a stack switch: the lease file a handover writes for it
+ * to load, and the file 0.5.2's mixed mode (Kea serving DHCP beside dnsmasq)
+ * left behind, which would make dnsmasq ignore every DHCP request.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
 import fs from 'fs';
@@ -41,50 +39,24 @@ const files = () =>
       .sort()
       .map((name) => [name, fs.readFileSync(path.join(confDir, name), 'utf8')]),
   );
-const ranges = (all) =>
-  Object.values(all)
-    .flatMap((text) => text.split('\n'))
-    .filter((line) => line.startsWith('dhcp-range='));
-
-describe('scope files while not serving', () => {
-  it('keeps the DHCPv6 ranges, drops DHCPv4, and ignores every request', () => {
+describe('the 0.5.2 not-serving file', () => {
+  it('is removed, and the scope files are the same as without it', () => {
     regenerateScopeConfigs(db, { confDir });
     const serving = files();
-    expect(serving['dhcp-not-serving.conf']).toBeUndefined();
-
-    expect(regenerateScopeConfigs(db, { confDir, serving: false })).toBe(true);
-    const quiet = files();
-    expect(quiet['dhcp-not-serving.conf']).toContain('dhcp-ignore=tag:!nosuchtag');
-    // IPv4: no range, so dnsmasq opens no DHCPv4 socket.
-    expect(ranges(quiet).some((line) => /10\.60\.0\./.test(line))).toBe(false);
-    // IPv6: every range as it was, so the RA flags do not change.
-    const v6Ranges = ranges(serving).filter((line) => line.includes('fd00:'));
-    expect(v6Ranges.length).toBeGreaterThan(0);
-    expect(ranges(quiet)).toEqual(v6Ranges);
-    // A stateful range is never turned into ra-only (which dnsmasq serves anyway).
-    expect(ranges(quiet).filter((line) => /fd00:63::/.test(line))).not.toEqual([]);
-    expect(ranges(quiet).some((line) => /fd00:63::.*ra-only/.test(line))).toBe(false);
-  });
-
-  it('goes back to serving with the same files it had', () => {
-    regenerateScopeConfigs(db, { confDir });
-    const serving = files();
-    regenerateScopeConfigs(db, { confDir, serving: false });
+    fs.writeFileSync(
+      path.join(confDir, 'dhcp-not-serving.conf'),
+      'dhcp-ignore=tag:!nosuchtag\n',
+    );
     expect(regenerateScopeConfigs(db, { confDir })).toBe(true);
     expect(files()).toEqual(serving);
     expect(regenerateScopeConfigs(db, { confDir })).toBe(false);
   });
 
-  it('empties the reservations, both families, and puts them back', () => {
+  it('keeps the reservations of both families', () => {
     regenerateReservations(db, { hostsDir });
-    const file = path.join(hostsDir, 'reservations.hosts');
-    const serving = fs.readFileSync(file, 'utf8');
-    expect(serving).toContain('10.60.0.50');
-    expect(serving).toContain('[fd00:63::50]');
-    expect(regenerateReservations(db, { hostsDir, serving: false })).toBe(true);
-    expect(fs.readFileSync(file, 'utf8')).toBe('');
-    expect(regenerateReservations(db, { hostsDir })).toBe(true);
-    expect(fs.readFileSync(file, 'utf8')).toBe(serving);
+    const text = fs.readFileSync(path.join(hostsDir, 'reservations.hosts'), 'utf8');
+    expect(text).toContain('10.60.0.50');
+    expect(text).toContain('[fd00:63::50]');
   });
 });
 

@@ -767,6 +767,34 @@ if [ -f "$INSTALL_DIR/scripts/lib/kea-install.sh" ]; then
   fi
 fi
 
+# v0.5.3+: PowerDNS Authoritative and Recursor, the other DNS server.
+# Installed and left off; dnsmasq serves DNS. Optional, like Kea.
+if [ -f "$INSTALL_DIR/scripts/lib/pdns-install.sh" ]; then
+  # shellcheck source=scripts/lib/pdns-install.sh
+  source "$INSTALL_DIR/scripts/lib/pdns-install.sh"
+  if install_pdns "$INSTALL_DIR"; then
+    ok "Installed PowerDNS (off; dnsmasq serves DNS)"
+    emit_event pdns pass
+  else
+    warn "PowerDNS was not installed; dnsmasq serves DNS"
+    emit_event pdns warn reason=install-failed
+  fi
+fi
+
+# v0.5.3+: radvd, which sends the Router Advertisements on the PowerDNS + Kea
+# stack. Installed and left off; dnsmasq sends them. Optional, like Kea.
+if [ -f "$INSTALL_DIR/scripts/lib/radvd-install.sh" ]; then
+  # shellcheck source=scripts/lib/radvd-install.sh
+  source "$INSTALL_DIR/scripts/lib/radvd-install.sh"
+  if install_radvd "$INSTALL_DIR"; then
+    ok "Installed radvd (off; dnsmasq sends the Router Advertisements)"
+    emit_event radvd pass
+  else
+    warn "radvd was not installed; the PowerDNS + Kea stack cannot be selected"
+    emit_event radvd warn reason=install-failed
+  fi
+fi
+
 # v0.4.15+: logrotate for dnsmasq.log. Prevents the unbounded growth that
 # inflated every backup to >1 GB before the 2026-04-21 hardening work.
 # Config uses copytruncate, so no restart or SIGUSR2 is needed.

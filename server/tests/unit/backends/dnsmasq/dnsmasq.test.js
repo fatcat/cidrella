@@ -19,19 +19,25 @@ function makeDb({
   zone = {},
   extraZones = [],
 } = {}) {
-  const zones = [{ id: 10, name: 'the-mcnultys.org', ...zone }, ...extraZones];
-  // The hosts writer reads records joined to their zone.
-  const inZone = (rows) => rows.map((row) => ({ zone_name: zones[0].name, ...row }));
-  aRecords = inZone(aRecords);
-  ptrRecords = inZone(ptrRecords);
+  const zones = [{ id: 10, name: 'the-mcnultys.org', type: 'forward', ...zone }, ...extraZones];
+  // The shared DNS model reads every record joined to its zone, in id order.
+  const records = [
+    ...aRecords.map((row) => ({ type: row.value.includes(':') ? 'AAAA' : 'A', ...row })),
+    ...otherRecords,
+    ...ptrRecords.map((row) => ({ type: 'PTR', ...row })),
+  ].map((row, i) => ({
+    id: i + 1,
+    zone_id: zones[0].id,
+    zone_name: zones[0].name,
+    zone_type: zones[0].type,
+    ...row,
+  }));
   return {
     prepare(sql) {
       return {
         all() {
+          if (sql.includes('FROM dns_records')) return records;
           if (sql.includes('FROM dns_zones')) return zones;
-          if (sql.includes("type IN ('A', 'AAAA')")) return aRecords;
-          if (sql.includes("type NOT IN ('A', 'AAAA', 'PTR')")) return otherRecords;
-          if (sql.includes("type = 'PTR'")) return ptrRecords;
           return [];
         },
       };

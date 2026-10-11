@@ -1,16 +1,34 @@
-<!-- Logging. Extracted from System.vue tab 11 (1:1): inner Tabs with a DNSmasq
-     tab (LogViewer component) and an Audit Log tab (DataTable + filters + pagination).
-     Loads audit filter options + audit log on mount. -->
+<!-- Logging: a tab per role (DNS, DHCP) showing the log of the server filling
+     it (GET /api/logs/sources, LogViewer), and an Audit Log tab (DataTable +
+     filters + pagination). Loads the sources, audit filter options and audit
+     log on mount. -->
 <template>
   <div>
-    <Tabs value="dnsmasq" class="logging-subtabs">
+    <Tabs v-model:value="activeTab" class="logging-subtabs">
       <TabList>
-        <Tab value="dnsmasq">DNSmasq</Tab>
-        <Tab value="audit">Audit Log</Tab>
+        <Tab
+          v-for="source in logSources"
+          :key="source.role"
+          :value="source.role"
+          :data-track="`logs-tab-${source.role}`"
+          >{{ ROLE_TITLE[source.role] }} ({{ source.label }})</Tab
+        >
+        <Tab value="audit" data-track="logs-tab-audit">Audit Log</Tab>
       </TabList>
       <TabPanels>
-        <TabPanel value="dnsmasq">
-          <LogViewer />
+        <TabPanel v-for="source in logSources" :key="source.role" :value="source.role">
+          <LogViewer
+            v-if="source.available"
+            :key="`${source.role}-${source.label}`"
+            :role="source.role"
+            :clearable="source.clearable"
+          />
+          <EmptyState
+            v-else
+            icon="pi-file"
+            :title="source.message"
+            description="Queries and leases are under Analytics and the Networks workspace."
+          />
         </TabPanel>
         <TabPanel value="audit">
           <div class="audit-section">
@@ -133,6 +151,19 @@ const LogViewer = defineAsyncComponent(() => import('../../components/LogViewer.
 
 const toast = useToast();
 
+const ROLE_TITLE = { dns: 'DNS', dhcp: 'DHCP' };
+const logSources = ref([]);
+const activeTab = ref('dns');
+
+async function loadLogSources() {
+  try {
+    logSources.value = (await api.get('/logs/sources')).data;
+  } catch (err) {
+    activeTab.value = 'audit';
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  }
+}
+
 // Audit Log
 const loadingAudit = ref(false);
 const auditLog = ref({ items: [], total: 0 });
@@ -233,6 +264,7 @@ function formatDetails(details) {
 }
 
 onMounted(() => {
+  loadLogSources();
   loadAuditFilterOptions();
   loadAuditLog();
 });

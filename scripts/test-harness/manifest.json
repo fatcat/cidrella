@@ -117,20 +117,22 @@
       "requires_fresh_host": true
     },
     {
-      "name": "kea-switch",
-      "file": "scripts/test-harness/scenarios/kea-switch.sh",
-      "description": "Install a PUBLISHED candidate (pre-)release carrying Kea (0.5.2+, via --candidate), then switch the DHCP server dnsmasq to Kea and back through POST /api/dhcp/server. Asserts Kea was installed and left off (ISC units masked, cidrella in group _kea), that each switch committed, that both Kea daemons ran while Kea served and stopped after, and that no switch marker is left.",
+      "name": "stack-switch",
+      "file": "scripts/test-harness/scenarios/stack-switch.sh",
+      "description": "Install a PUBLISHED candidate (pre-)release carrying the server stack switch (0.5.3+, via --candidate), then switch DNS and DHCP from dnsmasq to PowerDNS + Kea and back through POST /api/backend-stack, restarting CIDRella in between. Asserts the PowerDNS, Kea and radvd packages were installed and left off (distribution units masked), that each switch committed, that PowerDNS and both Kea daemons ran and dnsmasq did not while PowerDNS + Kea served, that the choice survived a restart, that DNS answered on each stack, how long the switch took, and that no switch marker or dnsmasq disable flag is left after switching back.",
       "catches": [
-        "Kea packaging regressions: ISC repository, key fingerprint, packages, the _kea group, the cidrella-kea@ unit",
-        "polkit rule gaps for the Kea units (start, stop, restart)",
-        "a switch that fails to start Kea, or to hand DHCP back to dnsmasq",
-        "Kea refusing the paths or capabilities the unit gives it"
+        "PowerDNS, Kea and radvd packaging regressions: repositories, keys, packages, groups, the cidrella-pdns-*, cidrella-kea@ and cidrella-radvd units",
+        "polkit rule gaps for any of the units (start, stop, restart)",
+        "a switch that fails to start the new stack, to stop dnsmasq, or to hand DNS and DHCP back to dnsmasq",
+        "boot starting dnsmasq on a PowerDNS + Kea install (the disable flag and the unit's start condition)",
+        "the daemons refusing the paths or capabilities their units give them"
       ],
       "does_not_catch": [
         "a real client's Renew or Rebind across a switch (no client on the served link; hardware check in BACKLOG.md)",
-        "the Docker image's s6 Kea services"
+        "Router Advertisements on the wire (no IPv6 scope or client; rdisc6 check on a host with one)",
+        "the Docker image's s6 services"
       ],
-      "expected_duration_sec": 300,
+      "expected_duration_sec": 420,
       "requires_fresh_host": true
     }
   ],

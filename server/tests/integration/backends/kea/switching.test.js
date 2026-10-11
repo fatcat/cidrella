@@ -1,6 +1,6 @@
 /**
  * What the Kea adapter does for a switch of the DHCP server
- * (services/dhcp-backend-switch.js): rendering while it answers no DHCP,
+ * (services/stack-switch.js): rendering while it answers no DHCP,
  * taking another server's leases and DUID, and saying when it is ready.
  */
 import { DATA_DIR } from '../../../helpers/isolated-data-dir.js';

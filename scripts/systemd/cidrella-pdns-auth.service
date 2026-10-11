@@ -1,0 +1,42 @@
+# PowerDNS Authoritative for CIDRella's DNS zones, on loopback only (DNS on
+# 5300, its HTTP API on 8053). Not enabled: it runs only while PowerDNS is
+# CIDRella's DNS server, and CIDRella starts and stops it itself
+# (backends/pdns, polkit-gated systemctl). The paths below must agree with
+# server/src/backends/pdns/paths.js.
+[Unit]
+Description=CIDRella PowerDNS Authoritative
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/fatcat/cidrella
+
+[Service]
+Type=notify
+User=cidrella
+Group=cidrella
+ExecStartPre=/bin/mkdir -p /var/lib/cidrella/pdns/run
+ExecStart=/usr/sbin/pdns_server --config-dir=/var/lib/cidrella/pdns/auth --guardian=no --daemon=no --disable-syslog --log-timestamp=no --write-pid=no
+Restart=on-failure
+RestartSec=3
+UMask=0027
+
+# Loopback ports above 1024: no capabilities at all.
+CapabilityBoundingSet=
+AmbientCapabilities=
+
+# Same sandbox as cidrella-kea@.service.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cidrella/pdns
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectClock=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+NoNewPrivileges=true
+RemoveIPC=true

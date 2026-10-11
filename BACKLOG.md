@@ -248,47 +248,44 @@ branches with release candidates only; the release is 0.6.0. Why stacks and not 
 mixed mode is what needs dnsmasq's not-serving render and two daemons on UDP 547, while
 one-way switching saved three lines of lease import and broke restoring a pre-switch backup.
 
-0.5.2 (plan `~/.claude/plans/tender-moseying-pascal.md`, design in `docs/DNSMASQ-COUPLING.md`):
-the Kea adapter, the DHCP switch with its lease handover, and Kea's packaging are in. Kea is
-hidden: Settings > DHCP > Server is out of the menu, and `/api/dhcp/server` stays, admin-only,
-for the harness and testerella.
+0.5.2 put in the Kea adapter, the lease handover and Kea's packaging. 0.5.3 (plan
+`~/.claude/plans/tender-moseying-pascal.md`, design in `docs/DNSMASQ-COUPLING.md`) made the
+stack selectable: the PowerDNS adapter, radvd for the Router Advertisements, the
+`backend_stack` setting and its switch (Settings > General > Servers and the setup wizard),
+PTR synthesis and the reserved zones in PowerDNS, the proxy's `forward_unknown` retry, the
+per-role log viewer, the mixed mode removed, and pre-release-only versions kept out of
+`releases.json` (`[pre-release]` on the heading). Left over:
 
-0.5.3, to plan:
-
-- **PowerDNS adapter** for the DNS role: Authoritative for the local zones, and Recursor behind
-  CIDRella's proxy in dnsmasq's place (decided 2026-10-09; the proxy and the in-Node forwarder
-  stay on both stacks, see DNSMASQ-COUPLING.md "Resolver on the PowerDNS stack"). Spiked
-  2026-10-10: it works, faster than dnsmasq and about 40 MB; the seven things the adapter
-  must do (negative trust anchors, timeouts, no throttling of loopback, cache wipes, zone
-  reloads, API-only zone writes, YAML) are in DNSMASQ-COUPLING.md "Recursor spike".
-- **An RA sender for the PowerDNS + Kea stack.** Kea sends none and dnsmasq is not running
-  there: radvd, as the `ra` role's adapter.
-- **One stack setting and one switch** in place of `dhcp_backend` and the DHCP-only switch,
-  the setup wizard's "what the appliance does" step offering it, and Settings > DHCP > Server
-  back as the stack panel.
-- **Remove the mixed mode:** dnsmasq's not-serving render (`dhcp-ignore`, the RA-only v6
-  scope files, the emptied reservations) and the shared-547 notes in DNSMASQ-COUPLING.md.
-- **Log viewer per role.** `routes/logs.js` reads the DNS backend's log and filters DHCP lines out
-  of it; under the new stack, DNS and DHCP logs come from two daemons, each with its own offset
-  in the SSE stream.
-- **Run the native packaging on a systemd host.** `install_kea` ran in a `node:22-trixie`
-  container (repository, key fingerprint, packages, `_kea`, the unit file), and the KEA_LIVE
-  test there starts both daemons on the rendered estate. Not yet run: the `cidrella-kea@` unit
-  and polkit under systemd (the `kea-switch` harness scenario on testerella, from a release
-  candidate). The Docker image switched dnsmasq to Kea and back, and kept Kea across a restart.
-- **Before 0.6.0: keep the pre-release-only versions out of `releases.json`.** 0.5.1, 0.5.2
-  and 0.5.3 are published only as pre-releases (decided 2026-10-10; closed into main at
-  `1188313`), but `scripts/build-releases-manifest.js` turns every `## vX.Y.Z` heading in
-  RELEASE-NOTES.md into a release, and nothing reads the optional `[tag]` after the date. A
-  final 0.6.0 build would publish all three in the signed manifest, and the update checker
-  could offer one as a step on the way to 0.6.0 when 0.6.0's `min_from` is above the running
-  version, though none has a final tarball. Fix: fold their notes into the 0.6.0 section, or
-  mark the headings (for example `[pre-release]`) and have the manifest skip them. Either way
-  the version guard must still find 0.6.0 as the newest heading.
+- **Run the `stack-switch` harness scenario from a release candidate.** The switch has run
+  under systemd with the real daemons: testerella on 2026-10-10 (the dev tree from
+  `deploy-lxc.sh`, then `install_kea`, `install_pdns`, `install_radvd` and the polkit rule by
+  hand, since `deploy-lxc.sh` installs none of them), four switches each way, 1.3 to 2.7 s
+  each with about a second of DNS unanswered, all 19 leases carried every time, and the
+  PowerDNS + Kea stack kept across a CIDRella restart and a reboot. Not yet run: the scenario
+  itself, which installs a candidate release with `install.sh`.
 - **Verify on hardware** (testerella, both directions, v4 and v6 clients): Renew and Rebind
   across a switch; that dnsmasq loads a handed-over lease file on the restart that makes it
   serve; how long a lease handed out between Kea's SIGHUP and the final lease read could be
-  missed.
+  missed; radvd's advertisements seen by a client (`rdisc6`) against dnsmasq's.
+- **The gaps against dnsmasq still open** (DNSMASQ-COUPLING.md, "Known gaps"): a reverse
+  lookup for an address outside every CIDRella network, `ra-names` and bare DHCP hostnames,
+  the `forward_unknown` retry in bypass mode and without DNSSEC validation.
+- **Recursor's built-in private reverse zones.** Recursor answers RFC 1918 reverse lookups
+  itself unless told otherwise; the derived reverse zones are forwarded to Authoritative,
+  which should win, but this has not been checked against a live Recursor for a network
+  inside 10/8 with no CIDRella reverse zone.
+- **Authoritative 5.1 is blocked.** 5.1.4's API refuses a TXT value holding `\"` or a
+  `\DDD` escape above 127 (verified on the spike container, 2026-10-10). Native installs pin
+  `auth-50`. Recheck on each 5.1 release; the live test's `intl` record is the check.
+- **Recursor 5.3 or 5.4.** Native pins `rec-53`; Alpine 3.24 (the Docker image) ships 5.4.5
+  and has no 5.3. The rendered config checks and runs on both, but only 5.3 has run the live
+  test. Pick one series for both, or run the live test on 5.4 too.
+- **Authoritative's schema on upgrade.** `prepare()` creates the gsqlite3 database from the
+  package's schema when it is missing and never upgrades it. The database is derived, so the
+  simple path on a schema change is to delete it and let the next sync rebuild it; nothing
+  detects that need yet.
+- **0.6.0's own heading.** When 0.6.0 is cut, its section gets no tag and its `min_from` must
+  not name 0.5.1, 0.5.2 or 0.5.3 (the manifest lint refuses that).
 
 ### Resolver instrumentation: what the 2026-10-08 pass left out
 

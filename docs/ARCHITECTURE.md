@@ -321,8 +321,14 @@ state: they read the database, make the daemon match it, and report
 (`check-db-ownership` refuses it); neutral work such as `syncDhcpDnsRecords`
 and lease ingestion (`services/dhcp-lease-sync.js`) stays in services. Only
 `backends/**` imports an adapter, enforced by ESLint and
-`scripts/check-backend-imports.js`. `docs/DNSMASQ-COUPLING.md` maps the seams
-and what is left for Kea and PowerDNS.
+`scripts/check-backend-imports.js`. `docs/DNSMASQ-COUPLING.md` maps the seams.
+
+Which adapter fills each role is the server stack, one setting
+(`backend_stack`): `dnsmasq` for DNS, DHCP and Router Advertisements, or
+`pdns-kea` (PowerDNS for DNS, Kea for DHCP, radvd for Router Advertisements).
+Never a mix. `services/stack-switch.js` moves every role and the leases from
+one stack to the other, and boot (`selectStackAtBoot`) stops every daemon
+outside the stack. Nothing else changes which adapter answers a role.
 
 The dnsmasq adapter (`backends/dnsmasq/`) generates its files from database
 state using atomic writes. Different file classes have different reload

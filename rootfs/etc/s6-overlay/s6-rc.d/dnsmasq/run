@@ -1,2 +1,12 @@
-#!/command/execlineb -P
-exec dnsmasq --keep-in-foreground --conf-file=/data/dnsmasq/dnsmasq.conf
+#!/bin/sh
+# dnsmasq serves DNS and DHCP unless another stack does: while CIDRella's
+# disable flag exists (backends/dnsmasq/paths.js DISABLE_FILE) this waits.
+#
+# It drops to cidrella, as Kea and PowerDNS run, so CIDRella can signal it:
+# a reload (SIGHUP) and a stop (TERM) from the cidrella account. Dropped to
+# its default user, every signal was refused (EPERM) and config changes
+# never reached the running dnsmasq.
+while [ -f /data/runtime/dnsmasq.disabled ]; do
+  sleep 1
+done
+exec dnsmasq --keep-in-foreground --user=cidrella --group=cidrella --conf-file=/data/dnsmasq/dnsmasq.conf

@@ -28,8 +28,16 @@
  * between). Empty min_from means "any prior version may upgrade directly
  * to this release." Non-empty must be a semver string.
  *
+ * A version published only as a pre-release carries `[pre-release]` after the
+ * date (`## v0.5.1 — 2026-10-09 [pre-release]`). It has no final tarball, so
+ * the manifest leaves it out: the update checker must never offer it as a
+ * step. `--all` keeps it, for build-release.sh's own min_from lookup when it
+ * builds that pre-release.
+ *
  * Usage:
  *   node scripts/build-releases-manifest.js              # emit manifest to stdout
+ *   node scripts/build-releases-manifest.js --all        # include pre-release-only versions
+ *   node scripts/build-releases-manifest.js --notes PATH # read another notes file
  *   node scripts/build-releases-manifest.js --out PATH   # emit to file
  *   node scripts/build-releases-manifest.js --lint       # lint only, no output
  *
@@ -45,7 +53,7 @@ const fs = require('fs');
 const path = require('path');
 
 const PROJECT_DIR = path.resolve(__dirname, '..');
-const NOTES_FILE = path.join(PROJECT_DIR, 'RELEASE-NOTES.md');
+
 const SCHEMA_VERSION = 1;
 
 // The release-header format lives in one place, shared with
@@ -59,8 +67,14 @@ const {
 // ─── argv ──────────────────────────────────────────────────
 const args = process.argv.slice(2);
 const LINT_ONLY = args.includes('--lint');
+const INCLUDE_PRE_RELEASES = args.includes('--all');
+const PRE_RELEASE_TAG = 'pre-release';
 const outIdx = args.indexOf('--out');
 const OUT_PATH = outIdx >= 0 ? args[outIdx + 1] : null;
+// --notes PATH reads another file (the tests); the default is the repo's.
+const notesIdx = args.indexOf('--notes');
+const NOTES_FILE =
+  notesIdx >= 0 ? path.resolve(args[notesIdx + 1]) : path.join(PROJECT_DIR, 'RELEASE-NOTES.md');
 
 // ─── helpers ──────────────────────────────────────────────
 
@@ -322,7 +336,30 @@ function lint(releases, errors, _warnings) {
     }
   }
 
-  // 6. Every release needs at least one non-empty New / Fixed / Known issues
+  // 6. A final release cannot need a version that never had one: a host
+  // could never reach it through the manifest. And a header tag is either
+  // absent or the one we know, so a typo cannot publish a pre-release.
+  const preReleaseOnly = new Set(
+    releases.filter((r) => r.tag === PRE_RELEASE_TAG).map((r) => r.version),
+  );
+  for (const r of releases) {
+    if (r.tag && r.tag !== PRE_RELEASE_TAG) {
+      issues.push({
+        version: r.version,
+        line: r.header_line,
+        message: `[${r.version}] unknown header tag "[${r.tag}]"; the only tag is [${PRE_RELEASE_TAG}]`,
+      });
+    }
+    if (r.tag !== PRE_RELEASE_TAG && r.min_from && preReleaseOnly.has(r.min_from)) {
+      issues.push({
+        version: r.version,
+        line: r.header_line,
+        message: `[${r.version}] min_from "${r.min_from}" was only ever a pre-release, so no host can reach it from the manifest`,
+      });
+    }
+  }
+
+  // 7. Every release needs at least one non-empty New / Fixed / Known issues
   for (const r of releases) {
     const required = ['New', 'Fixed', 'Known issues'];
     const present = required.filter((s) => r.subsections_with_content.has(s));
@@ -382,20 +419,22 @@ function main() {
   const manifest = {
     schema_version: SCHEMA_VERSION,
     generated_at: new Date().toISOString(),
-    releases: releases.map((r) => ({
-      version: r.version,
-      released_at: r.released_at,
-      min_from: r.min_from,
-      breaking: r.breaking,
-      security: r.security,
-      anchor: r.anchor,
-    })),
+    releases: releases
+      .filter((r) => INCLUDE_PRE_RELEASES || r.tag !== PRE_RELEASE_TAG)
+      .map((r) => ({
+        version: r.version,
+        released_at: r.released_at,
+        min_from: r.min_from,
+        breaking: r.breaking,
+        security: r.security,
+        anchor: r.anchor,
+      })),
   };
 
   const json = JSON.stringify(manifest, null, 2) + '\n';
   if (OUT_PATH) {
     fs.writeFileSync(OUT_PATH, json, 'utf8');
-    console.error(`Wrote ${OUT_PATH} (${releases.length} releases)`);
+    console.error(`Wrote ${OUT_PATH} (${manifest.releases.length} releases)`);
   } else {
     process.stdout.write(json);
   }

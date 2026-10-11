@@ -84,16 +84,16 @@ What enforces it:
 
 | #   | Seam                                | Backend op                                                              | dnsmasq adapter today                                                                                                                                                                                 | Kea/PowerDNS equivalent                                          | Adapter gap                                                                                 |
 | --- | ----------------------------------- | ----------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- | ------------------------------------------------------------------------------------------- |
-| 1   | **DNS records/zones**               | `dns.applyZones`                                                        | `backends/dnsmasq/dnsmasq.js` renders `hosts.d/records.hosts` (A/AAAA, each address's canonical PTR name first) and `conf.d/zone-*.conf` (CNAME/MX/TXT/SRV, PTRs the hosts file can't answer); SIGHUP | PowerDNS Auth `PATCH /zones/:zone` (rrsets)                      | full file regen vs targeted rrset PATCH; one TTL (`local-ttl=60`) for every record but a CNAME, so `servedTtl` reports that, not the stored TTL |
+| 1   | **DNS records/zones**               | `dns.applyZones`                                                        | `backends/dnsmasq/dnsmasq.js` renders `hosts.d/records.hosts` (A/AAAA, each address's canonical PTR name first) and `conf.d/zone-*.conf` (CNAME/MX/TXT/SRV, PTRs the hosts file can't answer); SIGHUP | PowerDNS (0.5.3): Authoritative's HTTP API, only the changed rrsets (`backends/pdns/diff.js`), from the shared model `backends/shared/dns-zone-model.js`; Recursor's cache wiped under the zone | dnsmasq serves one TTL (`local-ttl=60`) for every record but a CNAME, so its `servedTtl` reports that; PowerDNS serves each record's own |
 | 2   | **DHCP scopes and reservations**    | `dhcp.applyScopes`                                                      | `backends/dnsmasq/dhcp.js` renders `dhcp-range=`, `dhcp-host=`, options; restart or SIGHUP                                                                                                            | Kea (0.5.2): `kea-dhcp{4,6}.conf` rendered from the same scope model (`backends/shared/dhcp-scope-model.js`), checked with `kea-dhcp4 -t`, reloaded with SIGHUP | dnsmasq sends DHCPv4 numbers at the wrong width (DNSMASQ-08) |
 | 3   | **Lease ingestion**                 | `dhcp.readLeases`, `dhcp.watchLeases`                                   | `backends/dnsmasq/lease-file.js` reads `dnsmasq.leases` once it settles; `fs.watchFile`                                                                                                               | Kea (0.5.2): `lease4/6-get-page`; `watchLeases` polls the lease statistics | a page scan is not atomic, so a scan during which Kea handed out an address reads as unsettled |
 | 4   | **Lease release**                   | `dhcp.releaseLease`                                                     | `backends/dnsmasq/lease-release.js` (`dhcp_release`/`dhcp_release6`)                                                                                                                                  | Kea (0.5.2): `lease4-del` / `lease6-del`                         | none                                                                                        |
 | 5   | **DHCP fingerprint capture**        | `logSource().createDhcpParser`                                          | `backends/dnsmasq/dhcp-log-parser.js` parses `log-dhcp` text (opt55/60/hostname)                                                                                                                      | Kea (0.5.2): the `legal_log` hook, formatted to one line per committed lease (`backends/kea/legal-log-parser.js`) | Kea logs committed leases only, so DHCP message counts come from `dhcpCounters()` instead |
-| 6 | **Query log readers** | `logSource()` (`path`, `querySourceIp`, `dhcpDirection`, `isDhcpLine`) | `backends/dnsmasq/log-format.js` regexes, read by passive liveness, the metrics aggregator and the log viewer | PowerDNS: none needed for queries, since the proxy already records every client query; Recursor's own log for the log viewer. Kea logs | what reads dnsmasq's log must read the proxy's records or the new daemons' logs; a null `logSource()` turns those readers off |
-| 7 | **Recursion + filtering proxy** | none (stays in `utils/dns-proxy.js`) | bespoke UDP/TCP proxy in front of dnsmasq (blocklist, GeoIP, DNSSEC TCP relay, EDNS, bypass) | unchanged: the proxy stays on port 53 and forwards to Recursor instead of dnsmasq (decided 2026-10-09, see "Resolver on the PowerDNS stack") | the proxy's upstream address becomes a DNS-backend fact rather than `resolveDnsmasqInternalPort` |
-| 8   | **DNSSEC**                          | `dns.applyResolver`, `capabilities().dnssec`, `dns.onClockSynchronized` | `dnssec`/`trust-anchor` directives, `dnssec-no-timecheck` until NTP sync, then SIGHUP                                                                                                                 | Recursor `dnssec=validate` (+ Auth signing)                      | validate only, no online signing                                                            |
+| 6 | **Query log readers** | `logSource()` (`path`, `querySourceIp`, `dhcpDirection`, `isDhcpLine`) | `backends/dnsmasq/log-format.js` regexes, read by passive liveness, the metrics aggregator and the log viewer | PowerDNS (0.5.3): `logSource()` is null, since the proxy records every client query; the log viewer awaits its own item. Kea logs | what reads dnsmasq's log must read the proxy's records or the new daemons' logs; a null `logSource()` turns those readers off |
+| 7 | **Recursion + filtering proxy** | none (stays in `utils/dns-proxy.js`) | bespoke UDP/TCP proxy in front of dnsmasq (blocklist, GeoIP, DNSSEC TCP relay, EDNS, bypass) | unchanged: the proxy stays on port 53 and forwards to Recursor, which PowerDNS (0.5.3) puts on the same internal port dnsmasq used | none for now: Recursor takes `resolveDnsmasqInternalPort()`, so the proxy's upstream did not move |
+| 8   | **DNSSEC**                          | `dns.applyResolver`, `capabilities().dnssec`, `dns.onClockSynchronized` | `dnssec`/`trust-anchor` directives, `dnssec-no-timecheck` until NTP sync, then SIGHUP                                                                                                                 | PowerDNS (0.5.3): Recursor `dnssec.validation`, `process` until the clock is synchronized, then `validate`; local zones carry negative trust anchors                      | validate only, no online signing                                                            |
 | 9 | **Forwarders / upstreams** | `dns.applyResolver` | one `server=127.0.0.1#5356` line at the in-Node forwarder, which sends to the primary and backup over plain DNS, DoT or DoH | Recursor `forward-zones-recurse` for `.` at the same in-Node forwarder; Recursor has outgoing DoT but no DoH | none: the forwarder stays for both stacks |
-| 10 | **Listen addresses and interfaces** | `dns.applyListen`, `activate` | `interface=`/`listen-address=`/`no-dhcp-interface=` in `dnsmasq.conf`; restart | PowerDNS Recursor and Authoritative on 127.0.0.1 only (the proxy keeps the LAN addresses); Kea `interfaces-config` | one daemon today, three on the PowerDNS + Kea stack |
+| 10 | **Listen addresses and interfaces** | `dns.applyListen`, `activate` | `interface=`/`listen-address=`/`no-dhcp-interface=` in `dnsmasq.conf`; restart | PowerDNS (0.5.3): Authoritative on 127.0.0.1 only; Recursor on loopback at the internal port, or in bypass mode the LAN port on the DNS interfaces; Kea `interfaces-config` | one daemon today, three on the PowerDNS + Kea stack |
 | 11  | **Process control and health**      | `status`, `activate`, `restart`, `applyActivation`, `prepare`           | systemd `cidrella-dnsmasq` unit (s6 in Docker); health and restart ask systemd, `pidof` only without systemctl                                                                                                               | REST is live; health is the API answering                        | no SIGHUP/restart once the adapter is REST                                                  |
 
 **DHCP to DNS derivation and PTR sync** (`utils/ip-sync.js`, `services/subnet-dns-topology.js`,
@@ -148,11 +148,15 @@ Deliberate, each with a reason:
    under "Recursor spike" below.
 2. ~~Introduce the backend API as a thin facade over today's dnsmasq code.~~ Done in 0.5.1.
 3. **Kea first** (DHCP role, 0.5.2): the adapter is in `backends/kea/` and passes the contract
-   test. DNSMASQ-06 and -07 are fixed, and DDNS stays with CIDRella (no Kea D2). The
-   `dhcp_backend` setting and the switch with its lease handover are in. Still to come: the
-   packaging.
-4. **PowerDNS** (DNS role) after that; deprecate dnsmasq over one release, no permanent dual
-   stack.
+   test. DNSMASQ-06 and -07 are fixed, DDNS stays with CIDRella (no Kea D2), and the packaging
+   is in.
+4. **PowerDNS** (DNS role, 0.5.3): the adapter is in `backends/pdns/` and passes the contract,
+   golden and live tests; packaging is in. radvd sends the Router Advertisements on that stack
+   (`backends/radvd/`).
+5. **The stack choice** (0.5.3): the `backend_stack` setting picks dnsmasq or PowerDNS + Kea
+   for every role at once, and Settings > General > Servers (and the setup wizard) switch
+   between them with the leases. See "Switching stacks" below. Deprecate dnsmasq over one
+   release, no permanent dual stack.
 
 ## Resolver on the PowerDNS stack (decided 2026-10-09)
 
@@ -237,22 +241,23 @@ dnsmasq barely improves warm because its default cache holds 150 entries. Recurs
 - **YAML configuration.** Recursor 5 reads `recursor.conf` as YAML and the files in
   `recursor.d/` as `.yml`; quote any value with a colon, such as `"::1/128"`.
 
-Not covered: PowerDNS's own repositories (Recursor 5.3, Authoritative 5.0) rather than Debian's;
-DoT straight from Recursor (not used under option C); TCP and large answers through the chain;
+Not covered: DoT straight from Recursor (not used under option C); TCP and large answers through the chain;
 Recursor's packet cache settings and `max_cache_entries` for a small appliance; how
 `serve_rfc1918` interacts with a local reverse zone for a network outside 10/8.
+PowerDNS's own repositories (Recursor 5.3, Authoritative 5.0) were covered later by the adapter's
+live test; see PowerDNS (0.5.3) below.
 
 ## Kea (0.5.2)
 
-> **Two stacks (decided 2026-10-07).** A host will run either dnsmasq for everything or
-> PowerDNS + Kea (0.5.3, released as 0.6.0), never dnsmasq beside Kea. What follows describes
-> 0.5.2, where Kea fills the DHCP role next to dnsmasq's DNS; that mixed mode (dnsmasq's
-> not-serving render, both daemons on UDP 547) is interim, hidden from the UI, and goes in
-> 0.5.3. The adapter, the lease handover and the packaging carry over. The plan is in
-> `BACKLOG.md` (PowerDNS + Kea stack).
+> **Two stacks (decided 2026-10-07).** A host runs either dnsmasq for everything or
+> PowerDNS + Kea + radvd (0.5.3, released as 0.6.0), never dnsmasq beside Kea. 0.5.2 ran Kea
+> next to dnsmasq's DNS for a while; that mixed mode (dnsmasq's not-serving render, both
+> daemons on UDP 547, the `dhcp_backend` setting and `/api/dhcp/server`) was removed in 0.5.3.
+> An install left on it falls back to dnsmasq at boot with Kea's leases (see "Switching
+> stacks").
 
-`backends/kea/` fills the DHCP role with ISC Kea 3.0, one daemon per family. dnsmasq keeps DNS
-and the Router Advertisements. The configuration is file-canonical like dnsmasq's: `applyScopes`
+`backends/kea/` fills the DHCP role with ISC Kea 3.0, one daemon per family, on the PowerDNS +
+Kea stack. The configuration is file-canonical like dnsmasq's: `applyScopes`
 renders `DATA_DIR/kea/kea-dhcp4.conf` and `kea-dhcp6.conf`, `kea-dhcp4 -t` checks them inside
 the shared validated-file transaction (`backends/shared/validated-files.js`), and a SIGHUP
 (`systemctl reload`) makes Kea reread them. Leases stay in Kea's memfile and move through the
@@ -278,30 +283,43 @@ How CIDRella's model maps onto Kea (`backends/kea/render.js`):
 - The DHCPv6 server DUID is `DATA_DIR/kea/server-duid` when present (a switch carries dnsmasq's
   over), so clients renew with Kea instead of waiting to rebind.
 
-### Switching (Settings > DHCP > Server)
+### Switching stacks (Settings > General > Servers)
 
-`services/dhcp-backend-switch.js` moves the DHCP role and its leases, so exactly one server
-answers at any time (none for the seconds between):
+`services/stack-switch.js` moves DNS, DHCP and the Router Advertisements from one stack to the
+other with the leases, so one stack answers at any time (none for the seconds between). The
+registry (`backends/index.js`) maps a stack name to a backend per role (`STACKS`,
+`selectStack`, `stackName`, `stackServices`); `backend_stack` holds the choice.
 
-1. Preflight, read-only: the target is installed (`installed()`), and what the switch gains and
-   loses, from the feature report.
-2. A marker, `DATA_DIR/dhcp-switch.json`.
-3. The source stops answering (`setDhcpServing(name, false)` and a render). dnsmasq renders its
-   DHCPv6 scope files for the Router Advertisements plus `dhcp-ignore=tag:!nosuchtag`; Kea
-   renders `interfaces: []`.
-4. The source's final lease set, kept in `DATA_DIR/handover/<time>.json` (0600).
-5. The target is selected, still not answering, starts, and takes the leases with
-   `importLeases(leases, { serverDuid })`: Kea deletes what it held and adds them through
-   `lease_cmds`; dnsmasq gets a lease file whose `duid` line carries the server DUID, which it
-   loads when it restarts.
-6. The target answers (`awaitRunning()`: for Kea, `status-get` reports `sockets.status` ready).
-7. The setting is written, the marker cleared, and a source that fills no role is stopped.
+1. Preflight, read-only: every daemon of the target is installed (`installed()`), dnsmasq is
+   CIDRella's own (`cidrella-dnsmasq.service` is loaded; an install that left dnsmasq to the
+   host cannot switch), no switch is running, and what the switch gains and loses from the
+   feature report.
+2. A marker, `DATA_DIR/stack-switch.json`, then the after-commit hooks are held (`holdHooks`)
+   and the lease sync too (`holdLeaseSync`): a read of the target before it has the leases
+   would release every lease in the database. Interface changes answer 409 and the proxy does
+   not fall back to bypass while the flag in `utils/switch-state.js` is set.
+3. The target is staged without a contested port: PowerDNS Authoritative starts and takes every
+   zone, Recursor's file is written; Kea is rendered and started listening nowhere; radvd's
+   file is written; or dnsmasq's whole render is written with dnsmasq stopped.
+4. The source stops and is awaited. Stopping dnsmasq writes `DATA_DIR/runtime/dnsmasq.disabled`,
+   which its unit's `ConditionPathExists=!` and the s6 run script both honor, so nothing starts
+   it behind CIDRella's back.
+5. The source's final lease set is read (Kea's from its API, or its memfile when it is down) and
+   kept in `DATA_DIR/handover/<time>.json` (0600), then imported into the target with
+   `importLeases(leases, { serverDuid })`.
+6. The target is selected and activated: Recursor, Kea serving, radvd; or dnsmasq.
+7. Verify: the target is asked for the leases (any it does not show are reported, with the
+   snapshot's path), and the SOA of every zone must answer (not SERVFAIL or REFUSED) through
+   the backend DNS port on 127.0.0.1 (`backendDnsPort`).
+8. Commit: `backend_stack` and `runtime/backend-stack` (read by `rollback.sh`) are written,
+   the marker cleared, the holds released, and every daemon outside the stack stopped.
 
-A failure in steps 3 to 6 selects the source again and renders it serving. At boot,
-`selectDhcpBackendAtBoot` reads the setting, falls back to dnsmasq when the named backend is not
-installed, and, if a marker is left, stops the other backend and re-renders DHCP. The lease sync
-is held for the whole switch (`holdLeaseSync`): a read of the target before it has the leases
-would release every lease in the database.
+A failure after the source stopped puts the source back with the leases the target handed out,
+and the error says so. At boot `selectStackAtBoot` reads the setting, falls back to dnsmasq
+when a daemon of the stack is not installed, turns a legacy `dhcp_backend = kea` into the
+dnsmasq stack after carrying Kea's leases over, cleans up after an interrupted switch, and stops
+whatever is outside the stack. `/api/backend-stack` (GET, POST `{stack}`, admin only, audited)
+is the API.
 
 Not yet verified on real hardware: a client's Renew and Rebind across a switch in both
 directions, and that dnsmasq loads a handed-over lease file on the restart that makes it serve.
@@ -319,10 +337,10 @@ ISC's Cloudsmith repository, 2026-10-07):
 - **Sockets.** `service-sockets-require-all` stops a daemon that could not open a socket on
   every interface instead of running deaf, and five retries five seconds apart cover an
   interface still coming up (a DHCPv6 link-local address arrives a moment after the link).
-- **Router Advertisements.** dnsmasq binds UDP 547 whenever its RA carries M or O. Kea binds
-  the link-local and `ff02::1:2` sockets on the same port beside it, and `dhcp-ignore` makes
-  dnsmasq answer no DHCPv6, so RA stays on dnsmasq with no flag gating. Not yet tested: a
-  Renew or Rebind while both hold 547.
+- **Router Advertisements.** On the PowerDNS + Kea stack radvd sends them (`backends/radvd/`,
+  one block per DHCP interface holding an address in a DHCPv6 scope, flags and lifetimes as
+  dnsmasq sends them, RDNSS and DNSSL from options 23 and 24). It runs only while there is a
+  scope to advertise. Names for SLAAC hosts (`ra-names`) stay a dnsmasq feature.
 - **Leases.** Kea reports `cltt` and `valid-lft`, never an expiry; `valid-lft` 4294967295 is
   infinite. `lease4-add` takes `expire - valid-lft` as the lease start, and an infinite lease
   goes in with the infinite lifetime and no `expire`. `lease*-get-page` treats `from` as
@@ -358,3 +376,84 @@ ISC's Cloudsmith repository, 2026-10-07):
   backend on what was restored.
 - **Retention.** Kea starts a legal log file a day and never removes one; `pruneLogs` deletes
   them past the audit log retention, from the same daily prune.
+
+## PowerDNS (0.5.3)
+
+`backends/pdns/` fills the DNS role with PowerDNS Authoritative (CIDRella's zones) and Recursor
+(in dnsmasq's slot behind the proxy). It passes the contract test, the golden test
+(`pdns-golden.test.js`) and the live test (`PDNS_LIVE=1`, against Authoritative 5.0.7 and
+Recursor 5.3.11). The PowerDNS + Kea stack selects it.
+
+- **Ports, all on loopback.** Authoritative answers DNS on 5300 (`PDNS_AUTH_DNS_PORT`) and its
+  HTTP API on 8053 (`PDNS_AUTH_API_PORT`), with the key in `pdns/secret/api-key`. Recursor
+  takes `resolveDnsmasqInternalPort()`, the port the proxy already sends to, so `dns-proxy.js`
+  does not change; in bypass mode it takes the LAN port on the DNS interfaces, as dnsmasq does.
+- **Files.** Everything is under `DATA_DIR/pdns`: `auth/pdns.conf` and `auth/pdns.sqlite3`
+  (created from the gsqlite3 schema by `prepare()`), `recursor/recursor.yml`, and `run/` for
+  both control sockets. All of it is derived from `cidrella.db`, so backups leave it out.
+- **Zones.** `applyZones` reads the shared model (`backends/shared/dns-zone-model.js`, which
+  dnsmasq renders from too), builds the zones it wants (`render.js`), reads what Authoritative
+  holds, and sends only the difference (`diff.js`): a POST per new zone, one PATCH per changed
+  zone with REPLACE and DELETE rrsets, a DELETE per zone CIDRella no longer has. A second
+  apply sends nothing; the live test checks that against the real API, so contents are
+  written the way the API hands them back. A change of SOA serial alone (DHCP churn) is sent
+  without touching Recursor's cache. `applyZones` returns a Promise, and the after-commit
+  runner waits for it, so two zone writes never overlap.
+- **Recursor.** `recursor.yml` forwards each local zone to Authoritative with a negative trust
+  anchor, and `.` with recursion to the forwarder unless recursion is off. `dont_query` covers
+  every address, so Recursor never queries the internet itself (forwarders are exempt). It
+  carries a digest of its reloadable part (forward zones and anchors) and of the rest. A zone
+  change runs `rec_control reload-lua-config` (anchors first, or a new zone answers Bogus),
+  `reload-zones`, then `wipe-cache 'zone$'` for each changed zone; anything else restarts
+  Recursor. Recursor checks every write (`--config=check`) and a refused one is rolled back.
+- **DNSSEC.** Off: `process-no-validate`. On: `process` (log only) until the clock is
+  synchronized, then `validate`; `onClockSynchronized` rewrites the file. Without timedatectl
+  (Docker) it validates from the start, since the container shares the host's clock.
+- **TTLs.** A record is served with its own TTL, else 60 s (`LOCAL_RECORD_TTL`, shared with
+  dnsmasq); an rrset takes the lowest TTL among its records.
+- **Derived zones.** Beside the user's zones, `desiredZones` adds what dnsmasq answers without
+  being told: a PTR for each address an A or AAAA record names inside an allocated network
+  (the first name per address, `servedHostsByAddress`, shared with dnsmasq; a stored PTR
+  wins), placed in the covering CIDRella reverse zone, else a reverse zone for the whole
+  network when it is private space, else one zone for that single address so the rest of a
+  public block still resolves upstream; and an empty zone for each reserved name
+  (`backends/shared/reserved-zones.js`), the site-local ones only while every upstream is
+  public. Recursor's own built-ins (localhost, 127.in-addr.arpa, the ::1 reverse) are left to
+  it. Derived zones are part of the desired set, so the diff keeps them.
+- **What is left out.** Placeholder PTRs; every PTR at a name after the canonical one; other
+  data beside a CNAME (the first CNAME wins); a record named outside its zone, which
+  Authoritative refuses.
+- **Versions.** Authoritative 5.1.4's API refuses a TXT value holding a double quote or a byte
+  above 127 (it parses `\"` as the end of a string and prints `\195` as `\4294967235`); 5.0.7
+  takes both. Native installs pin `auth-50` and `rec-53`; Alpine 3.24 has Authoritative 5.0.7
+  and Recursor 5.4.5, which take the same configuration.
+
+### Known gaps
+
+dnsmasq does these and PowerDNS does not, or only in part:
+
+- `forward_unknown` zones (split horizon): Recursor sends a zone to Authoritative or upstream,
+  not one then the other. The proxy covers it: on NXDOMAIN for a name under such a zone it
+  asks the forwarder again (`dns.forwardsUnknownItself === false`, recursion on). Not in
+  bypass mode, and Recursor does not validate that second answer with DNSSEC.
+- A reverse lookup for an address outside every allocated network: dnsmasq answers it from
+  its hosts file; PowerDNS only synthesizes PTRs inside CIDRella networks.
+- Names only dnsmasq serves: SLAAC hosts (`ra-names`) and bare DHCP hostnames.
+- With recursion off, an outside name answers SERVFAIL.
+- `logSource()` is null: the proxy records every query, and Settings > Logs says PowerDNS
+  keeps no DNS log to show.
+
+### Packaging
+
+- **Native.** `scripts/lib/pdns-install.sh`, sourced by `install.sh` and `update.sh`, adds
+  `repo.powerdns.com` (`auth-50`, `rec-53`, key fingerprint
+  `9FAAA5577E8FCF62093D036C1B0C6205FD380FBB`, pinned above the distribution's packages),
+  installs `pdns-server`, `pdns-backend-sqlite3` and `pdns-recursor`, masks `pdns` and
+  `pdns-recursor`, and installs `cidrella-pdns-auth.service` and
+  `cidrella-pdns-recursor.service` (not enabled, `User=cidrella`, Recursor with
+  `CAP_NET_BIND_SERVICE` for bypass). polkit lets `cidrella` start, stop, restart and reload
+  both. A failure warns and the install or update goes on.
+- **Docker.** Alpine's `pdns`, `pdns-backend-sqlite3`, `pdns-doc` (the schema) and
+  `pdns-recursor`, with `cap_net_bind_service` on `pdns_recursor`. The s6 longruns `pdns-auth`
+  and `pdns-recursor` (`rootfs/etc/s6-overlay/scripts/pdns.sh`) wait for
+  `DATA_DIR/runtime/pdns-<daemon>.enabled`, which `init-data` clears at container start.

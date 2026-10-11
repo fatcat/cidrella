@@ -96,17 +96,10 @@ function generateScopeConfigV6(model) {
   return lines.join('\n') + '\n';
 }
 
-// Written while another backend (Kea) answers DHCP. dnsmasq still sends the
-// Router Advertisements, and an RA carrying the M or O flag makes it bind UDP
-// 547 beside Kea, which no setting avoids. This makes it answer no DHCP
-// request at all: no tag is called nosuchtag, so every packet matches.
-// Verified against dnsmasq 2.91 with Kea 3.0 (docs/DNSMASQ-COUPLING.md).
-const NOT_SERVING_FILE = 'dhcp-not-serving.conf';
-const NOT_SERVING_CONTENT = [
-  '# Another DHCP server answers DHCP; dnsmasq sends Router Advertisements only.',
-  'dhcp-ignore=tag:!nosuchtag',
-  '',
-].join('\n');
+// Left by 0.5.2's mixed mode (Kea serving DHCP beside dnsmasq), which made
+// dnsmasq ignore every DHCP request. dnsmasq now serves DHCP whenever it runs,
+// so the file is removed wherever it is found.
+const LEGACY_NOT_SERVING_FILE = 'dhcp-not-serving.conf';
 
 function writeIfChanged(filePath, content) {
   let old = null;
@@ -124,28 +117,16 @@ function writeIfChanged(filePath, content) {
  * Regenerate all DHCP scope config files in conf.d/. A scope left out of the
  * model (disabled, or IPv6 with support off) loses its file with the other
  * inactive ones. Returns true if any file changed (needs dnsmasq restart).
- *
- * With `serving` false another backend answers DHCP: DHCPv4 scopes get no
- * file (no range, so dnsmasq opens no DHCPv4 socket), DHCPv6 scopes keep
- * theirs so the Router Advertisements carry the right M and O flags, and
- * dhcp-not-serving.conf makes dnsmasq ignore every request. A range is never
- * rewritten as ra-only: dnsmasq serves stateful DHCPv6 from a range with
- * ra-only all the same.
  */
-export function regenerateScopeConfigs(db, { confDir = CONF_DIR, serving = true } = {}) {
+export function regenerateScopeConfigs(db, { confDir = CONF_DIR } = {}) {
   const activeIds = new Set();
   let changed = false;
-  const notServingPath = path.join(confDir, NOT_SERVING_FILE);
-  if (serving) {
-    if (fs.existsSync(notServingPath)) {
-      fs.rmSync(notServingPath, { force: true });
-      changed = true;
-    }
-  } else if (writeIfChanged(notServingPath, NOT_SERVING_CONTENT)) {
+  const legacyPath = path.join(confDir, LEGACY_NOT_SERVING_FILE);
+  if (fs.existsSync(legacyPath)) {
+    fs.rmSync(legacyPath, { force: true });
     changed = true;
   }
   for (const model of loadDhcpScopes(db)) {
-    if (!serving && model.family === 4) continue;
     activeIds.add(model.scope.id);
     const filePath = path.join(confDir, `dhcp-scope-${model.scope.id}.conf`);
     const newContent =
@@ -163,10 +144,9 @@ export function regenerateScopeConfigs(db, { confDir = CONF_DIR, serving = true 
  * Regenerate the reservations hosts file for dhcp-hostsdir (hot-reload).
  * DHCPv4: <mac>,<ip>[,<hostname>],infinite
  * DHCPv6: id:<duid>,[<ip>][,<hostname>],infinite
- * Empty while another backend answers DHCP (`serving` false).
  */
-export function regenerateReservations(db, { hostsDir = DHCP_HOSTS_DIR, serving = true } = {}) {
-  const reservations = serving ? loadDhcpReservations(db) : [];
+export function regenerateReservations(db, { hostsDir = DHCP_HOSTS_DIR } = {}) {
+  const reservations = loadDhcpReservations(db);
   const lines = reservations.map((r) => {
     const parts = r.family === 6 ? [`id:${r.duid}`, `[${r.ip}]`] : [r.mac, r.ip];
     if (r.hostname) parts.push(r.hostname);
