@@ -11,20 +11,20 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 ## Features
 
 * **IP address management**: Hierarchical subnets, folders, VLANs, functional ranges, table/grid views, and a canonical IP state model shared across Networks, DHCP, and DNS.
-* **DNS management**: Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation. An optional **"do not provide recursion"** mode makes CIDRella authoritative-only (answers its own zones, no external forwarding).
+* **DNS management**: Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation. 
 * **DNSSEC validation**: Turns on dnsmasq DNSSEC validation against the root trust anchor.
-* **Encrypted forwarders (DoT/DoH)**: Optionally encrypt CIDRella→upstream DNS via DNS-over-TLS or DNS-over-HTTPS through a built-in stub (no external daemon), with preset unfiltered resolvers (Cloudflare/Google/Quad9/AdGuard) or custom. Fails closed (no silent plaintext fallback) and stays compatible with DNSSEC validation.
+* **Encrypted forwarders (DoT/DoH)**: Optionally encrypt CIDRella→upstream DNS via DNS-over-TLS or DNS-over-HTTPS through a built-in stub (no external daemon), with preset unfiltered resolvers (Cloudflare/Google/Quad9/AdGuard) or custom. 
 * **DHCP management**: Scopes, global defaults for new scopes, per-scope options, DHCP Reservations, dynamic lease tracking, bulk updates, and DHCP-derived DNS records.
 * **Choice of DHCP & DNS servers (coming in 0.6.0)**: dnsmasq or ISC Kea with PowerDNS.
 * **IPv6**: Off by default. Turn it on under Settings, General, Interfaces to list the host's IPv6 addresses, listen on them, manage IPv6 networks, SLAAC, stateless or stateful DHCPv6 per network, DUID reservations, AAAA and ip6.arpa. Run the DHCPv6 and Router Advertisement checks.
-* **Rogue DHCP and router detection**: Scheduled active probes (DHCPv4 DISCOVER broadcast, DHCPv6 SOLICIT multicast) that flag unauthorized DHCP servers answering on CIDRella's segments, plus rogue IPv6 routers read from the Router Advertisements the kernel accepted. CIDRella's own server and configured gateways are auto-trusted, with a user allowlist by IP, MAC or DUID.
+* **Rogue DHCP and router detection**: Scheduled active probes (DHCPv4 DISCOVER broadcast, DHCPv6 SOLICIT multicast) that flag unauthorized DHCP servers answering on CIDRella's segments, plus rogue IPv6 routers read from the Router Advertisements the kernel accepted.
 * **IP liveness and rogue detection**: Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
-* **Passive device/OS fingerprinting**: Identifies each DHCP client's device type and OS family from its DHCP fingerprint (options 55/60 + hostname) and MAC OUI, classified by an offline ruleset. Surfaced as a "Device" column and the IP details drawer.
+* **Passive device/OS fingerprinting**: Identifies each DHCP client's device type and OS family from its DHCP fingerprint (options 55/60 + hostname) and MAC OUI, classified by an offline ruleset.
 * **Analytics**: service status, rogue DHCP servers, rogue hosts, anomalous devices, scope conflicts, DHCP review, host performance, queries per minute, p95 latency, cache hit rate, timeouts, pending, process CPU and memory, and much more.
-* **Blocklists and GeoIP filtering**: Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy. Two distinct exemptions: a shared **domain allowlist** (always allow a domain everywhere) and a GeoIP **IP/CIDR allowlist** (never GeoIP-block specific addresses/ranges, IPv4 or IPv6, regardless of country).
-* **Anomaly detection**: Observe and notify unusual query volume, new-domain patterns, beaconing, and DGA-like behavior. Every scored window also gets a threat-shape score (entropy, NXDOMAIN rate, name length, subdomain depth, block rate) that is independent of the per-device model. The Analytics > Anomalies triage page plots each device against its own baseline and shows the evidence behind every flag.
+* **Blocklists and GeoIP filtering**: Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy.
+* **Anomaly detection**: Observe and notify unusual query volume, new-domain patterns, beaconing, and DGA-like behavior.
 * **Pi-hole import**: Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP Reservations, and upstream DNS settings.
-* **Operations and recovery**: Signed native updates, scheduled backups, restore validation (a restore asks whether this appliance should serve DHCP afterwards, so a copy of another appliance never becomes a second DHCP server, and the restored data carries an audit entry for the restore), reset-password and reset-web-port tools, log viewing, and audit history.
+* **Operations and recovery**: Signed native updates, scheduled backups, restore validation, reset-password and reset-web-port tools, log viewing, and audit history.
 * **Certificate management**: Self-signed defaults, certificate upload, RSA/ECDSA CSR generation, and certificate/key validation.
 * **Role based access control**: Admin, DNS, DHCP, and readonly roles with permission-checked APIs and audited mutations.
 
@@ -38,9 +38,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 ## Host Sizing
 
-CIDRella targets 1–2 GB hosts. Per-IP bookkeeping in SQLite is the dominant memory cost, so very large allocated subnets (e.g. `/10`, `/8`) will outgrow modest hosts long before DHCP lease counts become the bottleneck. See [docs/SIZING.md](docs/SIZING.md) for the ceiling-per-host table and the math behind it.
-
-Developer notes: shared IP state returned to the UI follows the canonical read/write naming contract in [docs/API_MODEL.md](docs/API_MODEL.md). Backend database ownership boundaries are tracked in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+CIDRella requires hosts with 1–2 GB RAM. Very large allocated subnets (e.g. `/10`, `/8`) will outgrow modest hosts long before DHCP lease counts become the bottleneck. See [docs/SIZING.md](docs/SIZING.md) for the ceiling-per-host table and the math behind it.
 
 ## Installation
 
@@ -78,16 +76,14 @@ See [**INSTALL-DOCKER.md**](INSTALL-DOCKER.md) for full details. Note: in-app up
 
 ### First run
 
-The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password (the appliance-wide rule is set here too: a minimum length, mixed case, a number, a symbol, each on its own), optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes, choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start.
-
-Nothing but the password and the second factor is applied until the last step, and an interrupted setup resumes where it stopped. Upgraded installs never see it. Two-factor can be turned on, off, or given fresh backup codes later under Settings > Access > Two-factor, and the password rule under Settings > Access > Password rule. A restore carries the restoring operator's two-factor enrolment into the restored data.
+The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password, optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes (strongly encouraged), choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start.
 
 ## Upgrading
 
 CIDRella checks for new releases on startup and every hour. When an update is available, a blue badge appears in the header bar.
 
 **In-app (native deployments):**
-Navigate to **System > Updates** and click **Install Update**. CIDRella will download the release from GitHub, verify the signature, back up the current installation, and apply the update automatically.
+Navigate to **Settings > Maintenance > Updates** and click **Install Update**. CIDRella will download the release from GitHub, verify the signature, back up the current installation, and apply the update automatically.
 
 **Command line:**
 
@@ -106,14 +102,12 @@ sudo cidrella-update --version 0.5.0
 sudo cidrella-update --tarball /root/cidrella-v0.5.0-linux-x64.tar.gz
 ```
 
-The update script (`/opt/cidrella/update.sh`) backs up the current installation, downloads and verifies the signed release tarball, installs dependencies, and restarts services. Database migrations run automatically on startup.
-
-Native updates also refresh the installed systemd units, sudoers/polkit helpers, logrotate configuration, and recovery scripts. Hosts installed before the ambient-capability change receive the updated systemd capability configuration when the installer/update path refreshes the unit files.
+The update script (`/opt/cidrella/update.sh`) works the same way the in-app update works and performs the same steps.
 
 **Docker:**
 
 ```bash
-docker compose pull && docker compose up -d
+docker compose pull && docker compose up -d --build
 ```
 
 > **Do not apply updates using tarballs downloaded from sources other than the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Manually extracting an unverified tarball bypasses signature verification and could compromise your network infrastructure.
@@ -121,8 +115,6 @@ docker compose pull && docker compose up -d
 ## Web UI Ports
 
 CIDRella's standard web UI ports are `443` for HTTPS and `80` for the HTTP-to-HTTPS redirect. Ports below `1024` require `CAP_NET_BIND_SERVICE`; the native systemd unit installed by CIDRella includes this capability.
-
-If CIDRella is behind nginx, Traefik, or another reverse proxy, the HTTP redirect can be disabled in **Settings > Interfaces**. When redirect is disabled, CIDRella does not bind the configured HTTP port.
 
 If a web port change makes the UI unreachable, run:
 
@@ -138,8 +130,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership 
 
 | Layer             | Technology                                   |
 | ----------------- | -------------------------------------------- |
-| DHCP              | dnsmasq (Kea in 0.6.0)                       |
-| DNS               | dnsmasq (PowerDNS in 0.6.0)                  |
+| DHCP              | dnsmasq (or Kea in 0.6.0)                    |
+| DNS               | dnsmasq (or PowerDNS in 0.6.0)               |
 | Backend           | Node.js + Express                            |
 | Frontend          | Vue 3 + PrimeVue                             |
 | Database          | SQLite (better-sqlite3)                      |
