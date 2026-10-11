@@ -349,8 +349,9 @@ input {
   padding: 0.08rem 0.38rem;
   border-radius: 999px;
   background: var(--cid-surface-200);
-  color: var(--preview-muted);
-  font-size: 0.62rem;
+  /* The bubble is light in every theme, so the number is dark in every theme. */
+  color: var(--cid-surface-800);
+  font-size: calc(0.62rem + 2pt);
   font-weight: 700;
 }
 .explorer-empty {
