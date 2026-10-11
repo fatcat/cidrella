@@ -1,0 +1,76 @@
+name: VirusTotal
+
+# Uploads each release tarball to VirusTotal and appends the analysis link to
+# the release notes, so anyone can check the file against VirusTotal's engines
+# before installing it. build-release.sh attaches the assets before it
+# publishes, so they are there when this runs. Run it by hand to scan a
+# release published before this workflow existed.
+#
+# Needs the repository secret VT_API_KEY (a free VirusTotal account's API key).
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag to scan (for example v0.5.0)
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    permissions:
+      # Appends the analysis links to the release notes.
+      contents: write
+    steps:
+      - name: Scan the release tarball
+        if: github.event_name == 'release'
+        uses: crazy-max/ghaction-virustotal@v5
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          github_token: ${{ github.token }}
+          update_release_body: true
+          # The free API allows 4 requests a minute.
+          request_rate: 4
+          files: |
+            \.tar\.gz$
+
+      # A manual run has no release event, so the action cannot edit the
+      # release itself: download the tarball, scan it, then append the link.
+      - name: Download the release tarball
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+        run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --dir dist
+
+      - name: Scan the downloaded tarball
+        id: manual
+        if: github.event_name == 'workflow_dispatch'
+        uses: crazy-max/ghaction-virustotal@v5
+        with:
+          vt_api_key: ${{ secrets.VT_API_KEY }}
+          request_rate: 4
+          files: |
+            dist/*.tar.gz
+
+      - name: Append the analysis link to the release notes
+        if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ inputs.tag }}
+          ANALYSIS: ${{ steps.manual.outputs.analysis }}
+        run: |
+          body=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
+          links=""
+          IFS=',' read -ra entries <<< "$ANALYSIS"
+          for entry in "${entries[@]}"; do
+            name=$(basename "${entry%%=*}")
+            links+=$'\n'"  * [\`${name}\`](${entry#*=})"
+          done
+          printf '%s\n\n🛡 VirusTotal analysis:%s\n' "$body" "$links" > notes.md
+          gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md

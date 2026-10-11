@@ -1,5 +1,7 @@
 # CIDRella
 
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/fatcat/cidrella/badge)](https://scorecard.dev/viewer/?uri=github.com/fatcat/cidrella)
+
 Have a home network lab and need something better than a spreadsheet to plan and track your networks? Perhaps a small business, or even a medium-sized business. Need integrated address planning, DNS and DHCP all rolled into one, but found other solutions much too complicated (Netbox) or too simple (Pi-hole)? CIDRella is lightweight IP Address Management system that requires minimal system resources (can be deployed as a container or LXC) and minimal learning curve.
 
 Pronounced cider-ella, a lame, near-homophone of Cinderella. Why? It's complicated.
@@ -20,7 +22,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 * **Passive device/OS fingerprinting**: Identifies each DHCP client's device type and OS family from its DHCP fingerprint (options 55/60 + hostname) and MAC OUI, classified by an offline ruleset. Surfaced as a "Device" column and the IP details drawer.
 * **Analytics**: service status, rogue DHCP servers, rogue hosts, anomalous devices, scope conflicts, DHCP review, host performance, queries per minute, p95 latency, cache hit rate, timeouts, pending, process CPU and memory, and much more.
 * **Blocklists and GeoIP filtering**: Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy. Two distinct exemptions: a shared **domain allowlist** (always allow a domain everywhere) and a GeoIP **IP/CIDR allowlist** (never GeoIP-block specific addresses/ranges, IPv4 or IPv6, regardless of country).
-* **Anomaly detection**: Observe and notify unusual query volume, new-domain patterns, beaconing, and DGA-like behavior. Every scored window also gets a threat-shape score (entropy, NXDOMAIN rate, name length, subdomain depth, block rate) that is independent of the per-device model. 
+* **Anomaly detection**: Observe and notify unusual query volume, new-domain patterns, beaconing, and DGA-like behavior. Every scored window also gets a threat-shape score (entropy, NXDOMAIN rate, name length, subdomain depth, block rate) that is independent of the per-device model. The Analytics > Anomalies triage page plots each device against its own baseline and shows the evidence behind every flag.
 * **Pi-hole import**: Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP Reservations, and upstream DNS settings.
 * **Operations and recovery**: Signed native updates, scheduled backups, restore validation (a restore asks whether this appliance should serve DHCP afterwards, so a copy of another appliance never becomes a second DHCP server, and the restored data carries an audit entry for the restore), reset-password and reset-web-port tools, log viewing, and audit history.
 * **Certificate management**: Self-signed defaults, certificate upload, RSA/ECDSA CSR generation, and certificate/key validation.
@@ -30,7 +32,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 [![A network's addresses in CIDRella's IP Management workspace](docs/screenshots/ip-table.png)](docs/screenshots/ip-table.md)
 
-**[Browse all ten screenshots →](docs/screenshots/ip-table.md)** 
+**[Browse all ten screenshots →](docs/screenshots/ip-table.md)** Each page has Previous and Next links.
 
 ---
 
@@ -44,7 +46,7 @@ Developer notes: shared IP state returned to the UI follows the canonical read/w
 
 > **Use caution**: While no known vulnerabilities exist in this application, it would be unwise to expose its open ports on a public network. Always secure your infrastructure.
 
-> **Only install CIDRella from the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Starting with v0.4.1, every release tarball is cryptographically signed using [minisign](https://jedisct1.github.io/minisign/). Both the install script and the update script automatically verify the signature before applying changes. This ensures the tarball you are installing was built by the project maintainer and has not been modified. **Do not install or update using a tarball obtained from any other source.** There is no way to verify its authenticity or integrity.
+> **Only install CIDRella from the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Starting with v0.4.1, every release tarball is cryptographically signed using [minisign](https://jedisct1.github.io/minisign/). Both the install script and the update script automatically verify the signature before applying changes. This ensures the tarball you are installing was built by the project maintainer and has not been modified. **Do not install or update using a tarball obtained from any other source.** There is no way to verify its authenticity or integrity. Each release's notes also link a [VirusTotal](https://www.virustotal.com/) scan of its tarball.
 
 **Cloning the repository** is suitable for development and code review. For production deployments, use the install script or a release tarball. These include the pre-built frontend and are signature-verified.
 
@@ -111,7 +113,7 @@ Native updates also refresh the installed systemd units, sudoers/polkit helpers,
 **Docker:**
 
 ```bash
-docker compose pull && docker compose up -d 
+docker compose pull && docker compose up -d
 ```
 
 > **Do not apply updates using tarballs downloaded from sources other than the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Manually extracting an unverified tarball bypasses signature verification and could compromise your network infrastructure.
@@ -136,8 +138,8 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership 
 
 | Layer             | Technology                                   |
 | ----------------- | -------------------------------------------- |
-| DHCP              | DNSmasq or Kea<br/>                          |
-| DNS               | DNSmasq or PowerDNS<br/>                     |
+| DHCP              | dnsmasq (Kea in 0.6.0)                       |
+| DNS               | dnsmasq (PowerDNS in 0.6.0)                  |
 | Backend           | Node.js + Express                            |
 | Frontend          | Vue 3 + PrimeVue                             |
 | Database          | SQLite (better-sqlite3)                      |
