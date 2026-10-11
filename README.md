@@ -50,7 +50,7 @@ CIDRella requires hosts with 1–2 GB RAM. Very large allocated subnets (e.g. `/
 
 ### Option 1: Automated install (Debian/Ubuntu)
 
-Generally speaking performing an install of any software including CIDRella in this manner is a terrible idea and should only be done to a host that is completely isolated and you're willing to sacrifice. Consult the [**INSTALL-NATIVE.md**](INSTALL-NATIVE.md) for full details on alternate installation methods that afford an opportunity to review the code *before* installation.
+Generally speaking performing an install of any software including CIDRella in this manner is a terrible idea and should only be done to a host that is completely isolated and you're willing to sacrifice. Consult the [**INSTALL-NATIVE.md**](docs/INSTALL-NATIVE.md) for full details on alternate installation methods that afford an opportunity to review the code *before* installation.
 
 Download and review the install script, then run it:
 
@@ -72,7 +72,7 @@ cd cidrella
 docker compose up -d --build
 ```
 
-See [**INSTALL-DOCKER.md**](INSTALL-DOCKER.md) for full details. Note: in-app updates are not available in Docker. Update by pulling the latest image.
+See [**INSTALL-DOCKER.md**](docs/INSTALL-DOCKER.md) for full details. Note: in-app updates are not available in Docker. Update by pulling the latest image.
 
 ### First run
 

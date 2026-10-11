@@ -454,14 +454,16 @@ RECOVERY
     If the new slot fails health checks, the script automatically swaps
     the symlink back to the old slot and restores DB snapshots. Manual:
         cidrella-rollback
-    Full incident guide: /opt/cidrella/BREAK-GLASS-CEREMONY.md
+    Signing-key incident guide:
+        https://github.com/fatcat/cidrella/blob/main/docs/BREAK-GLASS-CEREMONY.md
 
 LOGS
     /var/lib/cidrella/update.log     - Full stdout/stderr of the last run
     /var/lib/cidrella/update-status.json - Current state (UI polls this)
 
 SEE ALSO
-    cidrella-rollback, RELEASE-NOTES.md inside /opt/cidrella
+    cidrella-rollback
+    Release notes: https://github.com/fatcat/cidrella/blob/main/RELEASE-NOTES.md
 HELP
 }
 

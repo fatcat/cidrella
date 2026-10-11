@@ -20,3 +20,8 @@ scripts/test-harness/results/
 server/assets/geo-cities.bin
 # Local graphify knowledge graph of the repo (/graphify .).
 /graphify-out/
+# The maintainer's local dev and session scripts, kept out of the repo.
+/restart-dev.sh
+/resume-claude.sh
+/resume-codex.sh
+/REVIEW_LOOP.md

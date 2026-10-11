@@ -216,13 +216,15 @@ rsync -az --delete \
 rsync -az --delete \
   "$PROJECT_DIR/dnsmasq/" "${SSH_TARGET}:${SYNC_DIR}/dnsmasq/"
 
-# Scripts
+# Scripts. update.sh lives in scripts/ in the repo but at the slot root in a
+# release, so it goes there alone below.
 rsync -az --delete \
+  --exclude='/update.sh' \
   "$PROJECT_DIR/scripts/" "${SSH_TARGET}:${SYNC_DIR}/scripts/"
 
 # Root files used by the deployed app and maintenance commands.
 rsync -az "$PROJECT_DIR/package.json" "${SSH_TARGET}:${SYNC_DIR}/package.json"
-rsync -az "$PROJECT_DIR/update.sh" "${SSH_TARGET}:${SYNC_DIR}/update.sh"
+rsync -az "$PROJECT_DIR/scripts/update.sh" "${SSH_TARGET}:${SYNC_DIR}/update.sh"
 
 ok "Files synced."
 

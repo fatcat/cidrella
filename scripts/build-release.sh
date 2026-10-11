@@ -888,7 +888,7 @@ if [ "$DRY_RUN" = false ]; then
 
   # ─── Pubkey staging assertion ────────────────────────
   #
-  # Per BREAK-GLASS-CEREMONY.md step 5, both minisign public keys must ship
+  # Per docs/BREAK-GLASS-CEREMONY.md step 5, both minisign public keys must ship
   # inside every release tarball at fixed canonical paths so update.sh can
   # verify the next release's signature AND apply rotation announcements
   # signed by the break-glass key. The rsync above already copies both
@@ -969,7 +969,7 @@ if [ "$DRY_RUN" = false ]; then
   echo "  Pubkey consistency verified (primary + break-glass)"
 
   # Update script (root level for visibility)
-  cp "$PROJECT_DIR/update.sh" "$STAGING_DIR/update.sh"
+  cp "$PROJECT_DIR/scripts/update.sh" "$STAGING_DIR/update.sh"
 
   # Note: scripts/rollback.sh is already included via the scripts/ rsync above.
   # update.sh and install.sh look for it at scripts/rollback.sh.
@@ -992,7 +992,7 @@ if [ "$DRY_RUN" = false ]; then
 
   # requirements.json, single source of truth for minimum host requirements.
   # Consumed by scripts/lib/preflight.sh at install/update time.
-  cp "$PROJECT_DIR/requirements.json" "$STAGING_DIR/requirements.json"
+  cp "$PROJECT_DIR/scripts/requirements.json" "$STAGING_DIR/requirements.json"
 
   # The license and its NOTICE travel with every copy (Apache-2.0 section 4),
   # so a build without them fails.
