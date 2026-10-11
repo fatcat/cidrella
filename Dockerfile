@@ -1,17 +1,17 @@
-FROM node:24-alpine AS client-build
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1 AS client-build
 
 ARG DEV_TRACKING=0
 
 WORKDIR /build/client
-COPY client/package.json client/package-lock.json* ./
-RUN npm install
+COPY client/package.json client/package-lock.json ./
+RUN npm ci
 COPY client/ ./
 # The client imports the helpers it shares with the server (@shared/* ->
 # server/src/utils), so they have to be here for the build.
 COPY server/src/ /build/server/src/
 RUN VITE_TRACKING=$DEV_TRACKING npx vite build
 
-FROM node:24-alpine
+FROM node:24-alpine@sha256:ebfe2f90462722a7a4de65e91990e97fe0d401c70e0e762c5b53302f905ec1c1
 
 # s6-overlay version
 ARG S6_OVERLAY_VERSION=3.2.3.2
@@ -78,10 +78,10 @@ RUN echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*' > /etc/sudoer
 WORKDIR /app
 
 # Install server dependencies and Python ML dependencies for anomaly detection sidecar
-COPY server/package.json server/package-lock.json* ./server/
+COPY server/package.json server/package-lock.json ./server/
 RUN apk add --no-cache python3 py3-pip py3-scikit-learn py3-numpy py3-joblib && \
     apk add --no-cache --virtual .build-deps py3-setuptools make g++ && \
-    cd server && npm install --production && cd .. && \
+    cd server && npm ci --omit=dev && cd .. && \
     apk del .build-deps && \
     setcap cap_net_raw,cap_net_bind_service+ep $(readlink -f $(which node))
 
