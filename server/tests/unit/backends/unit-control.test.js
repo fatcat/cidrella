@@ -2,7 +2,7 @@
  * createUnitControl without systemctl (Docker): s6 supervises the daemon,
  * and a daemon kept down until wanted (Kea) waits on its enable file.
  */
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, afterAll, vi } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
@@ -11,6 +11,7 @@ const { execFileSync } = vi.hoisted(() => ({ execFileSync: vi.fn() }));
 vi.mock('child_process', () => ({ execFileSync }));
 
 const { createUnitControl } = await import('../../../src/backends/shared/unit-control.js');
+const { unitEvents } = await import('../../../src/backends/shared/unit-events.js');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'unit-control-'));
 afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
@@ -72,7 +73,11 @@ describe('createUnitControl under s6', () => {
 
   it('marks a restart pending for a daemon with no enable file that is not running', () => {
     host({ running: false });
-    const unit = createUnitControl({ unit: 'cidrella-dnsmasq', processName: 'dnsmasq', restartPendingFile });
+    const unit = createUnitControl({
+      unit: 'cidrella-dnsmasq',
+      processName: 'dnsmasq',
+      restartPendingFile,
+    });
     unit.restart();
     expect(unit.restartPending()).toBe(true);
   });
@@ -181,5 +186,38 @@ describe('createUnitControl under systemd', () => {
   it('counts the daemon as installed where s6 runs it', () => {
     host({ running: false });
     expect(control().installed()).toBe(true);
+  });
+});
+
+describe('the events a daemon change emits', () => {
+  const control = () =>
+    createUnitControl({ unit: 'cidrella-dnsmasq', processName: 'dnsmasq', restartPendingFile });
+  let seen;
+  const listen = (event) => seen.push(event.action);
+  beforeEach(() => {
+    seen = [];
+    unitEvents.on('unit', listen);
+  });
+  afterEach(() => unitEvents.off('unit', listen));
+
+  it('says restarted after systemctl restarts it, and stopped after it stops', () => {
+    execFileSync.mockImplementation(() => Buffer.from(''));
+    control().restart();
+    control().stop();
+    expect(seen).toEqual(['restarted', 'stopped']);
+  });
+
+  it('says restart_failed when neither systemctl nor a signal can restart it', () => {
+    host({ running: false });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    control().restart();
+    warn.mockRestore();
+    expect(seen).toEqual(['restart_failed']);
+  });
+
+  it('says nothing for a reload', () => {
+    execFileSync.mockImplementation(() => Buffer.from(''));
+    control().reload();
+    expect(seen).toEqual([]);
   });
 });

@@ -680,3 +680,38 @@ describe('per-signal evidence endpoint', () => {
     expect(res.status).toBe(404);
   });
 });
+
+describe('audit rows', () => {
+  const lastRow = (action) => {
+    const row = db
+      .prepare('SELECT * FROM audit_log WHERE action = ? ORDER BY id DESC LIMIT 1')
+      .get(action);
+    return row && { ...row, details: JSON.parse(row.details) };
+  };
+
+  it('records dismissing and deleting a score, for either family', async () => {
+    const v4 = insertAnomaly('10.0.0.40');
+    const v6 = insertAnomaly('2001:db8::40');
+    expect((await request(app).post(`/api/anomalies/${v4}/dismiss`)).status).toBe(200);
+    expect(lastRow('anomaly_dismissed')).toMatchObject({
+      entity_id: v4,
+      actor: 'testadmin',
+      details: { client: '10.0.0.40' },
+    });
+    expect((await request(app).delete(`/api/anomalies/${v6}`)).status).toBe(200);
+    expect(lastRow('anomaly_deleted').details).toMatchObject({ client: '2001:db8::40' });
+  });
+
+  it('records a settings change as the settings that moved', async () => {
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('anomaly_sensitivity', 'medium')",
+    ).run();
+    const res = await request(app)
+      .put('/api/anomalies/settings')
+      .send({ anomaly_sensitivity: 'high' });
+    expect(res.status).toBe(200);
+    expect(lastRow('anomaly_settings_updated').details).toEqual({
+      changes: { anomaly_sensitivity: ['medium', 'high'] },
+    });
+  });
+});

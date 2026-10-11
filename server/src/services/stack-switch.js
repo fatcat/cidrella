@@ -42,6 +42,7 @@ import { holdHooks } from '../utils/after-commit.js';
 import { plainUdpQuery } from '../utils/plain-dns.js';
 import { setSwitchInProgress, switchInProgress } from '../utils/switch-state.js';
 import { nameQuery } from '../utils/upstream-probe.js';
+import { recordAudit } from './audit.js';
 import { applyDhcp } from './backend-apply.js';
 import { holdLeaseSync } from './dhcp-lease-sync.js';
 
@@ -469,20 +470,37 @@ async function stopOutside(name) {
  * marker showed.
  */
 export async function selectStackAtBoot(db) {
-  let name = readSetting(db, SETTING_KEY);
+  const stored = readSetting(db, SETTING_KEY);
+  let name = stored;
   let carryKea = false;
+  let fallbackReason = null;
   if (!name) {
     name = DEFAULT_STACK;
     carryKea = readSetting(db, LEGACY_SETTING_KEY) === 'kea';
   } else if (!STACKS[name]) {
     console.warn(`Unknown ${SETTING_KEY} '${name}'; ${DEFAULT_STACK} serves DNS and DHCP`);
+    fallbackReason = `unknown server '${name}'`;
     name = DEFAULT_STACK;
   }
   const installed = stackInstalled(name);
   if (!installed.ok) {
     console.error(`${installed.reason}; ${DEFAULT_STACK} serves DNS and DHCP instead`);
+    fallbackReason = installed.reason;
     carryKea = STACKS[name].dhcp === 'kea';
     name = DEFAULT_STACK;
+  }
+  // The operator chose one stack and boot serves another: a change of mode
+  // nobody asked for, so it is recorded.
+  if (fallbackReason) {
+    recordAudit({
+      action: 'backend_stack_fallback',
+      entityType: 'setting',
+      source: 'boot',
+      db,
+      before: { stack: stored },
+      after: { stack: name },
+      details: { reason: fallbackReason },
+    });
   }
 
   const marker = readMarker();
@@ -505,6 +523,13 @@ export async function selectStackAtBoot(db) {
       `A server switch from ${last.from} to ${last.to} was interrupted; ${stackLabel(name)} ` +
         `serves DNS and DHCP. The leases are in ${last.snapshot || 'no snapshot'}.`,
     );
+    recordAudit({
+      action: 'backend_stack_switch_interrupted',
+      entityType: 'setting',
+      source: 'boot',
+      db,
+      details: { from: last.from, to: last.to, serving: name, snapshot: last.snapshot || null },
+    });
   }
   return { stack: name, recovered: { ...last, finished } };
 }

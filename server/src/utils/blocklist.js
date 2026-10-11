@@ -5,6 +5,7 @@ import { loadBlocklist, loadAllowlist, loadFilteringOverrides } from './dns-prox
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categories.js';
 import { BLOCKLIST_DOWNLOAD_TIMEOUT_MS, BLOCKLIST_INSERT_BATCH } from '../config/defaults.js';
 import { openPinnedOutboundStream, TOO_LARGE_CODE } from './url-guard.js';
+import { recordAudit } from '../services/audit.js';
 
 // Domain validation
 const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -282,6 +283,35 @@ async function runRefresh(db, slug) {
   return { count: staged, changed: true, notModified: false };
 }
 
+// Domains per enabled category, { slug: count }: the before and after of a
+// refresh in its audit row.
+export function categoryDomainCounts(db) {
+  return Object.fromEntries(
+    db
+      .prepare(
+        'SELECT slug, domain_count FROM blocklist_categories WHERE enabled = 1 ORDER BY slug',
+      )
+      .all()
+      .map((row) => [row.slug, row.domain_count || 0]),
+  );
+}
+
+// A scheduled refresh that changed the lists: one row, the counts that moved.
+// A refresh that changed nothing writes none.
+function recordScheduledRefresh(db, before) {
+  try {
+    recordAudit({
+      action: 'blocklist_refreshed',
+      entityType: 'blocklist_category',
+      source: 'scheduler',
+      before: { domains: before },
+      after: { domains: categoryDomainCounts(db) },
+    });
+  } catch (err) {
+    console.warn('Could not record the blocklist refresh:', err.message);
+  }
+}
+
 /**
  * Refresh all enabled categories, regenerate config once at end
  */
@@ -368,6 +398,7 @@ export function startBlocklistScheduler() {
 
         if (due.length === 0) return;
 
+        const before = categoryDomainCounts(db);
         let anyChanged = false;
         for (const row of due) {
           try {
@@ -380,6 +411,7 @@ export function startBlocklistScheduler() {
 
         if (anyChanged) {
           generateBlocklistConfig(db);
+          recordScheduledRefresh(db, before);
         }
       } catch (err) {
         console.error('Blocklist scheduler error:', err.message);
@@ -393,7 +425,8 @@ export function startBlocklistScheduler() {
     try {
       const db = getDb();
       ensureCategoryRows(db);
-      await refreshAllEnabled(db);
+      const before = categoryDomainCounts(db);
+      if (await refreshAllEnabled(db)) recordScheduledRefresh(db, before);
     } catch (err) {
       console.error('Initial blocklist refresh failed:', err.message);
     }

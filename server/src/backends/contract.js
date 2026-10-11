@@ -113,13 +113,16 @@ export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
  * - restart() -> void
  * - prepare() -> void: create what the backend needs on disk before it starts
  * - logSource() -> null, or { path, querySourceIp(line), dhcpDirection(line),
- *   isDhcpLine(line), createDhcpParser() } for a backend whose log the
- *   liveness, metrics, log viewer and fingerprint readers can use.
+ *   isDhcpLine(line), createDhcpParser?() } for a backend whose log the
+ *   liveness, metrics, log viewer and fingerprint readers can use;
+ *   createDhcpParser only for a backend that serves DHCP.
  *   `path` is read on every poll, so a log that moves to a new file is
  *   followed (createLogFollower in utils/log-reader.js). dhcpDirection
  *   answers 'client', 'server' or null. Readers take the DNS role's log for
  *   queries and the DHCP role's for DHCP. `clearable: false` marks an audit
- *   log the log viewer must not truncate.
+ *   log the log viewer must not truncate. `proxyQueries: true` asks the DNS
+ *   proxy to write its query lines into `path` (utils/query-log.js), for a
+ *   backend that logs no queries while the proxy is in front of it.
  *
  * Optional, for a backend that can be switched to and from
  * (services/stack-switch.js):

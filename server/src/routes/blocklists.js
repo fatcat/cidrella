@@ -1,11 +1,13 @@
 import { Router } from 'express';
-import { getDb, audit, getSetting } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
+import { changedFields, recordAudit, settingsSnapshot } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from '../utils/blocklist-categories.js';
 import {
   ensureCategoryRows,
   refreshCategory,
   refreshAllEnabled,
+  categoryDomainCounts,
   generateBlocklistConfig,
   SCHEDULE_HOURS,
 } from '../utils/blocklist.js';
@@ -47,6 +49,10 @@ router.get('/categories', requirePerm('dns:read'), (req, res) => {
   res.json(result);
 });
 
+// One category's stored row, for the before side of an audit row.
+const categoryRow = (db, slug) =>
+  db.prepare('SELECT enabled, source_url FROM blocklist_categories WHERE slug = ?').get(slug);
+
 // PUT /api/blocklists/categories/:slug: enable/disable a category
 router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
@@ -61,9 +67,16 @@ router.put('/categories/:slug', requirePerm('dns:write'), async (req, res) => {
     return res.status(400).json({ error: 'enabled must be a boolean' });
 
   ensureCategoryRows(db);
+  const prior = categoryRow(db, slug);
   BlocklistStore.setCategoryEnabled(db, slug, enabled);
 
-  audit(req.user.id, 'update', 'blocklist_category', null, { slug, enabled });
+  recordAudit({
+    action: 'blocklist_category_updated',
+    entityType: 'blocklist_category',
+    before: { enabled: Boolean(prior?.enabled) },
+    after: { enabled },
+    details: { slug },
+  });
 
   // If enabling and never fetched, trigger initial download
   if (enabled) {
@@ -109,11 +122,15 @@ router.put('/categories/:slug/url', requirePerm('dns:write'), async (req, res) =
     const check = await validateOutboundUrl(urlValue);
     if (!check.ok) return res.status(400).json({ error: `Source URL refused: ${check.reason}` });
   }
+  const prior = categoryRow(db, slug);
   BlocklistStore.setCategorySourceUrl(db, slug, urlValue);
 
-  audit(req.user.id, 'update', 'blocklist_category', null, {
-    slug,
-    source_url: urlValue || getDefaultCategoryUrl(slug),
+  recordAudit({
+    action: 'blocklist_category_updated',
+    entityType: 'blocklist_category',
+    before: { source_url: prior?.source_url || getDefaultCategoryUrl(slug) },
+    after: { source_url: urlValue || getDefaultCategoryUrl(slug) },
+    details: { slug },
   });
   res.json({
     ok: true,
@@ -131,11 +148,20 @@ router.post('/categories/:slug/refresh', requirePerm('dns:write'), async (req, r
   if (!cat) return res.status(404).json({ error: 'Unknown category' });
 
   try {
+    const before = db
+      .prepare('SELECT domain_count FROM blocklist_categories WHERE slug = ?')
+      .get(slug);
     await refreshCategory(db, slug);
     generateBlocklistConfig(db);
     const row = db
       .prepare('SELECT domain_count, last_fetched_at FROM blocklist_categories WHERE slug = ?')
       .get(slug);
+    // One row per manual refresh, whether or not the feed changed: someone asked.
+    recordAudit({
+      action: 'blocklist_refreshed',
+      entityType: 'blocklist_category',
+      details: { slug, domains: [before?.domain_count ?? 0, row?.domain_count ?? 0] },
+    });
     res.json({ ok: true, domain_count: row?.domain_count, last_fetched_at: row?.last_fetched_at });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -146,7 +172,16 @@ router.post('/categories/:slug/refresh', requirePerm('dns:write'), async (req, r
 router.post('/refresh', requirePerm('dns:write'), async (req, res) => {
   const db = getDb();
   try {
+    const before = categoryDomainCounts(db);
     const changed = await refreshAllEnabled(db);
+    recordAudit({
+      action: 'blocklist_refreshed',
+      entityType: 'blocklist_category',
+      details: {
+        categories: Object.keys(before).length,
+        changes: changedFields(before, categoryDomainCounts(db)),
+      },
+    });
     res.json({ ok: true, changed });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -205,7 +240,6 @@ function pausedUntil() {
   return Number.isFinite(until) && until > Date.now() ? new Date(until).toISOString() : null;
 }
 
-
 // PUT /api/blocklists/pause { minutes }
 // Turns blocklists and GeoIP off for every client for 5, 15, 30 or 60 minutes;
 // 0 resumes now. The pause is a stored deadline the proxy compares against, so
@@ -222,9 +256,13 @@ router.put('/pause', requirePerm('dns:write'), (req, res) => {
   const until = minutes ? new Date(Date.now() + minutes * 60 * 1000).toISOString() : '';
   Setting.upsertSetting(getDb(), 'filtering_paused_until', until);
   loadFilteringOverrides();
-  audit(req.user.id, minutes ? 'filtering_paused' : 'filtering_resumed', 'filtering', null, {
-    minutes,
-    until: until || null,
+  recordAudit({
+    action: minutes ? 'filtering_paused' : 'filtering_resumed',
+    entityType: 'filtering',
+    details: {
+      minutes,
+      until: until || null,
+    },
   });
   res.json({ filtering_paused_until: pausedUntil() });
 });
@@ -234,8 +272,11 @@ router.put('/pause', requirePerm('dns:write'), (req, res) => {
 // host's MAC itself (models/filtering-exemption.js); a MAC from the client is
 // never trusted.
 router.put('/host-filtering', requirePerm('dns:write'), (req, res) => {
-  const { ip_address: rawIp, subnet_id: subnetId = null, interface_id: interfaceId = null } =
-    req.body || {};
+  const {
+    ip_address: rawIp,
+    subnet_id: subnetId = null,
+    interface_id: interfaceId = null,
+  } = req.body || {};
   const enabled = req.body?.enabled;
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'enabled must be true or false' });
@@ -255,7 +296,13 @@ router.put('/host-filtering', requirePerm('dns:write'), (req, res) => {
   )();
   if (changed) {
     loadFilteringOverrides();
-    audit(req.user.id, 'filtering_changed', 'ip_address', subnetId, { ip, enabled });
+    recordAudit({
+      action: 'host_filtering_changed',
+      entityType: 'ip_address',
+      before: { filtering: !enabled },
+      after: { filtering: enabled },
+      details: { ip, subnet_id: subnetId },
+    });
   }
   res.json({ ip_address: ip, filtering_enabled: !exemptAddressSet(db).has(ip) });
 });
@@ -332,6 +379,7 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: 'blocklist_max_feed_mb must be an integer 1-2048' });
   }
 
+  const before = settingsSnapshot(allowed, db);
   for (const key of allowed) {
     if (req.body[key] !== undefined) {
       Setting.upsertSetting(db, key, req.body[key]);
@@ -341,7 +389,12 @@ router.put('/settings', requirePerm('dns:write'), (req, res) => {
   // Reload blocklist in proxy (proxy always runs, just loads/clears data)
   generateBlocklistConfig(db);
 
-  audit(req.user.id, 'update', 'blocklist_settings', null, req.body);
+  recordAudit({
+    action: 'blocklist_settings_updated',
+    entityType: 'blocklist_settings',
+    before,
+    after: settingsSnapshot(allowed, db),
+  });
   res.json({ ok: true });
 });
 
@@ -388,7 +441,12 @@ router.post(['/allowlist', '/whitelist'], requirePerm('dns:write'), (req, res) =
   const id = BlocklistStore.addAllowlistEntry(db, normalized, reason);
   generateBlocklistConfig(db);
 
-  audit(req.user.id, 'create', 'blocklist_allowlist', id, { domain: normalized });
+  recordAudit({
+    action: 'blocklist_allowlist_created',
+    entityType: 'blocklist_allowlist',
+    entityId: id,
+    details: { domain: normalized },
+  });
   res.status(201).json({ id });
 });
 
@@ -401,7 +459,12 @@ router.delete(['/allowlist/:id', '/whitelist/:id'], requirePerm('dns:write'), (r
   BlocklistStore.deleteAllowlistEntry(db, entry.id);
   generateBlocklistConfig(db);
 
-  audit(req.user.id, 'delete', 'blocklist_allowlist', entry.id, { domain: entry.domain });
+  recordAudit({
+    action: 'blocklist_allowlist_deleted',
+    entityType: 'blocklist_allowlist',
+    entityId: entry.id,
+    details: { domain: entry.domain },
+  });
   res.json({ ok: true });
 });
 

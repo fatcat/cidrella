@@ -41,6 +41,7 @@ import {
   AUTH_DIR,
   DAEMONS,
   PDNS_DIR,
+  LOG_FILE,
   RECURSOR_CONF,
   RECURSOR_DIR,
   RESTART_PENDING,
@@ -58,6 +59,7 @@ import {
 import { createPdnsClient } from './client.js';
 import { desiredZones, renderAuthConfig, renderRecursorConfig, servedTtl } from './render.js';
 import { diffZones } from './diff.js';
+import { querySourceIp } from './log-format.js';
 import { forwardedAddresses, reservedLocalDomains } from '../shared/reserved-zones.js';
 
 const ROLES = ['dns'];
@@ -201,6 +203,7 @@ export function createPdnsBackend(deps = {}) {
     return {
       listen: [...new Set(listen)],
       port: backendDnsPort({ listenPort: getSetting('dns_listen_port'), bypass }),
+      logQueries: bypass,
     };
   }
 
@@ -514,7 +517,15 @@ export function createPdnsBackend(deps = {}) {
         }
       }
     },
-    // The proxy logs every query itself; PowerDNS's own log is not read yet.
-    logSource: () => null,
+    // pdns.log: both daemons' output, plus a query line per query, from the
+    // DNS proxy while it is in front (proxyQueries) or from Recursor in bypass
+    // mode. PowerDNS answers no DHCP.
+    logSource: () => ({
+      path: LOG_FILE,
+      proxyQueries: true,
+      querySourceIp,
+      dhcpDirection: () => null,
+      isDhcpLine: () => false,
+    }),
   };
 }

@@ -19,6 +19,8 @@ security-poll-suffix=
 # fixed: <digest>
 # zones: <digest>
 # Written by CIDRella from its database. Edits here are overwritten.
+logging:
+  quiet: false
 incoming:
   listen:
     - "127.0.0.1"

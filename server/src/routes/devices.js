@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { isValidMac } from '../utils/ip.js';
 import * as DeviceFingerprint from '../models/device-fingerprint.js';
@@ -47,10 +48,14 @@ router.put('/:mac/fingerprint', requirePerm('dhcp:write'), (req, res) => {
   }
   const db = getDb();
   DeviceFingerprint.setManual(db, mac, { device_type, os_family });
-  audit(req.user.id, 'device_fingerprint_override', 'device_fingerprint', null, {
-    mac: mac.toLowerCase(),
-    device_type,
-    os_family,
+  recordAudit({
+    action: 'device_fingerprint_override',
+    entityType: 'device_fingerprint',
+    details: {
+      mac: mac.toLowerCase(),
+      device_type,
+      os_family,
+    },
   });
   res.json(DeviceFingerprint.getByMac(db, mac));
 });
@@ -64,8 +69,12 @@ router.delete('/:mac/fingerprint', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const info = DeviceFingerprint.clearManual(db, mac);
   if (info.changes > 0) {
-    audit(req.user.id, 'device_fingerprint_reset', 'device_fingerprint', null, {
-      mac: mac.toLowerCase(),
+    recordAudit({
+      action: 'device_fingerprint_reset',
+      entityType: 'device_fingerprint',
+      details: {
+        mac: mac.toLowerCase(),
+      },
     });
   }
   res.json({ ok: true, cleared: info.changes > 0 });

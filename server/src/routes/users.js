@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { ROLES, requireRole } from '../auth/roles.js';
 import { generateToken, expiryFromDays } from '../auth/tokens.js';
 import * as User from '../models/user.js';
@@ -89,7 +90,12 @@ router.post('/', requireAdmin, async (req, res) => {
       mustChangePassword: kind !== 'service',
     });
 
-    audit(req.user.id, 'user_created', 'user', user.id, { username: username.trim(), role, kind });
+    recordAudit({
+      action: 'user_created',
+      entityType: 'user',
+      entityId: user.id,
+      details: { username: username.trim(), role, kind },
+    });
 
     if (kind === 'service') {
       res.status(201).json({ ...user, active_tokens: 0 });
@@ -120,10 +126,13 @@ router.put('/:id', requireAdmin, (req, res) => {
   const updated = User.updateRole(db, user.id, role);
   // Permissions travel in the token, so the user signs in again to get the new ones.
   Session.endUserSessions(db, user.id, 'role_changed', { actorId: req.user.id });
-  audit(req.user.id, 'user_updated', 'user', user.id, {
-    username: user.username,
-    old_role: user.role,
-    new_role: role,
+  recordAudit({
+    action: 'user_updated',
+    entityType: 'user',
+    entityId: user.id,
+    before: { role: user.role },
+    after: { role },
+    details: { username: user.username },
   });
 
   res.json(updated);
@@ -142,7 +151,12 @@ router.delete('/:id', requireAdmin, (req, res) => {
   try {
     Session.endUserSessions(db, user.id, 'user_deleted', { actorId: req.user.id });
     User.deleteUser(db, user.id);
-    audit(req.user.id, 'user_deleted', 'user', user.id, { username: user.username });
+    recordAudit({
+      action: 'user_deleted',
+      entityType: 'user',
+      entityId: user.id,
+      details: { username: user.username },
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error('Delete user error:', err);
@@ -163,7 +177,12 @@ router.post('/:id/reset-password', requireAdmin, async (req, res) => {
     User.resetPassword(db, user.id, hash);
     Session.endUserSessions(db, user.id, 'password_reset', { actorId: req.user.id });
 
-    audit(req.user.id, 'user_password_reset', 'user', user.id, { username: user.username });
+    recordAudit({
+      action: 'user_password_reset',
+      entityType: 'user',
+      entityId: user.id,
+      details: { username: user.username },
+    });
     res.json({ password });
   } catch (err) {
     res.status(500).json({ error: err.message || 'Internal server error' });
@@ -240,11 +259,16 @@ router.post('/:id/tokens', requireAdmin, (req, res) => {
     )
     .run(user.id, name, hash, prefix, req.user.id, expiresAt);
 
-  audit(req.user.id, 'api_token_created', 'user', user.id, {
-    username: user.username,
-    token_id: result.lastInsertRowid,
-    name,
-    expires_at: expiresAt || 'never',
+  recordAudit({
+    action: 'api_token_created',
+    entityType: 'user',
+    entityId: user.id,
+    details: {
+      username: user.username,
+      token_id: result.lastInsertRowid,
+      name,
+      expires_at: expiresAt || 'never',
+    },
   });
 
   const row = db
@@ -277,10 +301,15 @@ router.delete('/:id/tokens/:tokenId', requireAdmin, (req, res) => {
   }
 
   db.prepare("UPDATE api_tokens SET revoked_at = datetime('now') WHERE id = ?").run(token.id);
-  audit(req.user.id, 'api_token_revoked', 'user', user.id, {
-    username: user.username,
-    token_id: token.id,
-    name: token.name,
+  recordAudit({
+    action: 'api_token_revoked',
+    entityType: 'user',
+    entityId: user.id,
+    details: {
+      username: user.username,
+      token_id: token.id,
+      name: token.name,
+    },
   });
   res.json({ message: 'Token revoked' });
 });

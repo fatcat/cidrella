@@ -6,6 +6,7 @@
 #     Recursor 5.3), the packages, and the cidrella-pdns-auth and
 #     cidrella-pdns-recursor units. Returns nonzero on failure; PowerDNS is
 #     optional (dnsmasq serves DNS without it), so callers warn and carry on.
+#   - pdns_installed: are PowerDNS's own builds of the packages installed.
 #
 # It never starts, stops or restarts PowerDNS: CIDRella runs it only while it
 # serves DNS, the same rule updates follow for dnsmasq and Kea.
@@ -82,9 +83,9 @@ _pdns_repo() {
     -o APT::Get::List-Cleanup=0 >/dev/null 2>&1 || { warn "PowerDNS: apt-get update of PowerDNS's repository failed"; return 1; }
 }
 
-# _pdns_from_repo: are the installed packages PowerDNS's own builds? Debian
+# pdns_installed: are the installed packages PowerDNS's own builds? Debian
 # carries pdns-server too, an older Authoritative.
-_pdns_from_repo() {
+pdns_installed() {
   local pkg version
   for pkg in $PDNS_PACKAGES; do
     version=$(dpkg-query -W -f='${Version}' "$pkg" 2>/dev/null) || return 1
@@ -99,13 +100,15 @@ _pdns_from_repo() {
 install_pdns() {
   local slot="${1:?slot path required}"
 
-  if ! _pdns_from_repo; then
+  if ! pdns_installed; then
+    info "PowerDNS: installing from PowerDNS's repository (first time only)..."
     _pdns_repo || return 1
     # shellcheck disable=SC2086
     if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $PDNS_PACKAGES >/dev/null 2>&1; then
       warn "PowerDNS: apt-get install $PDNS_PACKAGES failed"
       return 1
     fi
+    ok "PowerDNS installed"
   fi
 
   # The packages' own units would take port 53 from CIDRella. Masking keeps

@@ -13,6 +13,7 @@ import { createDnsmasqBackend } from './dnsmasq/index.js';
 import { createKeaBackend } from './kea/index.js';
 import { createPdnsBackend } from './pdns/index.js';
 import { createRadvdBackend } from './radvd/index.js';
+import { unitEvents } from './shared/unit-events.js';
 
 const FACTORIES = {
   dnsmasq: createDnsmasqBackend,
@@ -100,6 +101,15 @@ export function setDhcpServing(name, serving) {
 export function onBackendChanged(fn) {
   listeners.add(fn);
   return () => listeners.delete(fn);
+}
+
+/**
+ * Follow the daemons starting and stopping (backends/shared/unit-events.js):
+ * fn({ action, unit, processName, error }). Returns the unsubscribe.
+ */
+export function onUnitEvent(fn) {
+  unitEvents.on('unit', fn);
+  return () => unitEvents.off('unit', fn);
 }
 
 /** Every backend CIDRella has, whether or not it fills a role now. */

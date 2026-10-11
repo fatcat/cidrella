@@ -65,11 +65,31 @@ upgrade changes nothing until someone switches.
   goes on and dnsmasq keeps serving. The Docker image carries Alpine's
   PowerDNS (Authoritative 5.0, Recursor 5.4), down until switched to.
 - **Settings > Logs has a tab per role**, named for the server filling it.
-  A server that keeps no log to show (PowerDNS) says so, and Kea's DHCP
-  audit log cannot be cleared from there.
+  Kea's DHCP audit log cannot be cleared from there.
+- **Settings > Logs > DNS on PowerDNS** shows a line per query (the client,
+  the answer and how long it took, or why it was blocked) and PowerDNS's own
+  messages, from `pdns.log`, rotated like dnsmasq's log. A PowerDNS that was
+  already running keeps writing its messages to the journal until CIDRella
+  next restarts it; query lines appear at once.
 - The header and Analytics chips name each server (PowerDNS, Kea, radvd),
   and radvd shows Idle rather than Stopped when it has nothing to
   advertise.
+- **The audit log says who, how, from where and what changed.** Each entry
+  names the person (kept after the account is deleted) or the system and
+  what acted, whether it came from a sign-in, an API token or an update run
+  from a shell, and the client address. An edit shows each changed field as
+  old → new, and a save that changes nothing adds no entry; secrets show as
+  changed, never their values. Settings > Logs > Audit Log has Who and
+  Source IP columns and a filter by origin.
+- **More is recorded**: a database reset, clearing a log, a backup or the IP
+  lifecycle report downloaded, anomaly settings, dismissing or deleting an
+  anomaly, deleting a scan, a manual blocklist or GeoIP refresh, a lease
+  sync, a per-address scan setting. So is what CIDRella does on its own: a
+  DNS or DHCP server restarted, stopped or failing to start, the DNS proxy
+  falling back to bypass and recovering, the server stack boot fell back to,
+  a scheduled backup (or its failure), scheduled list updates that changed
+  something, stale addresses retired, and an update or rollback, recorded at
+  the next start even when it ran from a shell.
 
 ### Fixed
 
@@ -83,6 +103,10 @@ upgrade changes nothing until someone switches.
   default user, so every reload and stop signal from CIDRella was refused and
   a configuration change never reached the running dnsmasq until the
   container restarted.
+- Settings > Logs: each log and the audit table scroll inside their own box,
+  and the page stays where it is.
+- On PowerDNS the dashboard and Analytics counted no DNS queries; they now
+  count every query, in bypass mode too, where PowerDNS logs them itself.
 - On a stack where DHCP has its own server, an interface change now reaches
   it (and radvd) as well as the DNS server.
 - The encrypted forwarder now truncates a UDP answer larger than the buffer
@@ -103,6 +127,10 @@ upgrade changes nothing until someone switches.
   a record for is answered with its name, as before.
 
 ### Upgrade notes
+
+- Audit entries are kept 90 days instead of 7; an install still on 7 moves
+  to 90. Existing entries keep their user and get the new action names
+  (`vlan_created` rather than `create`).
 
 - The DHCP-only switch of 0.5.2 (Kea answering DHCP beside dnsmasq's DNS,
   and `/api/dhcp/server`) is gone. An install left on it comes back on

@@ -6,6 +6,7 @@
 #     cidrella-radvd unit. Returns nonzero on failure; radvd is needed only
 #     by the PowerDNS + Kea stack (dnsmasq sends its own Router
 #     Advertisements), so callers warn and carry on.
+#   - radvd_installed: is the radvd package installed.
 #
 # It never starts, stops or restarts radvd: CIDRella runs it only while the
 # PowerDNS + Kea stack serves, the same rule updates follow for dnsmasq, Kea
@@ -19,14 +20,21 @@ fi
 __CIDRELLA_RADVD_LIB_LOADED=1
 
 # install_radvd <slot>
+# radvd_installed: is the radvd package installed.
+radvd_installed() {
+  dpkg-query -W -f='${Status}' radvd 2>/dev/null | grep -q 'install ok installed'
+}
+
 install_radvd() {
   local slot="${1:?slot path required}"
 
-  if ! dpkg-query -W -f='${Status}' radvd 2>/dev/null | grep -q 'install ok installed'; then
+  if ! radvd_installed; then
+    info "radvd: installing (first time only)..."
     if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq radvd >/dev/null 2>&1; then
       warn "radvd: apt-get install radvd failed"
       return 1
     fi
+    ok "radvd installed"
   fi
 
   # The package's own unit would advertise from /etc/radvd.conf. Masking

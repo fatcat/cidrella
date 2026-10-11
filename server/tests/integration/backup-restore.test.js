@@ -336,7 +336,7 @@ describe('restore-time DHCP choice (stampRestoredSettings contract)', () => {
     expect(auditRows(p)).toEqual([
       {
         user_id: 1,
-        action: 'restore',
+        action: 'backup_restored',
         entity_type: 'backup',
         details: {
           restored_by: 'admin',
@@ -357,7 +357,7 @@ describe('restore-time DHCP choice (stampRestoredSettings contract)', () => {
     expect(auditRows(p)).toMatchObject([
       {
         user_id: null,
-        action: 'restore',
+        action: 'backup_restored',
         details: { restored_by: 'admin', dhcp_after_restore: null },
       },
     ]);

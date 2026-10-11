@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import os from 'os';
 import fs from 'fs';
-import { getDb, getSetting, audit } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
+import { recordAudit, settingsSnapshot } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getDnsBackend, getService } from '../backends/index.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
@@ -21,6 +22,18 @@ import { queueRegen } from '../utils/after-commit.js';
 import { ipv6Enabled } from '../utils/ipv6-support.js';
 
 const router = Router();
+
+// The settings an interface save writes, for its audit row.
+const INTERFACE_KEYS = [
+  'interface_config',
+  'dns_enabled',
+  'dhcp_enabled',
+  'dns_listen_port',
+  'http_redirect_enabled',
+  'ipv6_enabled',
+  'https_port',
+  'http_port',
+];
 
 // Interface name prefixes to exclude
 const EXCLUDED_PREFIXES = ['br', 'veth', 'docker', 'virbr', 'tun', 'tap'];
@@ -134,6 +147,7 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     return res.status(409).json({ error: 'A server switch is running; try again when it is done' });
   }
   const body = req.body || {};
+  const auditBefore = settingsSnapshot(INTERFACE_KEYS);
   const {
     interfaces,
     dns_enabled,
@@ -313,15 +327,11 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     console.warn('Failed to rebind proxy:', err.message);
   }
 
-  audit(req.user.id, 'interface_config_updated', 'setting', null, {
-    interfaces,
-    dns_enabled,
-    dhcp_enabled,
-    dns_listen_port,
-    https_port: httpsPortNum,
-    http_port: httpPortNum,
-    http_redirect_enabled,
-    ipv6_enabled,
+  recordAudit({
+    action: 'interface_config_updated',
+    entityType: 'setting',
+    before: auditBefore,
+    after: settingsSnapshot(INTERFACE_KEYS),
   });
 
   res.json({

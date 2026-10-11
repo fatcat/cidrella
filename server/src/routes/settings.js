@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, setSetting, audit } from '../db/init.js';
+import { getDb, setSetting } from '../db/init.js';
+import { recordAudit, settingsSnapshot } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { pruneLifecycleEvents } from '../services/ip-lifecycle-service.js';
@@ -263,12 +264,19 @@ router.put('/bulk', requireRole('admin'), (req, res) => {
   }
 
   const db = getDb();
+  const keys = normalized.map(([key]) => key);
+  const before = settingsSnapshot(keys, db);
   Setting.upsertSettings(db, normalized);
 
   if (settings.ip_history_retention_days !== undefined) {
     pruneLifecycleEvents(db);
   }
-  audit(req.user.id, 'settings_bulk_updated', 'setting', null, { keys: entries.map(([k]) => k) });
+  recordAudit({
+    action: 'settings_bulk_updated',
+    entityType: 'setting',
+    before,
+    after: settingsSnapshot(keys, db),
+  });
   res.json({ ok: true });
 });
 
@@ -285,12 +293,18 @@ router.put('/:key', requirePerm('system:write'), (req, res) => {
   const check = validateSetting(key, value);
   if (check.error) return res.status(400).json({ error: check.error });
 
+  const before = settingsSnapshot([key]);
   setSetting(key, check.normalized);
 
   if (key === 'ip_history_retention_days') {
     pruneLifecycleEvents(getDb());
   }
-  audit(req.user.id, 'setting_updated', 'setting', null, { key, value: check.normalized });
+  recordAudit({
+    action: 'setting_updated',
+    entityType: 'setting',
+    before,
+    after: settingsSnapshot([key]),
+  });
   res.json({ key, value: check.normalized });
 });
 

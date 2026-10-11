@@ -15,7 +15,8 @@ Type=notify
 User=cidrella
 Group=cidrella
 ExecStartPre=/bin/mkdir -p /var/lib/cidrella/pdns/run
-ExecStart=/usr/sbin/pdns_recursor --config-dir=/var/lib/cidrella/pdns/recursor --daemon=no --write-pid=no --disable-syslog --log-timestamp=no
+# Output goes to pdns.log, as cidrella-pdns-auth.service explains.
+ExecStart=/bin/sh -c 'exec /usr/sbin/pdns_recursor --config-dir=/var/lib/cidrella/pdns/recursor --daemon=no --write-pid=no --disable-syslog >>/var/lib/cidrella/pdns/pdns.log 2>&1'
 Restart=on-failure
 RestartSec=3
 UMask=0027

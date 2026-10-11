@@ -23,6 +23,9 @@ export const API_KEY_FILE = 'api-key';
 export const AUTH_CONF = path.join(AUTH_DIR, 'pdns.conf');
 export const AUTH_DB = path.join(AUTH_DIR, 'pdns.sqlite3');
 export const RECURSOR_CONF = path.join(RECURSOR_DIR, 'recursor.yml');
+// Both daemons' output, and the DNS proxy's query lines (utils/query-log.js):
+// the DNS log on this stack. The units and the s6 script append to it.
+export const LOG_FILE = path.join(PDNS_DIR, 'pdns.log');
 // Left by a restart that failed, so the next boot restarts.
 export const RESTART_PENDING = path.join(DATA_DIR, 'runtime', 'pdns-restart-pending');
 

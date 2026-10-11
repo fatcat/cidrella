@@ -14,7 +14,11 @@ Type=notify
 User=cidrella
 Group=cidrella
 ExecStartPre=/bin/mkdir -p /var/lib/cidrella/pdns/run
-ExecStart=/usr/sbin/pdns_server --config-dir=/var/lib/cidrella/pdns/auth --guardian=no --daemon=no --disable-syslog --log-timestamp=no --write-pid=no
+# Output goes to pdns.log, the DNS log CIDRella shows on this stack, with
+# PowerDNS's own timestamps. A shell redirect rather than StandardOutput=append:
+# systemd would create a missing file as root, and CIDRella writes its query
+# lines into the same file as cidrella.
+ExecStart=/bin/sh -c 'exec /usr/sbin/pdns_server --config-dir=/var/lib/cidrella/pdns/auth --guardian=no --daemon=no --disable-syslog --write-pid=no >>/var/lib/cidrella/pdns/pdns.log 2>&1'
 Restart=on-failure
 RestartSec=3
 UMask=0027

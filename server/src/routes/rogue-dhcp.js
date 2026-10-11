@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, getSetting, setSetting, audit } from '../db/init.js';
+import { getDb, getSetting, setSetting } from '../db/init.js';
+import { recordAudit, settingsSnapshot } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { isValidMac } from '../utils/ip.js';
 import { isValidAddress } from '../utils/cidr.js';
@@ -72,7 +73,12 @@ router.post('/events/:id/acknowledge', requirePerm('dhcp:write'), (req, res) => 
   const db = getDb();
   const result = RogueDhcp.acknowledgeEvent(db, req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Event not found' });
-  audit(req.user.id, 'rogue_dhcp_acknowledged', 'rogue_dhcp_event', req.params.id, {});
+  recordAudit({
+    action: 'rogue_dhcp_acknowledged',
+    entityType: 'rogue_dhcp_event',
+    entityId: req.params.id,
+    details: {},
+  });
   res.json({ ok: true });
 });
 
@@ -80,8 +86,12 @@ router.post('/events/:id/acknowledge', requirePerm('dhcp:write'), (req, res) => 
 router.post('/acknowledge-all', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const result = RogueDhcp.acknowledgeAll(db);
-  audit(req.user.id, 'rogue_dhcp_acknowledged_all', 'rogue_dhcp_event', null, {
-    count: result.changes,
+  recordAudit({
+    action: 'rogue_dhcp_acknowledged_all',
+    entityType: 'rogue_dhcp_event',
+    details: {
+      count: result.changes,
+    },
   });
   res.json({ ok: true, acknowledged: result.changes });
 });
@@ -91,7 +101,12 @@ router.delete('/events/:id', requirePerm('dhcp:write'), (req, res) => {
   const db = getDb();
   const result = RogueDhcp.clearEvent(db, req.params.id);
   if (result.changes === 0) return res.status(404).json({ error: 'Event not found' });
-  audit(req.user.id, 'rogue_dhcp_cleared', 'rogue_dhcp_event', req.params.id, {});
+  recordAudit({
+    action: 'rogue_dhcp_cleared',
+    entityType: 'rogue_dhcp_event',
+    entityId: req.params.id,
+    details: {},
+  });
   res.json({ ok: true });
 });
 
@@ -107,13 +122,17 @@ router.post('/probe', requirePerm('dhcp:write'), async (req, res) => {
   }
   const { dhcp, dhcpv6, routerAdvertisements } = result;
   const rogueCount = dhcp.rogues.length + dhcpv6.rogues.length + routerAdvertisements.rogues.length;
-  audit(req.user.id, 'rogue_dhcp_probe', 'rogue_dhcp', null, {
-    interfaces: dhcp.interfaces,
-    offers: dhcp.offers,
-    advertisements: dhcpv6.advertisements,
-    routers: routerAdvertisements.routers,
-    rogues: rogueCount,
-    skipped: dhcp.skipped === true,
+  recordAudit({
+    action: 'rogue_dhcp_probe',
+    entityType: 'rogue_dhcp',
+    details: {
+      interfaces: dhcp.interfaces,
+      offers: dhcp.offers,
+      advertisements: dhcpv6.advertisements,
+      routers: routerAdvertisements.routers,
+      rogues: rogueCount,
+      skipped: dhcp.skipped === true,
+    },
   });
   res.json({
     supported: dhcp.supported,
@@ -198,13 +217,12 @@ router.post('/authorized', requirePerm('dhcp:write'), (req, res) => {
   if (result.changes === 0) {
     return res.status(409).json({ error: 'That server is already authorized' });
   }
-  audit(
-    req.user.id,
-    'rogue_dhcp_authorized_added',
-    'dhcp_authorized_server',
-    result.lastInsertRowid,
-    { server_ip: ip, server_mac: mac, server_duid: duid },
-  );
+  recordAudit({
+    action: 'rogue_dhcp_authorized_added',
+    entityType: 'dhcp_authorized_server',
+    entityId: result.lastInsertRowid,
+    details: { server_ip: ip, server_mac: mac, server_duid: duid },
+  });
   res.status(201).json({ id: result.lastInsertRowid });
 });
 
@@ -214,10 +232,15 @@ router.delete('/authorized/:id', requirePerm('dhcp:write'), (req, res) => {
   const entry = db.prepare('SELECT * FROM dhcp_authorized_servers WHERE id = ?').get(req.params.id);
   if (!entry) return res.status(404).json({ error: 'Entry not found' });
   RogueDhcp.deleteAuthorized(db, req.params.id);
-  audit(req.user.id, 'rogue_dhcp_authorized_removed', 'dhcp_authorized_server', req.params.id, {
-    server_ip: entry.server_ip,
-    server_mac: entry.server_mac,
-    server_duid: entry.server_duid,
+  recordAudit({
+    action: 'rogue_dhcp_authorized_removed',
+    entityType: 'dhcp_authorized_server',
+    entityId: req.params.id,
+    details: {
+      server_ip: entry.server_ip,
+      server_mac: entry.server_mac,
+      server_duid: entry.server_duid,
+    },
   });
   res.json({ ok: true });
 });
@@ -238,10 +261,17 @@ router.put('/settings', requirePerm('dhcp:write'), (req, res) => {
     }
   }
 
+  const ROGUE_KEYS = ['rogue_dhcp_detection_enabled', 'rogue_dhcp_probe_interval_min'];
+  const before = settingsSnapshot(ROGUE_KEYS);
   if (enabled !== undefined) setSetting('rogue_dhcp_detection_enabled', enabled ? 'true' : 'false');
   if (intervalMin !== undefined) setSetting('rogue_dhcp_probe_interval_min', String(intervalMin));
 
-  audit(req.user.id, 'rogue_dhcp_settings_updated', 'rogue_dhcp', null, { enabled, intervalMin });
+  recordAudit({
+    action: 'rogue_dhcp_settings_updated',
+    entityType: 'rogue_dhcp',
+    before,
+    after: settingsSnapshot(ROGUE_KEYS),
+  });
   res.json({
     enabled: getSetting('rogue_dhcp_detection_enabled') === 'true',
     intervalMin: parseInt(getSetting('rogue_dhcp_probe_interval_min'), 10) || 15,

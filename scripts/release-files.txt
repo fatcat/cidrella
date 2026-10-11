@@ -49,6 +49,7 @@ lib/verify.sh
 
 # OS integration assets installed onto the host
 logrotate/cidrella-dnsmasq
+logrotate/cidrella-pdns
 polkit/49-cidrella.rules
 sudoers/cidrella
 systemd/cidrella.service

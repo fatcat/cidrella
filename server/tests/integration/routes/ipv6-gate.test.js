@@ -145,7 +145,7 @@ describe('switching on, creating IPv6 objects, switching off', () => {
         "SELECT details FROM audit_log WHERE action = 'interface_config_updated' ORDER BY id DESC",
       )
       .get();
-    expect(JSON.parse(audit.details).ipv6_enabled).toBe(true);
+    expect(JSON.parse(audit.details).changes.ipv6_enabled).toEqual(['false', 'true']);
   });
 
   it('creates and configures an IPv6 network with a stateful scope and AAAA record', async () => {

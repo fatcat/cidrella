@@ -391,9 +391,3 @@ export function setSetting(key, value) {
   return upsertSettingWithConflict(getDb(), key, value);
 }
 
-export function audit(userId, action, entityType, entityId, details) {
-  const detailsJson = details ? JSON.stringify(details) : null;
-  db.prepare(
-    'INSERT INTO audit_log (user_id, action, entity_type, entity_id, details) VALUES (?, ?, ?, ?, ?)',
-  ).run(userId, action, entityType, entityId, detailsJson);
-}

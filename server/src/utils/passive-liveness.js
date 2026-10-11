@@ -25,8 +25,9 @@ import { getDhcpBackend, getService, onBackendChanged } from '../backends/index.
  * Without a log to read, only the staleness sweep runs.
  */
 export function startPassiveLivenessWatcher(db) {
-  // Follows the DNS role to another backend after a stack switch. PowerDNS
-  // keeps no query log; the DNS proxy records liveness for every query itself.
+  // Follows the DNS role to another backend after a stack switch. Behind the
+  // proxy the clients read here were already recorded by the proxy itself;
+  // reading them again costs one update per client per poll.
   let source;
   let log;
   const bind = () => {

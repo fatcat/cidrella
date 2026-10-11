@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, getSetting, setSetting, audit } from '../db/init.js';
+import { getDb, getSetting, setSetting } from '../db/init.js';
+import { recordAudit, settingsSnapshot } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
   getProxyStatus,
@@ -81,7 +82,11 @@ router.post('/rules', requirePerm('dns:write'), (req, res) => {
 
   if (added.length > 0) {
     loadGeoipRules();
-    audit(req.user.id, 'create', 'geoip_rules', null, { countries: added });
+    recordAudit({
+      action: 'geoip_rules_created',
+      entityType: 'geoip_rules',
+      details: { countries: added },
+    });
   }
 
   res.status(201).json({ added });
@@ -98,7 +103,14 @@ router.put('/rules/:id', requirePerm('dns:write'), (req, res) => {
 
   GeoipRule.setEnabled(db, rule.id, enabled);
   loadGeoipRules();
-  audit(req.user.id, 'update', 'geoip_rule', rule.id, { country_code: rule.country_code, enabled });
+  recordAudit({
+    action: 'geoip_rule_updated',
+    entityType: 'geoip_rule',
+    entityId: rule.id,
+    before: { enabled: Boolean(rule.enabled) },
+    after: { enabled: Boolean(enabled) },
+    details: { country_code: rule.country_code },
+  });
   res.json({ ok: true });
 });
 
@@ -110,7 +122,12 @@ router.delete('/rules/:id', requirePerm('dns:write'), (req, res) => {
 
   GeoipRule.deleteRule(db, rule.id);
   loadGeoipRules();
-  audit(req.user.id, 'delete', 'geoip_rule', rule.id, { country_code: rule.country_code });
+  recordAudit({
+    action: 'geoip_rule_deleted',
+    entityType: 'geoip_rule',
+    entityId: rule.id,
+    details: { country_code: rule.country_code },
+  });
   res.json({ ok: true });
 });
 
@@ -141,7 +158,12 @@ router.post('/allowlist', requirePerm('dns:write'), (req, res) => {
   }
   const id = GeoipAllowlist.addEntry(db, v, reason);
   loadGeoipAllowlist();
-  audit(req.user.id, 'create', 'geoip_ip_allowlist', id, { value: v });
+  recordAudit({
+    action: 'geoip_ip_allowlist_created',
+    entityType: 'geoip_ip_allowlist',
+    entityId: id,
+    details: { value: v },
+  });
   res.status(201).json({ id, value: v });
 });
 
@@ -152,7 +174,12 @@ router.delete('/allowlist/:id', requirePerm('dns:write'), (req, res) => {
   if (!entry) return res.status(404).json({ error: 'Allowlist entry not found' });
   GeoipAllowlist.deleteEntry(db, entry.id);
   loadGeoipAllowlist();
-  audit(req.user.id, 'delete', 'geoip_ip_allowlist', entry.id, { value: entry.value });
+  recordAudit({
+    action: 'geoip_ip_allowlist_deleted',
+    entityType: 'geoip_ip_allowlist',
+    entityId: entry.id,
+    details: { value: entry.value },
+  });
   res.json({ ok: true });
 });
 
@@ -177,6 +204,8 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
       .json({ error: 'Update schedule must be off, weekly, biweekly, or monthly' });
   }
 
+  const GEOIP_KEYS = ['geoip_enabled', 'geoip_mode', 'geoip_update_schedule'];
+  const before = settingsSnapshot(GEOIP_KEYS);
   const wasEnabled = getSetting('geoip_enabled') === 'true';
 
   // Update settings
@@ -203,9 +232,11 @@ router.put('/settings', requirePerm('dns:write'), async (req, res) => {
     return res.status(500).json({ error: 'Failed to load GeoIP database: ' + err.message });
   }
 
-  audit(req.user.id, 'update', 'geoip_settings', null, {
-    geoip_enabled: nowEnabled,
-    geoip_mode,
+  recordAudit({
+    action: 'geoip_settings_updated',
+    entityType: 'geoip_settings',
+    before,
+    after: settingsSnapshot(GEOIP_KEYS),
   });
 
   res.json({ ok: true });
@@ -216,7 +247,11 @@ router.post('/db/refresh', requirePerm('dns:write'), async (req, res) => {
   try {
     await downloadMmdb();
     const status = getProxyStatus();
-    audit(req.user.id, 'update', 'geoip_db', null, { action: 'refresh' });
+    recordAudit({
+      action: 'geoip_db_refreshed',
+      entityType: 'geoip_db',
+      details: { db_updated_at: status.dbLastUpdated ?? null },
+    });
     res.json({ ok: true, dbLastUpdated: status.dbLastUpdated, dbLoaded: status.dbLoaded });
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -236,6 +271,7 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
 // POST /api/geoip/stats/reset
 router.post('/stats/reset', requirePerm('dns:write'), (req, res) => {
   resetStats();
+  recordAudit({ action: 'geoip_stats_reset', entityType: 'geoip_settings' });
   res.json({ ok: true });
 });
 

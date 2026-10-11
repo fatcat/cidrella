@@ -14,6 +14,7 @@ import { listenableAddresses, selectInterfaceNames } from './interface-config.js
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyListenNow } from '../services/backend-apply.js';
+import { recordAudit } from '../services/audit.js';
 import { switchInProgress } from './switch-state.js';
 import { canonicalizeIp } from './address.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
@@ -24,6 +25,7 @@ import { extractEde, failureCause, FAILURE_CAUSES } from './dns-ede.js';
 import { createReservoir, quantileOfSorted } from './samples.js';
 import { loadCityTable, unloadCityTable, cityPlace } from './geo-cities.js';
 import { recordResolution } from './resolution-feed.js';
+import { writeQueryLine } from './query-log.js';
 import {
   DATA_DIR,
   GEOIP_CACHE_MAX,
@@ -360,6 +362,13 @@ function buildOptEcho(opt) {
   ];
 }
 
+// Every answered query, once: the analytics row and, for a DNS backend that
+// keeps no query log of its own, a line in its log (utils/query-log.js).
+function noteQuery(entry) {
+  logDnsQuery(entry);
+  writeQueryLine(entry);
+}
+
 // DNSSEC validation produces three states for analytics: secure, insecure,
 // and unknown. AD is meaningful only when validation is enabled and the
 // client did not ask dnsmasq to skip checking. Failed responses are not proof
@@ -692,7 +701,7 @@ function handleQuery(msg, rinfo, sock) {
       sock.send(response, rinfo.port, rinfo.address);
       const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
       recordLatency(latencyUs);
-      logDnsQuery({
+      noteQuery({
         clientIp,
         domain: queryName,
         queryType,
@@ -731,7 +740,7 @@ function handleQuery(msg, rinfo, sock) {
         timeoutCount++;
         const latencyUs = Number(process.hrtime.bigint() - p.startNs) / 1000;
         recordLatency(latencyUs);
-        logDnsQuery({
+        noteQuery({
           clientIp: p.clientIp,
           domain: p.queryName,
           queryType: p.queryType,
@@ -841,7 +850,7 @@ function deliverResponse(pending, msg, response) {
       pending.socket.send(nxResponse, pending.port, pending.address);
       const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
       recordLatency(latencyUs);
-      logDnsQuery({
+      noteQuery({
         clientIp: pending.clientIp,
         domain: pending.queryName,
         queryType: pending.queryType,
@@ -871,7 +880,7 @@ function deliverResponse(pending, msg, response) {
       enabled: getSetting('dnssec_enabled') === 'true',
       checkingDisabled: pending.checkingDisabled,
     });
-    logDnsQuery({
+    noteQuery({
       clientIp: pending.clientIp,
       domain: pending.queryName,
       queryType: pending.queryType,
@@ -967,7 +976,7 @@ async function handleTcpQuery(msg, clientSock) {
     writeTcpMessage(clientSock, createBlockedResponse(query));
     const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
     recordLatency(latencyUs);
-    logDnsQuery({
+    noteQuery({
       clientIp,
       domain: queryName,
       queryType,
@@ -1006,7 +1015,7 @@ async function handleTcpQuery(msg, clientSock) {
     timeoutCount++;
     statsTotal++;
     writeTcpMessage(clientSock, encodeServfail(query));
-    logDnsQuery({
+    noteQuery({
       clientIp,
       domain: queryName || '',
       queryType,
@@ -1041,7 +1050,7 @@ async function handleTcpQuery(msg, clientSock) {
   if (resolved.action === 'block') {
     recordResolvedBlock(resolved);
     writeTcpMessage(clientSock, createNxdomainResponse(query));
-    logDnsQuery({
+    noteQuery({
       clientIp,
       domain: queryName || '',
       queryType,
@@ -1062,7 +1071,7 @@ async function handleTcpQuery(msg, clientSock) {
     enabled: getSetting('dnssec_enabled') === 'true',
     checkingDisabled: !!query.flag_cd,
   });
-  logDnsQuery({
+  noteQuery({
     clientIp,
     domain: queryName || '',
     queryType,
@@ -1370,6 +1379,20 @@ function activateBypass() {
   if (switchInProgress()) return;
   bypassMode = true;
   proxyLog('error', 'All restart attempts failed, activating bypass mode (dnsmasq takes port 53)');
+  // Filtering, GeoIP and the query log stop with the proxy out of the path.
+  try {
+    recordAudit({
+      action: 'dns_proxy_bypass_activated',
+      entityType: 'dns_proxy',
+      source: 'proxy-health',
+      details: {
+        reason: `the proxy did not restart after ${PROXY_MAX_RESTART_ATTEMPTS} attempts`,
+        backend: getDnsBackend().name,
+      },
+    });
+  } catch (err) {
+    proxyLog('error', 'Could not record the bypass in the audit log', { error: err.message });
+  }
   try {
     // Temporarily override: dnsmasq listens on port 53 + LAN IPs.
     // Must be synchronous before the restart, queueRegen would defer
@@ -1385,6 +1408,15 @@ function activateBypass() {
 function deactivateBypass() {
   bypassMode = false;
   proxyLog('info', 'Bypass deactivated, proxy recovered');
+  try {
+    recordAudit({
+      action: 'dns_proxy_bypass_deactivated',
+      entityType: 'dns_proxy',
+      source: 'proxy-health',
+    });
+  } catch (err) {
+    proxyLog('error', 'Could not record the recovery in the audit log', { error: err.message });
+  }
   try {
     const db = getDb();
     Setting.deleteSetting(db, 'dns_proxy_bypass');
@@ -1628,6 +1660,12 @@ export function startGeoipScheduler() {
         proxyLog('info', `GeoIP database is older than ${intervalDays} days, downloading update`);
         try {
           await downloadMmdb();
+          recordAudit({
+            action: 'geoip_db_refreshed',
+            entityType: 'geoip_db',
+            source: 'scheduler',
+            details: { previous: lastUpdated, schedule },
+          });
         } catch (err) {
           proxyLog('error', 'GeoIP auto-update failed', { error: err.message });
         }

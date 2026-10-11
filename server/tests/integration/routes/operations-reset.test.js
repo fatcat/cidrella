@@ -10,10 +10,12 @@ const { default: request } = await import('supertest');
 
 let tmpDir;
 let app;
+let db;
 
 beforeAll(async () => {
   const setup = await setupTestDb();
   tmpDir = setup.tmpDir;
+  db = setup.db;
   app = createMultiRouterApp([
     { prefix: '/api/operations', router: operationsRouter },
     { prefix: '/api/dhcp', router: dhcpRouter },
@@ -42,5 +44,18 @@ describe('POST /api/operations/reset-database', () => {
     expect(res.body.defaults[51]).toBeUndefined();
     expect(res.body.defaults[6]).toContain(FALLBACK_SECONDARY_DNS);
     expect(res.body.defaults[6]).toMatch(/^(\d{1,3}\.){3}\d{1,3},9\.9\.9\.9$/);
+  });
+});
+
+describe('the audit row of a reset', () => {
+  it('leaves the reset as the only entry, naming who asked', async () => {
+    db.prepare(
+      "INSERT INTO audit_log (action, entity_type, actor) VALUES ('vlan_created', 'vlan', 'x')",
+    ).run();
+    expect((await request(app).post('/api/operations/reset-database').send({})).status).toBe(200);
+    const rows = db.prepare('SELECT action, actor, user_id, details FROM audit_log').all();
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ action: 'database_reset', actor: 'testadmin', user_id: null });
+    expect(JSON.parse(rows[0].details).removed).toHaveProperty('subnets');
   });
 });

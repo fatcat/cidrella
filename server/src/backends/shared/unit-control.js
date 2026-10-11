@@ -12,6 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
+import { emitUnitEvent } from './unit-events.js';
 
 const stderrOf = (err) => err?.stderr?.toString?.().trim();
 
@@ -51,6 +52,8 @@ export function createUnitControl({
       else writeFlag(disableFile);
     }
   }
+
+  const tell = (action, error = null) => emitUnitEvent(action, { unit, processName, error });
 
   function setRestartPending(pending) {
     try {
@@ -127,12 +130,14 @@ export function createUnitControl({
     } catch (err) {
       console.warn(`Could not enable ${processName}:`, err.message);
       setRestartPending(true);
+      tell('restart_failed', err.message);
       return;
     }
     try {
       execFileSync('systemctl', ['restart', unit], { stdio: 'pipe' });
       console.log(`${processName} restarted via systemctl`);
       setRestartPending(false);
+      tell('restarted');
       return;
     } catch (err) {
       const stderr = stderrOf(err);
@@ -144,20 +149,24 @@ export function createUnitControl({
     } catch (err) {
       console.warn(`Could not enable ${processName}:`, err.message);
       setRestartPending(true);
+      tell('restart_failed', err.message);
       return;
     }
     try {
       execFileSync('pkill', ['-TERM', '-x', processName], { stdio: 'pipe' });
       console.log(`${processName} terminated (supervisor will restart)`);
       setRestartPending(false);
+      tell('restarted');
     } catch {
       if (enableFile || disableFile) {
         // Not running yet: its run script starts it once the flag allows.
         setRestartPending(false);
+        tell('restarted');
         return;
       }
       console.warn(`Could not restart ${processName}`);
       setRestartPending(true);
+      tell('restart_failed', 'not running, and no supervisor flag to start it');
     }
   }
 
@@ -173,6 +182,7 @@ export function createUnitControl({
     }
     try {
       execFileSync('systemctl', ['stop', unit], { stdio: 'pipe' });
+      tell('stopped');
       return;
     } catch (err) {
       // Under systemd a TERM would only see the unit restarted, and could
@@ -185,6 +195,7 @@ export function createUnitControl({
     }
     try {
       execFileSync('pkill', ['-TERM', '-x', processName], { stdio: 'pipe' });
+      tell('stopped');
     } catch {
       /* not running */
     }

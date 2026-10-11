@@ -32,6 +32,7 @@ import {
 import { activeLeaseSql, leaseExpiryMs } from '../utils/lease-sql.js';
 import { leaseDurationMs } from '../utils/lease-time.js';
 import { parseIp } from '../utils/address.js';
+import { recordAudit, sample } from './audit.js';
 
 export const OFFLINE_RETIREMENT_MS = 60 * 60 * 1000;
 
@@ -825,6 +826,21 @@ export async function retireStaleDynamicAddresses(
     stickyRelease,
   };
   lastRetirementDiagnostics = { last_run_at: nowIso, ...result };
+  // One row per sweep that retired something; each address's own history is
+  // in ip_events.
+  if (eligible.length > 0) {
+    recordAudit({
+      action: 'stale_addresses_retired',
+      entityType: 'ip_address',
+      source: 'liveness',
+      db,
+      details: {
+        addresses: sample(eligible.map((row) => row.ip_address)),
+        dns_records_removed: dnsRecordsRemoved,
+        leases_removed: result.leasesRemoved,
+      },
+    });
+  }
   return result;
 }
 

@@ -335,7 +335,7 @@ describe('backup round trip', () => {
     const added = rows(after.audit_log).filter(
       (row) => !before.audit_log.includes(JSON.stringify(row)),
     );
-    expect(added.map((row) => row.action).sort()).toEqual(['restore', 'totp_carried_over']);
+    expect(added.map((row) => row.action).sort()).toEqual(['backup_restored', 'totp_carried_over']);
     expect(
       rows(before.audit_log).every((row) => after.audit_log.includes(JSON.stringify(row))),
     ).toBe(true);
@@ -486,7 +486,7 @@ describe('restoring a backup from schema 54', () => {
 
   it('records the restore in the migrated audit log', () => {
     const row = getDb()
-      .prepare("SELECT details FROM audit_log WHERE action = 'restore' ORDER BY id DESC")
+      .prepare("SELECT details FROM audit_log WHERE action = 'backup_restored' ORDER BY id DESC")
       .get();
     expect(JSON.parse(row.details)).toMatchObject({
       restored_by: 'legacy-admin',

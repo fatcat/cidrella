@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, getSetting, setSetting, audit } from '../db/init.js';
+import { getDb, getSetting, setSetting } from '../db/init.js';
+import { recordAudit, sample, settingsSnapshot } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { queueRegen } from '../utils/after-commit.js';
 import {
@@ -412,11 +413,30 @@ router.post('/zones', requirePerm('dns:write'), (req, res) => {
     soaDefaults,
   );
   if (zone.type === 'reverse' && zone.enabled) reconcileManagedReverseDns(db);
-  audit(req.user.id, 'zone_created', 'dns_zone', zone.id, { name, type });
+  recordAudit({
+    action: 'zone_created',
+    entityType: 'dns_zone',
+    entityId: zone.id,
+    details: { name, type },
+  });
 
   req.afterCommit('regenerate_dns');
   res.status(201).json(zone);
 });
+
+// The zone fields an edit can change, compared for the audit row.
+const ZONE_EDIT_FIELDS = [
+  'name',
+  'description',
+  'enabled',
+  'forward_unknown',
+  'soa_primary_ns',
+  'soa_admin_email',
+  'soa_refresh',
+  'soa_retry',
+  'soa_expire',
+  'soa_minimum_ttl',
+];
 
 // PUT /api/dns/zones/:id
 router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
@@ -485,7 +505,15 @@ router.put('/zones/:id', requirePerm('dns:write'), (req, res) => {
     return result;
   });
   const updated = updateWorkflow();
-  audit(req.user.id, 'zone_updated', 'dns_zone', zone.id, { changes: req.body });
+  recordAudit({
+    action: 'zone_updated',
+    entityType: 'dns_zone',
+    entityId: zone.id,
+    details: { name: zone.name },
+    before: zone,
+    after: updated,
+    only: ZONE_EDIT_FIELDS,
+  });
 
   req.afterCommit('regenerate_dns');
   res.json(updated);
@@ -516,7 +544,12 @@ router.delete('/zones/:id', requirePerm('dns:write'), (req, res) => {
     reconcileManagedReverseDns(db);
   })();
 
-  audit(req.user.id, 'zone_deleted', 'dns_zone', zone.id, { name: zone.name });
+  recordAudit({
+    action: 'zone_deleted',
+    entityType: 'dns_zone',
+    entityId: zone.id,
+    details: { name: zone.name },
+  });
 
   req.afterCommit('regenerate_dns');
   res.json({ message: 'Zone deleted' });
@@ -684,11 +717,16 @@ router.post('/zones/:zoneId/records', requirePerm('dns:write'), (req, res) => {
     throw err;
   }
 
-  audit(req.user.id, 'record_created', 'dns_record', record.id, {
-    zone: zone.name,
-    name: normalizedName,
-    type,
-    value: normalizedValue,
+  recordAudit({
+    action: 'record_created',
+    entityType: 'dns_record',
+    entityId: record.id,
+    details: {
+      zone: zone.name,
+      name: normalizedName,
+      type,
+      value: normalizedValue,
+    },
   });
 
   req.afterCommit('regenerate_dns');
@@ -843,7 +881,15 @@ router.put('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res) =>
     }),
   );
   const updated = updateWorkflow();
-  audit(req.user.id, 'record_updated', 'dns_record', record.id, { changes: req.body });
+  recordAudit({
+    action: 'record_updated',
+    entityType: 'dns_record',
+    entityId: record.id,
+    details: { zone: zone.name, name: record.name, type: record.type },
+    before: record,
+    after: updated,
+    only: ['name', 'type', 'value', 'priority', 'weight', 'port', 'ttl', 'enabled'],
+  });
 
   req.afterCommit('regenerate_dns');
   res.json(updated);
@@ -867,9 +913,14 @@ router.delete('/zones/:zoneId/records/:id', requirePerm('dns:write'), (req, res)
   const delZone = db.prepare('SELECT * FROM dns_zones WHERE id = ?').get(record.zone_id);
   db.transaction(() => applyRecordDelete(db, delZone, record))();
 
-  audit(req.user.id, 'record_deleted', 'dns_record', record.id, {
-    type: record.type,
-    name: record.name,
+  recordAudit({
+    action: 'record_deleted',
+    entityType: 'dns_record',
+    entityId: record.id,
+    details: {
+      type: record.type,
+      name: record.name,
+    },
   });
 
   req.afterCommit('regenerate_dns');
@@ -903,6 +954,7 @@ router.post('/records/bulk', requirePerm('dns:write'), (req, res) => {
 
   const db = getDb();
   const applied = [];
+  const appliedNames = [];
   const skipped = [];
   const applyOne = db.transaction((zone, record) =>
     action === 'delete'
@@ -952,17 +1004,17 @@ router.post('/records/bulk', requirePerm('dns:write'), (req, res) => {
         continue;
       }
       applied.push(id);
-      audit(
-        req.user.id,
-        action === 'delete' ? 'record_deleted' : 'record_updated',
-        'dns_record',
-        id,
-        action === 'delete'
-          ? { type: record.type, name: record.name, bulk: true }
-          : { changes: { enabled: action === 'enable' }, bulk: true },
-      );
+      appliedNames.push(`${record.name} ${record.type} (${zone.name})`);
     }
   })();
+
+  if (applied.length) {
+    recordAudit({
+      action: `dns_records_bulk_${action === 'delete' ? 'deleted' : `${action}d`}`,
+      entityType: 'dns_record',
+      details: { records: sample(appliedNames), skipped: skipped.length },
+    });
+  }
 
   if (applied.length) req.afterCommit('regenerate_dns');
   res.json({ action, applied, skipped });
@@ -988,7 +1040,11 @@ router.post('/apply', requirePerm('dns:write'), (req, res) => {
     )
     .get().c;
 
-  audit(req.user.id, 'dns_config_applied', 'dns', null, { zones: zoneCount, records: recordCount });
+  recordAudit({
+    action: 'dns_config_applied',
+    entityType: 'dns',
+    details: { zones: zoneCount, records: recordCount },
+  });
   res.json({ message: 'Configuration applied', zones: zoneCount, records: recordCount });
 });
 
@@ -1048,8 +1104,13 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
     }
   }
 
-  const db = getDb();
-  const oldRow = db.prepare("SELECT value FROM settings WHERE key = 'dns_upstream_servers'").get();
+  const FORWARDER_KEYS = [
+    'dns_upstream_servers',
+    'dns_upstream_backup_servers',
+    'dns_upstream_backup_mode',
+    'dns_no_recursion',
+  ];
+  const before = settingsSnapshot(FORWARDER_KEYS);
 
   // Preserve the existing forwarder list when recursion is off and none sent,
   // so toggling recursion back on restores them.
@@ -1065,12 +1126,11 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
   applyEncryptedForwarder();
   req.afterCommit('regenerate_dnsmasq_conf');
 
-  audit(req.user.id, 'dns_forwarders_updated', 'dns', null, {
-    old: oldRow?.value,
-    new: JSON.stringify(canonicalServers),
-    backup: canonicalBackup,
-    backup_mode,
-    no_recursion: noRecursion,
+  recordAudit({
+    action: 'dns_forwarders_updated',
+    entityType: 'dns',
+    before,
+    after: settingsSnapshot(FORWARDER_KEYS),
   });
 
   res.json(forwarderSettings());
@@ -1099,7 +1159,7 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
       .json({ error: 'dnsmasq on this host was not built with DNSSEC support' });
   }
 
-  const oldVal = getSetting('dnssec_enabled');
+  const before = settingsSnapshot(['dnssec_enabled']);
   setSetting('dnssec_enabled', enabled ? 'true' : 'false');
 
   if (enabled) {
@@ -1111,9 +1171,11 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
 
   req.afterCommit('regenerate_dnsmasq_conf');
 
-  audit(req.user.id, 'dns_dnssec_updated', 'dns', null, {
-    old: oldVal,
-    new: enabled ? 'true' : 'false',
+  recordAudit({
+    action: 'dns_dnssec_updated',
+    entityType: 'dns',
+    before,
+    after: settingsSnapshot(['dnssec_enabled']),
   });
 
   res.json({ enabled, ntp: getNtpStatus() });
@@ -1181,15 +1243,19 @@ router.put('/encryption', requirePerm('dns:write'), (req, res) => {
     }
   }
 
+  const ENCRYPTION_KEYS = ['forwarder_encryption', 'forwarder_encrypted_upstreams'];
+  const before = settingsSnapshot(ENCRYPTION_KEYS);
   setSetting('forwarder_encryption', mode);
   setSetting('forwarder_encrypted_upstreams', JSON.stringify(list));
 
   applyEncryptedForwarder(); // start/stop/reconfigure the stub now
   req.afterCommit('regenerate_dnsmasq_conf'); // server= → stub (or back to IPs)
 
-  audit(req.user.id, 'dns_encryption_updated', 'dns', null, {
-    mode,
-    upstreams: list.map((u) => u.hostname),
+  recordAudit({
+    action: 'dns_encryption_updated',
+    entityType: 'dns',
+    before,
+    after: settingsSnapshot(ENCRYPTION_KEYS),
   });
 
   res.json({ mode, upstreams: list, status: getEncryptedForwarderStatus() });
@@ -1234,9 +1300,13 @@ router.post('/resolver-test', requirePerm('dns:write'), (req, res) => {
     }
     throw err;
   }
-  audit(req.user.id, 'dns_resolver_test_started', 'dns', null, {
-    mode,
-    custom: custom.map((c) => c.hostname || c.addresses.join(',')),
+  recordAudit({
+    action: 'dns_resolver_test_started',
+    entityType: 'dns',
+    details: {
+      mode,
+      custom: custom.map((c) => c.hostname || c.addresses.join(',')),
+    },
   });
   res.status(202).json({ id });
 });
@@ -1279,7 +1349,12 @@ router.put('/soa-defaults', requirePerm('dns:write'), (req, res) => {
     if (err) return res.status(400).json({ error: err });
   }
   setSetting('dns_soa_defaults', JSON.stringify(defaults));
-  audit(req.user.id, 'configure', 'dns_soa_defaults', null, defaults);
+  recordAudit({
+    action: 'dns_soa_defaults_updated',
+    entityType: 'dns',
+    before: current,
+    after: defaults,
+  });
   res.json(defaults);
 });
 

@@ -43,6 +43,10 @@ the workspace gains a control or a display rule, add it to `driver.js` or `viola
 Components carry `data-row-id`, `data-zone-id`, `data-scope-id`, `data-network-id` and
 `data-folder-id` for it; keep them when refactoring, like `data-track`.
 
+A migration test builds its database with `databaseThrough(n)` in `tests/helpers/migrations.js`
+(every migration up to n, then `migrate(n + 1)`); older tests still carry their own copy
+(REVIEW.md TEST-MIGRATION-HELPER-01).
+
 Backups have a round-trip test (`server/tests/integration/backup-round-trip.test.js`): export,
 change everything, restore, restart, and every table and carried file must match, but for what a
 restore promises to change. A new table is covered automatically; a new file or directory under
@@ -158,7 +162,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   checks the keys against the client catalog), and the client control is
   `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
-  `dialog-actions`, `card-header`, `field-error`, `field-help`), `assets/analytics-workspace.css` for the
+  `dialog-actions`, `card-header`, `field-error`, `field-help`, `fill-panel`: the root of a
+  Settings `fill` section or full page, whose inner table or log scrolls instead of the page), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
   the `split`/`three` modifiers, `.figures` with `--figures`, `.lists` with `--lists`), `assets/panel-chrome.css` for the
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
@@ -175,7 +180,13 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   write, `models/ip-events.js` for address history (`ip_events` and `ip_range_events`; history
   is keyed by address, never by row, so it outlives the row), `utils/executable.js` (`findExecutable`: where a
   command would run from, searched on PATH as a shell does), `utils/request-actor.js`
-  (`currentActor`, the signed-in user a write deep in a model should name), `models/ip-view.js` for every server-owned display field (status, type, and
+  (`currentActor`, the signed-in user a write deep in a model should name;
+  `currentRequestContext` for the whole request: user, origin, client address),
+  `recordAudit` in `services/audit.js` (every audit row: `before`/`after` keep only changed
+  fields and skip a no-op, secrets masked, `sample()` for a bulk list, `settingsSnapshot` for a
+  settings write, `source` for the system's own rows; a new write route records or is listed in
+  `tests/unit/services/audit-coverage.test.js`), `onUnitEvent` in `backends/index.js` (a daemon
+  restarted, stopped or failing; `services/system-audit.js` writes its rows), `models/ip-view.js` for every server-owned display field (status, type, and
   `dhcp_lease_state` from the newest lease; any read that shows an address feeds it
   `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own; a count of rogue
   hosts runs rows through it too), `macIsAuthoritative` in `models/ip-lifecycle.js` (whether DHCP sets an address's stored MAC; anything comparing an observed MAC with the stored one asks it), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
@@ -249,7 +260,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   with a reason; see ARCHITECTURE.md Sign-in sessions), `models/filtering-exemption.js`
   (every rule for a host with DNS filtering off: keyed by MAC, else address; `exemptAddressSet`
   is what the proxy and the reads both use) and `utils/filtering-pause.js` (the pause periods,
-  client through `@shared`), `utils/resolution-feed.js` (the Resolution Map's live event
+  client through `@shared`), `utils/query-log.js` (the DNS proxy's query lines in the DNS
+  backend's log, for a backend whose `logSource()` says `proxyQueries`; the line format and its
+  parser are `utils/query-log-line.js`), `utils/resolution-feed.js` (the Resolution Map's live event
   buffer; the map never reads the proxy's `getAndReset*` counters) and `utils/geo-cities.js`
   (the city table: coarsening, file format and lookup, shared with
   `scripts/build-geo-cities.js`), client `components/analytics/ResolutionCanvas.vue` (the map and

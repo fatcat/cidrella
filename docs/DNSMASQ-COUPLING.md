@@ -423,6 +423,15 @@ Recursor 5.3.11). The PowerDNS + Kea stack selects it.
 - **What is left out.** Placeholder PTRs; every PTR at a name after the canonical one; other
   data beside a CNAME (the first CNAME wins); a record named outside its zone, which
   Authoritative refuses.
+- **Log.** `pdns.log` is the DNS log on this stack (`logSource()`), which Settings > Logs,
+  the metrics aggregator and passive liveness read. Both daemons append their output to it
+  (a shell redirect in the units, so the file is never created as root; the s6 script in
+  Docker), with PowerDNS's own timestamps. Behind the proxy PowerDNS sees every query as
+  coming from loopback, so the proxy writes a line per query into the same file
+  (`proxyQueries`, `utils/query-log.js`), with the client, the answer and the latency. In
+  bypass mode there is no proxy: Recursor renders with `logging.quiet: false` and logs each
+  query itself, and `backends/pdns/log-format.js` reads both kinds. Rotated by
+  `scripts/logrotate/cidrella-pdns` (copytruncate).
 - **Versions.** Authoritative 5.1.4's API refuses a TXT value holding a double quote or a byte
   above 127 (it parses `\"` as the end of a string and prints `\195` as `\4294967235`); 5.0.7
   takes both. Native installs pin `auth-50` and `rec-53`; Alpine 3.24 has Authoritative 5.0.7
@@ -440,8 +449,6 @@ dnsmasq does these and PowerDNS does not, or only in part:
   its hosts file; PowerDNS only synthesizes PTRs inside CIDRella networks.
 - Names only dnsmasq serves: SLAAC hosts (`ra-names`) and bare DHCP hostnames.
 - With recursion off, an outside name answers SERVFAIL.
-- `logSource()` is null: the proxy records every query, and Settings > Logs says PowerDNS
-  keeps no DNS log to show.
 
 ### Packaging
 

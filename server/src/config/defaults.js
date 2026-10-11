@@ -75,7 +75,7 @@ export const DEFAULTS = {
   // Migration 033 seeds this row as 'true' and 076 flips a fresh database to
   // 'false', so this default only matters if the row is ever deleted.
   dhcp_enabled: 'false',
-  audit_log_retention_days: 7,
+  audit_log_retention_days: 90,
   geoip_enabled: 'false',
   geoip_mode: 'blocklist',
   geoip_proxy_port: '5353', // legacy, kept for migration compat

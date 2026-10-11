@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { effectivePasswordPolicy, validatePolicyPatch } from '../auth/password-policy.js';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateInterfaceConfig } from '../utils/validation.js';
 import { getSetupState, setSetupState, upsertSettings } from '../models/setting.js';
@@ -103,9 +104,13 @@ router.put('/state', requirePerm('system:write'), (req, res) => {
   const db = getDb();
   if (Object.keys(patch).length > 0) setSetupState(db, patch);
   if (policy) upsertSettings(db, Object.entries(policy));
-  audit(req.user.id, 'setup_step', 'system', null, {
-    ...patch,
-    ...(policy ? { password_policy: policy } : {}),
+  recordAudit({
+    action: 'setup_step',
+    entityType: 'system',
+    details: {
+      ...patch,
+      ...(policy ? { password_policy: policy } : {}),
+    },
   });
   res.json(stateResponse(db));
 });

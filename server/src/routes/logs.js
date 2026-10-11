@@ -4,6 +4,7 @@ import path from 'path';
 import crypto from 'crypto';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
+import { recordAudit } from '../services/audit.js';
 import { getService } from '../backends/index.js';
 
 const router = Router();
@@ -251,6 +252,18 @@ router.post('/clear', requireRole('admin'), (req, res) => {
     return res.status(409).json({ error: `${log.label} keeps this log as an audit trail` });
   }
   try {
+    let bytes = 0;
+    try {
+      bytes = fs.statSync(log.file).size;
+    } catch {
+      // A log not written yet has nothing to clear.
+    }
+    // Recorded first: a log cleared with no record of it is the worse outcome.
+    recordAudit({
+      action: 'log_cleared',
+      entityType: 'log',
+      details: { role, file: path.basename(log.file), bytes },
+    });
     fs.writeFileSync(log.file, '');
     res.json({ ok: true });
   } catch {

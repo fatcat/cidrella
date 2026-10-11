@@ -56,6 +56,22 @@ export function certHasSan(certPath) {
   }
 }
 
+// Who a certificate names and when it ends, for the audit row of a change;
+// null when there is none or it cannot be read.
+export function certSummary(certPath) {
+  try {
+    const cert = new X509Certificate(fs.readFileSync(certPath));
+    return {
+      subject: cert.subject.replace(/\n/g, ', '),
+      issuer: cert.issuer.replace(/\n/g, ', '),
+      valid_to: cert.validTo,
+      sha256: cert.fingerprint256,
+    };
+  } catch {
+    return null;
+  }
+}
+
 // True only for a certificate this appliance generated: self-signed, carrying
 // the exact subject generateCert() writes. Anything else belongs to the
 // operator, and replacing it would destroy their certificate AND its private

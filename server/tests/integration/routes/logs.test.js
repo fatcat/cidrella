@@ -15,19 +15,25 @@ vi.mock('../../../src/backends/index.js', async () =>
 
 const { default: request } = await import('supertest');
 const { backend } = await import('../../../src/backends/index.js');
+const { setupTestDb, cleanupTestDb } = await import('../../helpers/test-db.js');
+const { actorMiddleware } = await import('../../../src/utils/request-actor.js');
 
 const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'logs-route-'));
 const file = path.join(dir, 'backend.log');
 let app;
 let server;
 let role;
+let db;
+let dbDir;
 beforeAll(async () => {
+  ({ db, tmpDir: dbDir } = await setupTestDb());
   const { default: router } = await import('../../../src/routes/logs.js');
   app = express();
   app.use((req, res, next) => {
     req.user = { id: 1, role, username: 'tester' };
     next();
   });
+  app.use(actorMiddleware);
   app.use('/api/logs', router);
   server = app.listen(0, '127.0.0.1');
   await new Promise((resolve) => server.once('listening', resolve));
@@ -35,6 +41,7 @@ beforeAll(async () => {
 afterAll(() => {
   server?.close();
   fs.rmSync(dir, { recursive: true, force: true });
+  cleanupTestDb(dbDir);
 });
 beforeEach(() => {
   role = 'admin';
@@ -71,7 +78,9 @@ async function backlog(query) {
 
 describe('GET /api/logs/stream', () => {
   it('shows the DHCP lines for the DHCP role where one log serves both', async () => {
-    expect((await backlog('role=dhcp')).lines).toEqual(['DHCPACK(eth0) 10.5.0.9 aa:bb:cc:00:00:01']);
+    expect((await backlog('role=dhcp')).lines).toEqual([
+      'DHCPACK(eth0) 10.5.0.9 aa:bb:cc:00:00:01',
+    ]);
     expect((await backlog('role=dns')).lines).toEqual(['query[A] web.lab.test from 10.5.0.9']);
   });
 
@@ -91,16 +100,25 @@ describe('GET /api/logs/stream', () => {
 
 describe('POST /api/logs/clear', () => {
   it('truncates the role log', async () => {
+    const bytes = fs.statSync(file).size;
     const res = await request(app).post('/api/logs/clear?role=dhcp');
     expect(res.status).toBe(200);
     expect(fs.readFileSync(file, 'utf8')).toBe('');
+    const row = db
+      .prepare("SELECT actor, details FROM audit_log WHERE action = 'log_cleared'")
+      .get();
+    expect(row.actor).toBe('tester');
+    expect(JSON.parse(row.details)).toEqual({ role: 'dhcp', file: 'backend.log', bytes });
   });
 
   it('never clears an audit log', async () => {
     const source = backend.logSource();
     backend.logSource = () => ({ ...source, clearable: false });
     const res = await request(app).post('/api/logs/clear?role=dhcp');
-    expect(res).toMatchObject({ status: 409, body: { error: 'fake keeps this log as an audit trail' } });
+    expect(res).toMatchObject({
+      status: 409,
+      body: { error: 'fake keeps this log as an audit trail' },
+    });
     expect(fs.readFileSync(file, 'utf8')).not.toBe('');
   });
 

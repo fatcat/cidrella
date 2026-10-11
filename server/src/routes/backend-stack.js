@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import { requireRole } from '../auth/roles.js';
 import { STACKS, stackName } from '../backends/index.js';
-import { audit, getDb } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import {
   SwitchError,
   stackLabel,
@@ -43,24 +44,32 @@ router.post('/', requireRole('admin'), async (req, res) => {
   const from = stackName();
   try {
     const result = await switchStack(getDb(), target);
-    audit(req.user.id, 'backend_stack_switched', 'setting', null, {
-      from,
-      to: target,
-      leases: result.leases,
-      refused: result.failed.length,
-      missing: result.missing.length,
+    recordAudit({
+      action: 'backend_stack_switched',
+      entityType: 'setting',
+      details: {
+        from,
+        to: target,
+        leases: result.leases,
+        refused: result.failed.length,
+        missing: result.missing.length,
+      },
     });
     res.json(result);
   } catch (err) {
     if (!(err instanceof SwitchError)) throw err;
     if (err.phase === 'preflight') return res.status(409).json({ error: err.message });
-    audit(req.user.id, 'backend_stack_switch_failed', 'setting', null, {
-      from,
-      to: target,
-      phase: err.phase,
-      error: err.message,
-      rolledBack: err.rolledBack,
-      rollbackError: err.rollbackError,
+    recordAudit({
+      action: 'backend_stack_switch_failed',
+      entityType: 'setting',
+      details: {
+        from,
+        to: target,
+        phase: err.phase,
+        error: err.message,
+        rolledBack: err.rolledBack,
+        rollbackError: err.rollbackError,
+      },
     });
     const back = err.rolledBack
       ? err.rollbackError

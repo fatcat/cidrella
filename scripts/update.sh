@@ -99,13 +99,22 @@ PREFLIGHT_PID=""
 LAST_PHASE="init"
 UPDATE_LOG="/var/lib/cidrella/update.log"
 
-# Append stdin to the update log with terminal escape sequences removed, so
-# the file reads as plain text in vim, less, journalctl and the web update
-# panel's failure tail.
+# Append stdin to the update log with terminal escape sequences removed and
+# the local time at the start of each line, so the file reads as plain text
+# in vim, less, journalctl and the web update panel's failure tail, and shows
+# where the time went. printf's %(...)T is a bash builtin: no date process
+# per line. SIGTERM is ignored (and inherited by sed and the loop) because
+# systemd stops the in-app update unit's leftover processes the moment
+# update.sh exits; the writer ends by itself when its input closes.
 _plain_log() {
+  trap '' TERM
+  local line
   # LC_ALL=C: under a UTF-8 locale sed's bracket ranges follow collation
   # order and [@-~] stops matching the final byte, so nothing is stripped.
-  LC_ALL=C sed -u "s|$(printf '\033')\[[0-9;?]*[ -/]*[@-~]||g" >> "$UPDATE_LOG"
+  LC_ALL=C sed -u "s|$(printf '\033')\[[0-9;?]*[ -/]*[@-~]||g" |
+    while IFS= read -r line || [ -n "$line" ]; do
+      printf '%(%Y-%m-%d %H:%M:%S)T %s\n' -1 "$line"
+    done >> "$UPDATE_LOG"
 }
 
 # ─── Shared library ───────────────────────────────────────
@@ -309,14 +318,13 @@ on_error() {
   local line_no="${BASH_LINENO[0]}"
   local phase="${LAST_PHASE:-unknown}"
 
-  # Tiny sleep to let any in-flight tee/stdbuf output flush to the log file
+  # Tiny sleep to let any in-flight tee/_plain_log output reach the log file
   # before we read its tail. Without this the background tee process can be
   # holding the last few lines in a pipe buffer.
   sleep 0.1
 
-  # Grab the tail of the update log. In --from-api mode we exec'd directly
-  # into the file; in CLI mode we exec'd through a tee process so both the
-  # terminal and the file see the stream.
+  # Grab the tail of the update log. Both modes write it through
+  # _plain_log; CLI mode tees the stream to the terminal as well.
   local log_tail=""
   if [ -f "$UPDATE_LOG" ]; then
     log_tail=$(tail -n 12 "$UPDATE_LOG" 2>/dev/null || true)
@@ -496,7 +504,7 @@ fi
 
 # Always capture stdout and stderr to $UPDATE_LOG so the ERR trap can read
 # the tail and surface it in the progress file's `error` field. Two modes:
-#   --from-api: server spawns with stdio: 'ignore', so we redirect only
+#   --from-api: server spawns with stdio: 'ignore', so we write the log only
 #               (no tee needed, there's no terminal to write to anyway).
 #   CLI mode:   tee to both the terminal AND the log file so the user still
 #               sees interactive progress AND the on_error handler has a
@@ -504,11 +512,19 @@ fi
 #               the log at all, so the rich ERR-trap message was empty on
 #               direct invocations, specifically the rsync getcwd() failure
 #               from the 2026-04-12 prod incident would have been lost.
+#
+# The --bootstrapped hand-off (below) keeps the log the first updater set up:
+# its stdout and stderr already lead to update.log, so truncating here would
+# drop the first updater's lines and a second tee would write every line
+# twice.
 mkdir -p "$(dirname "$UPDATE_LOG")" 2>/dev/null || true
-: > "$UPDATE_LOG" 2>/dev/null || true
-if [ "$FROM_API" = true ]; then
-  exec > "$UPDATE_LOG" 2>&1
+if [ "$BOOTSTRAPPED" = true ]; then
+  :
+elif [ "$FROM_API" = true ]; then
+  : > "$UPDATE_LOG" 2>/dev/null || true
+  exec > >(_plain_log) 2>&1
 else
+  : > "$UPDATE_LOG" 2>/dev/null || true
   # stdbuf -oL forces line-buffered output on tee so the log file sees each
   # line as it happens, not after a 4KB buffer fills. Without line buffering
   # the ERR trap can race tee and read an empty/partial log.
@@ -1291,15 +1307,12 @@ if [ -f "$TARGET_SLOT/scripts/cidrella-reset-web-ports" ]; then
   ok "Installed /usr/local/bin/cidrella-reset-web-ports wrapper"
 fi
 
-# v0.4.15+: logrotate for dnsmasq.log. install.sh adds this on fresh
-# installs; the upgrade path needs it too so existing hosts (e.g. the
-# v0.4.14 → v0.4.15 production hop) pick up log rotation instead of
-# continuing to grow dnsmasq.log without bound.
-if [ -f "$TARGET_SLOT/scripts/logrotate/cidrella-dnsmasq" ] && [ -d /etc/logrotate.d ]; then
-  install -m 0644 -o root -g root \
-    "$TARGET_SLOT/scripts/logrotate/cidrella-dnsmasq" \
-    /etc/logrotate.d/cidrella-dnsmasq
-  ok "Installed logrotate config (/etc/logrotate.d/cidrella-dnsmasq)"
+# logrotate configs: dnsmasq.log since v0.4.15, pdns.log since v0.5.3.
+# install.sh adds them on fresh installs; the upgrade path needs them too so
+# existing hosts (e.g. the v0.4.14 to v0.4.15 production hop) pick up log
+# rotation instead of growing the logs without bound.
+if [ -d "$TARGET_SLOT/scripts/logrotate" ]; then
+  install_logrotate_configs "$TARGET_SLOT/scripts/logrotate"
 fi
 
 # Repair existing dnsmasq log permissions so the cidrella service can tail
@@ -1472,12 +1485,28 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-update@.service" ]; then
   fi
 fi
 
+# The first update that brings Kea, PowerDNS or radvd installs their
+# packages, which adds a repository or two and takes a minute or so. Say so
+# in the progress file rather than sit at the last message.
+_missing_backends=()
+for _lib in kea pdns radvd; do
+  if [ -f "$TARGET_SLOT/scripts/lib/$_lib-install.sh" ]; then
+    # shellcheck source=/dev/null
+    source "$TARGET_SLOT/scripts/lib/$_lib-install.sh"
+    # An older release's library has no such check; it installs quietly.
+    if declare -F "${_lib}_installed" >/dev/null && ! "${_lib}_installed"; then
+      _missing_backends+=("$_lib")
+    fi
+  fi
+done
+if [ ${#_missing_backends[@]} -gt 0 ]; then
+  track_progress "switching" 87 "Installing DNS and DHCP packages (first time only)..."
+fi
+
 # v0.5.2+: Kea, installed on hosts that predate it, and its unit refreshed.
 # Never restarted here: CIDRella restarts it when it serves DHCP, the same
 # rule as dnsmasq. Optional, so a failure warns and the update goes on.
 if [ -f "$TARGET_SLOT/scripts/lib/kea-install.sh" ]; then
-  # shellcheck source=scripts/lib/kea-install.sh
-  source "$TARGET_SLOT/scripts/lib/kea-install.sh"
   if install_kea "$TARGET_SLOT"; then
     emit_event switchover pass kea=installed
   else
@@ -1490,8 +1519,6 @@ fi
 # refreshed. Never restarted here, the same rule as dnsmasq and Kea.
 # Optional, so a failure warns and the update goes on.
 if [ -f "$TARGET_SLOT/scripts/lib/pdns-install.sh" ]; then
-  # shellcheck source=scripts/lib/pdns-install.sh
-  source "$TARGET_SLOT/scripts/lib/pdns-install.sh"
   if install_pdns "$TARGET_SLOT"; then
     emit_event switchover pass pdns=installed
   else
@@ -1504,8 +1531,6 @@ fi
 # stack. Never restarted here. Optional, so a failure warns and the update
 # goes on.
 if [ -f "$TARGET_SLOT/scripts/lib/radvd-install.sh" ]; then
-  # shellcheck source=scripts/lib/radvd-install.sh
-  source "$TARGET_SLOT/scripts/lib/radvd-install.sh"
   if install_radvd "$TARGET_SLOT"; then
     emit_event switchover pass radvd=installed
   else

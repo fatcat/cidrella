@@ -8,7 +8,8 @@ import {
   parseColumnFilters,
 } from '../utils/ip-columns.js';
 import { Router } from 'express';
-import { getDb, getSetting, audit } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
+import { recordAudit, sample } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
   parseNetwork,
@@ -552,7 +553,12 @@ router.post(
     });
 
     const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(result.lastInsertRowid);
-    audit(req.user.id, 'subnet_created', 'subnet', subnet.id, { cidr: normalized });
+    recordAudit({
+      action: 'subnet_created',
+      entityType: 'subnet',
+      entityId: subnet.id,
+      details: { cidr: normalized },
+    });
     const vlan_warning = detectVlanCollision(db, subnet.vlan_id, subnet.id);
     res.status(201).json({ ...subnet, ...(vlan_warning ? { vlan_warning } : {}) });
   }),
@@ -717,9 +723,14 @@ router.post(
       });
       req.afterCommit('regenerate_dns');
       req.afterCommit('regenerate_dhcp');
-      audit(req.user.id, 'subnets_merged', 'subnet', mergedId, {
-        merged_cidrs: subnets.map((s) => s.cidr),
-        result_cidr: mergeResult.merged_cidr,
+      recordAudit({
+        action: 'subnets_merged',
+        entityType: 'subnet',
+        entityId: mergedId,
+        details: {
+          merged_cidrs: subnets.map((s) => s.cidr),
+          result_cidr: mergeResult.merged_cidr,
+        },
       });
 
       const parent = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parentId);
@@ -752,7 +763,11 @@ router.post(
 
     const updated = SubnetTopology.applyNameTemplateToSubnets(db, subnet_ids, template);
     if (updated.length > 0) {
-      audit(req.user.id, 'template_applied', 'subnet', null, { updated });
+      recordAudit({
+        action: 'subnet_name_template_applied',
+        entityType: 'subnet',
+        details: { template, subnets: sample(updated) },
+      });
     }
     res.json({ updated, count: updated.length });
   }),
@@ -956,7 +971,25 @@ router.put(
       req.afterCommit('regenerate_dns');
     }
 
-    audit(req.user.id, 'subnet_updated', 'subnet', subnet.id, { changes: req.body });
+    recordAudit({
+      action: 'subnet_updated',
+      entityType: 'subnet',
+      entityId: subnet.id,
+      before: subnet,
+      after: updated,
+      only: [
+        'name',
+        'description',
+        'vlan_id',
+        'gateway_address',
+        'gateway_policy',
+        'scan_interval',
+        'folder_id',
+        'domain_name',
+        'scan_enabled',
+      ],
+      details: { cidr: subnet.cidr },
+    });
     // Surface a VLAN collision when the caller just assigned a VLAN that
     // another subnet already uses. Non-blocking; client toasts as warning.
     const vlan_warning =
@@ -1553,13 +1586,18 @@ router.post(
         txn();
         req.afterCommit('regenerate_dns');
         req.afterCommit('regenerate_dhcp');
-        audit(req.user.id, 'subnet_divided', 'subnet', parent.id, {
-          parent_cidr: parent.cidr,
-          mode: 'equal',
-          new_prefix: targetPrefix,
-          count: subnets.length,
-          config_migrated: parent.status === 'allocated',
-          lossy_cleanup: txnLossyCleanup,
+        recordAudit({
+          action: 'subnet_divided',
+          entityType: 'subnet',
+          entityId: parent.id,
+          details: {
+            parent_cidr: parent.cidr,
+            mode: 'equal',
+            new_prefix: targetPrefix,
+            count: subnets.length,
+            config_migrated: parent.status === 'allocated',
+            lossy_cleanup: txnLossyCleanup,
+          },
         });
 
         const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parent.id);
@@ -1649,13 +1687,18 @@ router.post(
       txn();
       req.afterCommit('regenerate_dns');
       req.afterCommit('regenerate_dhcp');
-      audit(req.user.id, 'subnet_divided', 'subnet', parent.id, {
-        parent_cidr: parent.cidr,
-        mode: 'carve',
-        carved_cidr: normalized,
-        remainder,
-        config_migrated: parent.status === 'allocated',
-        lossy_cleanup: carveLossyCleanup,
+      recordAudit({
+        action: 'subnet_divided',
+        entityType: 'subnet',
+        entityId: parent.id,
+        details: {
+          parent_cidr: parent.cidr,
+          mode: 'carve',
+          carved_cidr: normalized,
+          remainder,
+          config_migrated: parent.status === 'allocated',
+          lossy_cleanup: carveLossyCleanup,
+        },
       });
 
       const updated = db.prepare('SELECT * FROM subnets WHERE id = ?').get(parent.id);
@@ -1913,12 +1956,17 @@ router.post(
       throw err;
     }
 
-    audit(req.user.id, 'subnet_configured', 'subnet', subnet.id, {
-      name,
-      cidr: subnet.cidr,
-      dhcp: !!create_dhcp_scope,
-      dhcp_v6_mode: dhcpV6?.mode || null,
-      reverse_dns: !!create_reverse_dns,
+    recordAudit({
+      action: 'subnet_configured',
+      entityType: 'subnet',
+      entityId: subnet.id,
+      details: {
+        name,
+        cidr: subnet.cidr,
+        dhcp: !!create_dhcp_scope,
+        dhcp_v6_mode: dhcpV6?.mode || null,
+        reverse_dns: !!create_reverse_dns,
+      },
     });
 
     if (create_dhcp_scope) {
@@ -1989,10 +2037,15 @@ router.delete(
     const { action, dns } = SubnetTopology.deleteSubnet(db, subnet);
     req.afterCommit('regenerate_dns');
     req.afterCommit('regenerate_dhcp');
-    audit(req.user.id, 'subnet_deleted', 'subnet', subnet.id, {
-      cidr: subnet.cidr,
-      action,
-      ...dns,
+    recordAudit({
+      action: 'subnet_deleted',
+      entityType: 'subnet',
+      entityId: subnet.id,
+      details: {
+        cidr: subnet.cidr,
+        action,
+        ...dns,
+      },
     });
     res.json({ message: 'Subnet deleted', action, dns });
   }),
@@ -2828,13 +2881,19 @@ router.put(
     });
     bulkUpdate();
 
-    audit(req.user.id, 'ip_allocation_changed', 'ip_address', subnet.id, {
-      start_ip,
-      end_ip,
-      count: updated.length,
-      skipped: skipped.length,
-      allocation_state,
-      note: reservationNote,
+    recordAudit({
+      action: 'ip_allocation_changed',
+      entityType: 'subnet',
+      entityId: subnet.id,
+      details: {
+        subnet: subnet.cidr,
+        start_ip,
+        end_ip,
+        count: updated.length,
+        skipped: skipped.length,
+        allocation_state,
+        note: reservationNote,
+      },
     });
     if (updated.length > 0) req.afterCommit('regenerate_dhcp');
     res.json({
@@ -2873,6 +2932,7 @@ router.put(
     if (rejection) return res.status(400).json({ error: rejection });
 
     const reservationNote = allocation_state === 'reserved' ? note || null : null;
+    const prior = IpAddress.findBySubnetAndIp(db, subnet.id, ipAddress);
 
     setManualReservation(
       db,
@@ -2882,10 +2942,16 @@ router.put(
       reservationNote,
     );
 
-    audit(req.user.id, 'ip_allocation_changed', 'ip_address', subnet.id, {
-      ip_address: ipAddress,
-      allocation_state,
-      note: reservationNote,
+    recordAudit({
+      action: 'ip_allocation_changed',
+      entityType: 'ip_address',
+      entityId: prior?.id ?? null,
+      before: {
+        allocation_state: prior?.allocation_state ?? 'unassigned',
+        note: prior?.reservation_note ?? null,
+      },
+      after: { allocation_state, note: reservationNote },
+      details: { ip_address: ipAddress, subnet: subnet.cidr },
     });
     req.afterCommit('regenerate_dhcp');
     res.json({ ip_address: ipAddress, allocation_state, reservation_note: reservationNote });
@@ -2911,9 +2977,18 @@ router.put(
       return res.status(400).json({ error: 'scan_enabled must be boolean or null' });
     }
     const scanEn = scan_enabled === null ? null : scan_enabled ? 1 : 0;
+    const prior = IpAddress.findBySubnetAndIp(db, subnet.id, ipAddress);
 
     IpAddress.setScanEnabled(db, subnet.id, ipAddress, scanEn);
 
+    recordAudit({
+      action: 'ip_scan_enabled_changed',
+      entityType: 'ip_address',
+      entityId: prior?.id ?? null,
+      before: { scan_enabled: prior?.scan_enabled ?? null },
+      after: { scan_enabled: scanEn },
+      details: { ip_address: ipAddress, subnet: subnet.cidr },
+    });
     res.json({ ip_address: ipAddress, scan_enabled: scanEn });
   }),
 );
@@ -2944,11 +3019,17 @@ router.put(
       }
     })();
 
-    audit(req.user.id, 'ip_scan_enabled_changed', 'ip_address', subnet.id, {
-      start_ip: req.body.start_ip,
-      end_ip: req.body.end_ip,
-      count,
-      scan_enabled: scanEn,
+    recordAudit({
+      action: 'ip_scan_enabled_changed',
+      entityType: 'subnet',
+      entityId: subnet.id,
+      details: {
+        subnet: subnet.cidr,
+        start_ip: req.body.start_ip,
+        end_ip: req.body.end_ip,
+        count,
+        scan_enabled: scanEn,
+      },
     });
     res.json({ count, scan_enabled: scanEn });
   }),

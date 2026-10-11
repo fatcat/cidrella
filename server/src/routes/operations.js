@@ -4,7 +4,9 @@ import path from 'path';
 import os from 'os';
 import { isIP } from 'net';
 import { execFileSync } from 'child_process';
-import { getDb, audit, ensureDefaults } from '../db/init.js';
+import { getDb, ensureDefaults } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
+import { currentRequestContext } from '../utils/request-actor.js';
 import { requireRole } from '../auth/roles.js';
 import { clearJwtSecretCache } from '../auth/middleware.js';
 import {
@@ -16,7 +18,7 @@ import {
   inspectBackup,
   collectRestoreCarryover,
 } from '../utils/backup.js';
-import { reloadTlsCerts } from '../utils/cert.js';
+import { certSummary, reloadTlsCerts } from '../utils/cert.js';
 import * as RangeType from '../models/range-type.js';
 import * as Folder from '../models/folder.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
@@ -57,7 +59,11 @@ router.post('/network-dhcp/repair-derived', (req, res) => {
   const result = SubnetTopology.repairDerivedNetworkDhcpState(getDb());
   req.afterCommit('regenerate_dns');
   req.afterCommit('regenerate_dhcp');
-  audit(req.user.id, 'network_dhcp_derived_state_repaired', 'system', null, result);
+  recordAudit({
+    action: 'network_dhcp_derived_state_repaired',
+    entityType: 'system',
+    details: result,
+  });
   res.json(result);
 });
 
@@ -171,7 +177,12 @@ router.post('/backup', (req, res) => {
   try {
     const db = getDb();
     const backup = createBackup(db);
-    audit(req.user.id, 'create', 'backup', backup.id, { filename: backup.filename });
+    recordAudit({
+      action: 'backup_created',
+      entityType: 'backup',
+      entityId: backup.id,
+      details: { filename: backup.filename },
+    });
     res.status(201).json(backup);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -202,6 +213,14 @@ router.get('/backups/:id/download', (req, res) => {
     return res.status(404).json({ error: 'Backup file missing from disk' });
   }
 
+  // A backup holds password hashes, TOTP secrets and the TLS key: who took a
+  // copy is worth a row, though it changes nothing.
+  recordAudit({
+    action: 'backup_downloaded',
+    entityType: 'backup',
+    entityId: row.id,
+    details: { filename: row.filename, bytes: fs.statSync(filePath).size },
+  });
   res.setHeader('Content-Type', 'application/gzip');
   res.setHeader('Content-Disposition', `attachment; filename="${row.filename}"`);
   fs.createReadStream(filePath).pipe(res);
@@ -212,7 +231,12 @@ router.delete('/backups/:id', (req, res) => {
   try {
     const db = getDb();
     const deleted = deleteBackup(db, parseInt(req.params.id, 10));
-    audit(req.user.id, 'delete', 'backup', deleted.id, { filename: deleted.filename });
+    recordAudit({
+      action: 'backup_deleted',
+      entityType: 'backup',
+      entityId: deleted.id,
+      details: { filename: deleted.filename },
+    });
     res.json({ ok: true });
   } catch (err) {
     res.status(err.message === 'Backup not found' ? 404 : 500).json({ error: err.message });
@@ -277,13 +301,17 @@ router.post('/restore', (req, res) => {
       }
 
       // Audit BEFORE restoreBackup closes the DB handle. If we called
-      // audit() after, it would hit a closed connection and throw. This row
+      // recordAudit() after, it would hit a closed connection and throw. This row
       // lives in the database being replaced, so it survives only in the
       // pre-restore snapshot; restoreBackup writes the matching row into the
       // restored database so the appliance keeps a record of its own restore.
-      audit(req.user.id, 'restore', 'backup', null, {
-        manifest: inspection.manifest,
-        dhcp_after_restore: dhcp.choice,
+      recordAudit({
+        action: 'backup_restored',
+        entityType: 'backup',
+        details: {
+          manifest: inspection.manifest,
+          dhcp_after_restore: dhcp.choice,
+        },
       });
 
       // Send response BEFORE restoreBackup exits the process, so the client
@@ -294,7 +322,7 @@ router.post('/restore', (req, res) => {
         allowIncompatible,
         inspection,
         dhcpAfterRestore: dhcp.choice,
-        restoredBy: { username: req.user.username },
+        restoredBy: { ...currentRequestContext(), username: req.user.username },
         carryover: collectRestoreCarryover(getDb(), req.user.id),
       });
       // Clean up the uploaded tarball, we're about to exit, but be explicit
@@ -424,6 +452,7 @@ router.post('/certs/upload', (req, res) => {
     }
 
     // Install
+    const replaced = certSummary(path.join(dir, 'server.crt'));
     fs.copyFileSync(tmpCert, path.join(dir, 'server.crt'));
     fs.copyFileSync(tmpKey, path.join(dir, 'server.key'));
     try {
@@ -434,8 +463,12 @@ router.post('/certs/upload', (req, res) => {
     } catch {}
     clearPendingCsrFiles(dir);
 
-    audit(req.user.id, 'update', 'tls_certificate', null, {
-      source: usingPendingKey ? 'csr' : 'upload',
+    recordAudit({
+      action: 'tls_certificate_updated',
+      entityType: 'tls_certificate',
+      before: { certificate: replaced },
+      after: { certificate: certSummary(path.join(dir, 'server.crt')) },
+      details: { source: usingPendingKey ? 'csr' : 'upload' },
     });
     const reloaded = reloadTlsCerts();
     res.json({
@@ -606,10 +639,14 @@ ${altNames}
       keyAlgorithm === 'ecdsa'
         ? { key_algorithm: keyAlgorithm, curve: curveName }
         : { key_algorithm: keyAlgorithm, key_size: keySize };
-    audit(req.user.id, 'create', 'tls_csr', null, {
-      common_name: commonName,
-      san: sans,
-      ...keyInfo,
+    recordAudit({
+      action: 'tls_csr_created',
+      entityType: 'tls_csr',
+      details: {
+        common_name: commonName,
+        san: sans,
+        ...keyInfo,
+      },
     });
     res.status(201).json({ ok: true, csr, common_name: commonName, san: sans, ...keyInfo });
   } catch (err) {
@@ -628,6 +665,7 @@ router.post('/certs/reset', (req, res) => {
   const certPath = path.join(certsDir, 'server.crt');
 
   try {
+    const replaced = certSummary(certPath);
     // Remove existing certs
     if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
     if (fs.existsSync(certPath)) fs.unlinkSync(certPath);
@@ -654,7 +692,13 @@ router.post('/certs/reset', (req, res) => {
     );
     clearPendingCsrFiles(certsDir);
 
-    audit(req.user.id, 'update', 'tls_certificate', null, { action: 'reset_self_signed' });
+    recordAudit({
+      action: 'tls_certificate_updated',
+      entityType: 'tls_certificate',
+      before: { certificate: replaced },
+      after: { certificate: certSummary(certPath) },
+      details: { source: 'self_signed' },
+    });
     const reloaded = reloadTlsCerts();
     res.json({
       ok: true,
@@ -671,6 +715,8 @@ router.post('/certs/reset', (req, res) => {
 router.post('/reset-database', async (req, res) => {
   try {
     const db = getDb();
+    const tableRows = (name) => db.prepare(`SELECT COUNT(*) AS n FROM "${name}"`).get().n;
+    const counts = { subnets: tableRows('subnets'), dns_records: tableRows('dns_records') };
 
     // Get all user-created tables (exclude schema_version and sqlite internals)
     const tables = db
@@ -702,6 +748,15 @@ router.post('/reset-database', async (req, res) => {
     // finding M3 (2026-04-24): the admin locks themselves out of their
     // own UI immediately after hitting Reset Database.
     clearJwtSecretCache();
+
+    // Written into the new database, so the reset is its first entry. The user
+    // who asked for it no longer has a row, so the name stands alone.
+    recordAudit({
+      action: 'database_reset',
+      entityType: 'system',
+      userId: null,
+      details: { removed: counts },
+    });
 
     res.json({ ok: true, message: 'Database reset complete.' });
   } catch (err) {

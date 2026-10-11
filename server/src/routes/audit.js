@@ -4,6 +4,8 @@ import { requireRole } from '../auth/roles.js';
 
 const router = Router();
 
+const AUDIT_ORIGINS = ['ui', 'api-token', 'cli', 'system'];
+
 // All audit routes require admin
 router.use(requireRole('admin'));
 
@@ -58,6 +60,23 @@ router.get('/', (req, res) => {
     where.push('a.entity_id = ?');
     params.push(entityId);
   }
+  // Who acted: ui (a sign-in), api-token, cli (an update or rollback from a
+  // shell) or system. Rows from before 0.5.3 have no origin: one with a user
+  // was a sign-in, one without was the system.
+  if (req.query.origin) {
+    const origins = String(req.query.origin)
+      .split(',')
+      .map((value) => value.trim())
+      .filter((value) => AUDIT_ORIGINS.includes(value));
+    if (origins.length === 0) {
+      return res.status(400).json({ error: `origin must be one of ${AUDIT_ORIGINS.join(', ')}` });
+    }
+    const clauses = [`a.origin IN (${origins.map(() => '?').join(',')})`];
+    if (origins.includes('ui')) clauses.push('(a.origin IS NULL AND a.user_id IS NOT NULL)');
+    if (origins.includes('system')) clauses.push('(a.origin IS NULL AND a.user_id IS NULL)');
+    where.push(`(${clauses.join(' OR ')})`);
+    params.push(...origins);
+  }
   if (req.query.user_id) {
     const userId = parseInt(req.query.user_id, 10);
     if (isNaN(userId)) return res.status(400).json({ error: 'Invalid user_id' });
@@ -72,11 +91,11 @@ router.get('/', (req, res) => {
   const items = db
     .prepare(
       `
-    SELECT a.*, u.username
+    SELECT a.*, COALESCE(a.actor, u.username) AS username
     FROM audit_log a
     LEFT JOIN users u ON a.user_id = u.id
     ${whereClause}
-    ORDER BY a.created_at DESC
+    ORDER BY a.created_at DESC, a.id DESC
     LIMIT ? OFFSET ?
   `,
     )

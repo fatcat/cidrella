@@ -84,9 +84,11 @@ export function runBackendContract(label, makeHarness) {
       if (log !== null) {
         // null until the backend has written a log (Kea's legal log).
         expect(log.path === null || typeof log.path === 'string').toBe(true);
-        for (const fn of ['querySourceIp', 'dhcpDirection', 'isDhcpLine', 'createDhcpParser']) {
+        for (const fn of ['querySourceIp', 'dhcpDirection', 'isDhcpLine']) {
           expect(typeof log[fn]).toBe('function');
         }
+        // Only a backend that serves DHCP has DHCP lines to reassemble.
+        if (h.backend.roles.includes('dhcp')) expect(typeof log.createDhcpParser).toBe('function');
       }
     });
 
@@ -248,7 +250,9 @@ export function runBackendContract(label, makeHarness) {
     it('applies the Router Advertisements idempotently, never writing the database', async (ctx) => {
       if (skipUnless('ra', ctx)) return;
       const ra = h.backend.ra;
-      expectApplyResult(await noWrites(() => ra.applyRouterAdvertisements(h.db, { activate: false })));
+      expectApplyResult(
+        await noWrites(() => ra.applyRouterAdvertisements(h.db, { activate: false })),
+      );
       const again = await noWrites(() => ra.applyRouterAdvertisements(h.db, { activate: false }));
       expect(again.changed).toBe(false);
     });

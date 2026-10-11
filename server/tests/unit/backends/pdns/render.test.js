@@ -218,6 +218,13 @@ describe('renderRecursorConfig', () => {
     expect(text).toContain('    - "::1/128"\n');
   });
 
+  it('logs each query only in bypass mode, where Recursor answers clients itself', () => {
+    expect(renderRecursorConfig(base).text).not.toContain('logging:');
+    const bypass = renderRecursorConfig({ ...base, logQueries: true });
+    expect(bypass.text).toContain('logging:\n  quiet: false\n');
+    expect(bypass.fixed).not.toBe(renderRecursorConfig(base).fixed);
+  });
+
   it('forwards nothing upstream with recursion off', () => {
     expect(renderRecursorConfig({ ...base, recursion: false }).text).toContain(
       '  forward_zones_recurse: []\n',

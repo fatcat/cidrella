@@ -283,7 +283,8 @@ ssh "$SSH_TARGET" "
 UNITS_UPDATED=false
 
 # Compare and update systemd units
-for UNIT in cidrella.service cidrella-dnsmasq.service cidrella-anomaly.service; do
+for UNIT in cidrella.service cidrella-dnsmasq.service cidrella-anomaly.service \
+  cidrella-pdns-auth.service cidrella-pdns-recursor.service; do
   SRC="${INSTALL_DIR}/scripts/systemd/${UNIT}"
   DST="/etc/systemd/system/${UNIT}"
   CHANGED=$(ssh "$SSH_TARGET" "

@@ -190,8 +190,9 @@ onUnmounted(() => {
 .log-viewer {
   display: flex;
   flex-direction: column;
+  flex: 1;
   height: 100%;
-  min-height: 400px;
+  min-height: 0;
 }
 
 .log-toolbar {
@@ -204,7 +205,6 @@ onUnmounted(() => {
   border-radius: 6px 6px 0 0;
   gap: 0.5rem;
 }
-
 
 .log-actions {
   display: flex;
@@ -245,7 +245,7 @@ onUnmounted(() => {
   overflow-x: auto;
   white-space: pre;
   border-radius: 0 0 6px 6px;
-  min-height: 300px;
+  min-height: 0;
 }
 
 .log-output .log-dhcp {

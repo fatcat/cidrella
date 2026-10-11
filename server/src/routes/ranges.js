@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit, sample } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
   addressToBig,
@@ -146,11 +147,16 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
           description,
         });
 
-  audit(req.user.id, 'range_created', 'range', range.id, {
-    subnet_id: subnetId,
-    start_ip,
-    end_ip,
-    type: rangeType.name,
+  recordAudit({
+    action: 'range_created',
+    entityType: 'range',
+    entityId: range.id,
+    details: {
+      subnet_id: subnetId,
+      start_ip,
+      end_ip,
+      type: rangeType.name,
+    },
   });
   res.status(201).json(range);
 });
@@ -254,17 +260,16 @@ function assignOrClear(req, res, { clear }) {
     selections: mergedSelections,
   });
 
-  audit(
-    req.user.id,
-    clear ? 'network_range_type_cleared' : 'network_range_type_set',
-    'subnet',
-    Number(subnetId),
-    {
+  recordAudit({
+    action: clear ? 'network_range_type_cleared' : 'network_range_type_set',
+    entityType: 'subnet',
+    entityId: Number(subnetId),
+    details: {
       range_type_id,
-      ranges: requestedRanges,
-      replaced_range_ids: result.replaced.map((range) => range.id),
+      ranges: sample(requestedRanges),
+      replaced_range_ids: sample(result.replaced.map((range) => range.id)),
     },
-  );
+  });
   return res.json(result);
 }
 
@@ -419,7 +424,15 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
           description,
         });
 
-  audit(req.user.id, 'range_updated', 'range', range.id, { changes: req.body });
+  recordAudit({
+    action: 'range_updated',
+    entityType: 'range',
+    entityId: range.id,
+    before: range,
+    after: updated,
+    only: ['range_type_id', 'start_ip', 'end_ip', 'description'],
+    details: { subnet: subnet.cidr },
+  });
   res.json(updated);
 });
 
@@ -457,9 +470,14 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   }
 
   Range.deleteRange(db, range.id);
-  audit(req.user.id, 'range_deleted', 'range', range.id, {
-    subnet_id: req.params.subnetId,
-    type: rangeType?.name,
+  recordAudit({
+    action: 'range_deleted',
+    entityType: 'range',
+    entityId: range.id,
+    details: {
+      subnet_id: req.params.subnetId,
+      type: rangeType?.name,
+    },
   });
   res.json({ message: 'Range deleted' });
 });

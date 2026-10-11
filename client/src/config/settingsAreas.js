@@ -253,6 +253,7 @@ export const SETTINGS_AREAS = [
         id: 'logs',
         label: 'Logs',
         dataTrack: 'settings-sec-logging',
+        fill: true,
         component: defineAsyncComponent(() => import('../views/settings/LogsSettings.vue')),
       },
       {

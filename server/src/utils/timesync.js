@@ -16,6 +16,7 @@ import { execFileSync } from 'child_process';
 import { getSetting } from '../db/init.js';
 import { getDnsBackend } from '../backends/index.js';
 import { getNtpStatus } from './ntp-status.js';
+import { recordAudit } from '../services/audit.js';
 
 export { getNtpStatus };
 
@@ -57,6 +58,15 @@ function disarm() {
  * Self-clears on success, on dnssec disable, when timedatectl is unavailable,
  * or after maxAttempts. Idempotent, a second call while armed does nothing.
  */
+// An audit row that must not stop the check when it cannot be written.
+function note(row) {
+  try {
+    recordAudit(row);
+  } catch (err) {
+    console.warn('[timesync] Could not record the DNSSEC change:', err?.message || err);
+  }
+}
+
 export function armDnssecTimecheckWhenSynced(opts = {}) {
   const intervalMs = opts.intervalMs || 10000;
   const maxAttempts = opts.maxAttempts || 360; // ~1h at 10s
@@ -77,6 +87,16 @@ export function armDnssecTimecheckWhenSynced(opts = {}) {
     const { available, synchronized } = getNtpStatus();
     if (!available) return finish();
     if (synchronized) {
+      // A clock in sync at the first look changes nothing anyone waited for;
+      // one that synced later ended a stretch of lenient DNSSEC.
+      if (attempts > 1) {
+        note({
+          action: 'dnssec_timestamps_enforced',
+          entityType: 'dns',
+          source: 'timesync',
+          details: { waited_seconds: Math.round(((attempts - 1) * intervalMs) / 1000) },
+        });
+      }
       try {
         getDnsBackend().onClockSynchronized();
         console.log(
@@ -88,6 +108,15 @@ export function armDnssecTimecheckWhenSynced(opts = {}) {
       return finish();
     }
     if (attempts >= maxAttempts) {
+      note({
+        action: 'dnssec_timestamps_lenient',
+        entityType: 'dns',
+        source: 'timesync',
+        details: {
+          reason: 'the clock never synchronized',
+          waited_seconds: (attempts * intervalMs) / 1000,
+        },
+      });
       console.warn(
         '[timesync] Gave up waiting for NTP sync, dnsmasq stays lenient on DNSSEC timestamps',
       );

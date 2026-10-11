@@ -98,9 +98,15 @@ function emptyZone(name, { ns, admin, serial, refresh, retry, expire, minimum })
     name,
     'SOA',
     LOCAL_RECORD_TTL,
-    [ns, admin, serial ?? 1, refresh ?? 3600, retry ?? 900, expire ?? 604800, minimum ?? 86400].join(
-      ' ',
-    ),
+    [
+      ns,
+      admin,
+      serial ?? 1,
+      refresh ?? 3600,
+      retry ?? 900,
+      expire ?? 604800,
+      minimum ?? 86400,
+    ].join(' '),
   );
   zone.put(name, 'NS', LOCAL_RECORD_TTL, ns);
   return zone;
@@ -281,6 +287,7 @@ export function renderRecursorConfig({
   validation,
   networkTimeoutMs,
   runDir,
+  logQueries = false,
 }) {
   const local = zones.map((name) => name.replace(/\.$/, '')).sort();
   const fixed = {
@@ -299,11 +306,15 @@ export function renderRecursorConfig({
     },
     dnssec: { validation },
   };
+  // In bypass mode Recursor answers clients itself, so it logs each query
+  // (backends/pdns/log-format.js reads them); behind the proxy, the proxy does.
+  if (logQueries) fixed.logging = { quiet: false };
   const zonePart = {
     forward_zones: local.map((zone) => ({ zone, forwarders: [`127.0.0.1:${authPort}`] })),
     negative_trustanchors: local.map((name) => ({ name, reason: 'CIDRella local zone' })),
   };
   const config = {
+    ...(fixed.logging && { logging: fixed.logging }),
     incoming: fixed.incoming,
     outgoing: fixed.outgoing,
     recursor: { ...fixed.recursor, forward_zones: zonePart.forward_zones },
