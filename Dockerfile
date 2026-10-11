@@ -106,7 +106,7 @@ RUN apk add --no-cache python3 py3-pip py3-scikit-learn py3-numpy py3-joblib && 
     setcap cap_net_raw,cap_net_bind_service+ep $(readlink -f $(which node))
 
 # Copy application code
-COPY package.json ./
+COPY package.json LICENSE NOTICE ./
 COPY server/ ./server/
 COPY dnsmasq/ ./dnsmasq/
 

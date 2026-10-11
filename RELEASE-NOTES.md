@@ -20,6 +20,9 @@ upgrade changes nothing until someone switches.
 
 ### New
 
+- **CIDRella is licensed under Apache-2.0.** The release carries `LICENSE`
+  and a `NOTICE` file, which also credits the DB-IP geolocation data. Until
+  now the repository had no license.
 - **Choose the servers: dnsmasq, or PowerDNS + Kea.** Settings > General >
   Servers shows which stack answers DNS and DHCP, whether each is
   installed, and what a switch adds and loses. Switch moves every role at

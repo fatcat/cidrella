@@ -994,6 +994,10 @@ if [ "$DRY_RUN" = false ]; then
   # Consumed by scripts/lib/preflight.sh at install/update time.
   cp "$PROJECT_DIR/requirements.json" "$STAGING_DIR/requirements.json"
 
+  # The license and its NOTICE travel with every copy (Apache-2.0 section 4),
+  # so a build without them fails.
+  cp "$PROJECT_DIR/LICENSE" "$PROJECT_DIR/NOTICE" "$STAGING_DIR/"
+
   # Documentation
   cp "$PROJECT_DIR/README.md" "$STAGING_DIR/README.md" 2>/dev/null || true
 

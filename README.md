@@ -150,3 +150,7 @@ See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership 
 | readonly_dns  | View DNS configuration                   |
 | readonly_dhcp | View DHCP configuration                  |
 | readonly      | View all configuration                   |
+
+## License
+
+CIDRella is licensed under the [Apache License, Version 2.0](LICENSE). You may use, modify and redistribute it, commercially or not, as long as you keep the copyright notice, the license and the [NOTICE](NOTICE) file with every copy, and mark the files you changed. The NOTICE file also credits the IP geolocation data CIDRella includes, which DB-IP provides under CC BY 4.0.
