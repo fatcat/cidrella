@@ -51,6 +51,7 @@ const SETTLE_POLL_MS = 1000;
 const SETTLE_POLLS = 15;
 const settlePolls = ref(0);
 let settleTimer = null;
+let unmounted = false;
 
 const inFlight = (item) =>
   !item.last_error && (item.status === 'pending' || item.status === 'applying');
@@ -115,7 +116,7 @@ async function load() {
   } finally {
     busy.value = false;
   }
-  if (generations.value.some(inFlight) && settlePolls.value < SETTLE_POLLS) {
+  if (!unmounted && generations.value.some(inFlight) && settlePolls.value < SETTLE_POLLS) {
     settleTimer = setTimeout(() => {
       settlePolls.value += 1;
       load();
@@ -155,7 +156,10 @@ async function repair() {
 }
 
 onMounted(refresh);
-onBeforeUnmount(() => clearTimeout(settleTimer));
+onBeforeUnmount(() => {
+  unmounted = true;
+  clearTimeout(settleTimer);
+});
 defineExpose({ refresh });
 </script>
 
