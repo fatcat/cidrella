@@ -45,3 +45,10 @@ updates:
     schedule:
       interval: weekly
       day: monday
+
+  # The Dockerfile's base image is pinned by digest; this keeps the digest current.
+  - package-ecosystem: docker
+    directory: "/"
+    schedule:
+      interval: weekly
+      day: monday

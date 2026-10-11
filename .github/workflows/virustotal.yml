@@ -29,7 +29,7 @@ jobs:
     steps:
       - name: Scan the release tarball
         if: github.event_name == 'release'
-        uses: crazy-max/ghaction-virustotal@v5
+        uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
           github_token: ${{ github.token }}
@@ -51,7 +51,7 @@ jobs:
       - name: Scan the downloaded tarball
         id: manual
         if: github.event_name == 'workflow_dispatch'
-        uses: crazy-max/ghaction-virustotal@v5
+        uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
           request_rate: 4
