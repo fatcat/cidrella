@@ -93,6 +93,10 @@ upgrade changes nothing until someone switches.
 
 ### Fixed
 
+- The Networks workspace no longer shows "Appliance configuration needs attention" after every
+  DNS or DHCP change. It read the apply status while the change was still being applied, a
+  fraction of a second, and never looked again. It now waits for the apply to finish and
+  warns only on a failure or an apply still unfinished after 15 seconds.
 - CIDRella no longer sends HSTS. Its certificate is self-signed until you upload one, and HSTS on a
   self-signed host turned the browser's certificate warning into one you cannot click past,
   so the appliance could only be reached by IP address. It now sends `max-age=0`. A browser

@@ -27,7 +27,7 @@
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue';
 import api from '../../api/client.js';
 import { apiError } from '../../utils/format.js';
 
@@ -44,13 +44,23 @@ const networkDhcpDiagnostics = ref(null);
 const busy = ref(false);
 const error = ref('');
 const confirmRepair = ref(false);
+// Every write queues an apply that finishes in well under a second, so a
+// generation still pending or applying right after a write is normal. Poll
+// until it settles; only one still unsettled after the last poll is stuck.
+const SETTLE_POLL_MS = 1000;
+const SETTLE_POLLS = 15;
+const settlePolls = ref(0);
+let settleTimer = null;
 
+const inFlight = (item) =>
+  !item.last_error && (item.status === 'pending' || item.status === 'applying');
 const attentionGenerations = computed(() =>
   generations.value.filter(
     (item) =>
-      item.status !== 'applied' ||
-      Number(item.desired_generation) > Number(item.applied_generation) ||
-      item.last_error,
+      (!inFlight(item) || settlePolls.value >= SETTLE_POLLS) &&
+      (item.status !== 'applied' ||
+        Number(item.desired_generation) > Number(item.applied_generation) ||
+        item.last_error),
   ),
 );
 const diagnosticCount = computed(
@@ -81,7 +91,13 @@ function generationLabel(hookName) {
     .toUpperCase();
 }
 
-async function refresh() {
+function refresh() {
+  settlePolls.value = 0;
+  return load();
+}
+
+async function load() {
+  clearTimeout(settleTimer);
   if (!props.canRead || busy.value) return;
   busy.value = true;
   error.value = '';
@@ -98,6 +114,12 @@ async function refresh() {
     error.value = `Could not load configuration status: ${apiError(requestError)}`;
   } finally {
     busy.value = false;
+  }
+  if (generations.value.some(inFlight) && settlePolls.value < SETTLE_POLLS) {
+    settleTimer = setTimeout(() => {
+      settlePolls.value += 1;
+      load();
+    }, SETTLE_POLL_MS);
   }
 }
 
@@ -133,6 +155,7 @@ async function repair() {
 }
 
 onMounted(refresh);
+onBeforeUnmount(() => clearTimeout(settleTimer));
 defineExpose({ refresh });
 </script>
 

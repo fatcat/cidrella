@@ -2,6 +2,8 @@
  * Audit rows for actions that change nothing anyone edits but are worth
  * knowing: a backup copied off the appliance, a scan's results deleted.
  */
+// First: backup.js builds its paths from DATA_DIR when it loads.
+import '../../helpers/isolated-data-dir.js';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';

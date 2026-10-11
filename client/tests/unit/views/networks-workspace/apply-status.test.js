@@ -39,6 +39,38 @@ describe('workspace apply status', () => {
     expect(wrapper.text()).toContain('dnsmasq validation failed');
   });
 
+  it('waits out an apply in progress and shows nothing once it lands', async () => {
+    vi.useFakeTimers();
+    try {
+      mockReads(generation('applying'));
+      const wrapper = mount(ApplyStatusBanner, { props: { canRead: true, canDnsWrite: true } });
+      await flushPromises();
+      expect(wrapper.find('.apply-status').exists()).toBe(false);
+      mockReads({ ...generation('applied'), applied_generation: 4 });
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(wrapper.find('.apply-status').exists()).toBe(false);
+      expect(api.get).toHaveBeenCalledTimes(6);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(api.get).toHaveBeenCalledTimes(6);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it('flags an apply that never finishes', async () => {
+    vi.useFakeTimers();
+    try {
+      mockReads(generation('pending'));
+      const wrapper = mount(ApplyStatusBanner, { props: { canRead: true, canDnsWrite: true } });
+      await flushPromises();
+      expect(wrapper.find('.apply-status').exists()).toBe(false);
+      await vi.advanceTimersByTimeAsync(15000);
+      expect(wrapper.text()).toContain('desired 4, applied 3 · pending');
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
   it('applies only through the explicit protocol endpoint', async () => {
     const wrapper = mount(ApplyStatusBanner, { props: { canRead: true, canDnsWrite: true } });
     await flushPromises();
