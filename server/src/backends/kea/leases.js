@@ -77,7 +77,9 @@ export async function pageLeases(command, family) {
 // stat_cmds names an address handed out in "cumulative-assigned-addresses"
 // (DHCPv4) and "cumulative-assigned-nas" (DHCPv6), per subnet and pool.
 const ASSIGNED_RE = /cumulative-assigned-(addresses|nas)$/;
-const WATCH_RE = /(assigned|declined|reclaimed)/;
+// A renewal moves none of the address counters, only the replies sent:
+// pkt4-ack-sent and pkt6-reply-sent.
+const WATCH_RE = /(assigned|declined|reclaimed|^pkt4-ack-sent$|^pkt6-reply-sent$)/;
 
 async function statistics(command) {
   const reply = await command('statistic-get-all');
@@ -126,8 +128,8 @@ export async function readKeaLeases(commands, families) {
 }
 
 /**
- * A fingerprint of the lease counters: changes when Kea hands out, declines
- * or reclaims an address. watchLeases polls it.
+ * A fingerprint of the lease counters: changes when Kea hands out, renews,
+ * declines or reclaims an address. watchLeases polls it.
  */
 export async function leaseSignature(command) {
   const stats = await statistics(command);
@@ -157,14 +159,16 @@ export async function releaseKeaLease(commands, lease) {
  * The lease4-add / lease6-add arguments for a BackendLease, for a handover.
  * Kea derives a lease's start time from `expire - valid-lft`, so the
  * remaining time is the valid lifetime and the start is now. An infinite
- * lease goes in with the infinite lifetime and no expire, the only form Kea
- * accepts for it.
+ * lease goes in with no lifetime, so Kea gives it its subnet's, starting now:
+ * dnsmasq hands every reserved host an infinite lease, and carried over as
+ * infinite it would hold the address from the reservation's next client for
+ * good.
  */
 export function keaLeaseArguments(lease, { now = Date.now() } = {}) {
   const family = lease.dhcpVersion === 6 ? 6 : 4;
   const timing =
     lease.expiresAt === 'infinite'
-      ? { 'valid-lft': INFINITE_LIFETIME }
+      ? {}
       : (() => {
           const expire = Math.floor(Date.parse(lease.expiresAt) / 1000);
           const valid = Math.max(1, expire - Math.floor(now / 1000));

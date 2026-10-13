@@ -12,6 +12,8 @@
  *   kea.churn = true    every statistics read sees one more address handed
  *                       out, as if leases changed during each scan
  *   kea.sockets         what status-get reports of the sockets ('ready')
+ *   kea.subnetLifetime  the valid lifetime a lease added without one gets, as
+ *                       Kea gives it its subnet's (3600)
  *   await kea.close()
  */
 import http from 'http';
@@ -63,6 +65,7 @@ export async function startFakeKea({ password, user = 'cidrella' } = {}) {
       case 'lease4-add':
       case 'lease6-add': {
         const lease = { ...args, state: 0 };
+        lease['valid-lft'] ??= fake.subnetLifetime;
         lease.cltt = args.expire ? args.expire - args['valid-lft'] : Math.floor(Date.now() / 1000);
         delete lease.expire;
         leases[family].set(args['ip-address'], lease);
@@ -124,6 +127,7 @@ export async function startFakeKea({ password, user = 'cidrella' } = {}) {
 
   const fake = {
     churn: false,
+    subnetLifetime: 3600,
     sockets: 'ready',
     port: server.address().port,
     v6Port: server.v6Port,

@@ -232,7 +232,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and
   `activeLeaseSql` in `utils/lease-sql.js` (which lease to believe for an address, and is a
   lease active),
-  `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync; `holdLeaseSync` to keep it still), `readSetting` in `models/setting.js` (one stored setting, null when absent), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
+  `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync; `holdLeaseSync` to keep it still;
+  it releases a lease holding another client's reservation, `holdsAnotherClientsReservation` in the
+  lifecycle service, and runs after every DHCP apply through `onDhcpApplied` in `services/backend-apply.js`), `readSetting` in `models/setting.js` (one stored setting, null when absent), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder
   upstream, DoT or DoH: reused connections, retry, address failover, fail closed),

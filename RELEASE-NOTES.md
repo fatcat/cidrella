@@ -93,6 +93,18 @@ upgrade changes nothing until someone switches.
 
 ### Fixed
 
+- A DHCP Reservation now takes effect when an earlier lease holds its address for another
+  client. The server will not hand out a leased address, so a reservation whose MAC (or DUID)
+  changed kept handing its new client a pool address for as long as the old client's lease
+  lasted, and a lease carried over by a switch from dnsmasq lasted forever (dnsmasq gives
+  every reserved host an infinite lease). The lease sync now releases such a lease, and runs
+  after every DHCP change. A switch to PowerDNS + Kea also gives an infinite lease the
+  scope's lease time instead of carrying it over as infinite.
+- On PowerDNS + Kea, the DHCP lease table now follows renewals. CIDRella synced only when an
+  address was handed out or reclaimed, so a lease that was renewed showed as expired.
+- An expired lease no longer stays in the DHCP lease table for good. One the server no
+  longer holds is kept for an hour, so its name outlives it while the host is away, and then
+  removed. Some had stayed indefinitely.
 - The Networks workspace no longer shows "Appliance configuration needs attention" after every
   DNS or DHCP change. It read the apply status while the change was still being applied, a
   fraction of a second, and never looked again. It now waits for the apply to finish and

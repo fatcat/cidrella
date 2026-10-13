@@ -610,26 +610,43 @@ export function observeDhcpLeases(db, leases, { prevalidated = false } = {}) {
   return reconcileExpiredDhcpAllocations(db);
 }
 
-export function dhcpLeaseRejectionReason(db, lease) {
-  if (!lease?.subnetId) return `DHCP lease ${lease?.ip || ''} has no managed subnet`;
-  if (!isValidAddress(lease.ip)) return `DHCP lease address ${lease.ip || ''} is invalid`;
-  const reservation = db
+function enabledReservationAt(db, subnetId, ip) {
+  return db
     .prepare(
       `
     SELECT id, mac_address, duid FROM dhcp_reservations
     WHERE subnet_id = ? AND ip_address = ? AND enabled = 1
   `,
     )
-    .get(lease.subnetId, lease.ip);
-  // DHCPv4 identifies the client by MAC, DHCPv6 by DUID.
-  const clientMatches = (expected, observed) =>
+    .get(subnetId, ip);
+}
+
+// DHCPv4 identifies the client by MAC, DHCPv6 by DUID.
+function leaseIsReservationClient(reservation, lease) {
+  const matches = (expected, observed) =>
     String(expected || '').toLowerCase() === String(observed || '').toLowerCase();
-  if (
-    reservation &&
-    !(lease.dhcpVersion === 6
-      ? clientMatches(reservation.duid, lease.duid)
-      : clientMatches(reservation.mac_address, lease.mac))
-  ) {
+  return lease.dhcpVersion === 6
+    ? matches(reservation.duid, lease.duid)
+    : matches(reservation.mac_address, lease.mac);
+}
+
+/**
+ * Whether a lease holds an enabled DHCP Reservation's address for another
+ * client: one left from before the reservation, or before its client changed.
+ * The DHCP server will not hand a leased address to the reservation's client,
+ * so the lease sync releases it.
+ */
+export function holdsAnotherClientsReservation(db, lease) {
+  if (!lease?.subnetId || !isValidAddress(lease.ip)) return false;
+  const reservation = enabledReservationAt(db, lease.subnetId, lease.ip);
+  return Boolean(reservation) && !leaseIsReservationClient(reservation, lease);
+}
+
+export function dhcpLeaseRejectionReason(db, lease) {
+  if (!lease?.subnetId) return `DHCP lease ${lease?.ip || ''} has no managed subnet`;
+  if (!isValidAddress(lease.ip)) return `DHCP lease address ${lease.ip || ''} is invalid`;
+  const reservation = enabledReservationAt(db, lease.subnetId, lease.ip);
+  if (reservation && !leaseIsReservationClient(reservation, lease)) {
     return `DHCP Lease ${lease.ip} does not match its DHCP Reservation client`;
   }
   if (!reservation && !findEnabledScopeForIp(db, lease.subnetId, lease.ip)) {

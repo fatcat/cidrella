@@ -167,7 +167,7 @@ describe('keaLeaseArguments', () => {
     });
   });
 
-  it('adds an infinite lease with no expire, the form Kea takes', () => {
+  it('adds an infinite lease with no lifetime, so it takes its subnet’s', () => {
     expect(
       keaLeaseArguments(
         { ip: 'fd00:5::121', duid: '00:01:aa', iaid: 41, expiresAt: 'infinite', dhcpVersion: 6 },
@@ -178,8 +178,13 @@ describe('keaLeaseArguments', () => {
       duid: '00:01:aa',
       iaid: 41,
       type: 'IA_NA',
-      'valid-lft': 4294967295,
     });
+    expect(
+      keaLeaseArguments(
+        { ip: '10.5.0.121', mac: 'aa:bb:cc:00:00:21', expiresAt: 'infinite', dhcpVersion: 4 },
+        { now },
+      ),
+    ).toEqual({ 'ip-address': '10.5.0.121', 'hw-address': 'aa:bb:cc:00:00:21' });
   });
 });
 

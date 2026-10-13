@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 
 vi.mock('../../../src/utils/after-commit.js', () => ({
   queueRegen: vi.fn(),
@@ -112,6 +112,75 @@ describe('replaceLeases', () => {
         .prepare('SELECT allocation_state FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
         .get(subnetId, lease.ip).allocation_state,
     ).toBe('unassigned');
+  });
+});
+
+describe('replaceLeases, a lease the backend dropped', () => {
+  let subnet6Id;
+  beforeAll(() => {
+    enableIpv6(db);
+    subnet6Id = db
+      .prepare(
+        `INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length,
+           total_addresses, status, address_family)
+         VALUES ('fd00:1::/64', 'v6', 'fd00:1::', NULL, 64, '18446744073709551616', 'allocated', 6)`,
+      )
+      .run().lastInsertRowid;
+    const rangeTypeId = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get().id;
+    const range6 = db
+      .prepare(
+        `INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
+         VALUES (?, ?, 'fd00:1::10', 'fd00:1::ff')`,
+      )
+      .run(subnet6Id, rangeTypeId).lastInsertRowid;
+    const scope6 = db
+      .prepare(
+        `INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, address_family, v6_mode)
+         VALUES (?, ?, '24h', 6, 'stateful')`,
+      )
+      .run(range6, subnet6Id).lastInsertRowid;
+    db.prepare(
+      `INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+       VALUES (?, ?, 'fd00:1::10', 'fd00:1::ff')`,
+    ).run(scope6, range6);
+  });
+
+  const kept = (ip) => db.prepare('SELECT * FROM dhcp_leases WHERE ip_address = ?').get(ip);
+  const HOUR = 3600_000;
+
+  it.each([
+    ['10.0.1.70', { mac: 'aa:bb:cc:00:00:70', dhcpVersion: 4 }],
+    ['fd00:1::70', { duid: '00:01:00:01:aa:bb:cc:00:00:70', iaid: 1, dhcpVersion: 6 }],
+  ])('keeps %s for the offline window after it expired, then lets it go', (ip, client) => {
+    const subnet = ip.includes(':') ? subnet6Id : subnetId;
+    const now = Date.now();
+    const lease = {
+      ip,
+      hostname: 'gone',
+      clientId: null,
+      expiresAt: new Date(now - 10 * 60_000).toISOString(),
+      subnetId: subnet,
+      ...client,
+    };
+    replaceLeases(db, [lease], { now });
+    replaceLeases(db, [], { now });
+    expect(kept(ip)).toMatchObject({ hostname: 'gone' });
+    replaceLeases(db, [], { now: now + 30 * 60_000 });
+    expect(kept(ip)).toBeTruthy();
+    replaceLeases(db, [], { now: now + HOUR });
+    expect(kept(ip)).toBeUndefined();
+  });
+
+  it('starts the window when a lease still running is dropped', () => {
+    const now = Date.now();
+    replaceLeases(db, [
+      { ip: '10.0.1.71', mac: 'aa:bb:cc:00:00:71', hostname: 'h', expiresAt: 'infinite', subnetId },
+    ]);
+    replaceLeases(db, [], { now });
+    replaceLeases(db, [], { now: now + 50 * 60_000 });
+    expect(kept('10.0.1.71')).toBeTruthy();
+    replaceLeases(db, [], { now: now + 2 * HOUR });
+    expect(kept('10.0.1.71')).toBeUndefined();
   });
 });
 

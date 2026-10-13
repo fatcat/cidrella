@@ -48,6 +48,19 @@ export function applyDhcp(db) {
   syncDhcpDnsRecords(db, leases);
   dhcp.applyActivation(result.activation);
   if (raResult) ra.applyActivation(raResult.activation);
+  for (const listener of dhcpAppliedListeners) listener();
+}
+
+const dhcpAppliedListeners = new Set();
+
+/**
+ * Call `listener` after every DHCP apply. The lease sync listens: a
+ * reservation may have changed hands, and the sync releases a lease that holds
+ * its address for another client. Returns the unsubscribe.
+ */
+export function onDhcpApplied(listener) {
+  dhcpAppliedListeners.add(listener);
+  return () => dhcpAppliedListeners.delete(listener);
 }
 
 /**
