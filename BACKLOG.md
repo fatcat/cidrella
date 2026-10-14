@@ -238,12 +238,12 @@ the DHCP leases table columns for DUID/IAID default to hidden. No IPv6 NTP defau
 
 ## Deferred design work
 
-### PowerDNS + Kea stack (0.5.2, 0.5.3, ships as 0.6.0), in flight
+### PowerDNS + Kea stack (shipped in 0.6.0), what is left
 
 Decided 2026-10-07: a host runs one of two stacks, **dnsmasq** (DNS, DHCP, RAs) or
 **PowerDNS + Kea**, never a mix. The switch moves between stacks both ways, from the setup
 wizard at install and from Settings afterward. `install.sh` and `update.sh` install both
-stacks' packages, since the app cannot install anything itself. 0.5.2 and 0.5.3 are dev
+stacks' packages, since the app cannot install anything itself. 0.5.2 and 0.5.3 were dev
 branches with release candidates only; the release is 0.6.0. Why stacks and not one-way: the
 mixed mode is what needs dnsmasq's not-serving render and two daemons on UDP 547, while
 one-way switching saved three lines of lease import and broke restoring a pre-switch backup.
@@ -284,8 +284,6 @@ per-role log viewer, the mixed mode removed, and pre-release-only versions kept 
   package's schema when it is missing and never upgrades it. The database is derived, so the
   simple path on a schema change is to delete it and let the next sync rebuild it; nothing
   detects that need yet.
-- **0.6.0's own heading.** When 0.6.0 is cut, its section gets no tag and its `min_from` must
-  not name 0.5.1, 0.5.2 or 0.5.3 (the manifest lint refuses that).
 
 ### Resolver instrumentation: what the 2026-10-08 pass left out
 

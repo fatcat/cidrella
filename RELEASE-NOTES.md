@@ -6,7 +6,7 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
-## v0.5.3 — 2026-10-10 [pre-release]
+## v0.6.0 — 2026-10-14
 
 ```yaml
 min_from: "0.4.17"
@@ -14,9 +14,13 @@ breaking: false
 security: false
 ```
 
-The PowerDNS + Kea stack, selectable. A development line, like 0.5.2:
-release candidates only, shipped as 0.6.0. dnsmasq stays the default; an
-upgrade changes nothing until someone switches.
+The PowerDNS + Kea stack, selectable. dnsmasq stays the default; an upgrade
+changes nothing until someone switches.
+
+0.6.0 is the first release since 0.5.0. It also carries everything from the
+0.5.1 and 0.5.2 release candidates, whose notes follow this section: the
+DNS/DHCP backend layer (0.5.1) and the Kea adapter (0.5.2). This section
+covers what came after them, from the 0.5.3 candidates.
 
 ### New
 
@@ -190,7 +194,7 @@ upgrade changes nothing until someone switches.
   to 90. Existing entries keep their user and get the new action names
   (`vlan_created` rather than `create`).
 
-- The DHCP-only switch of 0.5.2 (Kea answering DHCP beside dnsmasq's DNS,
+- The DHCP-only switch of the 0.5.2 candidates (Kea answering DHCP beside dnsmasq's DNS,
   and `/api/dhcp/server`) is gone. An install left on it comes back on
   dnsmasq for both at boot, with Kea's leases carried over; switch to
   PowerDNS + Kea from Settings > General > Servers to run Kea again.
