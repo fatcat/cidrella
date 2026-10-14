@@ -776,12 +776,13 @@ function handleQuery(msg, rinfo, sock) {
       checkingDisabled: !!query.flag_cd,
       opt: getQueryOpt(query), // echoed on a synthesized GeoIP-block response
       query: msg, // asked again of the forwarder for a forward-unknown zone
+      clientRd: asksRecursion(msg),
       timer,
       startNs,
     });
 
-    // Rewrite query ID and forward to dnsmasq on localhost:5353
-    const fwdBuf = Buffer.from(msg);
+    // Rewrite query ID and forward to the backend on the internal port.
+    const fwdBuf = withRecursionDesired(msg);
     fwdBuf.writeUInt16BE(internalId, 0);
     dnsmasqSocket.send(
       fwdBuf,
@@ -791,6 +792,23 @@ function handleQuery(msg, rinfo, sock) {
   } catch (err) {
     proxyLog('error', 'Query processing error', { error: err.message });
   }
+}
+
+// Recursion Desired: bit 0 of the third header byte. PowerDNS Recursor
+// refuses a query without it, even for a name CIDRella serves, where dnsmasq
+// answered it; Home Assistant's hourly reverse sweep of a network sends RD=0
+// and drew a REFUSED for every address. The proxy asks the backend with RD set
+// on either stack and gives the client back its own bit.
+const RD_BIT = 0x01;
+export const asksRecursion = (msg) => msg.length > 2 && (msg[2] & RD_BIT) !== 0;
+export function withRecursionDesired(msg) {
+  const buf = Buffer.from(msg);
+  if (buf.length > 2) buf[2] |= RD_BIT;
+  return buf;
+}
+export function withClientRd(reply, clientRd) {
+  if (reply.length > 2) reply[2] = (reply[2] & ~RD_BIT) | (clientRd ? RD_BIT : 0);
+  return reply;
 }
 
 // Handle a response from dnsmasq
@@ -867,7 +885,7 @@ function deliverResponse(pending, msg, response) {
     // Allowed, forward original response (restore original query ID)
     statsAllowed++;
     statsTotal++;
-    const buf = Buffer.from(msg);
+    const buf = withClientRd(Buffer.from(msg), pending.clientRd);
     buf.writeUInt16BE(pending.originalId, 0);
     pending.socket.send(buf, pending.port, pending.address);
     const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
@@ -991,7 +1009,12 @@ async function handleTcpQuery(msg, clientSock) {
 
   // Relay to dnsmasq over TCP (same internal port it serves UDP on).
   const internalPort = resolveDnsmasqInternalPort(getSetting('dns_listen_port'));
-  let respMsg = await relayQueryOverTcp(msg, '127.0.0.1', internalPort, PROXY_TCP_RELAY_TIMEOUT_MS);
+  let respMsg = await relayQueryOverTcp(
+    withRecursionDesired(msg),
+    '127.0.0.1',
+    internalPort,
+    PROXY_TCP_RELAY_TIMEOUT_MS,
+  );
   if (respMsg) {
     let first = null;
     try {
@@ -1064,10 +1087,11 @@ async function handleTcpQuery(msg, clientSock) {
     return;
   }
 
-  // Allowed, relay dnsmasq's raw bytes verbatim (preserves signatures + ID).
+  // Allowed, relay the backend's raw bytes (preserves signatures + ID), with
+  // the client's own RD bit; the header is outside every signature.
   statsAllowed++;
   statsTotal++;
-  writeTcpMessage(clientSock, respMsg);
+  writeTcpMessage(clientSock, withClientRd(Buffer.from(respMsg), asksRecursion(msg)));
   const dnssecSupported = classifyDnssecSupport(response, {
     enabled: getSetting('dnssec_enabled') === 'true',
     checkingDisabled: !!query.flag_cd,

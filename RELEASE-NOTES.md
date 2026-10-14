@@ -127,6 +127,11 @@ upgrade changes nothing until someone switches.
   no window in the last day is faded, with the window's age in its tooltip.
 - The triage queue says its number is the last flagged score, which can differ from where the
   device sits on the map (its newest window).
+- On PowerDNS + Kea, a DNS query sent without Recursion Desired was refused, even for a name
+  CIDRella serves: PowerDNS Recursor refuses any such query, where dnsmasq answered it. Home
+  Assistant's hourly reverse lookup of every address on a network sends them, which showed as
+  a spike of refused answers on the hour in Analytics > Performance. The DNS proxy now asks the
+  backend with Recursion Desired set, on either stack, and returns the client's own flag.
 - Settings > Filtering > Categories shows its last rows. The table took the height of the
   whole section, not what was left under the settings above it, so the bottom of the list sat
   under the panel's edge.
