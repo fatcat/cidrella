@@ -132,6 +132,16 @@ upgrade changes nothing until someone switches.
   Assistant's hourly reverse lookup of every address on a network sends them, which showed as
   a spike of refused answers on the hour in Analytics > Performance. The DNS proxy now asks the
   backend with Recursion Desired set, on either stack, and returns the client's own flag.
+- A change to the DHCP DNS Servers default now survives a restart. At every start CIDRella
+  wrote the default back to its own address plus 9.9.9.9, so removing the fallback resolver
+  (in Settings or with Bulk Change) lasted only until the next restart or update, and clients
+  could then get an outside resolver's "no such name" for a local one. Now only CIDRella's
+  own entry moves, when the server's address changes; the rest of the list is left as set.
+- DHCP no longer hands out 9.9.9.9 beside CIDRella's address. A new install's DNS Servers
+  default, a new scope, and Bulk Change with DNS left blank now give CIDRella's address alone.
+  Most clients ask either server, not the second only as a backup, so the outside one answered
+  without filtering and without local names. An existing default or scope that still lists
+  9.9.9.9 keeps it until someone removes it.
 - The three charts in each row of Analytics > Performance are the same height. A chart with a
   one-line legend, such as Upstream latency, left its panel shorter than the others.
 - Settings > Filtering > Categories shows its last rows. The table took the height of the

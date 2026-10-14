@@ -255,9 +255,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   percentiles),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
   enabled set, blanks filled from its network; new scopes and Bulk Change; `USE_DEFAULT` there
-  marks an option linked to its default, written as a NULL row), `networkOptionFills` and
-  `FALLBACK_SECONDARY_DNS` in `utils/dhcp-network-options.js` (what a scope takes from its
-  network, either family; the scope dialog imports it through `@shared`),
+  marks an option linked to its default, written as a NULL row), `networkOptionFills` in
+  `utils/dhcp-network-options.js` (what a scope takes from its network, either family; DNS is
+  CIDRella's address alone, never an outside fallback; the scope dialog imports it through
+  `@shared`),
   `resolveEffectiveScopeOptions` and `isLinkedOption` in `models/dhcp-scope.js` (what a scope
   serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
   `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default),

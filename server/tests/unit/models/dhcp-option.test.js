@@ -1,4 +1,5 @@
-import { describe, it, expect, beforeAll, afterAll, beforeEach } from 'vitest';
+import os from 'os';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import * as DhcpOption from '../../../src/models/dhcp-option.js';
 import { DHCP6_DEFAULT_NTP_SERVERS } from '../../../src/config/defaults.js';
@@ -194,5 +195,40 @@ describe('DHCP option ownership', () => {
     expect(DhcpOption.upsertServerDnsDefault(db, '10.70.0.2,9.9.9.9')).toBe(false);
     expect(DhcpOption.getDefaultOptions(db).defaults).toEqual({ 6: '10.70.0.2,9.9.9.9' });
     expect(DhcpOption.getDefaultOptions(db, 6).defaults).toEqual({ 23: 'fd00::53' });
+  });
+
+  it('moves only its own entry in the DNS Servers default when the host address changes', () => {
+    const value = DhcpOption.serverDnsDefaultValue;
+    expect(value(null, '10.0.0.5', null)).toBe('10.0.0.5');
+    expect(value(' ', '10.0.0.5', null)).toBe('10.0.0.5');
+    // Already there, wherever a person put it: nothing changes.
+    expect(value('10.0.0.5', '10.0.0.5', '10.0.0.5')).toBe('10.0.0.5');
+    expect(value('1.1.1.1, 10.0.0.5', '10.0.0.5', null)).toBe('1.1.1.1, 10.0.0.5');
+    // The host moved: its old address is replaced, the rest kept.
+    expect(value('10.0.0.4', '10.0.0.5', '10.0.0.4')).toBe('10.0.0.5');
+    expect(value('1.1.1.1,10.0.0.4', '10.0.0.5', '10.0.0.4')).toBe('1.1.1.1,10.0.0.5');
+    // A list without CIDRella's old address is a person's: left alone.
+    expect(value('1.1.1.1', '10.0.0.5', '10.0.0.4')).toBe('1.1.1.1');
+    // An install from before the address was kept: the first entry is its.
+    expect(value('10.0.0.4', '10.0.0.5', null)).toBe('10.0.0.5');
+  });
+
+  it('keeps a DNS Servers default without the fallback across restarts', () => {
+    const spy = vi.spyOn(os, 'networkInterfaces').mockReturnValue({
+      eth0: [{ family: 'IPv4', internal: false, address: '10.70.0.2' }],
+    });
+    try {
+      DhcpOption.upsertServerDnsDefault(db, '10.70.0.2');
+      DhcpOption.syncServerDnsDefault(db);
+      DhcpOption.syncServerDnsDefault(db);
+      expect(DhcpOption.getDefaultOptions(db).defaults[6]).toBe('10.70.0.2');
+
+      spy.mockReturnValue({ eth0: [{ family: 'IPv4', internal: false, address: '10.70.0.9' }] });
+      DhcpOption.upsertServerDnsDefault(db, '10.70.0.2,1.1.1.1');
+      DhcpOption.syncServerDnsDefault(db);
+      expect(DhcpOption.getDefaultOptions(db).defaults[6]).toBe('10.70.0.9,1.1.1.1');
+    } finally {
+      spy.mockRestore();
+    }
   });
 });

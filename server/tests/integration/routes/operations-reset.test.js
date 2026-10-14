@@ -2,7 +2,6 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 import { DHCP_DEFAULT_NTP_SERVERS } from '../../../src/config/defaults.js';
-import { FALLBACK_SECONDARY_DNS } from '../../../src/utils/dhcp-network-options.js';
 
 const { default: operationsRouter } = await import('../../../src/routes/operations.js');
 const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');
@@ -42,8 +41,8 @@ describe('POST /api/operations/reset-database', () => {
 
     expect(res.body.defaults[42]).toBe(DHCP_DEFAULT_NTP_SERVERS);
     expect(res.body.defaults[51]).toBeUndefined();
-    expect(res.body.defaults[6]).toContain(FALLBACK_SECONDARY_DNS);
-    expect(res.body.defaults[6]).toMatch(/^(\d{1,3}\.){3}\d{1,3},9\.9\.9\.9$/);
+    // CIDRella's own address alone, no outside fallback.
+    expect(res.body.defaults[6]).toMatch(/^(\d{1,3}\.){3}\d{1,3}$/);
   });
 });
 
