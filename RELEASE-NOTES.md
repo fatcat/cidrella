@@ -132,6 +132,8 @@ upgrade changes nothing until someone switches.
   Assistant's hourly reverse lookup of every address on a network sends them, which showed as
   a spike of refused answers on the hour in Analytics > Performance. The DNS proxy now asks the
   backend with Recursion Desired set, on either stack, and returns the client's own flag.
+- The three charts in each row of Analytics > Performance are the same height. A chart with a
+  one-line legend, such as Upstream latency, left its panel shorter than the others.
 - Settings > Filtering > Categories shows its last rows. The table took the height of the
   whole section, not what was left under the settings above it, so the bottom of the list sat
   under the panel's edge.
