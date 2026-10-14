@@ -163,7 +163,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
   `dialog-actions`, `card-header`, `field-error`, `field-help`, `fill-panel`: the root of a
-  Settings `fill` section or full page, whose inner table or log scrolls instead of the page), `assets/analytics-workspace.css` for the
+  Settings `fill` section or full page, whose inner table or log scrolls instead of the page; a
+  `scrollHeight="flex"` DataTable directly inside it takes the height left under its siblings), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
   the `split`/`three` modifiers, `.figures` with `--figures`, `.lists` with `--lists`), `assets/panel-chrome.css` for the
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`

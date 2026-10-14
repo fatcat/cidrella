@@ -105,6 +105,9 @@ upgrade changes nothing until someone switches.
 - An expired lease no longer stays in the DHCP lease table for good. One the server no
   longer holds is kept for an hour, so its name outlives it while the host is away, and then
   removed. Some had stayed indefinitely.
+- Settings > Filtering > Categories shows its last rows. The table took the height of the
+  whole section, not what was left under the settings above it, so the bottom of the list sat
+  under the panel's edge.
 - The Networks workspace no longer shows "Appliance configuration needs attention" after every
   DNS or DHCP change. It read the apply status while the change was still being applied, a
   fraction of a second, and never looked again. It now waits for the apply to finish and
