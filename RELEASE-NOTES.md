@@ -105,6 +105,13 @@ upgrade changes nothing until someone switches.
 - An expired lease no longer stays in the DHCP lease table for good. One the server no
   longer holds is kept for an hour, so its name outlives it while the host is away, and then
   removed. Some had stayed indefinitely.
+- On PowerDNS + Kea, switching DHCP off now stops it. Kea ignored the switch and kept serving
+  every scope on the DHCP interfaces, so a box with DHCP off could still hand out addresses on
+  the LAN. Kea now listens on no interface while DHCP is off, as dnsmasq does.
+- Switching DNS off now stops DNS on either stack. The DNS proxy ignored the switch and kept
+  answering on the LAN, which on PowerDNS + Kea meant DNS carried on as if it were on. The
+  proxy now does not listen while DNS is off, and its health check no longer reads that as a
+  failure and turns on bypass.
 - Settings > Filtering > Categories shows its last rows. The table took the height of the
   whole section, not what was left under the settings above it, so the bottom of the list sat
   under the panel's edge.

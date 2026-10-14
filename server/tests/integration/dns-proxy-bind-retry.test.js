@@ -68,8 +68,8 @@ const { startProxy, stopProxy, getProxyStatus } = await import('../../src/utils/
 
 const PORT = 20000 + Math.floor(Math.random() * 20000);
 let tmpDir;
+let db;
 beforeAll(async () => {
-  let db;
   ({ db, tmpDir } = await setupTestDb());
   enableIpv6(db);
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dns_listen_port', ?)").run(
@@ -136,5 +136,24 @@ describe('proxy bind retry', () => {
     await new Promise((resolve) => setTimeout(resolve, 1300));
     expect(calls('udp', '::1')).toBe(1);
     expect(getProxyStatus().running).toBe(false);
+  });
+});
+
+describe('proxy with DNS switched off', () => {
+  it('binds nothing, IPv4 or IPv6, and binds again once DNS is back on', async () => {
+    const setDns = (on) =>
+      db
+        .prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('dns_enabled', ?)")
+        .run(on ? 'true' : 'false');
+    setDns(false);
+    try {
+      startProxy();
+      expect(bindCalls).toEqual([]);
+      expect(getProxyStatus().running).toBe(false);
+    } finally {
+      setDns(true);
+    }
+    startProxy();
+    await vi.waitFor(() => expect(listening()).toEqual(['127.0.0.1', '::1']));
   });
 });

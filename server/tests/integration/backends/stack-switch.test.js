@@ -111,6 +111,8 @@ let tmpDir;
 beforeAll(async () => {
   ({ db, tmpDir } = await setupTestDb());
   db.prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('lab.test', 'forward', 1)").run();
+  // DHCP ships switched off; these switches move a DHCP server that serves.
+  upsertSetting(db, 'dhcp_enabled', 'true');
 });
 afterAll(() => {
   cleanupTestDb(tmpDir);

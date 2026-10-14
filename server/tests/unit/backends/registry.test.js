@@ -1,4 +1,6 @@
-import { describe, it, expect, afterEach, vi } from 'vitest';
+import { describe, it, expect, afterEach, beforeAll, afterAll, vi } from 'vitest';
+import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { upsertSetting } from '../../../src/models/setting.js';
 import {
   STACKS,
   getBackend,
@@ -17,6 +19,15 @@ import {
   featureReport,
 } from '../../../src/backends/index.js';
 import { FEATURE_IDS } from '../../../src/backends/features.js';
+
+// servesDhcp reads dhcp_enabled, which ships off; most cases here want it on.
+let db;
+let tmpDir;
+beforeAll(async () => {
+  ({ db, tmpDir } = await setupTestDb());
+  upsertSetting(db, 'dhcp_enabled', 'true');
+});
+afterAll(() => cleanupTestDb(tmpDir));
 
 describe('backend registry', () => {
   it('fills every role with dnsmasq by default, built once', () => {
@@ -86,6 +97,15 @@ describe('choosing the stack', () => {
     expect(servesDhcp('kea')).toBe(true);
     setDhcpServing('kea', false);
     expect(servesDhcp('kea')).toBe(false);
+  });
+
+  it('serves no DHCP while DHCP is switched off, whatever the stack', () => {
+    upsertSetting(db, 'dhcp_enabled', 'false');
+    expect(servesDhcp('dnsmasq')).toBe(false);
+    selectStack('pdns-kea');
+    expect(servesDhcp('kea')).toBe(false);
+    upsertSetting(db, 'dhcp_enabled', 'true');
+    expect(servesDhcp('kea')).toBe(true);
   });
 
   it('tells listeners of each role that moved, and only then', () => {

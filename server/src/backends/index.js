@@ -14,6 +14,7 @@ import { createKeaBackend } from './kea/index.js';
 import { createPdnsBackend } from './pdns/index.js';
 import { createRadvdBackend } from './radvd/index.js';
 import { unitEvents } from './shared/unit-events.js';
+import { getSetting } from '../db/init.js';
 
 const FACTORIES = {
   dnsmasq: createDnsmasqBackend,
@@ -36,12 +37,15 @@ const quiesced = new Set();
 const listeners = new Set();
 
 /**
- * Does `name` answer DHCP right now? Only the stack's DHCP backend does, and
- * not while a switch holds it quiet. A backend not answering still renders
+ * Does `name` answer DHCP right now? Only the stack's DHCP backend does, not
+ * while a switch holds it quiet, and not while DHCP is switched off
+ * (`dhcp_enabled`, on unless 'false'). A backend not answering still renders
  * its configuration, with no addresses to hand out.
  */
 export function servesDhcp(name) {
-  return STACKS[stack].dhcp === name && !quiesced.has(name);
+  return (
+    STACKS[stack].dhcp === name && !quiesced.has(name) && getSetting('dhcp_enabled') !== 'false'
+  );
 }
 
 /** The adapter instance by name, whatever role it fills now. */

@@ -1125,9 +1125,17 @@ function onTcpConnection(clientSock) {
 }
 
 // Start the DNS proxy, binds one UDP socket per LAN address on port 53
+// DNS switched off (`dns_enabled`, on unless 'false'): the proxy does not
+// listen, whatever stack serves, so the LAN port gets no answer.
+const dnsSwitchedOff = () => getSetting('dns_enabled') === 'false';
+
 export function startProxy() {
   if (proxyServers.length > 0) {
     proxyLog('warn', 'Proxy already running');
+    return;
+  }
+  if (dnsSwitchedOff()) {
+    proxyLog('info', 'DNS is switched off, the proxy does not listen');
     return;
   }
 
@@ -1326,6 +1334,7 @@ function startHealthMonitor() {
   healthTimer = setInterval(async () => {
     if (proxyServers.length > 0) return; // proxy is alive
     if (bypassMode) return; // already bypassed, nothing to do
+    if (dnsSwitchedOff()) return; // down on purpose, not dead
 
     proxyLog('warn', 'Proxy appears dead, attempting restart');
 
