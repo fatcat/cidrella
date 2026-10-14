@@ -570,6 +570,30 @@ describe('GET /api/anomalies/map', () => {
     expect(res.body[0].identity).toBe('aa:bb:cc:00:00:01');
   });
 
+  it('counts flagged_24h by time, in the sidecar ISO shape too', async () => {
+    // The sidecar writes '2026-10-13T01:00:00+00:00'. As text that sorts
+    // after SQLite's '2026-10-13 10:50:00', so a window 30 hours old on the
+    // cutoff's date used to count as inside the last day.
+    model('10.0.0.64', '10.0.0.64');
+    const iso = (hoursAgo) =>
+      new Date(Date.now() - hoursAgo * 3600e3).toISOString().replace(/\.\d+Z$/, '+00:00');
+    const insert = db.prepare(
+      `INSERT INTO anomaly_scores
+         (client_ip, identity, window_start, window_end, anomaly_score, is_anomaly, severity)
+       VALUES ('10.0.0.64', '10.0.0.64', ?, ?, -0.1, 1, 'low')`,
+    );
+    insert.run(iso(2), iso(1));
+    // Just past the cutoff, and from the same date as it unless the test runs
+    // within a minute of midnight UTC.
+    insert.run(iso(24.02), iso(23.02));
+    insert.run(iso(30), iso(29));
+
+    const res = await request(app).get('/api/anomalies/map');
+    expect(res.body.find((row) => row.identity === '10.0.0.64').flagged_24h).toBe(1);
+    const events = await request(app).get('/api/anomalies/events?days=1');
+    expect(events.body.events.filter((e) => e.client_ip === '10.0.0.64')).toHaveLength(1);
+  });
+
   it('keeps an active model that has no scored window yet, with null score fields', async () => {
     model('10.0.0.64', '10.0.0.64');
     const res = await request(app).get('/api/anomalies/map');

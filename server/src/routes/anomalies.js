@@ -201,7 +201,7 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
   const events = db
     .prepare(
       `SELECT * FROM anomaly_scores
-     WHERE is_anomaly = 1 AND window_start >= datetime('now', '-' || ? || ' days')
+     WHERE is_anomaly = 1 AND datetime(window_start) >= datetime('now', '-' || ? || ' days')
      ORDER BY client_ip, window_start`,
     )
     .all(days)
@@ -224,6 +224,9 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
 // gets a dot, flagged or not, so "within baseline" is visible as a cloud rather
 // than an absence. threat_score is NULL for windows scored before the column
 // existed; the sidecar fills it on its next cycle.
+// window_start comes in two shapes (see windowToUtcMs below), and as text
+// '2026-10-13T01:00:00+00:00' sorts after '2026-10-13 10:50:00', so a time
+// window compares datetime(window_start), which reads either shape.
 router.get('/map', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const rows = db
@@ -233,7 +236,7 @@ router.get('/map', requirePerm('analytics:read'), (req, res) => {
               s.is_anomaly, s.resolved,
               (SELECT COUNT(*) FROM anomaly_scores f
                 WHERE f.identity = m.identity AND f.is_anomaly = 1
-                  AND f.window_start >= datetime('now', '-1 day')) AS flagged_24h
+                  AND datetime(f.window_start) >= datetime('now', '-1 day')) AS flagged_24h
          FROM anomaly_models m
          LEFT JOIN anomaly_scores s ON s.id = (
            SELECT x.id FROM anomaly_scores x

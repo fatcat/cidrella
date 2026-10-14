@@ -116,6 +116,17 @@ upgrade changes nothing until someone switches.
   on the Analytics status rails, as does the DNS proxy while DNS is off. They showed as
   running, or the proxy as stopped in red. radvd with nothing to advertise is grey in the
   header too.
+- The anomaly triage map uses its whole width. Calm devices were squeezed into a strip just
+  left of center, because one scale served both sides of the flag line and calm scores never
+  go far above it; each side now has its own.
+- The triage map's "flagged in 24 hours" count, which sets dot size and rings, counted every
+  flagged window from the day before, whatever its time: the sidecar's timestamps compared as
+  text against SQLite's. The 7-day event list had the same edge. Both now compare times.
+- On the triage map, blue fill now means only a flagged, low severity window. A device calm
+  now but flagged in the last 24 hours has a grey dot with a blue outline, and a device with
+  no window in the last day is faded, with the window's age in its tooltip.
+- The triage queue says its number is the last flagged score, which can differ from where the
+  device sits on the map (its newest window).
 - Settings > Filtering > Categories shows its last rows. The table took the height of the
   whole section, not what was left under the settings above it, so the bottom of the list sat
   under the panel's edge.

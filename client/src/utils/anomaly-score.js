@@ -16,11 +16,21 @@ export function deviation(score) {
   return clamp(-score / SCORE_SCALE, 0, 1);
 }
 
+// The triage map scales the two sides of the flag boundary apart, because
+// they are not the same length. Each device's boundary sits just under its own
+// usual scores (the sensitivity setting places it), so calm windows land only
+// a little above 0: production tops out near +0.25. Flagged windows fall
+// further, to about -0.35. One shared scale of SCORE_SCALE squeezed every calm
+// device into the strip just left of center.
+export const MAP_CALM_SCALE = 0.25;
+export const MAP_FLAGGED_SCALE = 0.35;
+
 // Horizontal position on the triage map, 0..100. The flag boundary sits on
 // the middle gridline; the right half is flagged, the left half is calm.
 export function mapX(score) {
   if (typeof score !== 'number' || !Number.isFinite(score)) return 50;
-  return 50 + 50 * clamp(-score / SCORE_SCALE, -1, 1);
+  if (score >= 0) return 50 - 50 * clamp(score / MAP_CALM_SCALE, 0, 1);
+  return 50 + 50 * clamp(-score / MAP_FLAGGED_SCALE, 0, 1);
 }
 
 // The more anomalous of two scores, for buckets that hold several windows.
