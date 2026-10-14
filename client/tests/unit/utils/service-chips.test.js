@@ -71,11 +71,21 @@ describe('serviceChips: backends', () => {
       dhcp: { name: 'kea', label: 'Kea', running: true, off: true },
       ra: { name: 'radvd', label: 'radvd', running: false, idle: true },
     };
-    const chips = serviceChips({ ...base, geoip_proxy: false, backends });
+    const chips = serviceChips({ ...base, geoip_proxy: false, geoip_switched_off: true, backends });
     expect(chips.slice(0, 4).map((c) => [c.label, c.value, c.tone])).toEqual([
       ['PowerDNS', 'Off', 'muted'],
       ['Kea', 'Off', 'muted'],
       ['radvd', 'Idle', 'muted'],
+      ['DNS proxy', 'Off', 'muted'],
+    ]);
+  });
+
+  it('shows the DNS proxy off with DNS off on dnsmasq, which still serves DHCP', () => {
+    const dnsmasq = { name: 'dnsmasq', label: 'dnsmasq', running: true, off: false };
+    const backends = { dns: dnsmasq, dhcp: dnsmasq, ra: dnsmasq };
+    const chips = serviceChips({ ...base, geoip_proxy: false, geoip_switched_off: true, backends });
+    expect(chips.slice(0, 2).map((c) => [c.label, c.value, c.tone])).toEqual([
+      ['dnsmasq', 'Running', 'ok'],
       ['DNS proxy', 'Off', 'muted'],
     ]);
   });

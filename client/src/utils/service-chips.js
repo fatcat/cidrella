@@ -26,8 +26,9 @@ export function serviceChips(services) {
     {
       key: 'proxy',
       label: 'DNS proxy',
-      // With DNS switched off the proxy does not listen, on purpose.
-      ...(s.backends?.dns?.off
+      // With DNS switched off the proxy does not listen, on purpose. The DNS
+      // backend's own `off` cannot say so on dnsmasq, which also serves DHCP.
+      ...(s.geoip_switched_off
         ? { value: 'Off', tone: 'muted' }
         : {
             value: s.geoip_bypassed ? 'Bypassed' : s.geoip_proxy ? 'Running' : 'Stopped',

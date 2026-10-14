@@ -131,6 +131,7 @@ router.get('/services', requirePerm('analytics:read'), async (req, res) => {
     backends,
     geoip_proxy: geoipStatus.running,
     geoip_bypassed: geoipStatus.bypassed,
+    geoip_switched_off: geoipStatus.switchedOff,
     geoip_port: geoipStatus.port,
     geoip_db_loaded: geoipStatus.dbLoaded,
     geoip_db_last_updated: geoipStatus.dbLastUpdated,

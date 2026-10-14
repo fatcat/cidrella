@@ -1537,6 +1537,8 @@ export function getProxyStatus() {
   return {
     running: proxyServers.some((s) => s.bound),
     bypassed: bypassMode,
+    // DNS switched off in CIDRella: the proxy does not listen, on purpose.
+    switchedOff: dnsSwitchedOff(),
     port: 53,
     listenAddresses: proxyServers.filter((s) => s.bound).map((s) => s.address),
     tcpListeners: tcpServers.length,
