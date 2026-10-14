@@ -3,6 +3,10 @@ Description=CIDRella DNSmasq (DNS/DHCP)
 After=network-online.target
 Wants=network-online.target
 Documentation=https://github.com/fatcat/cidrella
+# Kept down while the PowerDNS + Kea stack serves (CIDRella writes the flag
+# when it stops dnsmasq and removes it before starting it). A skipped start
+# is not a failure, so cidrella.service's Wants= is unaffected.
+ConditionPathExists=!/var/lib/cidrella/runtime/dnsmasq.disabled
 
 [Service]
 Type=simple

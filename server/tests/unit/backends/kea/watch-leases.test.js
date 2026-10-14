@@ -11,25 +11,34 @@ import { createKeaBackend } from '../../../../src/backends/kea/index.js';
 afterAll(() => fs.rmSync(DATA_DIR, { recursive: true, force: true }));
 afterEach(() => vi.useRealTimers());
 
-// A Kea that is down until `up`, answering statistic-get-all with `assigned`.
+// A Kea that is down until `up`, answering statistic-get-all with `assigned`
+// and the replies sent, `acks` (pkt4-ack-sent and pkt6-reply-sent).
 function fakeKea() {
-  const kea = { up: false, assigned: 1 };
+  const kea = { up: false, assigned: 1, acks: 10 };
   kea.fetchImpl = async () => {
     if (!kea.up) throw new Error('connect ECONNREFUSED');
     const sample = (value) => [[value, '2026-10-07 12:00:00.000']];
     return new Response(
       JSON.stringify([
-        { result: 0, arguments: { 'subnet[1].assigned-addresses': sample(kea.assigned) } },
+        {
+          result: 0,
+          arguments: {
+            'subnet[1].assigned-addresses': sample(kea.assigned),
+            'pkt4-ack-sent': sample(kea.acks),
+            'pkt6-reply-sent': sample(kea.acks),
+            'pkt4-received': sample(kea.acks * 3),
+          },
+        },
       ]),
     );
   };
   return kea;
 }
 
-async function watching(kea) {
+async function watching(kea, family = 4) {
   vi.useFakeTimers({ toFake: ['setInterval'] });
   const onChange = vi.fn();
-  const backend = createKeaBackend({ families: () => [4], fetchImpl: kea.fetchImpl });
+  const backend = createKeaBackend({ families: () => [family], fetchImpl: kea.fetchImpl });
   const stop = backend.dhcp.watchLeases(onChange);
   await vi.advanceTimersByTimeAsync(0);
   const tick = () => vi.advanceTimersByTimeAsync(DHCP_LEASE_WATCH_MS);
@@ -48,6 +57,19 @@ describe('Kea watchLeases', () => {
     expect(onChange).toHaveBeenCalledTimes(1);
     stop();
   });
+
+  it.each([4, 6])(
+    'calls on a renewal, which moves only the replies sent (DHCPv%i)',
+    async (family) => {
+      const kea = fakeKea();
+      kea.up = true;
+      const { onChange, stop, tick } = await watching(kea, family);
+      kea.acks += 1;
+      await tick();
+      expect(onChange).toHaveBeenCalledTimes(1);
+      stop();
+    },
+  );
 
   it('calls once Kea answers after it did not, so a sync that failed is caught up', async () => {
     const kea = fakeKea();

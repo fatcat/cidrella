@@ -1,0 +1,48 @@
+=== radvd.conf ===
+# Rendered by CIDRella from the DHCPv6 scopes; edits are overwritten.
+interface eth0 {
+  AdvSendAdvert on;
+  IgnoreIfMissing on;
+  AdvDefaultLifetime 0;
+  AdvManagedFlag on;
+  AdvOtherConfigFlag on;
+  AdvLinkMTU 1500;
+  prefix fd00:61::/64 {
+    AdvOnLink on;
+    AdvAutonomous on;
+    AdvValidLifetime 3600;
+    AdvPreferredLifetime 3600;
+  };
+  prefix fd00:63::/64 {
+    AdvOnLink on;
+    AdvAutonomous off;
+    AdvValidLifetime 3600;
+    AdvPreferredLifetime 3600;
+  };
+  RDNSS fd00:61::2 fd00:63::2 {
+    AdvRDNSSLifetime 3600;
+  };
+  DNSSL golden.test {
+    AdvDNSSLLifetime 3600;
+  };
+};
+
+interface eth1 {
+  AdvSendAdvert on;
+  IgnoreIfMissing on;
+  AdvDefaultLifetime 0;
+  AdvManagedFlag off;
+  AdvOtherConfigFlag on;
+  prefix fd00:62::/64 {
+    AdvOnLink on;
+    AdvAutonomous on;
+    AdvValidLifetime 3600;
+    AdvPreferredLifetime 3600;
+  };
+  RDNSS fd00:62::2 {
+    AdvRDNSSLifetime 3600;
+  };
+};
+
+=== commands ===
+radvd --configtest --config=$DATA_DIR/radvd/radvd.conf

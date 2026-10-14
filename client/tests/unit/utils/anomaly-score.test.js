@@ -1,5 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
+  MAP_CALM_SCALE,
+  MAP_FLAGGED_SCALE,
   SCORE_SCALE,
   deviation,
   mapX,
@@ -21,10 +23,19 @@ describe('anomaly-score', () => {
 
   it('mapX puts the flag boundary in the middle, flagged to the right', () => {
     expect(mapX(0)).toBe(50);
-    expect(mapX(-SCORE_SCALE)).toBe(100);
-    expect(mapX(SCORE_SCALE)).toBe(0);
-    expect(mapX(-0.35)).toBe(75);
+    expect(mapX(-MAP_FLAGGED_SCALE)).toBe(100);
+    expect(mapX(-5)).toBe(100);
+    expect(mapX(MAP_CALM_SCALE)).toBe(0);
+    expect(mapX(5)).toBe(0);
     expect(mapX(undefined)).toBe(50);
+  });
+
+  it('mapX scales each side on its own, so calm devices spread across the left half', () => {
+    // The spread production showed, -0.05 to +0.23, used to fill x 34 to 54.
+    expect(mapX(0.23)).toBeCloseTo(4);
+    expect(mapX(0.125)).toBeCloseTo(25);
+    expect(mapX(-0.05)).toBeCloseTo(57.1, 1);
+    expect(mapX(-0.175)).toBeCloseTo(75);
   });
 
   it('worst keeps the more negative score and tolerates a missing one', () => {

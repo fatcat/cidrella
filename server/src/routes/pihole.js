@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { parse as parseToml } from 'smol-toml';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { isClientMac, isValidMac, isValidIpv4, isValidDomain } from '../utils/ip.js';
 import { allocateStaticDns, deallocateStaticDns } from '../services/ip-lifecycle-service.js';
@@ -608,7 +609,12 @@ router.post('/import', requirePerm('dns:write'), async (req, res) => {
     req.afterCommit('regenerate_dhcp');
   }
 
-  audit(req.user.id, 'pihole_import', 'dns_zone', zoneId, { zone: zone.name, results });
+  recordAudit({
+    action: 'pihole_import',
+    entityType: 'dns_zone',
+    entityId: zoneId,
+    details: { zone: zone.name, results },
+  });
 
   res.json({ message: 'Import complete', results });
 });

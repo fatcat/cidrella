@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
 import * as SubnetTopology from '../services/subnet-topology.js';
@@ -57,7 +58,12 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
 
   const folder = Folder.createFolder(db, { name: cleanName, description, sortOrder });
 
-  audit(req.user.id, 'folder_created', 'folder', folder.id, { name: cleanName });
+  recordAudit({
+    action: 'folder_created',
+    entityType: 'folder',
+    entityId: folder.id,
+    details: { name: cleanName },
+  });
   res.status(201).json(folder);
 });
 
@@ -95,7 +101,16 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     sortOrder: sort_order,
   });
 
-  audit(req.user.id, 'folder_updated', 'folder', folder.id, { name: cleanName });
+  recordAudit({
+    action: 'folder_updated',
+    entityType: 'folder',
+    entityId: folder.id,
+    // Display order is left out: a reorder is not a change worth a row.
+    before: folder,
+    after: updated,
+    only: ['name', 'description'],
+    details: { name: cleanName },
+  });
   res.json(updated);
 });
 
@@ -113,7 +128,12 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   });
   doDelete();
 
-  audit(req.user.id, 'folder_deleted', 'folder', folder.id, { name: folder.name });
+  recordAudit({
+    action: 'folder_deleted',
+    entityType: 'folder',
+    entityId: folder.id,
+    details: { name: folder.name },
+  });
   res.json({ ok: true });
 });
 

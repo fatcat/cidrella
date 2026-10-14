@@ -3,6 +3,7 @@
  * (backends/contract.js). Kea keeps them in its memfile; CIDRella only reads,
  * adds (a handover) and deletes (a release) them through the API.
  */
+import fs from 'fs';
 import { INFINITE_LIFETIME } from './render.js';
 
 const PAGE_LIMIT = 1000;
@@ -76,7 +77,9 @@ export async function pageLeases(command, family) {
 // stat_cmds names an address handed out in "cumulative-assigned-addresses"
 // (DHCPv4) and "cumulative-assigned-nas" (DHCPv6), per subnet and pool.
 const ASSIGNED_RE = /cumulative-assigned-(addresses|nas)$/;
-const WATCH_RE = /(assigned|declined|reclaimed)/;
+// A renewal moves none of the address counters, only the replies sent:
+// pkt4-ack-sent and pkt6-reply-sent.
+const WATCH_RE = /(assigned|declined|reclaimed|^pkt4-ack-sent$|^pkt6-reply-sent$)/;
 
 async function statistics(command) {
   const reply = await command('statistic-get-all');
@@ -125,8 +128,8 @@ export async function readKeaLeases(commands, families) {
 }
 
 /**
- * A fingerprint of the lease counters: changes when Kea hands out, declines
- * or reclaims an address. watchLeases polls it.
+ * A fingerprint of the lease counters: changes when Kea hands out, renews,
+ * declines or reclaims an address. watchLeases polls it.
  */
 export async function leaseSignature(command) {
   const stats = await statistics(command);
@@ -156,14 +159,16 @@ export async function releaseKeaLease(commands, lease) {
  * The lease4-add / lease6-add arguments for a BackendLease, for a handover.
  * Kea derives a lease's start time from `expire - valid-lft`, so the
  * remaining time is the valid lifetime and the start is now. An infinite
- * lease goes in with the infinite lifetime and no expire, the only form Kea
- * accepts for it.
+ * lease goes in with no lifetime, so Kea gives it its subnet's, starting now:
+ * dnsmasq hands every reserved host an infinite lease, and carried over as
+ * infinite it would hold the address from the reservation's next client for
+ * good.
  */
 export function keaLeaseArguments(lease, { now = Date.now() } = {}) {
   const family = lease.dhcpVersion === 6 ? 6 : 4;
   const timing =
     lease.expiresAt === 'infinite'
-      ? { 'valid-lft': INFINITE_LIFETIME }
+      ? {}
       : (() => {
           const expire = Math.floor(Date.parse(lease.expiresAt) / 1000);
           const valid = Math.max(1, expire - Math.floor(now / 1000));
@@ -231,4 +236,68 @@ export async function keaPacketCounters(commands, families) {
     totals.sent += current(stats[`pkt${family}-sent`]);
   }
   return totals;
+}
+
+// Kea's memfile lease types (lease6 "lease_type").
+const MEMFILE_LEASE_TYPES = { 0: 'IA_NA', 1: 'IA_TA', 2: 'IA_PD' };
+
+// Kea escapes each byte it will not store as is (a comma, "&", control and
+// non-ASCII bytes) as "&#x" and two hex digits, with no closing semicolon.
+// Everything else is ASCII, so the bytes go back together as UTF-8.
+const unescapeField = (value) =>
+  Buffer.from(
+    value.replace(/&#x([0-9a-f]{2})/gi, (_, hex) => String.fromCharCode(parseInt(hex, 16))),
+    'latin1',
+  ).toString('utf8');
+
+/**
+ * The leases in Kea's memfile, read straight from the CSV with no daemon
+ * running: boot uses it to carry the leases of an install Kea served to
+ * dnsmasq. The files are read oldest first (a finished cleanup, then one in
+ * progress, then the live file), and Kea appends a row for every change, so
+ * the last row for an address is its lease. Rows not in use or already
+ * expired are dropped. `files` lists the paths for one family.
+ */
+export function readMemfileLeases(files, family, { now = Date.now() } = {}) {
+  const byAddress = new Map();
+  for (const file of files) {
+    let text;
+    try {
+      text = fs.readFileSync(file, 'utf8');
+    } catch {
+      continue;
+    }
+    const [header, ...rows] = text.split(/\r?\n/);
+    const columns = header.split(',');
+    for (const row of rows) {
+      if (!row.trim()) continue;
+      const cells = row.split(',');
+      const field = Object.fromEntries(columns.map((name, i) => [name, cells[i] ?? '']));
+      if (field.address) byAddress.set(field.address, field);
+    }
+  }
+  const leases = [];
+  for (const field of byAddress.values()) {
+    const valid = Number(field.valid_lifetime);
+    const expire = Number(field.expire);
+    // Kea marks a deleted lease with a zero lifetime.
+    if (valid === 0 || (valid !== INFINITE_LIFETIME && !(expire * 1000 > now))) continue;
+    const lease = backendLeaseFromKea(
+      {
+        'ip-address': field.address,
+        'hw-address': field.hwaddr || null,
+        'client-id': field.client_id || null,
+        'valid-lft': valid,
+        cltt: valid === INFINITE_LIFETIME ? expire : expire - valid,
+        state: Number(field.state || 0),
+        hostname: unescapeField(field.hostname || ''),
+        duid: field.duid || null,
+        iaid: field.iaid === undefined || field.iaid === '' ? null : Number(field.iaid),
+        type: family === 6 ? MEMFILE_LEASE_TYPES[field.lease_type] || 'IA_NA' : undefined,
+      },
+      family,
+    );
+    if (lease) leases.push(lease);
+  }
+  return leases;
 }

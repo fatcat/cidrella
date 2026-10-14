@@ -1,8 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import {
-  FALLBACK_SECONDARY_DNS,
-  networkOptionFills,
-} from '../../../src/utils/dhcp-network-options.js';
+import { networkOptionFills } from '../../../src/utils/dhcp-network-options.js';
 import { parseNetwork } from '../../../src/utils/ip.js';
 import { fillScopeOptions, USE_DEFAULT } from '../../../src/services/subnet-dhcp-topology.js';
 
@@ -26,7 +23,7 @@ describe('networkOptionFills', () => {
       { code: 28, value: '10.60.0.255', overwrite: true },
       { code: 15, value: 'lab.test', overwrite: false },
       { code: 119, value: 'lab.test', overwrite: false },
-      { code: 6, value: `10.60.0.2, ${FALLBACK_SECONDARY_DNS}`, overwrite: false },
+      { code: 6, value: '10.60.0.2', overwrite: false },
     ]);
   });
 
@@ -59,7 +56,7 @@ describe('networkOptionFills', () => {
     expect(Object.fromEntries(v4)).toEqual({
       1: '255.255.255.0',
       3: '10.60.0.1',
-      6: `10.60.0.2, ${FALLBACK_SECONDARY_DNS}`,
+      6: '10.60.0.2',
       15: 'own.test',
       28: '10.60.0.255',
       119: 'lab.test',

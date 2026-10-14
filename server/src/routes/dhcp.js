@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, getSetting, audit } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
+import { recordAudit, sample } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
   networkContains,
@@ -37,6 +38,7 @@ import {
   gatewayInPoolError,
   dynamicPoolConflict,
   getScopePools,
+  getScopeWithDetails,
   resolveEffectiveScopeOptions,
 } from '../models/dhcp-scope.js';
 import {
@@ -48,6 +50,7 @@ import {
   createCustomOption,
   deleteCustomOption,
   replaceDefaultOptions,
+  getDefaultOptions,
   SHIPPED_DEFAULT_OPTIONS,
   linkedOptionCounts,
 } from '../models/dhcp-option.js';
@@ -57,6 +60,22 @@ import { UNGROUPED } from '../utils/validation.js';
 import { isValidLeaseTime } from '../utils/lease-time.js';
 
 const router = Router();
+
+// What a scope edit can change, for its audit row.
+const SCOPE_AUDIT_FIELDS = [
+  'lease_time',
+  'dns_servers',
+  'domain_name',
+  'gateway',
+  'ntp_servers',
+  'domain_search',
+  'enabled',
+  'description',
+  'start_ip',
+  'end_ip',
+  'options',
+  'v6_mode',
+];
 // A DHCPv6 DUID as dnsmasq prints it: colon-separated hex bytes, at least
 // the two-byte type prefix, at most the 130 bytes RFC 8415 allows.
 
@@ -111,8 +130,9 @@ function validateScopeOption(opt, family = 4) {
   if (opt.use_default !== undefined && typeof opt.use_default !== 'boolean')
     return 'use_default must be true or false';
   if (opt.use_default === true) {
-    if (opt.value != null && opt.value !== '') return 'an option that uses the default takes no value';
-    if (family === 4 && code === 51) return 'lease time is the scope\'s own, not a default';
+    if (opt.value != null && opt.value !== '')
+      return 'an option that uses the default takes no value';
+    if (family === 4 && code === 51) return "lease time is the scope's own, not a default";
     return null;
   }
   const value = opt.value;
@@ -428,9 +448,14 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     { subnet, defaultLeaseTime: getSetting('default_lease_time') },
   );
 
-  audit(req.user.id, 'dhcp_scope_created', 'dhcp_scope', scope.id, {
-    subnet: subnet.cidr,
-    range_id,
+  recordAudit({
+    action: 'dhcp_scope_created',
+    entityType: 'dhcp_scope',
+    entityId: scope.id,
+    details: {
+      subnet: subnet.cidr,
+      range_id,
+    },
   });
   req.afterCommit('regenerate_dhcp');
   res.status(201).json(scope);
@@ -583,6 +608,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   const optionSubnet = db
     .prepare('SELECT gateway_address, cidr, domain_name FROM subnets WHERE id = ?')
     .get(scope.subnet_id);
+  const before = getScopeWithDetails(db, scope.id);
   const updated = updateScope(
     db,
     scope,
@@ -603,7 +629,15 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
     { subnet: optionSubnet },
   );
 
-  audit(req.user.id, 'dhcp_scope_updated', 'dhcp_scope', scope.id, { changes: req.body });
+  recordAudit({
+    action: 'dhcp_scope_updated',
+    entityType: 'dhcp_scope',
+    entityId: scope.id,
+    before,
+    after: updated,
+    only: SCOPE_AUDIT_FIELDS,
+    details: { subnet: scopeSubnet.cidr },
+  });
   req.afterCommit('regenerate_dhcp');
   res.json(updated);
 });
@@ -674,11 +708,16 @@ router.post('/scopes/bulk-options', requirePerm('dhcp:write'), (req, res) => {
       .json({ error: `Scope ${unknown} is not a DHCPv${request.family} scope` });
   }
   const result = bulkChangeScopeOptions(db, { ...request, scopeIds: ids });
-  audit(req.user.id, 'dhcp_scope_options_bulk_changed', 'dhcp', null, {
-    address_family: request.family,
-    scope_ids: result.applied,
-    enabled: request.enabled,
-    defaults_saved: request.saveDefaults,
+  recordAudit({
+    action: 'dhcp_scope_options_bulk_changed',
+    entityType: 'dhcp',
+    details: {
+      address_family: request.family,
+      scopes: sample(result.applied),
+      options: request.options,
+      enabled: request.enabled,
+      defaults_saved: request.saveDefaults,
+    },
   });
   req.afterCommit('regenerate_dhcp');
   res.json(result);
@@ -691,7 +730,12 @@ router.delete('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   if (!scope) return res.status(404).json({ error: 'Scope not found' });
 
   deleteScope(db, scope);
-  audit(req.user.id, 'dhcp_scope_deleted', 'dhcp_scope', scope.id, { range_id: scope.range_id });
+  recordAudit({
+    action: 'dhcp_scope_deleted',
+    entityType: 'dhcp_scope',
+    entityId: scope.id,
+    details: { range_id: scope.range_id },
+  });
   req.afterCommit('regenerate_dhcp');
   res.json({ message: 'Scope deleted' });
 });
@@ -910,11 +954,16 @@ router.post('/reservations', requirePerm('dhcp:write'), (req, res) => {
     duid: identity.duid,
     iaid: identity.iaid,
   });
-  audit(req.user.id, 'dhcp_reservation_created', 'dhcp_reservation', reservation.id, {
-    mac,
-    duid: identity.duid,
-    ip: ip_address,
-    subnet: subnet.cidr,
+  recordAudit({
+    action: 'dhcp_reservation_created',
+    entityType: 'dhcp_reservation',
+    entityId: reservation.id,
+    details: {
+      mac,
+      duid: identity.duid,
+      ip: ip_address,
+      subnet: subnet.cidr,
+    },
   });
   req.afterCommit('regenerate_dhcp');
   res.status(201).json(reservation);
@@ -1033,8 +1082,14 @@ router.put('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
     duid: identity.duid,
     iaid: identity.iaid,
   });
-  audit(req.user.id, 'dhcp_reservation_updated', 'dhcp_reservation', reservation.id, {
-    changes: req.body,
+  recordAudit({
+    action: 'dhcp_reservation_updated',
+    entityType: 'dhcp_reservation',
+    entityId: reservation.id,
+    before: reservation,
+    after: updated,
+    only: ['mac_address', 'ip_address', 'hostname', 'description', 'enabled', 'duid', 'iaid'],
+    details: { ip: updated?.ip_address ?? reservation.ip_address, subnet: subnet.cidr },
   });
   req.afterCommit('regenerate_dhcp');
   res.json(updated);
@@ -1047,10 +1102,15 @@ router.delete('/reservations/:id', requirePerm('dhcp:write'), (req, res) => {
   if (!reservation) return res.status(404).json({ error: 'DHCP Reservation not found' });
 
   deleteReservation(db, reservation);
-  audit(req.user.id, 'dhcp_reservation_deleted', 'dhcp_reservation', reservation.id, {
-    mac: reservation.mac_address,
-    duid: reservation.duid,
-    ip: reservation.ip_address,
+  recordAudit({
+    action: 'dhcp_reservation_deleted',
+    entityType: 'dhcp_reservation',
+    entityId: reservation.id,
+    details: {
+      mac: reservation.mac_address,
+      duid: reservation.duid,
+      ip: reservation.ip_address,
+    },
   });
   req.afterCommit('regenerate_dhcp');
   res.json({ message: 'DHCP Reservation deleted' });
@@ -1263,6 +1323,7 @@ router.get('/leases', requirePerm('dhcp:read'), (req, res) => {
 router.post('/sync-leases', requirePerm('dhcp:write'), async (req, res) => {
   const db = getDb();
   const result = await syncLeasesNow(db);
+  recordAudit({ action: 'dhcp_leases_synced', entityType: 'dhcp', details: result });
   res.json({ message: 'Leases synced', ...result });
 });
 
@@ -1278,9 +1339,13 @@ router.post('/apply', requirePerm('dhcp:write'), (req, res) => {
     .prepare('SELECT COUNT(*) as c FROM dhcp_reservations WHERE enabled = 1')
     .get().c;
 
-  audit(req.user.id, 'dhcp_config_applied', 'dhcp', null, {
-    scopes: scopeCount,
-    reservations: reservationCount,
+  recordAudit({
+    action: 'dhcp_config_applied',
+    entityType: 'dhcp',
+    details: {
+      scopes: scopeCount,
+      reservations: reservationCount,
+    },
   });
   res.json({
     message: 'DHCP configuration applied',
@@ -1423,10 +1488,15 @@ router.post('/options/custom', requirePerm('dhcp:write'), (req, res) => {
     address_family: family,
   });
 
-  audit(req.user.id, 'create', 'dhcp_custom_option', created.id, {
-    code: codeNum,
-    label,
-    address_family: family,
+  recordAudit({
+    action: 'dhcp_custom_option_created',
+    entityType: 'dhcp_custom_option',
+    entityId: created.id,
+    details: {
+      code: codeNum,
+      label,
+      address_family: family,
+    },
   });
   res.status(201).json(created);
 });
@@ -1445,13 +1515,29 @@ router.delete('/options/custom/:code', requirePerm('dhcp:write'), (req, res) => 
 
   deleteCustomOption(db, entry);
 
-  audit(req.user.id, 'delete', 'dhcp_custom_option', entry.id, {
-    code: codeNum,
-    label: entry.label,
-    address_family: family,
+  recordAudit({
+    action: 'dhcp_custom_option_deleted',
+    entityType: 'dhcp_custom_option',
+    entityId: entry.id,
+    details: {
+      code: codeNum,
+      label: entry.label,
+      address_family: family,
+    },
   });
   res.json({ ok: true });
 });
+
+// The defaults flattened for an audit row: one field per option, and which are on.
+function defaultsForAudit(db, family) {
+  const { defaults, enabledDefaults } = getDefaultOptions(db, family);
+  return {
+    ...Object.fromEntries(
+      Object.entries(defaults).map(([code, value]) => [`option_${code}`, value]),
+    ),
+    enabled_by_default: [...enabledDefaults].sort((a, b) => a - b),
+  };
+}
 
 // PUT /api/dhcp/options/defaults: set global defaults for one family
 // ({ family: 4|6 }, IPv4 when omitted). The other family's rows are untouched.
@@ -1464,10 +1550,14 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   if (bodyErr) return res.status(400).json({ error: bodyErr });
 
   const db = getDb();
+  const before = defaultsForAudit(db, family);
   const updated = replaceDefaultOptions(db, options, enabledDefaults, family);
-  audit(req.user.id, 'dhcp_option_defaults_updated', 'dhcp', null, {
-    count: options.length,
-    address_family: family,
+  recordAudit({
+    action: 'dhcp_option_defaults_updated',
+    entityType: 'dhcp',
+    before,
+    after: defaultsForAudit(db, family),
+    details: { address_family: family },
   });
   req.afterCommit('regenerate_dhcp');
 

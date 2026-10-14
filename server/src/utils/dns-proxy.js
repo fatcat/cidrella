@@ -14,6 +14,8 @@ import { listenableAddresses, selectInterfaceNames } from './interface-config.js
 import * as Setting from '../models/setting.js';
 import { logDnsQuery } from '../db/duckdb.js';
 import { applyListenNow } from '../services/backend-apply.js';
+import { recordAudit } from '../services/audit.js';
+import { switchInProgress } from './switch-state.js';
 import { canonicalizeIp } from './address.js';
 import { recordDnsQueryLiveness } from './ip-liveness.js';
 import { exemptAddressSet } from '../models/filtering-exemption.js';
@@ -23,6 +25,7 @@ import { extractEde, failureCause, FAILURE_CAUSES } from './dns-ede.js';
 import { createReservoir, quantileOfSorted } from './samples.js';
 import { loadCityTable, unloadCityTable, cityPlace } from './geo-cities.js';
 import { recordResolution } from './resolution-feed.js';
+import { writeQueryLine } from './query-log.js';
 import {
   DATA_DIR,
   GEOIP_CACHE_MAX,
@@ -37,9 +40,13 @@ import {
   PROXY_TCP_IDLE_TIMEOUT_MS,
   PROXY_MAX_TCP_CONNECTIONS,
   PROXY_TCP_RELAY_TIMEOUT_MS,
+  ENCRYPTED_FORWARDER_PORT,
   resolveDnsmasqInternalPort,
   resolveDnsListenPort,
 } from '../config/defaults.js';
+import { getDnsBackend } from '../backends/index.js';
+import { roleSwitchedOff } from './role-switches.js';
+import { plainUdpQuery } from './plain-dns.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
 
@@ -356,6 +363,13 @@ function buildOptEcho(opt) {
   ];
 }
 
+// Every answered query, once: the analytics row and, for a DNS backend that
+// keeps no query log of its own, a line in its log (utils/query-log.js).
+function noteQuery(entry) {
+  logDnsQuery(entry);
+  writeQueryLine(entry);
+}
+
 // DNSSEC validation produces three states for analytics: secure, insecure,
 // and unknown. AD is meaningful only when validation is enabled and the
 // client did not ask dnsmasq to skip checking. Failed responses are not proof
@@ -601,6 +615,63 @@ export function recordResolvedBlock(verdict) {
 }
 
 // Handle a DNS query from any proxy socket
+// ─── Forward-unknown zones on a backend that cannot ─────────────
+// A zone with forward_unknown set sends the names CIDRella has no record for
+// upstream (split horizon). dnsmasq does that itself; PowerDNS answers them
+// NXDOMAIN from Authoritative, so the proxy asks the forwarder again for an
+// NXDOMAIN under such a zone. The second answer is not validated by
+// Recursor, and with bypass on the proxy is not in the path at all.
+const FORWARD_UNKNOWN_CACHE_MS = 5000;
+let forwardUnknownZones = { at: 0, names: [] };
+let loggedForwardUnknownRetry = false;
+
+function underForwardUnknownZone(queryName) {
+  const now = Date.now();
+  if (now - forwardUnknownZones.at > FORWARD_UNKNOWN_CACHE_MS) {
+    forwardUnknownZones = {
+      at: now,
+      names: getDb()
+        .prepare('SELECT name FROM dns_zones WHERE enabled = 1 AND forward_unknown = 1')
+        .all()
+        .map((row) => normalizeZoneName(row.name)),
+    };
+  }
+  const name = normalizeZoneName(queryName);
+  return forwardUnknownZones.names.some((zone) => name === zone || name.endsWith(`.${zone}`));
+}
+
+const normalizeZoneName = (name) =>
+  String(name || '')
+    .toLowerCase()
+    .replace(/\.$/, '');
+
+/** Should this answer be asked again of the forwarder? See above. */
+export function wantsUnknownRetry(response, queryName) {
+  if (response?.rcode !== 'NXDOMAIN' || !queryName) return false;
+  if (getDnsBackend().forwardsUnknownItself !== false) return false;
+  if (getSetting('dns_no_recursion') === 'true') return false;
+  return underForwardUnknownZone(queryName);
+}
+
+function noteUnknownRetry(queryName) {
+  if (loggedForwardUnknownRetry) return;
+  loggedForwardUnknownRetry = true;
+  proxyLog('info', 'Asking the forwarder for names a forward-unknown zone does not hold', {
+    example: queryName,
+  });
+}
+
+// The forwarder's answer to `query` (raw bytes), or null.
+async function askForwarder(query, { tcp = false, timeoutMs }) {
+  if (timeoutMs <= 0) return null;
+  if (tcp) return relayQueryOverTcp(query, '127.0.0.1', ENCRYPTED_FORWARDER_PORT, timeoutMs);
+  const { answer } = await plainUdpQuery('127.0.0.1', query, {
+    timeoutMs,
+    port: ENCRYPTED_FORWARDER_PORT,
+  });
+  return answer;
+}
+
 function handleQuery(msg, rinfo, sock) {
   try {
     const startNs = process.hrtime.bigint();
@@ -631,7 +702,7 @@ function handleQuery(msg, rinfo, sock) {
       sock.send(response, rinfo.port, rinfo.address);
       const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
       recordLatency(latencyUs);
-      logDnsQuery({
+      noteQuery({
         clientIp,
         domain: queryName,
         queryType,
@@ -670,7 +741,7 @@ function handleQuery(msg, rinfo, sock) {
         timeoutCount++;
         const latencyUs = Number(process.hrtime.bigint() - p.startNs) / 1000;
         recordLatency(latencyUs);
-        logDnsQuery({
+        noteQuery({
           clientIp: p.clientIp,
           domain: p.queryName,
           queryType: p.queryType,
@@ -704,12 +775,14 @@ function handleQuery(msg, rinfo, sock) {
       queryType,
       checkingDisabled: !!query.flag_cd,
       opt: getQueryOpt(query), // echoed on a synthesized GeoIP-block response
+      query: msg, // asked again of the forwarder for a forward-unknown zone
+      clientRd: asksRecursion(msg),
       timer,
       startNs,
     });
 
-    // Rewrite query ID and forward to dnsmasq on localhost:5353
-    const fwdBuf = Buffer.from(msg);
+    // Rewrite query ID and forward to the backend on the internal port.
+    const fwdBuf = withRecursionDesired(msg);
     fwdBuf.writeUInt16BE(internalId, 0);
     dnsmasqSocket.send(
       fwdBuf,
@@ -719,6 +792,23 @@ function handleQuery(msg, rinfo, sock) {
   } catch (err) {
     proxyLog('error', 'Query processing error', { error: err.message });
   }
+}
+
+// Recursion Desired: bit 0 of the third header byte. PowerDNS Recursor
+// refuses a query without it, even for a name CIDRella serves, where dnsmasq
+// answered it; Home Assistant's hourly reverse sweep of a network sends RD=0
+// and drew a REFUSED for every address. The proxy asks the backend with RD set
+// on either stack and gives the client back its own bit.
+const RD_BIT = 0x01;
+export const asksRecursion = (msg) => msg.length > 2 && (msg[2] & RD_BIT) !== 0;
+export function withRecursionDesired(msg) {
+  const buf = Buffer.from(msg);
+  if (buf.length > 2) buf[2] |= RD_BIT;
+  return buf;
+}
+export function withClientRd(reply, clientRd) {
+  if (reply.length > 2) reply[2] = (reply[2] & ~RD_BIT) | (clientRd ? RD_BIT : 0);
+  return reply;
 }
 
 // Handle a response from dnsmasq
@@ -731,6 +821,32 @@ function handleDnsmasqResponse(msg) {
     pendingQueries.delete(response.id);
     clearTimeout(pending.timer);
 
+    if (wantsUnknownRetry(response, pending.queryName)) {
+      noteUnknownRetry(pending.queryName);
+      const elapsedMs = Number(process.hrtime.bigint() - pending.startNs) / 1e6;
+      askForwarder(pending.query, { timeoutMs: PROXY_UDP_TIMEOUT_MS - elapsedMs })
+        .then((answer) => {
+          let retried = null;
+          try {
+            retried = answer && dnsPacket.decode(answer);
+          } catch {
+            /* keep the first answer */
+          }
+          if (retried) deliverResponse(pending, answer, retried);
+          else deliverResponse(pending, msg, response);
+        })
+        .catch((err) => proxyLog('error', 'Response processing error', { error: err.message }));
+      return;
+    }
+    deliverResponse(pending, msg, response);
+  } catch (err) {
+    proxyLog('error', 'Response processing error', { error: err.message });
+  }
+}
+
+// Send the client its answer: GeoIP checked, query ID restored, logged.
+function deliverResponse(pending, msg, response) {
+  try {
     // GeoIP check, inspect resolved IPs
     const ips = response.answers
       .filter((a) => a.type === 'A' || a.type === 'AAAA')
@@ -753,7 +869,7 @@ function handleDnsmasqResponse(msg) {
       pending.socket.send(nxResponse, pending.port, pending.address);
       const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
       recordLatency(latencyUs);
-      logDnsQuery({
+      noteQuery({
         clientIp: pending.clientIp,
         domain: pending.queryName,
         queryType: pending.queryType,
@@ -769,7 +885,7 @@ function handleDnsmasqResponse(msg) {
     // Allowed, forward original response (restore original query ID)
     statsAllowed++;
     statsTotal++;
-    const buf = Buffer.from(msg);
+    const buf = withClientRd(Buffer.from(msg), pending.clientRd);
     buf.writeUInt16BE(pending.originalId, 0);
     pending.socket.send(buf, pending.port, pending.address);
     const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
@@ -783,7 +899,7 @@ function handleDnsmasqResponse(msg) {
       enabled: getSetting('dnssec_enabled') === 'true',
       checkingDisabled: pending.checkingDisabled,
     });
-    logDnsQuery({
+    noteQuery({
       clientIp: pending.clientIp,
       domain: pending.queryName,
       queryType: pending.queryType,
@@ -879,7 +995,7 @@ async function handleTcpQuery(msg, clientSock) {
     writeTcpMessage(clientSock, createBlockedResponse(query));
     const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
     recordLatency(latencyUs);
-    logDnsQuery({
+    noteQuery({
       clientIp,
       domain: queryName,
       queryType,
@@ -893,12 +1009,29 @@ async function handleTcpQuery(msg, clientSock) {
 
   // Relay to dnsmasq over TCP (same internal port it serves UDP on).
   const internalPort = resolveDnsmasqInternalPort(getSetting('dns_listen_port'));
-  const respMsg = await relayQueryOverTcp(
-    msg,
+  let respMsg = await relayQueryOverTcp(
+    withRecursionDesired(msg),
     '127.0.0.1',
     internalPort,
     PROXY_TCP_RELAY_TIMEOUT_MS,
   );
+  if (respMsg) {
+    let first = null;
+    try {
+      first = dnsPacket.decode(respMsg);
+    } catch {
+      /* relayed raw below */
+    }
+    if (wantsUnknownRetry(first, queryName)) {
+      noteUnknownRetry(queryName);
+      const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
+      const retried = await askForwarder(msg, {
+        tcp: true,
+        timeoutMs: PROXY_TCP_RELAY_TIMEOUT_MS - elapsedMs,
+      });
+      if (retried) respMsg = retried;
+    }
+  }
   const latencyUs = Number(process.hrtime.bigint() - startNs) / 1000;
   recordLatency(latencyUs);
 
@@ -906,7 +1039,7 @@ async function handleTcpQuery(msg, clientSock) {
     timeoutCount++;
     statsTotal++;
     writeTcpMessage(clientSock, encodeServfail(query));
-    logDnsQuery({
+    noteQuery({
       clientIp,
       domain: queryName || '',
       queryType,
@@ -941,7 +1074,7 @@ async function handleTcpQuery(msg, clientSock) {
   if (resolved.action === 'block') {
     recordResolvedBlock(resolved);
     writeTcpMessage(clientSock, createNxdomainResponse(query));
-    logDnsQuery({
+    noteQuery({
       clientIp,
       domain: queryName || '',
       queryType,
@@ -954,15 +1087,16 @@ async function handleTcpQuery(msg, clientSock) {
     return;
   }
 
-  // Allowed, relay dnsmasq's raw bytes verbatim (preserves signatures + ID).
+  // Allowed, relay the backend's raw bytes (preserves signatures + ID), with
+  // the client's own RD bit; the header is outside every signature.
   statsAllowed++;
   statsTotal++;
-  writeTcpMessage(clientSock, respMsg);
+  writeTcpMessage(clientSock, withClientRd(Buffer.from(respMsg), asksRecursion(msg)));
   const dnssecSupported = classifyDnssecSupport(response, {
     enabled: getSetting('dnssec_enabled') === 'true',
     checkingDisabled: !!query.flag_cd,
   });
-  logDnsQuery({
+  noteQuery({
     clientIp,
     domain: queryName || '',
     queryType,
@@ -1016,13 +1150,22 @@ function onTcpConnection(clientSock) {
 }
 
 // Start the DNS proxy, binds one UDP socket per LAN address on port 53
+// DNS switched off: the proxy does not listen, whatever stack serves, so the
+// LAN port gets no answer.
+const dnsSwitchedOff = () => roleSwitchedOff('dns');
+
 export function startProxy() {
   if (proxyServers.length > 0) {
     proxyLog('warn', 'Proxy already running');
     return;
   }
+  if (dnsSwitchedOff()) {
+    proxyLog('info', 'DNS is switched off, the proxy does not listen');
+    return;
+  }
 
   proxyStartedAt = Date.now();
+  cancelBindRetries();
 
   // Create socket for forwarding to dnsmasq
   dnsmasqSocket = dgram.createSocket('udp4');
@@ -1043,71 +1186,129 @@ export function startProxy() {
   // See REVIEW.md, duplicate-logic audit #10.
   const listenPort = resolveDnsListenPort(getSetting('dns_listen_port'));
 
-  let bindCount = 0;
   for (const addr of addresses) {
-    const sock = dgram.createSocket({
-      type: net.isIP(addr) === 6 ? 'udp6' : 'udp4',
-      reuseAddr: true,
-    });
-
-    sock.on('message', (msg, rinfo) => handleQuery(msg, rinfo, sock));
-
-    sock.on('error', (err) => {
-      proxyLog('error', 'Proxy socket error', {
-        address: addr,
-        error: err.message,
-        code: err.code,
-      });
-      if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
-        proxyLog('error', `Cannot bind port ${listenPort}`, { address: addr });
-      }
-    });
-
-    sock.on('close', () => {
-      // Remove from proxyServers array
-      const idx = proxyServers.findIndex((s) => s.socket === sock);
-      if (idx >= 0) proxyServers.splice(idx, 1);
-      if (proxyServers.length === 0) {
-        proxyLog('warn', 'All proxy sockets closed');
-      }
-    });
-
-    sock.bind(listenPort, addr, () => {
-      bindCount++;
-      proxyLog('info', 'Proxy socket bound', { address: `${addr}:${listenPort}` });
-      if (bindCount === addresses.length) {
-        proxyStartupMs = Date.now() - proxyStartedAt;
-        proxyLog('info', 'Proxy fully started', { sockets: bindCount, startupMs: proxyStartupMs });
-        if (!healthTimer) startHealthMonitor();
-      }
-    });
-
-    proxyServers.push({ socket: sock, address: addr });
+    bindUdp(addr, listenPort, addresses.length);
+    bindTcp(addr, listenPort);
   }
+}
 
-  // Bind a TCP listener per LAN address on the same port. TCP is additive and
-  // best-effort: a TCP bind failure is logged but does NOT tear down the UDP
-  // path or trip the bypass health monitor (which tracks UDP sockets), UDP
-  // DNS keeps working even if TCP can't bind. In practice they bind or fail
-  // together since they share the address/port.
-  for (const addr of addresses) {
-    const tcpServer = net.createServer(onTcpConnection);
-    tcpServer.on('error', (err) => {
-      proxyLog('error', 'Proxy TCP server error', {
-        address: addr,
-        error: err.message,
-        code: err.code,
-      });
+// An address can be on the interface but not usable yet: an IPv6 address
+// waits out Duplicate Address Detection after boot, and a bind to it fails
+// with EADDRNOTAVAIL. Such a bind is tried again, a second apart and then
+// further, for about a minute, so the proxy is not left deaf on that address
+// until the next restart. Any other bind error stays final, as before.
+const BIND_RETRY_DELAYS_MS = [1000, 2000, 3000, 5000, 5000, 10000, 10000, 10000, 15000];
+const bindRetries = new Set();
+
+function retryBind(err, addr, attempt, bind) {
+  if (err.code !== 'EADDRNOTAVAIL' || attempt >= BIND_RETRY_DELAYS_MS.length) return false;
+  const delayMs = BIND_RETRY_DELAYS_MS[attempt];
+  proxyLog('warn', 'Address not usable yet, binding again', {
+    address: addr,
+    error: err.message,
+    delayMs,
+  });
+  const timer = setTimeout(() => {
+    bindRetries.delete(timer);
+    bind(attempt + 1);
+  }, delayMs);
+  timer.unref?.();
+  bindRetries.add(timer);
+  return true;
+}
+
+function cancelBindRetries() {
+  for (const timer of bindRetries) clearTimeout(timer);
+  bindRetries.clear();
+}
+
+function bindUdp(addr, listenPort, total, attempt = 0) {
+  const sock = dgram.createSocket({
+    type: net.isIP(addr) === 6 ? 'udp6' : 'udp4',
+    reuseAddr: true,
+  });
+  let bound = false;
+
+  sock.on('message', (msg, rinfo) => handleQuery(msg, rinfo, sock));
+
+  sock.on('error', (err) => {
+    // A socket that never bound answers nothing: drop it, so the status and
+    // the health monitor do not count it, and try again when that may help
+    // (retryBind logs that, so a retried bind is a warning, not an error).
+    if (!bound) {
+      try {
+        sock.close();
+      } catch {
+        /* already closed */
+      }
+      if (retryBind(err, addr, attempt, (next) => bindUdp(addr, listenPort, total, next))) return;
+    }
+    proxyLog('error', 'Proxy socket error', {
+      address: addr,
+      error: err.message,
+      code: err.code,
     });
-    tcpServer.listen(listenPort, addr, () => {
-      proxyLog('info', 'Proxy TCP listener bound', { address: `${addr}:${listenPort}` });
+    if (err.code === 'EADDRINUSE' || err.code === 'EACCES') {
+      proxyLog('error', `Cannot bind port ${listenPort}`, { address: addr });
+    }
+  });
+
+  sock.on('close', () => {
+    // Remove from proxyServers array
+    const idx = proxyServers.findIndex((s) => s.socket === sock);
+    if (idx >= 0) proxyServers.splice(idx, 1);
+    if (proxyServers.length === 0 && bound) {
+      proxyLog('warn', 'All proxy sockets closed');
+    }
+  });
+
+  sock.bind(listenPort, addr, () => {
+    bound = true;
+    const entry = proxyServers.find((s) => s.socket === sock);
+    if (entry) entry.bound = true;
+    proxyLog('info', 'Proxy socket bound', { address: `${addr}:${listenPort}` });
+    if (proxyServers.filter((s) => s.bound).length === total) {
+      proxyStartupMs = Date.now() - proxyStartedAt;
+      proxyLog('info', 'Proxy fully started', { sockets: total, startupMs: proxyStartupMs });
+    }
+    // Watch from the first bound socket on, not only once every address has
+    // bound: one address still waiting must not leave the rest unwatched.
+    if (!healthTimer) startHealthMonitor();
+  });
+
+  proxyServers.push({ socket: sock, address: addr, bound: false });
+}
+
+// Bind a TCP listener per LAN address on the same port. TCP is additive and
+// best-effort: a TCP bind failure is logged but does NOT tear down the UDP
+// path or trip the bypass health monitor (which tracks UDP sockets), UDP
+// DNS keeps working even if TCP can't bind. In practice they bind or fail
+// together since they share the address/port.
+function bindTcp(addr, listenPort, attempt = 0) {
+  const tcpServer = net.createServer(onTcpConnection);
+  let listening = false;
+  tcpServer.on('error', (err) => {
+    if (!listening) {
+      const idx = tcpServers.findIndex((t) => t.server === tcpServer);
+      if (idx >= 0) tcpServers.splice(idx, 1);
+      if (retryBind(err, addr, attempt, (next) => bindTcp(addr, listenPort, next))) return;
+    }
+    proxyLog('error', 'Proxy TCP server error', {
+      address: addr,
+      error: err.message,
+      code: err.code,
     });
-    tcpServers.push({ server: tcpServer, address: addr });
-  }
+  });
+  tcpServer.listen(listenPort, addr, () => {
+    listening = true;
+    proxyLog('info', 'Proxy TCP listener bound', { address: `${addr}:${listenPort}` });
+  });
+  tcpServers.push({ server: tcpServer, address: addr });
 }
 
 // Stop the DNS proxy
 export function stopProxy() {
+  cancelBindRetries();
   for (const { socket } of proxyServers) {
     try {
       socket.close();
@@ -1158,6 +1359,7 @@ function startHealthMonitor() {
   healthTimer = setInterval(async () => {
     if (proxyServers.length > 0) return; // proxy is alive
     if (bypassMode) return; // already bypassed, nothing to do
+    if (dnsSwitchedOff()) return; // down on purpose, not dead
 
     proxyLog('warn', 'Proxy appears dead, attempting restart');
 
@@ -1206,8 +1408,25 @@ function stopHealthMonitor() {
 // through queueRegen without solving the synchrony requirement first.
 function activateBypass() {
   if (bypassMode) return;
+  // A server stack switch is moving the DNS backend; the next health check
+  // tries again once it is done.
+  if (switchInProgress()) return;
   bypassMode = true;
   proxyLog('error', 'All restart attempts failed, activating bypass mode (dnsmasq takes port 53)');
+  // Filtering, GeoIP and the query log stop with the proxy out of the path.
+  try {
+    recordAudit({
+      action: 'dns_proxy_bypass_activated',
+      entityType: 'dns_proxy',
+      source: 'proxy-health',
+      details: {
+        reason: `the proxy did not restart after ${PROXY_MAX_RESTART_ATTEMPTS} attempts`,
+        backend: getDnsBackend().name,
+      },
+    });
+  } catch (err) {
+    proxyLog('error', 'Could not record the bypass in the audit log', { error: err.message });
+  }
   try {
     // Temporarily override: dnsmasq listens on port 53 + LAN IPs.
     // Must be synchronous before the restart, queueRegen would defer
@@ -1223,6 +1442,15 @@ function activateBypass() {
 function deactivateBypass() {
   bypassMode = false;
   proxyLog('info', 'Bypass deactivated, proxy recovered');
+  try {
+    recordAudit({
+      action: 'dns_proxy_bypass_deactivated',
+      entityType: 'dns_proxy',
+      source: 'proxy-health',
+    });
+  } catch (err) {
+    proxyLog('error', 'Could not record the recovery in the audit log', { error: err.message });
+  }
   try {
     const db = getDb();
     Setting.deleteSetting(db, 'dns_proxy_bypass');
@@ -1331,10 +1559,12 @@ export function getProxyStatus() {
   const dbExists = fs.existsSync(dbPath);
 
   return {
-    running: proxyServers.length > 0,
+    running: proxyServers.some((s) => s.bound),
     bypassed: bypassMode,
+    // DNS switched off in CIDRella: the proxy does not listen, on purpose.
+    switchedOff: dnsSwitchedOff(),
     port: 53,
-    listenAddresses: proxyServers.map((s) => s.address),
+    listenAddresses: proxyServers.filter((s) => s.bound).map((s) => s.address),
     tcpListeners: tcpServers.length,
     activeTcpConnections,
     dbLoaded: mmdbReader !== null,
@@ -1466,6 +1696,12 @@ export function startGeoipScheduler() {
         proxyLog('info', `GeoIP database is older than ${intervalDays} days, downloading update`);
         try {
           await downloadMmdb();
+          recordAudit({
+            action: 'geoip_db_refreshed',
+            entityType: 'geoip_db',
+            source: 'scheduler',
+            details: { previous: lastUpdated, schedule },
+          });
         } catch (err) {
           proxyLog('error', 'GeoIP auto-update failed', { error: err.message });
         }

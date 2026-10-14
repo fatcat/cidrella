@@ -22,6 +22,10 @@
       <dd>{{ auth.totpEnabled ? 'on, authenticator app with backup codes' : 'off' }}</dd>
       <dt>Role</dt>
       <dd>{{ ROLE_LABEL[draft.role] }}</dd>
+      <template v-if="setup.chosenStack">
+        <dt>Servers</dt>
+        <dd>{{ setup.stackLabelOf(setup.chosenStack) }}</dd>
+      </template>
       <dt>DNS on</dt>
       <dd>{{ draft.role === 'dhcp' ? 'off' : listFor('dns') }}</dd>
       <dt>DHCP on</dt>
@@ -80,7 +84,7 @@
 
 <script setup>
 import StatusDot from '../StatusDot.vue';
-import { computed } from 'vue';
+import { computed, onMounted } from 'vue';
 import Button from '../../ui/Button.js';
 import Message from '../../ui/Message.js';
 import { useAuthStore } from '../../stores/auth.js';
@@ -96,6 +100,11 @@ const emit = defineEmits(['back', 'start']);
 
 const auth = useAuthStore();
 const setup = useSetupStore();
+
+// A setup resumed at this step never mounted the deployment step.
+onMounted(() => {
+  if (!setup.servers) setup.loadServers();
+});
 const draft = setup.draft;
 
 const ROLE_LABEL = { both: 'DNS & DHCP', dns: 'DNS only', dhcp: 'DHCP only' };

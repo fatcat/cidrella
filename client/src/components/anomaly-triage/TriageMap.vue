@@ -57,19 +57,24 @@
             :cy="dot.cy"
             :r="dot.r + 4"
             fill="none"
-            :stroke="dot.color"
-            stroke-opacity="0.6"
+            :stroke="dot.accent"
+            :stroke-opacity="dot.stale ? 0.25 : 0.6"
           />
           <circle
             class="mdot"
-            :class="{ open: dot.id === openId, hover: dot.id === hoverId, hollow: dot.hollow }"
+            :class="{
+              open: dot.id === openId,
+              hover: dot.id === hoverId,
+              hollow: dot.hollow,
+              stale: dot.stale,
+            }"
             :cx="dot.cx"
             :cy="dot.cy"
             :r="dot.r"
             :fill="dot.color"
-            :fill-opacity="dot.hollow ? 0.12 : dot.actionable ? 0.9 : 0.55"
-            :stroke="dot.hollow ? dot.color : 'transparent'"
-            stroke-width="1.5"
+            :fill-opacity="dot.hollow ? 0.12 : dot.stale ? 0.3 : dot.actionable ? 0.9 : 0.55"
+            :stroke="dot.hollow ? dot.color : dot.recent ? dot.accent : 'transparent'"
+            :stroke-width="dot.recent ? 2 : 1.5"
             role="button"
             tabindex="0"
             :aria-label="`Open ${dot.name}`"
@@ -93,10 +98,14 @@
       <span><i class="sw" :style="{ background: warnColor }"></i> Flagged, medium</span>
       <span><i class="sw" :style="{ background: infoColor }"></i> Flagged, low</span>
       <span><i class="sw within"></i> Within baseline</span>
+      <span><i class="sw recent" :style="{ borderColor: infoColor }"></i> Within baseline now, flagged
+        in the last 24 hours</span>
+      <span v-if="stale"><i class="sw stale"></i> No window in the last day</span>
       <span v-if="unscored"><i class="sw hollow"></i> Threat shape not scored yet</span>
     </div>
     <p class="map-foot">
-      Dot size is how many of the last 24 windows were flagged. A ring means 3 or more.
+      Each dot is the device's newest window. Its size is how many windows were flagged in the
+      last 24 hours; a ring means 3 or more.
       <template v-if="unscored">
         Hollow dots sit on the bottom edge until the detector's next scoring cycle fills in their
         threat shape.
@@ -111,7 +120,8 @@ import { chartColor, chartThemeVersion } from '../../utils/chart-config.js';
 import { mapX } from '../../utils/anomaly-score.js';
 
 const props = defineProps({
-  // { id, name, ip, score, threat, severity, flagged24h, actionable, color }
+  // { id, name, ip, score, threat, severity, flagged24h, actionable, color, recent, stale,
+  //   windowAge }
   points: { type: Array, required: true },
   openId: { type: String, default: null },
   hoverId: { type: String, default: null },
@@ -149,13 +159,21 @@ const dots = computed(() =>
       hollow,
       actionable: p.actionable,
       ringed: (p.flagged24h || 0) >= 3,
+      recent: !!p.recent,
+      stale: !!p.stale,
+      // The outline and ring of a device calm now but flagged earlier take the
+      // flagged color, not the grey fill.
+      accent: p.recent ? infoColor.value : p.color,
       title: `${p.name} · ${p.ip}${
         typeof p.score === 'number' ? ` · score ${p.score.toFixed(2)}` : ' · not scored yet'
-      }${hollow ? ' · threat shape not scored yet' : ` · threat ${Math.round(p.threat * 100)}`}`,
+      }${hollow ? ' · threat shape not scored yet' : ` · threat ${Math.round(p.threat * 100)}`}${
+        p.flagged24h ? ` · ${p.flagged24h} flagged in 24h` : ''
+      }${p.windowAge ? ` · window ${p.windowAge}` : ''}`,
     };
   }),
 );
 const unscored = computed(() => dots.value.some((d) => d.hollow));
+const stale = computed(() => dots.value.some((d) => d.stale));
 </script>
 
 <style scoped>
@@ -225,6 +243,14 @@ const unscored = computed(() => dots.value.some((d) => d.hollow));
 .sw.within {
   background: var(--cid-surface-ground);
   border: 1px solid var(--cid-surface-border);
+}
+.sw.recent {
+  background: var(--cid-surface-ground);
+  border: 2px solid;
+}
+.sw.stale {
+  background: var(--cid-text-muted-color);
+  opacity: 0.3;
 }
 .sw.hollow {
   background: none;

@@ -321,8 +321,14 @@ state: they read the database, make the daemon match it, and report
 (`check-db-ownership` refuses it); neutral work such as `syncDhcpDnsRecords`
 and lease ingestion (`services/dhcp-lease-sync.js`) stays in services. Only
 `backends/**` imports an adapter, enforced by ESLint and
-`scripts/check-backend-imports.js`. `docs/DNSMASQ-COUPLING.md` maps the seams
-and what is left for Kea and PowerDNS.
+`scripts/check-backend-imports.js`. `docs/DNSMASQ-COUPLING.md` maps the seams.
+
+Which adapter fills each role is the server stack, one setting
+(`backend_stack`): `dnsmasq` for DNS, DHCP and Router Advertisements, or
+`pdns-kea` (PowerDNS for DNS, Kea for DHCP, radvd for Router Advertisements).
+Never a mix. `services/stack-switch.js` moves every role and the leases from
+one stack to the other, and boot (`selectStackAtBoot`) stops every daemon
+outside the stack. Nothing else changes which adapter answers a role.
 
 The dnsmasq adapter (`backends/dnsmasq/`) generates its files from database
 state using atomic writes. Different file classes have different reload
@@ -472,6 +478,50 @@ decides whether the login still works. `models/session.js` holds every rule:
   and written to the audit log. `users.updated_at` is no longer a revocation
   signal.
 - API tokens (`cidr_pat_`) are not sessions and never go idle.
+
+### Audit trail
+
+Every audit row goes through `recordAudit` in `services/audit.js`;
+`models/audit-log.js` stores it. A row says who (`actor`: the username, or
+`system`), how (`origin`: `ui` for a sign-in, `api-token`, `cli` for an update
+or rollback run from a shell, `system`), from where (`source_ip`) and, for the
+system's own rows, what acted (`source`: `backend`, `proxy-health`,
+`scheduler`, `boot`, `timesync`, `liveness`, `retention`, `update`,
+`rollback`). The request context comes from `utils/request-actor.js`, set
+after authentication and carried into the work a request starts, so a daemon
+restart caused by an edit is the editor's.
+
+The rule is short but complete:
+
+- One row per action. An edit passes `before` and `after` and keeps only the
+  fields that changed, as `changes: { field: [old, new] }`; a save that
+  changes nothing writes no row. Settings writes compare `settingsSnapshot`
+  before and after.
+- A secret (a field named like a password, key, token or TOTP secret) is
+  recorded as changed, never its value.
+- A bulk action is one row with `sample()`: a count and the first 20 items.
+- Recorded beyond edits: sign-in and sign-out, a database reset (the first row
+  of the new database), clearing a log, a backup or the IP lifecycle report
+  downloaded, a manual blocklist or GeoIP refresh, a lease sync.
+- The system records changes of state, not checks: a backend daemon
+  restarted, stopped or failing to restart (`backends/shared/unit-events.js`,
+  heard by `services/system-audit.js`; quiet during boot but for a failure,
+  and during a server switch, which has its own row), proxy bypass on and off,
+  DNSSEC timestamps enforced after a late clock sync or left lenient, the
+  stack boot falls back to, an interrupted switch, a scheduled backup or its
+  failure, a scheduled blocklist or GeoIP refresh that changed something,
+  stale addresses retired (one row per sweep; each address's history is in
+  `ip_events`), and pruning.
+- A version change is recorded at the first boot of the new version
+  (`services/version-audit.js`): it compares `last_running_version` and reads
+  the updater's `events.jsonl` for how. An update the UI started names the
+  person; a rollback that restored the pre-update database is still caught.
+- Not recorded: previews, probes and tests, reloads, health checks, one
+  user's display preferences, starting TOTP enrolment (enabling it is).
+  `tests/unit/services/audit-coverage.test.js` fails on a write route that
+  neither records nor says why.
+
+Rows are kept `audit_log_retention_days` (90).
 
 ### Filtering pause and hosts with filtering off
 

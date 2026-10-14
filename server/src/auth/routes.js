@@ -3,7 +3,8 @@ import { passwordPolicyError, effectivePasswordPolicy } from './password-policy.
 import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import rateLimit from 'express-rate-limit';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import * as User from '../models/user.js';
 import * as Session from '../models/session.js';
 import { permissionProjection, isSuperuser, requireRole } from './roles.js';
@@ -99,7 +100,15 @@ function sessionPayload(db, user, req) {
     userAgent: req.get('user-agent'),
   });
   const token = generateToken(user, session);
-  audit(user.id, 'login', 'user', user.id, { session_id: session.id, ip: session.ip });
+  recordAudit({
+    action: 'login',
+    entityType: 'user',
+    entityId: user.id,
+    details: { session_id: session.id },
+    userId: user.id,
+    sourceIp: session.ip,
+    actor: user.username,
+  });
 
   let preferences = {};
   try {
@@ -156,14 +165,26 @@ router.post('/login', loginLimiter, async (req, res) => {
 
     if (!user || !valid) {
       if (user) {
-        audit(user.id, 'login_failed', 'user', user.id, { reason: 'invalid_password' });
+        recordAudit({
+          action: 'login_failed',
+          entityType: 'user',
+          entityId: user.id,
+          details: { reason: 'invalid_password' },
+          userId: user.id,
+          actor: user.username,
+        });
       } else {
         // Audit unknown-user attempts so an operator watching the log can see
         // enumeration probes. Truncate the submitted username to avoid giant
         // entries from adversarial input.
-        audit(null, 'login_failed', 'user', null, {
-          reason: 'unknown_user',
-          attempted_username: username.slice(0, 64),
+        recordAudit({
+          action: 'login_failed',
+          entityType: 'user',
+          details: {
+            reason: 'unknown_user',
+            attempted_username: username.slice(0, 64),
+          },
+          actor: '(unknown user)',
         });
       }
       return res.status(401).json({ error: 'Invalid credentials' });
@@ -174,7 +195,14 @@ router.post('/login', loginLimiter, async (req, res) => {
     // never match anyway, but refusing by kind means the rule is stated rather
     // than relied upon as a side effect.
     if (user.kind === 'service') {
-      audit(user.id, 'login_failed', 'user', user.id, { reason: 'service_account' });
+      recordAudit({
+        action: 'login_failed',
+        entityType: 'user',
+        entityId: user.id,
+        details: { reason: 'service_account' },
+        userId: user.id,
+        actor: user.username,
+      });
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
@@ -222,7 +250,14 @@ router.post('/login/totp', loginLimiter, (req, res) => {
     if (looksLikeBackupCode(code)) {
       if (BackupCode.consumeBackupCode(db, user.id, hashBackupCode(code))) {
         const remaining = BackupCode.countUnusedBackupCodes(db, user.id);
-        audit(user.id, 'login_backup_code', 'user', user.id, { remaining });
+        recordAudit({
+          action: 'login_backup_code',
+          entityType: 'user',
+          entityId: user.id,
+          details: { remaining },
+          userId: user.id,
+          actor: user.username,
+        });
         return res.json({ ...sessionPayload(db, user, req), backup_codes_remaining: remaining });
       }
     } else {
@@ -232,7 +267,14 @@ router.post('/login/totp', loginLimiter, (req, res) => {
         return res.json(sessionPayload(db, user, req));
       }
     }
-    audit(user.id, 'login_failed', 'user', user.id, { reason: 'totp' });
+    recordAudit({
+      action: 'login_failed',
+      entityType: 'user',
+      entityId: user.id,
+      details: { reason: 'totp' },
+      userId: user.id,
+      actor: user.username,
+    });
     return res.status(401).json({ error: 'That code did not work' });
   } catch (err) {
     console.error('TOTP login error:', err?.message || err);
@@ -281,7 +323,14 @@ router.post('/totp/enable', changePasswordLimiter, (req, res) => {
     User.enableTotp(db, user.id, step);
     BackupCode.replaceBackupCodes(db, user.id, codes.map(hashBackupCode));
   })();
-  audit(user.id, 'totp_enabled', 'user', user.id, { backup_codes: codes.length });
+  recordAudit({
+    action: 'totp_enabled',
+    entityType: 'user',
+    entityId: user.id,
+    details: { backup_codes: codes.length },
+    userId: user.id,
+    actor: user.username,
+  });
   res.json({ ok: true, backup_codes: codes });
 });
 
@@ -301,7 +350,14 @@ router.post('/totp/backup-codes', changePasswordLimiter, async (req, res) => {
     if (!valid) return res.status(401).json({ error: 'Password is incorrect' });
     const codes = generateBackupCodes();
     BackupCode.replaceBackupCodes(db, user.id, codes.map(hashBackupCode));
-    audit(user.id, 'backup_codes_regenerated', 'user', user.id, { backup_codes: codes.length });
+    recordAudit({
+      action: 'backup_codes_regenerated',
+      entityType: 'user',
+      entityId: user.id,
+      details: { backup_codes: codes.length },
+      userId: user.id,
+      actor: user.username,
+    });
     res.json({ ok: true, backup_codes: codes });
   } catch (err) {
     console.error('Backup codes error:', err?.message || err);
@@ -335,14 +391,27 @@ router.post('/totp/disable', changePasswordLimiter, async (req, res) => {
     if (!user) return res.status(404).json({ error: 'User not found' });
     const valid = await bcrypt.compare(password, user.password_hash);
     if (!valid) {
-      audit(user.id, 'totp_disable_failed', 'user', user.id, { reason: 'invalid_password' });
+      recordAudit({
+        action: 'totp_disable_failed',
+        entityType: 'user',
+        entityId: user.id,
+        details: { reason: 'invalid_password' },
+        userId: user.id,
+        actor: user.username,
+      });
       return res.status(401).json({ error: 'Password is incorrect' });
     }
     db.transaction(() => {
       User.disableTotp(db, user.id);
       BackupCode.deleteBackupCodes(db, user.id);
     })();
-    audit(user.id, 'totp_disabled', 'user', user.id, null);
+    recordAudit({
+      action: 'totp_disabled',
+      entityType: 'user',
+      entityId: user.id,
+      userId: user.id,
+      actor: user.username,
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error('TOTP disable error:', err?.message || err);
@@ -387,7 +456,13 @@ router.post('/change-password', changePasswordLimiter, async (req, res) => {
     const hash = await bcrypt.hash(new_password, 10);
     const updatedUser = User.changePassword(db, user.id, hash);
 
-    audit(user.id, 'password_changed', 'user', user.id, null);
+    recordAudit({
+      action: 'password_changed',
+      entityType: 'user',
+      entityId: user.id,
+      userId: user.id,
+      actor: user.username,
+    });
     // Every other browser signed in as this user signs in again with the new
     // password; this one carries on.
     Session.endUserSessions(db, user.id, 'password_changed', { except: req.user.sessionId });
@@ -426,7 +501,12 @@ router.post('/logout', (req, res) => {
   try {
     const db = getDb();
     if (req.user.sessionId) Session.endSession(db, req.user.sessionId, 'logout');
-    audit(req.user.id, 'logout', 'user', req.user.id, { session_id: req.user.sessionId ?? null });
+    recordAudit({
+      action: 'logout',
+      entityType: 'user',
+      entityId: req.user.id,
+      details: { session_id: req.user.sessionId ?? null },
+    });
     res.json({ ok: true });
   } catch (err) {
     console.error('Logout error:', err?.message || err);

@@ -30,13 +30,15 @@ cidrella-reset-password
 cidrella-reset-web-ports
 
 # minisign public keys. update.sh verifies the next release with these, and the
-# break-glass key validates rotation announcements (BREAK-GLASS-CEREMONY.md step 5)
+# break-glass key validates rotation announcements (docs/BREAK-GLASS-CEREMONY.md step 5)
 cidrella.pub
 cidrella-break-glass.pub
 
 # Shared shell libraries sourced by install/update/rollback
 lib/dnsmasq-perms.sh
 lib/kea-install.sh
+lib/pdns-install.sh
+lib/radvd-install.sh
 lib/log.sh
 lib/preflight.sh
 lib/rotation.sh
@@ -47,10 +49,14 @@ lib/verify.sh
 
 # OS integration assets installed onto the host
 logrotate/cidrella-dnsmasq
+logrotate/cidrella-pdns
 polkit/49-cidrella.rules
 sudoers/cidrella
 systemd/cidrella.service
 systemd/cidrella-dnsmasq.service
 systemd/cidrella-kea@.service
+systemd/cidrella-pdns-auth.service
+systemd/cidrella-pdns-recursor.service
+systemd/cidrella-radvd.service
 systemd/cidrella-anomaly.service
 systemd/cidrella-update@.service

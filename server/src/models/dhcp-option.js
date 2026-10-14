@@ -1,6 +1,6 @@
 import os from 'os';
 import { DHCP_DEFAULT_NTP_SERVERS, DHCP6_DEFAULT_NTP_SERVERS } from '../config/defaults.js';
-import { FALLBACK_SECONDARY_DNS } from '../utils/dhcp-network-options.js';
+import { readSetting, upsertSetting } from './setting.js';
 
 // DHCPv4 and DHCPv6 option codes are separate namespaces, so every table here
 // is keyed by (address_family, code). Callers that never learned about
@@ -251,10 +251,35 @@ export function upsertServerDnsDefault(db, value) {
   return true;
 }
 
+// The address CIDRella last put in the DNS Servers default, so a later boot
+// can tell its own entry from the ones a person set.
+const SERVER_DNS_SETTING = 'dhcp_dns_default_server_ip';
+
 /**
- * Detect the server's primary IPv4 address and update the DNS Servers
- * global default (option 6) to "<server_ip>, <secondary>".
- * Runs at startup so a host IP change is always reflected.
+ * The DNS Servers default (option 6) once the server's address is `serverIp`.
+ * Only CIDRella's own entry follows the host: `previousIp` is the address it
+ * wrote last, and on an install from before it was kept, the first entry,
+ * where it always wrote it. Every other entry is a person's choice and stays,
+ * (a resolver removed stays removed). An empty default is seeded with the
+ * server alone, as networkOptionFills fills a scope.
+ */
+export function serverDnsDefaultValue(existing, serverIp, previousIp) {
+  const list = (existing || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  if (!list.length) return serverIp;
+  if (list.includes(serverIp)) return existing;
+  const own = previousIp ? list.indexOf(previousIp) : 0;
+  if (own < 0) return existing;
+  list[own] = serverIp;
+  return list.join(',');
+}
+
+/**
+ * Detect the server's primary IPv4 address and put it in the DNS Servers
+ * global default (option 6), by serverDnsDefaultValue. Runs at startup so a
+ * host IP change is always reflected.
  */
 export function syncServerDnsDefault(db) {
   // Find the first non-internal IPv4 address
@@ -275,7 +300,15 @@ export function syncServerDnsDefault(db) {
     return;
   }
 
-  const newValue = `${serverIp},${FALLBACK_SECONDARY_DNS}`;
+  const existing = db
+    .prepare('SELECT value FROM dhcp_option_defaults WHERE option_code = 6 AND address_family = 4')
+    .get()?.value;
+  const newValue = serverDnsDefaultValue(
+    existing,
+    serverIp,
+    readSetting(db, SERVER_DNS_SETTING),
+  );
+  upsertSetting(db, SERVER_DNS_SETTING, serverIp);
 
   if (upsertServerDnsDefault(db, newValue)) {
     console.log(`DNS Servers default updated: ${newValue}`);

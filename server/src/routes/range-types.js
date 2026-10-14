@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
 import * as RangeType from '../models/range-type.js';
@@ -49,7 +50,12 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     description,
     isSystem: false,
   });
-  audit(req.user.id, 'range_type_created', 'range_type', type.id, { name });
+  recordAudit({
+    action: 'range_type_created',
+    entityType: 'range_type',
+    entityId: type.id,
+    details: { name },
+  });
   res.status(201).json(type);
 });
 
@@ -93,7 +99,15 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
   }
 
   const updated = RangeType.updateRangeType(db, type, { name, color, description });
-  audit(req.user.id, 'range_type_updated', 'range_type', type.id, { changes: req.body });
+  recordAudit({
+    action: 'range_type_updated',
+    entityType: 'range_type',
+    entityId: type.id,
+    before: type,
+    after: updated,
+    only: ['name', 'color', 'description'],
+    details: { name: type.name },
+  });
   res.json(updated);
 });
 
@@ -116,7 +130,12 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   }
 
   RangeType.deleteRangeType(db, type.id);
-  audit(req.user.id, 'range_type_deleted', 'range_type', type.id, { name: type.name });
+  recordAudit({
+    action: 'range_type_deleted',
+    entityType: 'range_type',
+    entityId: type.id,
+    details: { name: type.name },
+  });
   res.json({ message: 'Range type deleted' });
 });
 

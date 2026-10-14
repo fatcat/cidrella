@@ -47,7 +47,7 @@ const send = (query) =>
     .send(Buffer.from('not really a tarball'));
 
 const lastAudit = () =>
-  db.prepare("SELECT details FROM audit_log WHERE action = 'restore' ORDER BY id DESC").get();
+  db.prepare("SELECT details FROM audit_log WHERE action = 'backup_restored' ORDER BY id DESC").get();
 
 describe('POST /api/operations/restore ?dhcp=', () => {
   it('rejects anything but enabled or disabled', async () => {
@@ -63,7 +63,9 @@ describe('POST /api/operations/restore ?dhcp=', () => {
     expect(res.status).toBe(200);
     expect(restoreBackup).toHaveBeenCalledWith(
       expect.any(String),
-      expect.objectContaining({ restoredBy: { username: 'testadmin' } }),
+      expect.objectContaining({
+        restoredBy: expect.objectContaining({ username: 'testadmin' }),
+      }),
     );
   });
 

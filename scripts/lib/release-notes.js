@@ -28,6 +28,7 @@
  * Usage as a CLI (for bash callers):
  *   node scripts/lib/release-notes.js --newest <notes-file>
  *   node scripts/lib/release-notes.js --has-version <x.y.z> <notes-file>
+ *   node scripts/lib/release-notes.js --tag <x.y.z> <notes-file>   (prints the [tag], if any)
  */
 
 const fs = require('fs');
@@ -93,11 +94,12 @@ module.exports = {
 if (require.main === module) {
   const argv = process.argv.slice(2);
   const mode = argv[0];
-  const notesPath = mode === '--has-version' ? argv[2] : argv[1];
+  const notesPath = mode === '--has-version' || mode === '--tag' ? argv[2] : argv[1];
 
   if (!mode || !notesPath) {
     console.error('usage: release-notes.js --newest <notes-file>');
     console.error('       release-notes.js --has-version <x.y.z> <notes-file>');
+    console.error('       release-notes.js --tag <x.y.z> <notes-file>');
     process.exit(2);
   }
 
@@ -129,6 +131,13 @@ if (require.main === module) {
 
   if (mode === '--has-version') {
     process.exit(parsed.headers.some((h) => h.version === argv[1]) ? 0 : 1);
+  }
+
+  if (mode === '--tag') {
+    const header = parsed.headers.find((h) => h.version === argv[1]);
+    if (!header) process.exit(1);
+    process.stdout.write(header.tag || '');
+    process.exit(0);
   }
 
   console.error(`unknown mode: ${mode}`);

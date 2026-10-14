@@ -441,7 +441,7 @@ async function saveConfig() {
       toast.add({
         severity: 'warn',
         summary: 'Saved with warning',
-        detail: 'Configuration saved but dnsmasq failed to restart. Check server logs.',
+        detail: 'Configuration saved but the DNS server failed to restart. Check the server logs.',
         life: 5000,
       });
     } else {

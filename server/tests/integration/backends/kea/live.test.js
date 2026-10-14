@@ -35,6 +35,8 @@ const { binary, confPath, controlPort, keaEnv, KEA_API_USER } =
 const { readKeaSecret } = await import('../../../../src/backends/kea/secret.js');
 const { createKeaClient } = await import('../../../../src/backends/kea/client.js');
 const { optionCatalogFor } = await import('../../../../src/utils/dhcp-options.js');
+const { keaLeaseArguments } = await import('../../../../src/backends/kea/leases.js');
+const { INFINITE_LIFETIME } = await import('../../../../src/backends/kea/render.js');
 
 // What a user would enter for each kind of option, in dnsmasq's syntax.
 const SAMPLE_TEXT = {
@@ -152,6 +154,22 @@ describe.skipIf(!LIVE)('Kea adapter against real Kea', () => {
           );
         }
         expect(status, output.match(/ERROR[^\n]*/g)?.join('\n') || output).toBeTruthy();
+
+        // A handed-over infinite lease goes in with no lifetime: Kea takes it
+        // and gives it the subnet's, never the infinite one.
+        const ip = family === 6 ? 'fd00:63::120' : '10.60.0.120';
+        const client =
+          family === 6
+            ? { duid: '00:01:00:01:00:00:00:09', iaid: 1 }
+            : { mac: 'aa:bb:cc:00:00:09' };
+        await command(
+          `lease${family}-add`,
+          keaLeaseArguments({ ip, expiresAt: 'infinite', dhcpVersion: family, ...client }),
+        );
+        const added = await command(`lease${family}-get`, { 'ip-address': ip });
+        const valid = Number(added.arguments['valid-lft']);
+        expect(valid).toBeGreaterThan(0);
+        expect(valid).toBeLessThan(INFINITE_LIFETIME);
       } finally {
         if (child.exitCode === null) {
           child.kill('SIGTERM');

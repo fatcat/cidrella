@@ -120,10 +120,36 @@ function serverState(overrides = {}) {
   };
 }
 
-function mountWizard(state) {
+// GET /api/backend-stack on an appliance with both stacks installed.
+const SERVERS = {
+  current: 'dnsmasq',
+  label: 'dnsmasq',
+  switching: false,
+  stacks: [
+    { name: 'dnsmasq', label: 'dnsmasq', daemons: ['dnsmasq'], installed: { ok: true } },
+    {
+      name: 'pdns-kea',
+      label: 'PowerDNS + Kea',
+      daemons: ['PowerDNS', 'Kea', 'radvd'],
+      installed: { ok: true },
+    },
+  ],
+  targets: [
+    {
+      name: 'pdns-kea',
+      label: 'PowerDNS + Kea',
+      blocked: null,
+      gained: [{ id: 'dhcp-ha', label: 'DHCP failover' }],
+      lost: [{ id: 'ra-names', label: 'Names for SLAAC hosts' }],
+    },
+  ],
+};
+
+function mountWizard(state, { servers = null } = {}) {
   api.get.mockImplementation((url) => {
     if (url === '/setup/state') return Promise.resolve({ data: state });
     if (url === '/interfaces') return Promise.resolve({ data: IFACES });
+    if (url === '/backend-stack' && servers) return Promise.resolve({ data: servers });
     return Promise.reject(new Error(`unexpected GET ${url}`));
   });
   api.put.mockImplementation((url, body) => {
@@ -408,9 +434,9 @@ describe('two-factor step', () => {
 });
 
 describe('deployment step', () => {
-  async function atDeployment() {
+  async function atDeployment(opts) {
     auth.mustChangePassword = false;
-    const w = mountWizard(serverState({ password: true, totp: 'skipped' }));
+    const w = mountWizard(serverState({ password: true, totp: 'skipped' }), opts);
     await flushPromises();
     expect(stepOf(w)).toBe(3);
     return w;
@@ -478,6 +504,31 @@ describe('deployment step', () => {
     w.unmount();
   });
 
+  it('offers the server stacks, locks one not installed, and remembers the pick', async () => {
+    const servers = structuredClone(SERVERS);
+    servers.stacks[1].installed = { ok: false, reason: 'Kea is not installed' };
+    let w = await atDeployment({ servers });
+    const cards = w.findAll('[data-track="first-run-stack"]');
+    expect(cards.map((c) => c.attributes('aria-pressed'))).toEqual(['true', 'false']);
+    expect(cards[1].attributes('disabled')).toBeDefined();
+    expect(cards[1].text()).toContain('Kea is not installed');
+    w.unmount();
+
+    setActivePinia(createPinia());
+    w = await atDeployment({ servers: SERVERS });
+    const pdns = w.find('[data-stack="pdns-kea"]');
+    expect(pdns.text()).toContain('Adds DHCP failover. Loses Names for SLAAC hosts.');
+    await pdns.trigger('click');
+    expect(pdns.attributes('aria-pressed')).toBe('true');
+    await w.find('[data-track="first-run-deployment-continue"]').trigger('click');
+    await flushPromises();
+    expect(api.put).toHaveBeenCalledWith(
+      '/setup/state',
+      expect.objectContaining({ deployment: expect.objectContaining({ stack: 'pdns-kea' }) }),
+    );
+    w.unmount();
+  });
+
   it('refuses to continue with no interface ticked for the role', async () => {
     const w = await atDeployment();
     const eth0 = w.findAll('.fr-table tbody tr')[0];
@@ -490,7 +541,7 @@ describe('deployment step', () => {
 });
 
 describe('import step and start', () => {
-  async function atImport(role = 'both', deployment = {}) {
+  async function atImport(role = 'both', deployment = {}, opts) {
     auth.mustChangePassword = false;
     const w = mountWizard(
       serverState({
@@ -502,6 +553,7 @@ describe('import step and start', () => {
           ...deployment,
         },
       }),
+      opts,
     );
     await flushPromises();
     expect(stepOf(w)).toBe(4);
@@ -537,6 +589,35 @@ describe('import step and start', () => {
     expect(doneAt).toBeLessThan(auth.fetchUser.mock.invocationCallOrder[0]);
     expect(router.push).toHaveBeenCalledWith('/networks');
     expect(ops.restoreBackup).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it('switches the servers before writing the interfaces when another stack was picked', async () => {
+    api.post.mockResolvedValue({ data: { leases: 0, added: 0, failed: [], missing: [] } });
+    const w = await atImport('both', { stack: 'pdns-kea' }, { servers: SERVERS });
+    await w.find('[data-track="first-run-import-continue"]').trigger('click');
+    await flushPromises();
+    expect(w.find('.fr-summary').text()).toContain('PowerDNS + Kea');
+    await w.find('[data-track="first-run-start"]').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/backend-stack', { stack: 'pdns-kea' });
+    const ifaceAt =
+      api.put.mock.invocationCallOrder[
+        api.put.mock.calls.findIndex(([url]) => url === '/interfaces/config')
+      ];
+    expect(api.post.mock.invocationCallOrder[0]).toBeLessThan(ifaceAt);
+    expect(router.push).toHaveBeenCalledWith('/networks');
+    w.unmount();
+  });
+
+  it('does not switch when the stack picked is the one serving now', async () => {
+    const w = await atImport('both', { stack: 'dnsmasq' }, { servers: SERVERS });
+    await w.find('[data-track="first-run-import-continue"]').trigger('click');
+    await flushPromises();
+    await w.find('[data-track="first-run-start"]').trigger('click');
+    await flushPromises();
+    expect(api.post).not.toHaveBeenCalledWith('/backend-stack', expect.anything());
+    expect(router.push).toHaveBeenCalledWith('/networks');
     w.unmount();
   });
 

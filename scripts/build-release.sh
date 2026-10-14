@@ -694,6 +694,14 @@ if [ -f "$PROJECT_DIR/RELEASE-NOTES.md" ]; then
     exit 1
   fi
   echo "  RELEASE-NOTES.md has v${NOTES_VERSION} entry: OK"
+  # A version marked "[pre-release]" never gets a final build: the published
+  # manifest leaves it out, so hosts could not see the release just cut.
+  NOTES_TAG=$(node "$PROJECT_DIR/scripts/lib/release-notes.js" --tag "${NOTES_VERSION}" "$PROJECT_DIR/RELEASE-NOTES.md")
+  if [ "$NOTES_TAG" = "pre-release" ] && [ "$PRE_RELEASE" != true ]; then
+    echo "ERROR: RELEASE-NOTES.md marks v${NOTES_VERSION} [pre-release], and this is a final build."
+    echo "  Build it with --pre, or remove the tag from its heading to release it."
+    exit 1
+  fi
 else
   echo "WARNING: RELEASE-NOTES.md not found at $PROJECT_DIR/RELEASE-NOTES.md"
   echo "  The v0.4.12+ skip-upgrade machinery requires this file. Build will"
@@ -880,7 +888,7 @@ if [ "$DRY_RUN" = false ]; then
 
   # ─── Pubkey staging assertion ────────────────────────
   #
-  # Per BREAK-GLASS-CEREMONY.md step 5, both minisign public keys must ship
+  # Per docs/BREAK-GLASS-CEREMONY.md step 5, both minisign public keys must ship
   # inside every release tarball at fixed canonical paths so update.sh can
   # verify the next release's signature AND apply rotation announcements
   # signed by the break-glass key. The rsync above already copies both
@@ -961,7 +969,7 @@ if [ "$DRY_RUN" = false ]; then
   echo "  Pubkey consistency verified (primary + break-glass)"
 
   # Update script (root level for visibility)
-  cp "$PROJECT_DIR/update.sh" "$STAGING_DIR/update.sh"
+  cp "$PROJECT_DIR/scripts/update.sh" "$STAGING_DIR/update.sh"
 
   # Note: scripts/rollback.sh is already included via the scripts/ rsync above.
   # update.sh and install.sh look for it at scripts/rollback.sh.
@@ -984,7 +992,11 @@ if [ "$DRY_RUN" = false ]; then
 
   # requirements.json, single source of truth for minimum host requirements.
   # Consumed by scripts/lib/preflight.sh at install/update time.
-  cp "$PROJECT_DIR/requirements.json" "$STAGING_DIR/requirements.json"
+  cp "$PROJECT_DIR/scripts/requirements.json" "$STAGING_DIR/requirements.json"
+
+  # The license and its NOTICE travel with every copy (Apache-2.0 section 4),
+  # so a build without them fails.
+  cp "$PROJECT_DIR/LICENSE" "$PROJECT_DIR/NOTICE" "$STAGING_DIR/"
 
   # Documentation
   cp "$PROJECT_DIR/README.md" "$STAGING_DIR/README.md" 2>/dev/null || true
@@ -1005,7 +1017,9 @@ if [ "$DRY_RUN" = false ]; then
   # (equivalent to "any predecessor may jump here") and emit a warning,
   # build proceeds so that missing metadata doesn't block an emergency
   # release, but the warning is loud enough for a human to notice.
-  MIN_FROM=$(node "$PROJECT_DIR/scripts/build-releases-manifest.js" 2>/dev/null \
+  # --all: a pre-release-only version is left out of the published manifest
+  # but still needs its own min_from here.
+  MIN_FROM=$(node "$PROJECT_DIR/scripts/build-releases-manifest.js" --all 2>/dev/null \
     | node -e '
         let s="";process.stdin.on("data",c=>s+=c);process.stdin.on("end",()=>{
           try {

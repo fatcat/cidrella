@@ -94,7 +94,7 @@ describe('PUT /api/blocklists/host-filtering', () => {
     const on = await put({ ip_address: '10.0.0.40', enabled: true });
     expect(on.body.filtering_enabled).toBe(true);
     expect(filteringBypass('10.0.0.40')).toBeNull();
-    expect(auditActions()).toEqual(['filtering_changed', 'filtering_changed']);
+    expect(auditActions()).toEqual(['host_filtering_changed', 'host_filtering_changed']);
     const events = db
       .prepare("SELECT old_value, new_value FROM ip_events WHERE event_type = 'filtering_changed'")
       .all();

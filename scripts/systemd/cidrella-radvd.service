@@ -1,0 +1,44 @@
+# radvd, which sends the IPv6 Router Advertisements while the PowerDNS + Kea
+# stack serves (dnsmasq sends its own on the dnsmasq stack). Not enabled:
+# CIDRella starts and stops it itself (backends/radvd, polkit-gated
+# systemctl). The paths below must agree with server/src/backends/radvd/paths.js.
+[Unit]
+Description=CIDRella radvd (IPv6 Router Advertisements)
+After=network-online.target
+Wants=network-online.target
+Documentation=https://github.com/fatcat/cidrella
+
+[Service]
+Type=simple
+User=cidrella
+Group=cidrella
+ExecStart=/usr/sbin/radvd --nodaemon --logmethod=stderr_clean --config=/var/lib/cidrella/radvd/radvd.conf --pidfile=/var/lib/cidrella/radvd/radvd.pid
+ExecReload=/bin/kill -HUP $MAINPID
+Restart=on-failure
+RestartSec=3
+UMask=0027
+
+# Capabilities required:
+#   CAP_NET_RAW - the ICMPv6 socket the advertisements go out on
+# Without root it cannot set an interface's hop limit through /proc and logs
+# that once; the advertisement carries the hop limit regardless.
+AmbientCapabilities=CAP_NET_RAW
+CapabilityBoundingSet=CAP_NET_RAW
+
+# Same sandbox as cidrella-kea@.service.
+ProtectSystem=strict
+ReadWritePaths=/var/lib/cidrella/radvd
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectClock=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+NoNewPrivileges=true
+RemoveIPC=true

@@ -4,6 +4,8 @@
 # Source this file; do not execute it. Provides:
 #   - install_systemd_unit <source> <dest>: idempotent copy + daemon-reload hint
 #   - reload_systemd:                      daemon-reload wrapper
+#   - install_logrotate_configs <dir>:     every file in <dir> into
+#                                          /etc/logrotate.d
 #
 # Depends on log.sh. Caller must source log.sh first.
 
@@ -44,4 +46,18 @@ reload_systemd() {
     return $?
   fi
   return 0
+}
+
+# install_logrotate_configs <dir>
+#   Installs every file in <dir> (a slot's scripts/logrotate) into
+#   /etc/logrotate.d under its own name, and says so. Nothing on a host
+#   without logrotate.
+install_logrotate_configs() {
+  local dir="${1:?logrotate config dir required}" conf
+  [ -d /etc/logrotate.d ] || return 0
+  for conf in "$dir"/*; do
+    [ -f "$conf" ] || continue
+    install -m 0644 -o root -g root "$conf" "/etc/logrotate.d/$(basename "$conf")"
+    ok "Installed logrotate config (/etc/logrotate.d/$(basename "$conf"))"
+  done
 }

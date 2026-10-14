@@ -43,6 +43,10 @@ the workspace gains a control or a display rule, add it to `driver.js` or `viola
 Components carry `data-row-id`, `data-zone-id`, `data-scope-id`, `data-network-id` and
 `data-folder-id` for it; keep them when refactoring, like `data-track`.
 
+A migration test builds its database with `databaseThrough(n)` in `tests/helpers/migrations.js`
+(every migration up to n, then `migrate(n + 1)`); older tests still carry their own copy
+(REVIEW.md TEST-MIGRATION-HELPER-01).
+
 Backups have a round-trip test (`server/tests/integration/backup-round-trip.test.js`): export,
 change everything, restore, restart, and every table and carried file must match, but for what a
 restore promises to change. A new table is covered automatically; a new file or directory under
@@ -56,6 +60,14 @@ renders, every catalog option included). It is skipped unless `KEA_LIVE=1`:
 host or container with ISC's `isc-kea-dhcp4`, `isc-kea-dhcp6` and `isc-kea-hooks` packages
 (`scripts/lib/kea-install.sh` installs them in a `node:22-trixie` container). It also starts each
 daemon, which needs `CAP_NET_RAW` for the ping check: root, or `setpriv` with ambient caps.
+
+The PowerDNS adapter has a live check too, skipped unless `PDNS_LIVE=1`:
+`cd server && PDNS_LIVE=1 npx vitest run tests/integration/backends/pdns/live.test.js`. It starts
+Authoritative and Recursor on what CIDRella renders and queries every record type, an edit, and
+DNSSEC through CIDRella's forwarder. Run it as root or `cidrella` on a host with PowerDNS's
+`pdns-server`, `pdns-backend-sqlite3` and `pdns-recursor` (`scripts/lib/pdns-install.sh` adds the
+repository), ports 5300, 5353, 5356 and 8053 free on loopback, and outbound DNS to
+`PDNS_LIVE_UPSTREAM` (9.9.9.9 by default).
 
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.
@@ -135,8 +147,11 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`, `utils/keyboard.js` (`MOD_LABEL`, `isModShortcut`: Ctrl, or Command on a Mac, for every shortcut and its hint),
   `utils/proxy-perf.js` (the resolution and process figures from the proxy-perf rows),
   `utils/service-chips.js` (the backend, proxy and forwarder chips), `utils/backend-status.js`
-  (`backendUnits`: the DNS/DHCP backends from a health payload, one unit per daemon, with the
-  pre-0.5.1 dnsmasq flag as fallback; every chip or row naming a backend reads it), `utils/ipTableDisplay.js`
+  (`backendUnits`: the DNS/DHCP backends from a health payload, one unit per daemon named by
+  its server label, an idle one (radvd with nothing to advertise) counted as running, with the
+  pre-0.5.1 dnsmasq flag as fallback; a unit whose roles are all switched off is `off`;
+  `unitState` is the one wording and tone for a unit; every chip or row naming a backend reads
+  it), `utils/ipTableDisplay.js`
   (`ipSourceLabel`, the one label for a DNS, DHCP or detection source), and in
   `views/networks-workspace-data.js` the `ipRowFields` adapter that fills every shared IP
   column for the workspace tables (both the Addresses and DHCP adapters spread it; add a
@@ -149,7 +164,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   checks the keys against the client catalog), and the client control is
   `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
-  `dialog-actions`, `card-header`, `field-error`, `field-help`), `assets/analytics-workspace.css` for the
+  `dialog-actions`, `card-header`, `field-error`, `field-help`, `fill-panel`: the root of a
+  Settings `fill` section or full page, whose inner table or log scrolls instead of the page; a
+  `scrollHeight="flex"` DataTable directly inside it takes the height left under its siblings), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
   the `split`/`three` modifiers, `.figures` with `--figures`, `.lists` with `--lists`), `assets/panel-chrome.css` for the
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
@@ -159,48 +176,68 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `normalizeRecordNameForZone`, `normalizeDnsName`: the zone-file rule for record names, a
   trailing dot is absolute and anything else is under the zone; SQL that builds an FQDN must
   agree with it), `utils/reverse-zones.js` (`generateReverseName(s)`,
-  `reverseZoneNetwork`: the in-addr.arpa and ip6.arpa names for a CIDR and back),
+  `reverseNameOf` for one address, `reverseZoneNetwork`: the in-addr.arpa and ip6.arpa names for a CIDR and back),
   `utils/config-value-validation.js` (`validateConfigSafeValue` and the record-name and TXT
   checks: what a DNS or DHCP value may contain before any backend writes it),
   `services/ip-lifecycle-service.js` for every lifecycle
   write, `models/ip-events.js` for address history (`ip_events` and `ip_range_events`; history
   is keyed by address, never by row, so it outlives the row), `utils/executable.js` (`findExecutable`: where a
   command would run from, searched on PATH as a shell does), `utils/request-actor.js`
-  (`currentActor`, the signed-in user a write deep in a model should name), `models/ip-view.js` for every server-owned display field (status, type, and
+  (`currentActor`, the signed-in user a write deep in a model should name;
+  `currentRequestContext` for the whole request: user, origin, client address),
+  `recordAudit` in `services/audit.js` (every audit row: `before`/`after` keep only changed
+  fields and skip a no-op, secrets masked, `sample()` for a bulk list, `settingsSnapshot` for a
+  settings write, `source` for the system's own rows; a new write route records or is listed in
+  `tests/unit/services/audit-coverage.test.js`), `onUnitEvent` in `backends/index.js` (a daemon
+  restarted, stopped or failing; `services/system-audit.js` writes its rows), `models/ip-view.js` for every server-owned display field (status, type, and
   `dhcp_lease_state` from the newest lease; any read that shows an address feeds it
   `in_dynamic_pool` and `dhcp_expires_at` rather than computing its own; a count of rogue
   hosts runs rows through it too), `macIsAuthoritative` in `models/ip-lifecycle.js` (whether DHCP sets an address's stored MAC; anything comparing an observed MAC with the stored one asks it), `isAddressPoolScope` / `addressPoolScopeSql` in `models/dhcp-scope.js` (whether a scope's
   pools hand out addresses: every DHCPv4 scope and a stateful DHCPv6 one, never a SLAAC or
   stateless one; anything treating a scope as a dynamic pool asks it), `backends/index.js` (the DNS/DHCP backend registry: `getDnsBackend`,
-  `getDhcpBackend`, `getService`, `backendStatuses` for what the health endpoints report,
-  `selectDhcpBackend` and `servesDhcp` for which backend answers DHCP (only
-  `services/dhcp-backend-switch.js` and boot move it), `onBackendChanged` for anything bound to a
-  backend (a watcher, a log tail) to follow the role,
+  `getDhcpBackend`, `getRaBackend`, `getService`, `backendStatuses` for what the health
+  endpoints report (each status carries a display `label`), `STACKS`, `stackName`,
+  `stackServices` and `selectStack` for which stack serves (dnsmasq, or PowerDNS + Kea + radvd;
+  only `services/stack-switch.js` (`switchStack`, `switchPreflight`, `selectStackAtBoot`) and
+  boot move it, and `utils/switch-state.js` says whether a switch runs), `onBackendChanged` for
+  anything bound to a backend (a watcher, a log tail) to follow the role,
   `getDnsBackend().servedTtl(record)` for the TTL a record is answered with: every record read
   carries it as `served_ttl`, and a TTL display shows that, never the stored `ttl`; only `backends/**` imports an adapter, and an adapter never
   writes the database), `services/backend-apply.js` (`applyDns`, `applyDhcp`, `applyResolver`:
   what the after-commit hooks run; `applyAtBoot` and `applyListenNow` for the paths that cannot
   wait for a hook; route and service tests stub them with `stubBackendApply`, or swap the
   registry with `fakeBackendsModule`, both in `tests/helpers/fake-backends.js`; Kea's control
-  API is `startFakeKea` in `tests/helpers/fake-kea.js`; a new adapter
+  API is `startFakeKea` in `tests/helpers/fake-kea.js` and PowerDNS Authoritative's is
+  `startFakePdns` in `tests/helpers/fake-pdns.js`; `applyZones` may return a Promise, which the
+  after-commit runner waits for; a new adapter
   passes `tests/contract/backend-contract.js`, and its golden seeds `seedBackendEstate` from
   `tests/helpers/backend-estate.js`; anything reading the backend's log asks
   `getService(role).logSource()` and follows it with `createLogFollower` in
-  `utils/log-reader.js`), `backends/features.js` (the catalog of backend-dependent
+  `utils/log-reader.js`; `/api/logs/sources` tells the client which role has a log),
+  `holdHooks` in `utils/after-commit.js` (wait for the running after-commit hooks and defer new
+  ones until released), `backendDnsPort` in `config/defaults.js` (the port the DNS backend
+  answers on: internal behind the proxy, the LAN port in bypass), `backends/features.js` (the catalog of backend-dependent
   features; an adapter's `capabilities()` is `declareSupport(roles, [...ids])`; ask
   `supports(id)` from the registry, gate a write with `refuseUnlessSupported(res, id)` or
   `assertSupported(id)` in `utils/backend-features.js`, and in the client
   `useFeatures().supports(id)`/`reason(id)`), `backends/shared/` (what more than one adapter
   needs: `loadDhcpScopes` and `loadDhcpReservations` in `dhcp-scope-model.js` for what every
-  DHCP adapter serves, options merged and resolved; `poolSegments` for a pool minus its
+  DHCP adapter serves, options merged and resolved; `loadDnsZones` in `dns-zone-model.js` for
+  the zones and records every DNS adapter serves, with `LOCAL_RECORD_TTL` for a record without
+  its own TTL, and `servedHostsByAddress` (the one name each address answers a reverse lookup
+  with); `reserved-zones.js` for the reserved and site-local names a resolver keeps local; `ensureSecret` and `readSecret` in `secret.js` for a 0600 key file; `poolSegments` for a pool minus its
   reserved addresses; `atomicWrite` and `createValidatedFiles` for a rendered config written as
-  one checked transaction; `createUnitControl` for starting, reloading and checking a daemon,
-  with `enableFile` for one s6 keeps down until wanted),
+  one checked transaction; `createUnitControl` for starting, stopping, reloading and checking
+  a daemon (`installed`, `awaitStopped`), with `enableFile` for one s6 keeps down until wanted
+  and `disableFile` for one that runs unless told not to, dnsmasq),
+  `utils/ntp-status.js` (`getNtpStatus`: is the clock synchronized),
   `utils/lease-time.js` (`leaseSeconds`, `isValidLeaseTime`: every read of a stored lease
   time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and
   `activeLeaseSql` in `utils/lease-sql.js` (which lease to believe for an address, and is a
   lease active),
-  `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync; `holdLeaseSync` to keep it still), `readSetting` in `models/setting.js` (one stored setting, null when absent), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
+  `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync; `holdLeaseSync` to keep it still;
+  it releases a lease holding another client's reservation, `holdsAnotherClientsReservation` in the
+  lifecycle service, and runs after every DHCP apply through `onDhcpApplied` in `services/backend-apply.js`), `readSetting` in `models/setting.js` (one stored setting, null when absent), `roleSwitchedOff` in `utils/role-switches.js` (is DNS or DHCP switched off in CIDRella: no stack serves it then; the registry and the DNS proxy both ask it), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder
   upstream, DoT or DoH: reused connections, retry, address failover, fail closed),
@@ -218,9 +255,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   percentiles),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
   enabled set, blanks filled from its network; new scopes and Bulk Change; `USE_DEFAULT` there
-  marks an option linked to its default, written as a NULL row), `networkOptionFills` and
-  `FALLBACK_SECONDARY_DNS` in `utils/dhcp-network-options.js` (what a scope takes from its
-  network, either family; the scope dialog imports it through `@shared`),
+  marks an option linked to its default, written as a NULL row), `networkOptionFills` in
+  `utils/dhcp-network-options.js` (what a scope takes from its network, either family; DNS is
+  CIDRella's address alone, never an outside fallback; the scope dialog imports it through
+  `@shared`),
   `resolveEffectiveScopeOptions` and `isLinkedOption` in `models/dhcp-scope.js` (what a scope
   serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
   `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default),
@@ -228,7 +266,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   with a reason; see ARCHITECTURE.md Sign-in sessions), `models/filtering-exemption.js`
   (every rule for a host with DNS filtering off: keyed by MAC, else address; `exemptAddressSet`
   is what the proxy and the reads both use) and `utils/filtering-pause.js` (the pause periods,
-  client through `@shared`), `utils/resolution-feed.js` (the Resolution Map's live event
+  client through `@shared`), `utils/query-log.js` (the DNS proxy's query lines in the DNS
+  backend's log, for a backend whose `logSource()` says `proxyQueries`; the line format and its
+  parser are `utils/query-log-line.js`), `utils/resolution-feed.js` (the Resolution Map's live event
   buffer; the map never reads the proxy's `getAndReset*` counters) and `utils/geo-cities.js`
   (the city table: coarsening, file format and lookup, shared with
   `scripts/build-geo-cities.js`), client `components/analytics/ResolutionCanvas.vue` (the map and

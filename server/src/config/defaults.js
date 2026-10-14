@@ -75,7 +75,7 @@ export const DEFAULTS = {
   // Migration 033 seeds this row as 'true' and 076 flips a fresh database to
   // 'false', so this default only matters if the row is ever deleted.
   dhcp_enabled: 'false',
-  audit_log_retention_days: 7,
+  audit_log_retention_days: 90,
   geoip_enabled: 'false',
   geoip_mode: 'blocklist',
   geoip_proxy_port: '5353', // legacy, kept for migration compat
@@ -185,6 +185,14 @@ export const PROXY_UDP_TIMEOUT_MS = 5000;
 export const ENCRYPTED_FORWARDER_TIMEOUT_MS = 2500;
 export const ENCRYPTED_FORWARDER_BUDGET_MS = 4500;
 export const ENCRYPTED_FORWARDER_HOLD_MS = 30_000;
+// PowerDNS Recursor (behind the proxy, in dnsmasq's place) gives a forwarder
+// this long before trying again: just past the forwarder's whole budget, so
+// it never sends a second copy while the first is still being worked on, and
+// inside the proxy's wait, so the client hears the answer.
+export const RECURSOR_NETWORK_TIMEOUT_MS = ENCRYPTED_FORWARDER_BUDGET_MS + 100;
+// PowerDNS Authoritative on loopback: DNS for Recursor, and its HTTP API.
+export const PDNS_AUTH_DNS_PORT = 5300;
+export const PDNS_AUTH_API_PORT = 8053;
 
 /**
  * Returns the port dnsmasq should bind internally, given the user's LAN
@@ -217,6 +225,17 @@ export function resolveDnsmasqInternalPort(lanListenPort) {
 export function resolveDnsListenPort(rawValue) {
   const p = Number(rawValue);
   return Number.isInteger(p) && p >= 1 && p <= 65535 ? p : DEFAULT_DNS_LISTEN_PORT;
+}
+
+/**
+ * Where the DNS backend (dnsmasq or PowerDNS Recursor) answers on loopback:
+ * the internal port behind the proxy, or in bypass mode the LAN port itself.
+ * null with DNS switched off. `listenPort` is the stored dns_listen_port.
+ */
+export function backendDnsPort({ listenPort, bypass = false, enabled = true }) {
+  if (!enabled) return null;
+  const lan = resolveDnsListenPort(listenPort);
+  return bypass ? lan : resolveDnsmasqInternalPort(lan);
 }
 export const ANALYTICS_FLUSH_INTERVAL_MS = 5000; // 5 seconds
 export const ANALYTICS_RETENTION_CLEANUP_MS = 6 * 60 * 60 * 1000; // 6 hours

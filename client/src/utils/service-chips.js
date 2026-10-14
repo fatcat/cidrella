@@ -2,7 +2,7 @@
 // each DNS/DHCP backend by name, the DNS proxy, and how many forwarders
 // answer. The Dashboard and Performance both lead their rail with these.
 
-import { backendUnits } from './backend-status.js';
+import { backendUnits, unitState } from './backend-status.js';
 
 const PROTOCOL_LABELS = { dot: 'DoT', doh: 'DoH' };
 
@@ -22,17 +22,18 @@ export function serviceChips(services) {
   const fw = s.forwarders || [];
   const up = fw.filter((f) => f.reachable).length;
   return [
-    ...backendUnits(s).map((unit) => ({
-      key: unit.key,
-      label: unit.name,
-      value: unit.running ? 'Running' : 'Stopped',
-      tone: unit.running ? 'ok' : 'err',
-    })),
+    ...backendUnits(s).map((unit) => ({ key: unit.key, label: unit.name, ...unitState(unit) })),
     {
       key: 'proxy',
       label: 'DNS proxy',
-      value: s.geoip_bypassed ? 'Bypassed' : s.geoip_proxy ? 'Running' : 'Stopped',
-      tone: s.geoip_bypassed ? 'warn' : s.geoip_proxy ? 'ok' : 'err',
+      // With DNS switched off the proxy does not listen, on purpose. The DNS
+      // backend's own `off` cannot say so on dnsmasq, which also serves DHCP.
+      ...(s.geoip_switched_off
+        ? { value: 'Off', tone: 'muted' }
+        : {
+            value: s.geoip_bypassed ? 'Bypassed' : s.geoip_proxy ? 'Running' : 'Stopped',
+            tone: s.geoip_bypassed ? 'warn' : s.geoip_proxy ? 'ok' : 'err',
+          }),
     },
     {
       key: 'forwarders',

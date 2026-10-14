@@ -64,3 +64,21 @@
   font-size: var(--app-fs-xs);
   color: var(--cid-text-muted-color);
 }
+
+/* The root of a panel that fills its host (a Settings `fill` section, a full
+   page): a column at full height whose inner table or log scrolls, never the
+   page. */
+.fill-panel {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+}
+/* A flex-scroll table (scrollHeight="flex") sizes itself to 100% of its
+   parent and ignores what sits above it, which pushes its last rows under the
+   clip edge. In a fill panel it takes the height that is left. */
+.fill-panel > .p-datatable-flex-scrollable {
+  flex: 1 1 0;
+  min-height: 0;
+  height: auto;
+}

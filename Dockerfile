@@ -61,6 +61,26 @@ RUN apk add --no-cache \
     setcap cap_net_raw,cap_net_bind_service+ep /usr/sbin/kea-dhcp4 && \
     setcap cap_net_raw,cap_net_bind_service+ep /usr/sbin/kea-dhcp6
 
+# PowerDNS Authoritative and Recursor, the other DNS server. They stay down
+# until CIDRella serves DNS from them (rootfs/etc/s6-overlay/scripts/pdns.sh)
+# and run as cidrella. Recursor binds port 53 in proxy bypass mode, so it
+# carries that capability; Authoritative keeps to loopback ports above 1024.
+# pdns-doc holds the gsqlite3 schema CIDRella creates the database from.
+RUN apk add --no-cache \
+    pdns \
+    pdns-backend-sqlite3 \
+    pdns-doc \
+    pdns-recursor && \
+    test -f /usr/share/doc/pdns/schema.sqlite3.sql && \
+    setcap cap_net_bind_service+ep /usr/sbin/pdns_recursor
+
+# radvd sends the IPv6 Router Advertisements while the PowerDNS + Kea stack
+# serves (dnsmasq sends its own). It stays down until then
+# (rootfs/etc/s6-overlay/s6-rc.d/radvd/run) and runs as cidrella, so the
+# binary carries the raw-socket capability its ICMPv6 socket needs.
+RUN apk add --no-cache radvd && \
+    setcap cap_net_raw+ep /usr/sbin/radvd
+
 # Create non-root user for Node.js
 RUN addgroup -g 65532 cidrella && \
     adduser -D -u 65532 -G cidrella -H -s /sbin/nologin cidrella
@@ -86,7 +106,7 @@ RUN apk add --no-cache python3 py3-pip py3-scikit-learn py3-numpy py3-joblib && 
     setcap cap_net_raw,cap_net_bind_service+ep $(readlink -f $(which node))
 
 # Copy application code
-COPY package.json ./
+COPY package.json LICENSE NOTICE ./
 COPY server/ ./server/
 COPY dnsmasq/ ./dnsmasq/
 

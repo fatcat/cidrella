@@ -406,7 +406,7 @@ function saveScopeOptions(db, scopeId, subnet, options, { replace = false } = {}
   }
 }
 
-function getScopeWithDetails(db, scopeId) {
+export function getScopeWithDetails(db, scopeId) {
   const scope = db
     .prepare(
       `
@@ -428,7 +428,9 @@ function getScopeWithDetails(db, scopeId) {
       scope.end_ip = scope.pools[0].end_ip;
     }
     scope.options = db
-      .prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?')
+      .prepare(
+        'SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ? ORDER BY option_code',
+      )
       .all(scopeId);
     scope.effective = resolveEffectiveScopeOptions(db, scope);
   }

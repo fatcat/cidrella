@@ -1,5 +1,6 @@
-
 # CIDRella
+
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/fatcat/cidrella/badge)](https://scorecard.dev/viewer/?uri=github.com/fatcat/cidrella)
 
 Have a home network lab and need something better than a spreadsheet to plan and track your networks? Perhaps a small business, or even a medium-sized business. Need integrated address planning, DNS and DHCP all rolled into one, but found other solutions much too complicated (Netbox) or too simple (Pi-hole)? CIDRella is lightweight IP Address Management system that requires minimal system resources (can be deployed as a container or LXC) and minimal learning curve.
 
@@ -9,45 +10,47 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 
 ## Features
 
-- **IP address management**: Hierarchical subnets, folders, VLANs, functional ranges, table/grid views, and a canonical IP state model shared across Networks, DHCP, and DNS.
-- **DNS management**: Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation. An optional **"do not provide recursion"** mode makes CIDRella authoritative-only (answers its own zones, no external forwarding), which also disables forwarders, encryption, and domain/GeoIP filtering since they no longer apply.
-- **DNSSEC validation**: UI toggle that turns on dnsmasq DNSSEC validation against the root trust anchor, with a TCP-capable DNS proxy (so large/signed answers and validating-stub resolvers work) while blocklist + GeoIP filtering stay in place. NTP is enabled automatically and dnsmasq starts lenient on signature timestamps until the clock syncs.
-- **Encrypted forwarders (DoT/DoH)**: Optionally encrypt CIDRella→upstream DNS via DNS-over-TLS or DNS-over-HTTPS through a built-in stub (no external daemon), with preset unfiltered resolvers (Cloudflare/Google/Quad9/AdGuard) or custom. Fails closed (no silent plaintext fallback) and stays compatible with DNSSEC validation.
-- **DHCP management**: Scopes, global defaults for new scopes, per-scope options, DHCP Reservations, dynamic lease tracking, and DHCP-derived DNS records.
-- **Choice of DHCP server**: dnsmasq or ISC Kea 3.0, switched in Settings > DHCP > Server with every IPv4 and IPv6 lease moved across, so clients keep their addresses. Kea is installed alongside and stays off until switched to; dnsmasq keeps DNS and the IPv6 Router Advertisements either way.
-- **IPv6, behind one switch**: Off by default. Turn it on under Settings, General, Interfaces to list the host's IPv6 addresses, listen on them, manage IPv6 networks (SLAAC, stateless or stateful DHCPv6 per network, DUID reservations, AAAA and ip6.arpa) and run the DHCPv6 and Router Advertisement checks. Off, CIDRella is an IPv4 product and refuses new IPv6 objects.
-- **Rogue DHCP and router detection**: Scheduled active probes (DHCPv4 DISCOVER broadcast, DHCPv6 SOLICIT multicast) that flag unauthorized DHCP servers answering on CIDRella's segments, plus rogue IPv6 routers read from the Router Advertisements the kernel accepted. CIDRella's own server and configured gateways are auto-trusted, with a user allowlist by IP, MAC or DUID. Surfaces a yellow warning on the Ops chip.
-- **Liveness and rogue detection**: Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
-- **Passive device/OS fingerprinting**: Identifies each DHCP client's device type and OS family from its DHCP fingerprint (options 55/60 + hostname) and MAC OUI, classified by an offline ruleset. Surfaced as a "Device" column and the IP details drawer. No active scanning, no raw sockets.
-- **Analytics**: the Dashboard is a health board answering "is the network healthy right now": service status, the conditions that need a decision (rogue DHCP servers, rogue hosts, anomalous devices, scope conflicts, DHCP review, reconciliation) each linking to where it is acted on, resolution latency and cache figures, DNS and DHCP traffic, and the address plan. Performance shows the resolver's figures (queries per minute, p95 latency, cache hit rate, timeouts, pending, process CPU and memory) with their series over the chosen range. Intelligence is DNS filtering: whether each filter is on, the allowed and blocked verdicts over the range, and ranked lists of what was permitted, what each filter blocked (domains, categories, countries, hosts, host-and-domain pairs) and what answered without DNSSEC, backed by DuckDB.
-- **Blocklists and GeoIP filtering**: Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy. Two distinct exemptions: a shared **domain allowlist** (always allow a domain everywhere) and a GeoIP **IP/CIDR allowlist** (never GeoIP-block specific addresses/ranges, IPv4 or IPv6, regardless of country).
-- **Anomaly detection**: Python sidecar for unusual query volume, new-domain patterns, beaconing, and DGA-like behavior. Every scored window also gets a threat-shape score (entropy, NXDOMAIN rate, name length, subdomain depth, block rate) that is independent of the per-device model. The Analytics > Anomalies triage page plots each monitored device by deviation from its own baseline against threat shape, and opening a device shows its evidence: behavior timeline, score history, contributing signals, why the latest window was flagged with the names behind each factor, and the DNS queries behind it.
-- **Pi-hole import**: Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP Reservations, and upstream DNS settings.
-- **Operations and recovery**: Signed native updates, scheduled backups, restore validation (a restore asks whether this appliance should serve DHCP afterwards, so a copy of another appliance never becomes a second DHCP server, and the restored data carries an audit entry for the restore), reset-password and reset-web-port tools, log viewing, and audit history.
-- **Certificate management**: Self-signed defaults, certificate upload, RSA/ECDSA CSR generation, and certificate/key validation.
-- **Role based access control**: Admin, DNS, DHCP, and readonly roles with permission-checked APIs and audited mutations.
+* **IP address management**: Hierarchical subnets, folders, VLANs, functional ranges, table/grid views, and a canonical IP state model shared across Networks, DHCP, and DNS.
+* **DNS management**: Forward and reverse zones with A, CNAME, MX, TXT, SRV, PTR records, SOA serial management, PTR sync, and direct dnsmasq config generation. 
+* **DNSSEC validation**: Turns on dnsmasq DNSSEC validation against the root trust anchor.
+* **Encrypted forwarders (DoT/DoH)**: Optionally encrypt CIDRella→upstream DNS via DNS-over-TLS or DNS-over-HTTPS through a built-in stub (no external daemon), with preset unfiltered resolvers (Cloudflare/Google/Quad9/AdGuard) or custom. 
+* **DHCP management**: Scopes, global defaults for new scopes, per-scope options, DHCP Reservations, dynamic lease tracking, bulk updates, and DHCP-derived DNS records.
+* **Choice of DHCP & DNS servers (coming in 0.6.0)**: dnsmasq or ISC Kea with PowerDNS.
+* **IPv6**: Off by default. Turn it on under Settings, General, Interfaces to list the host's IPv6 addresses, listen on them, manage IPv6 networks, SLAAC, stateless or stateful DHCPv6 per network, DUID reservations, AAAA and ip6.arpa. Run the DHCPv6 and Router Advertisement checks.
+* **Rogue DHCP and router detection**: Scheduled active probes (DHCPv4 DISCOVER broadcast, DHCPv6 SOLICIT multicast) that flag unauthorized DHCP servers answering on CIDRella's segments, plus rogue IPv6 routers read from the Router Advertisements the kernel accepted.
+* **IP liveness and rogue detection**: Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
+* **Passive device/OS fingerprinting**: Identifies each DHCP client's device type and OS family from its DHCP fingerprint (options 55/60 + hostname) and MAC OUI, classified by an offline ruleset.
+* **Analytics**: service status, rogue DHCP servers, rogue hosts, anomalous devices, scope conflicts, DHCP review, host performance, queries per minute, p95 latency, cache hit rate, timeouts, pending, process CPU and memory, and much more.
+* **Blocklists and GeoIP filtering**: Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy.
+* **Anomaly detection**: Observe and notify unusual query volume, new-domain patterns, beaconing, and DGA-like behavior.
+* **Pi-hole import**: Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP Reservations, and upstream DNS settings.
+* **Operations and recovery**: Signed native updates, scheduled backups, restore validation, reset-password and reset-web-port tools, log viewing, and audit history.
+* **Certificate management**: Self-signed defaults, certificate upload, RSA/ECDSA CSR generation, and certificate/key validation.
+* **Role based access control**: Admin, DNS, DHCP, and readonly roles with permission-checked APIs and audited mutations.
 
 ---
 
-![CIDRella Networks Page](https://raw.githubusercontent.com/fatcat/cidrella/main/client/public/networks.png)
+[![A network's addresses in CIDRella's IP Management workspace](docs/screenshots/ip-table.png)](docs/screenshots/ip-table.md)
+
+**[Browse all ten screenshots →](docs/screenshots/ip-table.md)** Each page has Previous and Next links.
 
 ---
 
 ## Host Sizing
 
-CIDRella targets 1–2 GB hosts. Per-IP bookkeeping in SQLite is the dominant memory cost, so very large allocated subnets (e.g. `/10`, `/8`) will outgrow modest hosts long before DHCP lease counts become the bottleneck. See [docs/SIZING.md](docs/SIZING.md) for the ceiling-per-host table and the math behind it.
-
-Developer notes: shared IP state returned to the UI follows the canonical read/write naming contract in [docs/API_MODEL.md](docs/API_MODEL.md). Backend database ownership boundaries are tracked in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md).
+CIDRella requires hosts with 1–2 GB RAM. Very large allocated subnets (e.g. `/10`, `/8`) will outgrow modest hosts long before DHCP lease counts become the bottleneck. See [docs/SIZING.md](docs/SIZING.md) for the ceiling-per-host table and the math behind it.
 
 ## Installation
 
 > **Use caution**: While no known vulnerabilities exist in this application, it would be unwise to expose its open ports on a public network. Always secure your infrastructure.
 
-> **Only install CIDRella from the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Starting with v0.4.1, every release tarball is cryptographically signed using [minisign](https://jedisct1.github.io/minisign/). Both the install script and the update script automatically verify the signature before applying changes. This ensures the tarball you are installing was built by the project maintainer and has not been modified. **Do not install or update using a tarball obtained from any other source.** There is no way to verify its authenticity or integrity.
+> **Only install CIDRella from the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Starting with v0.4.1, every release tarball is cryptographically signed using [minisign](https://jedisct1.github.io/minisign/). Both the install script and the update script automatically verify the signature before applying changes. This ensures the tarball you are installing was built by the project maintainer and has not been modified. **Do not install or update using a tarball obtained from any other source.** There is no way to verify its authenticity or integrity. Each release's notes also link a [VirusTotal](https://www.virustotal.com/) scan of its tarball.
 
 **Cloning the repository** is suitable for development and code review. For production deployments, use the install script or a release tarball. These include the pre-built frontend and are signature-verified.
 
 ### Option 1: Automated install (Debian/Ubuntu)
+
+Generally speaking performing an install of any software including CIDRella in this manner is a terrible idea and should only be done to a host that is completely isolated and you're willing to sacrifice. Consult the [**INSTALL-NATIVE.md**](docs/INSTALL-NATIVE.md) for full details on alternate installation methods that afford an opportunity to review the code *before* installation.
 
 Download and review the install script, then run it:
 
@@ -57,46 +60,54 @@ less install.sh    # review before running
 sudo bash install.sh
 ```
 
-The script installs system dependencies, uses the bundled Node runtime from the release tarball, downloads the latest signed release from GitHub, verifies the signature, and configures systemd services. See **[INSTALL-NATIVE.md](INSTALL-NATIVE.md)** for full details.
+The script installs system dependencies, uses the bundled Node runtime from the release tarball, downloads the latest signed release from GitHub, verifies the signature, and configures systemd services.
 
 ### Option 2: Docker
 
 For development and testing:
 
 ```bash
-docker compose up -d
+git clone https://github.com/fatcat/cidrella.git
+cd cidrella
+docker compose up -d --build
 ```
 
-See **[INSTALL-DOCKER.md](INSTALL-DOCKER.md)** for full details. Note: in-app updates are not available in Docker. Update by pulling the latest image.
+See [**INSTALL-DOCKER.md**](docs/INSTALL-DOCKER.md) for full details. Note: in-app updates are not available in Docker. Update by pulling the latest image.
 
 ### First run
 
-The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password (the appliance-wide rule is set here too: a minimum length, mixed case, a number, a symbol, each on its own), optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes, choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start. Nothing but the password and the second factor is applied until the last step, and an interrupted setup resumes where it stopped. Upgraded installs never see it. Two-factor can be turned on, off, or given fresh backup codes later under Settings > Access > Two-factor, and the password rule under Settings > Access > Password rule. A restore carries the restoring operator's two-factor enrolment into the restored data.
+The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password, optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes (strongly encouraged), choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start.
 
 ## Upgrading
 
 CIDRella checks for new releases on startup and every hour. When an update is available, a blue badge appears in the header bar.
 
 **In-app (native deployments):**
-Navigate to **System > Updates** and click **Install Update**. CIDRella will download the release from GitHub, verify the signature, back up the current installation, and apply the update automatically.
+Navigate to **Settings > Maintenance > Updates** and click **Install Update**. CIDRella will download the release from GitHub, verify the signature, back up the current installation, and apply the update automatically.
 
 **Command line:**
+
 ```bash
-sudo cidrella-update               # update to latest
-sudo cidrella-update --version 0.5.0  # update to specific version
-sudo cidrella-update --tarball /root/cidrella-v0.5.0-linux-x64.tar.gz  # install a local signed build
+# update to latest
+sudo cidrella-update
 ```
 
-The update script (`/opt/cidrella/update.sh`) backs up the current installation, downloads and verifies the signed release tarball, installs dependencies, and restarts services. Database migrations run automatically on startup.
+```bash
+# update to specific version
+sudo cidrella-update --version 0.5.0
+```
 
-Native updates also refresh the installed systemd units, sudoers/polkit helpers,
-logrotate configuration, and recovery scripts. Hosts installed before the
-ambient-capability change receive the updated systemd capability configuration
-when the installer/update path refreshes the unit files.
+```bash
+# install a local signed build
+sudo cidrella-update --tarball /root/cidrella-v0.5.0-linux-x64.tar.gz
+```
+
+The update script (`/opt/cidrella/update.sh`) works the same way the in-app update works and performs the same steps.
 
 **Docker:**
+
 ```bash
-docker compose pull && docker compose up -d
+docker compose pull && docker compose up -d --build
 ```
 
 > **Do not apply updates using tarballs downloaded from sources other than the official [GitHub releases](https://github.com/fatcat/cidrella/releases).** Manually extracting an unverified tarball bypasses signature verification and could compromise your network infrastructure.
@@ -104,8 +115,6 @@ docker compose pull && docker compose up -d
 ## Web UI Ports
 
 CIDRella's standard web UI ports are `443` for HTTPS and `80` for the HTTP-to-HTTPS redirect. Ports below `1024` require `CAP_NET_BIND_SERVICE`; the native systemd unit installed by CIDRella includes this capability.
-
-If CIDRella is behind nginx, Traefik, or another reverse proxy, the HTTP redirect can be disabled in **Settings > Interfaces**. When redirect is disabled, CIDRella does not bind the configured HTTP port.
 
 If a web port change makes the UI unreachable, run:
 
@@ -117,26 +126,31 @@ This clears the stored web port overrides, re-enables the HTTP redirect, and res
 
 ## Architecture
 
-| Layer | Technology |
-|-------|-----------|
-| DNS/DHCP | DNSmasq; ISC Kea 3.0 for DHCP when chosen |
-| Backend | Node.js + Express |
-| Frontend | Vue 3 + PrimeVue |
-| Database | SQLite (better-sqlite3) |
-| Database | DuckDB (for analytics and anomaly detection) |
-| Custom | DNS proxy (for domain and country blocking) |
-| Anomaly Detection | Python sidecar |
-| Process Manager | s6-overlay (Docker), systemd (native) |
-
 See [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) for backend database ownership boundaries, model/service responsibilities, and guardrails.
+
+| Layer             | Technology                                   |
+| ----------------- | -------------------------------------------- |
+| DHCP              | dnsmasq (or Kea in 0.6.0)                    |
+| DNS               | dnsmasq (or PowerDNS in 0.6.0)               |
+| Backend           | Node.js + Express                            |
+| Frontend          | Vue 3 + PrimeVue                             |
+| Database          | SQLite (better-sqlite3)                      |
+| Database          | DuckDB (for analytics and anomaly detection) |
+| Custom            | DNS proxy (for domain and country blocking)  |
+| Anomaly Detection | Python sidecar                               |
+| Process Manager   | s6-overlay (Docker), systemd (native)        |
 
 ## Roles
 
-| Role | Description |
-|------|-------------|
-| admin | Full access to all features |
-| dns_admin | Manage DNS records and zones |
-| dhcp_admin | Manage DHCP Scopes and DHCP Reservations |
-| readonly_dns | View DNS configuration |
-| readonly_dhcp | View DHCP configuration |
-| readonly | View all configuration |
+| Role          | Description                              |
+| ------------- | ---------------------------------------- |
+| admin         | Full access to all features              |
+| dns_admin     | Manage DNS records and zones             |
+| dhcp_admin    | Manage DHCP Scopes and DHCP Reservations |
+| readonly_dns  | View DNS configuration                   |
+| readonly_dhcp | View DHCP configuration                  |
+| readonly      | View all configuration                   |
+
+## License
+
+CIDRella is licensed under the [Apache License, Version 2.0](LICENSE). You may use, modify and redistribute it, commercially or not, as long as you keep the copyright notice, the license and the [NOTICE](NOTICE) file with every copy, and mark the files you changed. The NOTICE file also credits the IP geolocation data CIDRella includes, which DB-IP provides under CC BY 4.0.

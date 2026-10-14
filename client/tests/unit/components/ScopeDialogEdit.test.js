@@ -19,7 +19,6 @@ vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => toast }));
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 
 const ScopeDialog = (await import('../../../src/components/ScopeDialog.vue')).default;
-const { FALLBACK_SECONDARY_DNS } = await import('@shared/dhcp-network-options.js');
 
 const DialogStub = {
   props: ['visible'],
@@ -562,7 +561,7 @@ describe('network fills from a picked range', () => {
       28: '10.0.0.255',
       15: 'lab.test',
       119: 'lab.test',
-      6: `10.0.0.2, ${FALLBACK_SECONDARY_DNS}`,
+      6: '10.0.0.2',
     });
   });
 

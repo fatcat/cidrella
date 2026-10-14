@@ -4,15 +4,21 @@
  * them, and the names and DNS records they get, is decided here.
  */
 import { getDhcpBackend, onBackendChanged } from '../backends/index.js';
+import { onDhcpApplied } from './backend-apply.js';
 import { findSubnetForIp } from '../utils/ip-sync.js';
 import { generateFallbackHostname } from '../utils/mac-vendor.js';
 import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
-import { dhcpLeaseRejectionReason } from './ip-lifecycle-service.js';
+import {
+  dhcpLeaseRejectionReason,
+  holdsAnotherClientsReservation,
+} from './ip-lifecycle-service.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
 
 /**
  * Store a backend's whole lease set: leases missing from `leases` are
- * released. Returns how many were kept and how many refused.
+ * released. Returns how many were kept and how many refused, and the refused
+ * leases that hold another client's DHCP Reservation (`blocking`), for
+ * syncLeasesNow to release at the backend.
  */
 export function ingestLeases(db, leases) {
   const located = [];
@@ -29,12 +35,14 @@ export function ingestLeases(db, leases) {
   }
 
   const acceptedLeases = [];
+  const blocking = [];
   let rejected = 0;
   for (const lease of located) {
     const rejection = dhcpLeaseRejectionReason(db, lease);
     if (rejection) {
       rejected++;
-      console.warn(`Rejected lease ${lease.ip}: ${rejection}`);
+      if (holdsAnotherClientsReservation(db, lease)) blocking.push(lease);
+      else console.warn(`Rejected lease ${lease.ip}: ${rejection}`);
     } else {
       acceptedLeases.push(lease);
     }
@@ -55,7 +63,39 @@ export function ingestLeases(db, leases) {
   // A host with filtering off is keyed by MAC; its new address takes effect now.
   loadFilteringOverrides();
 
-  return { synced: acceptedLeases.length, rejected };
+  return { synced: acceptedLeases.length, rejected, blocking };
+}
+
+/**
+ * Release leases that hold a DHCP Reservation's address for another client.
+ * The server will not give a leased address to the reservation's client, and
+ * a lease that never ends (dnsmasq gives a reserved host one, and a switch
+ * used to carry it over) would keep it from that client for good. Never
+ * throws: what could not be released is logged and tried on the next sync.
+ */
+export async function releaseBlockingLeases(leases, backend = getDhcpBackend()) {
+  let released = 0;
+  for (const lease of leases) {
+    const client = lease.duid || lease.mac || 'unknown client';
+    let result;
+    try {
+      result = await backend.releaseLease(lease);
+    } catch (err) {
+      result = { released: false, error: err.message };
+    }
+    if (result?.released) {
+      released++;
+      console.log(
+        `Released lease ${lease.ip} (${client}): the address is reserved for another client`,
+      );
+    } else {
+      const why = result?.error || result?.skipped || 'not released';
+      console.warn(
+        `Could not release lease ${lease.ip} (${client}) blocking its DHCP Reservation: ${why}`,
+      );
+    }
+  }
+  return released;
 }
 
 /**
@@ -66,7 +106,9 @@ export function ingestLeases(db, leases) {
 export async function syncLeasesNow(db, read = {}) {
   const { leases, unsettled } = await getDhcpBackend().readLeases(read);
   if (!leases) return { synced: 0, unsettled: Boolean(unsettled) };
-  return ingestLeases(db, leases);
+  const result = ingestLeases(db, leases);
+  if (result.blocking.length) result.released = await releaseBlockingLeases(result.blocking);
+  return result;
 }
 
 let syncDb = null;
@@ -132,7 +174,9 @@ export async function holdLeaseSync() {
 
 /**
  * Sync now, then every time the DHCP backend says its leases may have
- * changed, following the role to another backend when it moves. Returns
+ * changed, following the role to another backend when it moves, and after
+ * every DHCP apply: a lease on an address that just became another client's
+ * reservation is released without waiting for the leases to change. Returns
  * the stop.
  */
 export function startLeaseSync(db) {
@@ -148,10 +192,12 @@ export function startLeaseSync(db) {
       runLeaseSync('Lease sync error');
     }
   });
+  const stopApplied = onDhcpApplied(() => runLeaseSync('Lease sync error'));
   runLeaseSync('Initial lease sync failed');
   watch();
   return () => {
     unsubscribe();
+    stopApplied();
     stopWatching?.();
   };
 }

@@ -25,7 +25,7 @@ A few things worth knowing if you're evaluating CIDRella for self-hosting:
 - **A/B slot updates with auto-rollback.** Updates extract to an inactive slot, preflight-probe the new slot's `/api/health/deep`, and only swap the symlink if the probe passes. A failed health check after switchover triggers automatic rollback to the previous slot. DNS and DHCP stay up across updates (the `cidrella-dnsmasq` service is never restarted by the updater).
 - **Systemd hardening.** Service units run with `ProtectSystem=strict`, narrow `CapabilityBoundingSet`, `NoNewPrivileges`, `PrivateDevices`, the full `Protect*` family, and explicit `ReadWritePaths`. The Python anomaly daemon runs with an empty capability bounding set.
 - **Filesystem permissions.** `cidrella.db`, `analytics.duckdb`, and the TLS private key are mode 0600 and owned by the `cidrella` user. The `certs/`, `backups/`, and `anomaly/` directories are mode 0700.
-- **Break-glass key rotation.** Primary signing-key rotation is supported via signed announcements verified against an embedded break-glass pubkey, applied before tarball verification. See `BREAK-GLASS-CEREMONY.md`.
+- **Break-glass key rotation.** Primary signing-key rotation is supported via signed announcements verified against an embedded break-glass pubkey, applied before tarball verification. See [docs/BREAK-GLASS-CEREMONY.md](docs/BREAK-GLASS-CEREMONY.md).
 
 ## Historical disclosures
 

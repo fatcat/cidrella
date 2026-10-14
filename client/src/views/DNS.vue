@@ -243,7 +243,7 @@
             <span>Enable DNSSEC validation</span>
           </div>
           <p v-if="dnssecSupported === false" class="dnssec-warn">
-            This host's dnsmasq was not built with DNSSEC support, so validation cannot be enabled.
+            This host's DNS server was not built with DNSSEC support, so validation cannot be enabled.
           </p>
           <p v-else-if="savedDnssec && savedDnssec.enabled" class="dnssec-status">
             <StatusDot

@@ -8,6 +8,7 @@ import { DHCP_LEASE_WATCH_MS } from '../../config/defaults.js';
 import { CONF_DIR, DHCP_HOSTS_DIR, HOSTS_DIR } from './paths.js';
 import {
   applyInterfaceConfig,
+  awaitDnsmasqStopped,
   dnsmasqRestartPending,
   dnsmasqSupportsDnssec,
   isCidrellaDnsmasqRunning,
@@ -17,6 +18,8 @@ import {
   restartDnsmasq,
   servedRecordTtl,
   signalDnsmasq,
+  stopDnsmasq,
+  dnsmasqUnitInstalled,
   withValidatedDnsmasqUpdate,
 } from './dnsmasq.js';
 import {
@@ -82,23 +85,19 @@ function apply(write, { activate = true } = {}) {
   };
 }
 
-/**
- * `servesDhcp()` says whether dnsmasq answers DHCP or only sends the Router
- * Advertisements while another backend serves (backends/index.js).
- */
-export function createDnsmasqBackend({ servesDhcp = () => true } = {}) {
+export function createDnsmasqBackend() {
   // Scopes are in conf-dir (restart); reservations in dhcp-hostsdir (reread
-  // on SIGHUP). Not serving, the same files carry the RA only.
+  // on SIGHUP).
   const applyScopes = (db, opts) =>
     apply(() => {
-      const serving = servesDhcp();
-      const confChanged = regenerateScopeConfigs(db, { serving });
-      const resChanged = regenerateReservations(db, { serving });
+      const confChanged = regenerateScopeConfigs(db);
+      const resChanged = regenerateReservations(db);
       return confChanged ? 'restart' : resChanged ? 'reload' : 'none';
     }, opts);
 
   return {
     name: 'dnsmasq',
+    label: 'dnsmasq',
     roles: ROLES,
 
     dns: {
@@ -118,6 +117,9 @@ export function createDnsmasqBackend({ servesDhcp = () => true } = {}) {
       // SIGHUP after the clock syncs makes dnsmasq enforce them.
       onClockSynchronized: () => signalDnsmasq(),
       servedTtl: (record) => servedRecordTtl(record),
+      // A zone set to forward unknown names gets no local=, so dnsmasq
+      // forwards them itself.
+      forwardsUnknownItself: true,
       // Optional op: clear what older releases left behind.
       retireLegacyArtifacts: () => retireLegacyBlocklistConf(),
     },
@@ -155,15 +157,16 @@ export function createDnsmasqBackend({ servesDhcp = () => true } = {}) {
       },
     },
 
-    // The Router Advertisements come from the DHCPv6 scope files. While
-    // dnsmasq serves DHCP, applyScopes writes them; while another backend
-    // does, this does (the same files, answering no request).
+    // The Router Advertisements come from the DHCPv6 scope files, which
+    // applyScopes writes (backend-apply.js calls this only for a separate
+    // RA backend, so on the dnsmasq stack it is never called).
     ra: {
       applyRouterAdvertisements: applyScopes,
     },
 
     status: () => ({
       name: 'dnsmasq',
+      label: 'dnsmasq',
       running: isCidrellaDnsmasqRunning(),
       restartPending: dnsmasqRestartPending(),
     }),
@@ -188,9 +191,34 @@ export function createDnsmasqBackend({ servesDhcp = () => true } = {}) {
       return 'unchanged';
     },
     restart: () => restartDnsmasq(),
-    // Started by restart(), which returns once systemd has it running.
-    async awaitRunning() {
-      if (!isCidrellaDnsmasqRunning()) throw new Error('dnsmasq is not running');
+    // When the other stack takes DNS and DHCP. It stays down, across
+    // reboots too, until restart() or activate() starts it again.
+    stop: () => stopDnsmasq(),
+    // A host whose install left dnsmasq to the system (install.sh's include
+    // or skip mode) has none of CIDRella's to stop or start.
+    installed: () =>
+      dnsmasqUnitInstalled()
+        ? { ok: true }
+        : { ok: false, reason: 'dnsmasq is not run by CIDRella here (no cidrella-dnsmasq.service)' },
+    awaitStopped: (opts) => awaitDnsmasqStopped(opts),
+    // systemd has it running once restart() returns; under s6 the
+    // supervisor starts it a moment later.
+    async awaitRunning({ timeoutMs = 10000, intervalMs = 250 } = {}) {
+      const deadline = Date.now() + timeoutMs;
+      while (!isCidrellaDnsmasqRunning()) {
+        if (Date.now() >= deadline) throw new Error('dnsmasq is not running');
+        await new Promise((resolve) => setTimeout(resolve, intervalMs));
+      }
+    },
+    // A stack switch back to dnsmasq: its whole configuration written and
+    // checked as one, dnsmasq still stopped (PowerDNS and Kea hold its ports).
+    async stage(db) {
+      withValidatedDnsmasqUpdate(() => {
+        this.dns.applyListen(db, { activate: false });
+        this.dns.applyResolver(db, { activate: false });
+        this.dns.applyZones(db, { activate: false });
+        applyScopes(db, { activate: false });
+      });
     },
     // The directories dnsmasq.conf points hostsdir, dhcp-hostsdir and
     // conf-dir at; dnsmasq refuses to start without them.

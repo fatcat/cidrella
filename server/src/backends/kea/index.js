@@ -36,6 +36,7 @@ import {
   pruneLegalLogs,
   unitName,
   enableFlagPath,
+  memfilePaths,
 } from './paths.js';
 import { ensureKeaSecret, readKeaSecret } from './secret.js';
 import { createKeaClient } from './client.js';
@@ -45,6 +46,7 @@ import {
   keaPacketCounters,
   leaseSignature,
   readKeaLeases,
+  readMemfileLeases,
   releaseKeaLease,
 } from './leases.js';
 import { createLegalLogParser, isLegalLine } from './legal-log-parser.js';
@@ -202,6 +204,7 @@ export function createKeaBackend(deps = {}) {
 
   return {
     name: 'kea',
+    label: 'Kea',
     roles: ROLES,
 
     dhcp: {
@@ -259,11 +262,16 @@ export function createKeaBackend(deps = {}) {
         return importKeaLeases(commands, leases, { ...opts, families: families() });
       },
       serverIdentity: () => ({ duid: serverDuid() }),
+      // The leases in Kea's lease files, read with Kea stopped (boot moving
+      // an install Kea served back to dnsmasq).
+      readStoredLeases: () =>
+        FAMILIES.flatMap((family) => readMemfileLeases(memfilePaths(family), family)),
       dhcpCounters: () => keaPacketCounters(commands, families()),
     },
 
     status: () => ({
       name: 'kea',
+      label: 'Kea',
       running: runningFamilies().length === families().length,
       restartPending: units[4].restartPending(),
     }),
@@ -281,6 +289,9 @@ export function createKeaBackend(deps = {}) {
     restart: () => applyActivation('restart'),
     stop() {
       for (const family of FAMILIES) units[family].stop();
+    },
+    async awaitStopped(opts) {
+      for (const family of FAMILIES) await units[family].awaitStopped(opts);
     },
     // Whether the daemons can run here at all, for the switch's preflight.
     installed() {
@@ -323,6 +334,14 @@ export function createKeaBackend(deps = {}) {
         }
       }
     },
+    // A stack switch, before dnsmasq stops: Kea running with its
+    // configuration and listening nowhere (it is not the DHCP backend yet),
+    // ready to take the leases.
+    async stage(db) {
+      withValidatedKeaUpdate(() => renderAll(db));
+      applyActivation('restart');
+      await this.awaitRunning();
+    },
     // Kea refuses a control-socket directory looser than 0750.
     prepare() {
       fs.mkdirSync(KEA_LOG_DIR, { recursive: true });
@@ -344,6 +363,8 @@ export function createKeaBackend(deps = {}) {
       dhcpDirection: () => null,
       isDhcpLine: isLegalLine,
       createDhcpParser: createLegalLogParser,
+      // An audit log, kept as long as the audit log is; the viewer never clears it.
+      clearable: false,
     }),
   };
 }

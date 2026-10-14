@@ -27,6 +27,32 @@
       </button>
     </div>
 
+    <div v-if="setup.servers" class="fr-stacks">
+      <div class="fr-eyebrow">Servers</div>
+      <div class="fr-cards" role="group" aria-label="Servers">
+        <button
+          v-for="stack in setup.servers.stacks"
+          :key="stack.name"
+          type="button"
+          class="fr-card"
+          :aria-pressed="setup.chosenStack === stack.name"
+          :disabled="!stack.installed.ok"
+          :data-stack="stack.name"
+          data-track="first-run-stack"
+          @click="draft.stack = stack.name"
+        >
+          <span class="fr-card-title">{{ stack.label }}</span>
+          <span v-if="stack.daemons.join(', ') !== stack.label" class="fr-card-desc">{{
+            stack.daemons.join(', ')
+          }}</span>
+          <span v-if="!stack.installed.ok" class="fr-card-note">{{ stack.installed.reason }}</span>
+          <span v-else-if="gainsAndLosses(stack.name)" class="fr-card-note">{{
+            gainsAndLosses(stack.name)
+          }}</span>
+        </button>
+      </div>
+    </div>
+
     <div v-if="loading" class="fr-note">
       <i class="pi pi-spinner pi-spin"></i> Reading interfaces
     </div>
@@ -160,7 +186,7 @@ const ROLES = [
   },
 ];
 const ROLE_NOTE = {
-  both: 'dnsmasq will answer DNS and DHCP on the interfaces ticked above. DHCP answers nothing until a network with a scope exists.',
+  both: 'DNS and DHCP will be answered on the interfaces ticked above. DHCP answers nothing until a network with a scope exists.',
   dns: 'DHCP is switched off globally. The DHCP column is locked; it can be enabled per interface later from Settings > General > Interfaces.',
   dhcp: 'DNS is switched off globally, so port 53 stays closed. Clients keep whatever resolver they have now.',
 };
@@ -172,6 +198,14 @@ const GATEWAY_END_OPTIONS = GATEWAY_POSITION_OPTIONS.filter((o) =>
 );
 
 const loading = ref(false);
+
+// What picking another stack would add and lose, against the one serving now.
+function gainsAndLosses(name) {
+  const target = setup.servers?.targets.find((t) => t.name === name);
+  if (!target) return '';
+  const part = (lead, list) => (list.length ? `${lead} ${list.map((f) => f.label).join(', ')}.` : '');
+  return [part('Adds', target.gained), part('Loses', target.lost)].filter(Boolean).join(' ');
+}
 const saving = ref(false);
 const error = ref('');
 
@@ -183,6 +217,7 @@ const selectionOk = computed(
 );
 
 onMounted(async () => {
+  setup.loadServers();
   if (draft.interfaces.length > 0) return;
   loading.value = true;
   try {
@@ -211,6 +246,7 @@ async function submit() {
         role: draft.role,
         interfaces: setup.interfaceConfig,
         gateway_position: draft.gatewayPosition,
+        ...(setup.chosenStack ? { stack: setup.chosenStack } : {}),
       },
     });
     emit('next');
@@ -229,6 +265,11 @@ async function submit() {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
+}
+.fr-stacks {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
 }
 .fr-badge {
   margin-left: 0.4rem;

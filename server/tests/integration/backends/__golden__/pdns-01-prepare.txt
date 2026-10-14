@@ -1,0 +1,18 @@
+##### api
+##### files
+=== auth/pdns.conf ===
+# Written by CIDRella. Edits here are overwritten.
+launch=gsqlite3
+gsqlite3-database=<DATA_DIR>/pdns/auth/pdns.sqlite3
+local-address=127.0.0.1
+local-port=5300
+socket-dir=<DATA_DIR>/pdns/run
+api=yes
+api-key=<API_KEY>
+webserver=yes
+webserver-address=127.0.0.1
+webserver-port=<API_PORT>
+webserver-allow-from=127.0.0.1/32,::1/128
+security-poll-suffix=
+
+##### commands

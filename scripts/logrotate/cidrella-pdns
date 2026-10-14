@@ -1,0 +1,19 @@
+# CIDRella PowerDNS log rotation
+#
+# Installed to /etc/logrotate.d/cidrella-pdns by scripts/install.sh and
+# scripts/update.sh.
+#
+# pdns.log holds both PowerDNS daemons' output and a line per DNS query from
+# CIDRella's DNS proxy: as busy as dnsmasq.log with log-queries. copytruncate,
+# because the daemons and CIDRella hold it open for append.
+
+/var/lib/cidrella/pdns/pdns.log {
+    size 50M
+    rotate 7
+    compress
+    delaycompress
+    missingok
+    notifempty
+    copytruncate
+    dateext
+}

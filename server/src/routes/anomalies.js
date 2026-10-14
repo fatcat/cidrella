@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, getSetting, audit } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
+import { recordAudit, settingsSnapshot } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { isValidAddress } from '../utils/ip.js';
@@ -174,7 +175,11 @@ router.post('/acknowledge', requirePerm('analytics:write'), (req, res) => {
       ?.id || 0;
 
   Setting.upsertSetting(db, 'anomaly_acknowledged_score_id', String(maxId));
-  audit(req.user.id, 'anomaly_counter_acknowledged', 'anomaly_scores', null, { through_id: maxId });
+  recordAudit({
+    action: 'anomaly_counter_acknowledged',
+    entityType: 'anomaly_scores',
+    details: { through_id: maxId },
+  });
 
   res.json({
     ok: true,
@@ -196,7 +201,7 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
   const events = db
     .prepare(
       `SELECT * FROM anomaly_scores
-     WHERE is_anomaly = 1 AND window_start >= datetime('now', '-' || ? || ' days')
+     WHERE is_anomaly = 1 AND datetime(window_start) >= datetime('now', '-' || ? || ' days')
      ORDER BY client_ip, window_start`,
     )
     .all(days)
@@ -219,6 +224,9 @@ router.get('/events', requirePerm('analytics:read'), (req, res) => {
 // gets a dot, flagged or not, so "within baseline" is visible as a cloud rather
 // than an absence. threat_score is NULL for windows scored before the column
 // existed; the sidecar fills it on its next cycle.
+// window_start comes in two shapes (see windowToUtcMs below), and as text
+// '2026-10-13T01:00:00+00:00' sorts after '2026-10-13 10:50:00', so a time
+// window compares datetime(window_start), which reads either shape.
 router.get('/map', requirePerm('analytics:read'), (req, res) => {
   const db = getDb();
   const rows = db
@@ -228,7 +236,7 @@ router.get('/map', requirePerm('analytics:read'), (req, res) => {
               s.is_anomaly, s.resolved,
               (SELECT COUNT(*) FROM anomaly_scores f
                 WHERE f.identity = m.identity AND f.is_anomaly = 1
-                  AND f.window_start >= datetime('now', '-1 day')) AS flagged_24h
+                  AND datetime(f.window_start) >= datetime('now', '-1 day')) AS flagged_24h
          FROM anomaly_models m
          LEFT JOIN anomaly_scores s ON s.id = (
            SELECT x.id FROM anomaly_scores x
@@ -412,11 +420,15 @@ router.delete('/:id', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid ID' });
   }
 
-  const result = Anomaly.deleteScore(db, id);
+  const deleted = Anomaly.deleteScore(db, id);
+  if (!deleted) return res.status(404).json({ error: 'Anomaly not found' });
 
-  if (result.changes === 0) {
-    return res.status(404).json({ error: 'Anomaly not found' });
-  }
+  recordAudit({
+    action: 'anomaly_deleted',
+    entityType: 'anomaly_score',
+    entityId: id,
+    details: { client: deleted.client_ip, window_start: deleted.window_start },
+  });
   res.json({ ok: true });
 });
 
@@ -477,11 +489,16 @@ router.post('/:id/dismiss', requirePerm('dns:write'), (req, res) => {
     return res.status(400).json({ error: 'Invalid ID' });
   }
 
-  const result = Anomaly.dismissScore(db, id);
-
-  if (result.changes === 0) {
+  const dismissed = Anomaly.dismissScore(db, id);
+  if (!dismissed) {
     return res.status(404).json({ error: 'Anomaly not found or already resolved' });
   }
+  recordAudit({
+    action: 'anomaly_dismissed',
+    entityType: 'anomaly_score',
+    entityId: id,
+    details: { client: dismissed.client_ip },
+  });
   res.json({ ok: true });
 });
 
@@ -512,7 +529,12 @@ router.post(['/allowlist', '/whitelist'], requirePerm('dns:write'), (req, res) =
 
   const id = Anomaly.addAllowlistEntry(db, clientIp, reason);
 
-  audit(req.user.id, 'anomaly_allowlist_add', 'anomaly_allowlist', id, { client_ip, reason });
+  recordAudit({
+    action: 'anomaly_allowlist_add',
+    entityType: 'anomaly_allowlist',
+    entityId: id,
+    details: { client_ip, reason },
+  });
   res.status(201).json({ id, ok: true });
 });
 
@@ -526,8 +548,13 @@ router.delete(['/allowlist/:id', '/whitelist/:id'], requirePerm('dns:write'), (r
   if (!entry) return res.status(404).json({ error: 'Not found' });
 
   Anomaly.deleteAllowlistEntry(db, id);
-  audit(req.user.id, 'anomaly_allowlist_remove', 'anomaly_allowlist', id, {
-    client_ip: entry.client_ip,
+  recordAudit({
+    action: 'anomaly_allowlist_remove',
+    entityType: 'anomaly_allowlist',
+    entityId: id,
+    details: {
+      client_ip: entry.client_ip,
+    },
   });
   res.json({ ok: true });
 });
@@ -592,7 +619,14 @@ router.put('/settings', requireRole('admin'), (req, res) => {
     }
   }
 
+  const before = settingsSnapshot(allowedKeys, db);
   Setting.upsertSettings(db, Object.entries(updates));
+  recordAudit({
+    action: 'anomaly_settings_updated',
+    entityType: 'anomaly_settings',
+    before,
+    after: settingsSnapshot(allowedKeys, db),
+  });
 
   res.json({ ok: true, updated: Object.keys(updates) });
 });

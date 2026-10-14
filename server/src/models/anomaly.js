@@ -1,16 +1,19 @@
+// The deleted row, or undefined when there was none.
 export function deleteScore(db, id) {
-  return db.prepare('DELETE FROM anomaly_scores WHERE id = ?').run(id);
+  return db.prepare('DELETE FROM anomaly_scores WHERE id = ? RETURNING *').get(id);
 }
 
+// The dismissed row's client, or undefined when there was none to dismiss.
 export function dismissScore(db, id) {
   return db
     .prepare(
       `
     UPDATE anomaly_scores SET resolved = 1, resolved_at = datetime('now')
     WHERE id = ? AND resolved = 0
+    RETURNING client_ip
   `,
     )
-    .run(id);
+    .get(id);
 }
 
 // Resolve a client IP to the anomaly-detection identity it's scored under:

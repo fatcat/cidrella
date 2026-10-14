@@ -1,5 +1,5 @@
 <template>
-  <div class="blocklists-page" style="display: flex; flex-direction: column; height: 100%">
+  <div class="blocklists-page fill-panel">
     <!-- Stats Bar -->
     <div class="stats-bar">
       <div class="stat">

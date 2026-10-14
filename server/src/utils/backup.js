@@ -3,7 +3,13 @@ import path from 'path';
 import { execFileSync, spawnSync } from 'child_process';
 import Database from 'better-sqlite3';
 import { insertAuditRow } from '../models/audit-log.js';
-import { upsertSettingWithConflict, deleteSetting } from '../models/setting.js';
+import { recordAudit } from '../services/audit.js';
+import { LAST_VERSION_KEY } from '../services/version-audit.js';
+import {
+  upsertSettingWithConflict,
+  deleteSetting,
+  updateStoredSetting,
+} from '../models/setting.js';
 import * as User from '../models/user.js';
 import * as BackupCode from '../models/backup-code.js';
 import { endAllLiveSessions } from '../models/session.js';
@@ -119,6 +125,9 @@ export function createBackup(db) {
 
   // Kea's leases and server DUID, when Kea has ever served here.
   if (fs.existsSync(path.join(DATA_DIR, 'kea'))) includes.push('kea');
+  // Not pdns/: PowerDNS's database and configuration are derived from
+  // cidrella.db (backends/pdns). A restore leaves the host's copy; while
+  // PowerDNS serves DNS, the restart after a restore resyncs its zones.
 
   if (includes.length === 0) {
     throw new Error('No data files found to backup');
@@ -617,6 +626,10 @@ export function stampRestoredSettings(
         upsertSettingWithConflict(staged, RESTORE_CARRYOVER_KEY, JSON.stringify(carryover));
       }
       if (restoredBy) {
+        // The backup remembers the version that took it; the next boot would
+        // read that as an update. An UPDATE, not an insert: a backup from
+        // before 0.5.3 has no row, and boot then has nothing to compare.
+        updateStoredSetting(staged, LAST_VERSION_KEY, APP_VERSION);
         // Sessions that were live when the backup was taken must not come back
         // to life with it. A backup from before sessions existed has no table.
         const hasSessions = staged
@@ -628,9 +641,14 @@ export function stampRestoredSettings(
           : null;
         insertAuditRow(staged, {
           userId: user?.id ?? null,
-          action: 'restore',
+          action: 'backup_restored',
           entityType: 'backup',
+          actor: restoredBy.username || null,
+          origin: restoredBy.origin || null,
+          sourceIp: restoredBy.ip || null,
           details: {
+            // Kept here as well: a backup from before 0.5.3 has no actor column
+            // to hold it, and the restoring user may not exist in it.
             restored_by: restoredBy.username || null,
             backup_version: manifest?.cidrella_version ?? null,
             backup_schema_version: manifest?.schema_version ?? null,
@@ -1162,7 +1180,14 @@ export function startBackupScheduler() {
 
         if (now - lastRunTime >= interval) {
           console.log(`Scheduled backup (${scheduleValue})...`);
-          createBackup(db);
+          const backup = createBackup(db);
+          recordAudit({
+            action: 'backup_created',
+            entityType: 'backup',
+            entityId: backup?.id ?? null,
+            source: 'scheduler',
+            details: { filename: backup?.filename ?? null, schedule: scheduleValue },
+          });
 
           // Update last run time
           setSetting('backup_last_run', new Date().toISOString());
@@ -1170,6 +1195,16 @@ export function startBackupScheduler() {
         }
       } catch (err) {
         console.error('Scheduled backup failed:', err.message);
+        try {
+          recordAudit({
+            action: 'backup_failed',
+            entityType: 'backup',
+            source: 'scheduler',
+            details: { error: err.message },
+          });
+        } catch {
+          // The database may be what failed.
+        }
       }
     },
     15 * 60 * 1000,

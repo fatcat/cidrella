@@ -2,7 +2,8 @@ import { Router } from 'express';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
-import { getSetting, audit } from '../db/init.js';
+import { getSetting } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { APP_VERSION } from '../utils/version.js';
 import { checkForUpdates } from '../utils/update-checker.js';
 import { compareSemver } from '../utils/semver.js';
@@ -271,6 +272,17 @@ router.get('/ip-lifecycle-migration-report', requireRole('admin'), (req, res) =>
     return res.status(404).json({ error: 'IP lifecycle migration report not found.' });
   }
 
+  // The report is there because a migration stopped, so the database may not
+  // take the row; the download goes ahead regardless.
+  try {
+    recordAudit({
+      action: 'ip_lifecycle_migration_report_downloaded',
+      entityType: 'system',
+      details: { bytes: stat.size },
+    });
+  } catch (err) {
+    console.warn('Could not record the report download:', err.message);
+  }
   res.setHeader('Content-Type', 'application/json; charset=utf-8');
   res.setHeader('Content-Disposition', 'attachment; filename="ip-lifecycle-migration-report.json"');
   res.setHeader('Cache-Control', 'no-store');
@@ -359,9 +371,13 @@ router.post('/install', requireRole('admin'), (req, res) => {
     return res.status(500).json({ error: failedStatus.error });
   }
 
-  audit(req.user.id, 'update_started', 'system', null, {
-    from_version: APP_VERSION,
-    to_version: targetVersion,
+  recordAudit({
+    action: 'update_started',
+    entityType: 'system',
+    details: {
+      from_version: APP_VERSION,
+      to_version: targetVersion,
+    },
   });
 
   res.status(202).json({ started: true, version: targetVersion });

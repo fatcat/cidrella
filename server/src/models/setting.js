@@ -29,6 +29,11 @@ export function upsertSettingWithConflict(db, key, value) {
     .run(key, String(value));
 }
 
+/** Change a setting that is stored, and leave one that is not absent. */
+export function updateStoredSetting(db, key, value) {
+  return db.prepare('UPDATE settings SET value = ? WHERE key = ?').run(String(value), key);
+}
+
 export function deleteSetting(db, key) {
   return db.prepare('DELETE FROM settings WHERE key = ?').run(key);
 }

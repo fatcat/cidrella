@@ -69,3 +69,23 @@ export function reverseZoneNetwork(zoneName) {
   }
   return null;
 }
+
+/**
+ * The reverse lookup name of one address, either family: "10.0.1.5" is
+ * "5.1.0.10.in-addr.arpa", an IPv6 address its 32 nibbles under ip6.arpa.
+ * null for anything that is not an address.
+ */
+export function reverseNameOf(address) {
+  let parsed;
+  try {
+    parsed = parseNetwork(`${address}/${String(address).includes(':') ? 128 : 32}`);
+  } catch {
+    return null;
+  }
+  if (!parsed) return null;
+  if (parsed.family === 6) {
+    const nibbles = parsed.networkBig.toString(16).padStart(32, '0').split('');
+    return `${nibbles.reverse().join('.')}.ip6.arpa`;
+  }
+  return `${parsed.network.split('.').reverse().join('.')}.in-addr.arpa`;
+}

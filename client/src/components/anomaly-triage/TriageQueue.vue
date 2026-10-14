@@ -51,7 +51,9 @@
           <span class="row-tag">{{ row.patternLabel }}</span>
         </span>
         <span class="row-right">
-          <span class="row-score" :style="{ color: row.color }">{{ row.scoreLabel }}</span>
+          <span class="row-score" :style="{ color: row.color }" :title="row.scoreTitle">{{
+            row.scoreLabel
+          }}</span>
           <AnomalySparkline v-if="row.spark.length > 1" :scores="row.spark" :color="row.color" />
         </span>
       </button>
@@ -64,7 +66,7 @@ import AnomalySparkline from '../anomaly/AnomalySparkline.vue';
 import { QUEUE_FILTERS } from './triage-filters.js';
 
 defineProps({
-  rows: { type: Array, required: true }, // { id, name, ip, patternLabel, scoreLabel, color, spark }
+  rows: { type: Array, required: true }, // { id, name, ip, patternLabel, scoreLabel, scoreTitle, color, spark }
   counts: { type: Object, required: true }, // per filter id
   filter: { type: String, required: true },
   openId: { type: String, default: null },

@@ -45,13 +45,13 @@ export function uncachedName(zone) {
   return `${crypto.randomBytes(8).toString('hex')}.${zone}`;
 }
 
-/** An A query for `name` with EDNS and the DO bit, as dnsmasq sends them. */
-export function nameQuery(name, id = crypto.randomInt(0, 0x10000)) {
+/** A query for `name` (an A query unless `type` says) with EDNS and the DO bit, as dnsmasq sends them. */
+export function nameQuery(name, id = crypto.randomInt(0, 0x10000), type = 'A') {
   return dnsPacket.encode({
     id,
     type: 'query',
     flags: dnsPacket.RECURSION_DESIRED,
-    questions: [{ type: 'A', name }],
+    questions: [{ type, name }],
     additionals: [
       { type: 'OPT', name: '.', udpPayloadSize: 1232, flags: dnsPacket.DNSSEC_OK, options: [] },
     ],

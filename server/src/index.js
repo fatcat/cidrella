@@ -35,6 +35,7 @@ import { authMiddleware } from './auth/middleware.js';
 import { actorMiddleware } from './utils/request-actor.js';
 import {
   afterCommitMiddleware,
+  holdHooks,
   queueRegen,
   registerHookHandlers,
   resumePendingRegeneration,
@@ -42,7 +43,7 @@ import {
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import featuresRoutes from './routes/features.js';
-import dhcpBackendRoutes from './routes/dhcp-backend.js';
+import backendStackRoutes from './routes/backend-stack.js';
 import { BackendFeatureError } from './utils/backend-features.js';
 import subnetRoutes from './routes/subnets.js';
 import rangeTypeRoutes from './routes/range-types.js';
@@ -79,7 +80,11 @@ import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { allBackends, uniqueServices } from './backends/index.js';
-import { selectDhcpBackendAtBoot } from './services/dhcp-backend-switch.js';
+import { selectStackAtBoot } from './services/stack-switch.js';
+import { startSystemAudit, systemAuditBooted } from './services/system-audit.js';
+import { recordAudit } from './services/audit.js';
+import { recordVersionChange } from './services/version-audit.js';
+import { APP_VERSION } from './utils/version.js';
 import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
@@ -127,12 +132,22 @@ async function main() {
     console.error('Restore carry-over failed:', err.message);
   }
   console.log('Database initialized');
+  // An update or rollback run from the shell leaves its only trace here.
+  if (process.env.CIDRELLA_PREFLIGHT !== '1') {
+    try {
+      recordVersionChange(getDb(), { version: APP_VERSION, dataDir: DATA_DIR });
+    } catch (err) {
+      console.warn('Could not record the version change:', err.message);
+    }
+  }
+  // From here a daemon starting or stopping leaves an audit row.
+  startSystemAudit({ boot: true });
 
-  // Which backend serves DHCP comes from the database, so the services are
-  // prepared once it is open and before any hook renders their config. A
-  // switch a crash interrupted is undone: the DHCP files go back to the
-  // backend the setting names.
-  const { recovered } = selectDhcpBackendAtBoot(getDb());
+  // Which stack serves DNS and DHCP comes from the database, so the services
+  // are prepared once it is open and before any hook renders their config.
+  // A switch a crash interrupted is undone: the files go back to the stack
+  // the setting names.
+  const { recovered } = await selectStackAtBoot(getDb());
   for (const service of uniqueServices()) service.prepare();
   if (recovered && !recovered.finished) queueRegen('regenerate_dhcp');
 
@@ -292,11 +307,20 @@ async function main() {
       const result = AuditLog.pruneAuditLog(getDb(), days);
       if (result.changes > 0) {
         console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
+        recordAudit({
+          action: 'audit_log_pruned',
+          entityType: 'audit_log',
+          source: 'retention',
+          details: { removed: result.changes, retention_days: Number(days) },
+        });
       }
       // A backend's own audit log (Kea's legal log) keeps as long.
       for (const backend of allBackends()) {
         const files = backend.pruneLogs?.(Number(days)) || 0;
-        if (files > 0) console.log(`${backend.name} audit log: ${files} file(s) older than ${days} days removed`);
+        if (files > 0)
+          console.log(
+            `${backend.name} audit log: ${files} file(s) older than ${days} days removed`,
+          );
       }
       const sessions = Session.pruneSessions(getDb(), days);
       if (sessions.changes > 0) {
@@ -342,7 +366,12 @@ async function main() {
       },
       crossOriginEmbedderPolicy: false,
       referrerPolicy: { policy: 'strict-origin-when-cross-origin' },
-      strictTransportSecurity: { maxAge: 31536000, includeSubDomains: true },
+      // No HSTS. The certificate is self-signed until someone uploads one, and
+      // HSTS on a self-signed host makes the browser's certificate warning
+      // impossible to click past, locking the user out by name for a year.
+      // max-age=0 clears an entry an older release left, on a visit where the
+      // browser trusts the certificate (it ignores the header otherwise).
+      strictTransportSecurity: { maxAge: 0, includeSubDomains: false },
     }),
   );
   app.use((req, res, next) => {
@@ -440,7 +469,7 @@ async function main() {
   app.use('/api/settings', settingsRoutes);
   app.use('/api/dns', dnsRoutes);
   app.use('/api/dhcp/rogue', rogueDhcpRoutes);
-  app.use('/api/dhcp/server', dhcpBackendRoutes);
+  app.use('/api/backend-stack', backendStackRoutes);
   app.use('/api/devices', deviceRoutes);
   app.use('/api/dhcp', dhcpRoutes);
   app.use('/api/workspace', workspaceRoutes);
@@ -567,6 +596,14 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
       } catch (err) {
         console.warn(`Unable to clear startup status: ${err?.message || err}`);
       }
+      // Boot is over once the hooks it queued have run: daemon events after
+      // that are recorded in full.
+      holdHooks()
+        .then((release) => {
+          systemAuditBooted();
+          release();
+        })
+        .catch(() => systemAuditBooted());
     },
   });
 

@@ -1,5 +1,5 @@
 <template>
-  <div class="bulk-page">
+  <div class="fill-panel">
     <div class="bulk-toolbar">
       <SelectButton
         v-if="features.ipv6.value"
@@ -178,9 +178,9 @@
             <span>
               Also make these my {{ familyLabel }} defaults
               <span class="text-sm muted save-defaults-help">
-                On: the selected scopes use these defaults and follow later edits of them, and
-                new scopes start with them. Off: the selected scopes get these values as their
-                own, and the defaults stay as they are.
+                On: the selected scopes use these defaults and follow later edits of them, and new
+                scopes start with them. Off: the selected scopes get these values as their own, and
+                the defaults stay as they are.
               </span>
             </span>
           </label>
@@ -216,7 +216,9 @@
       <p v-if="saveDefaults">
         Options with a value use the default, so a later edit of your defaults reaches these scopes.
       </p>
-      <p v-else>These scopes keep the values as their own; a later edit of the defaults leaves them alone.</p>
+      <p v-else>
+        These scopes keep the values as their own; a later edit of the defaults leaves them alone.
+      </p>
       <p>{{ applySummary }}.</p>
     </ConfirmDialog>
   </div>
@@ -458,12 +460,6 @@ onMounted(loadOptions);
 </script>
 
 <style scoped>
-.bulk-page {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
-}
 .bulk-toolbar {
   display: flex;
   align-items: center;

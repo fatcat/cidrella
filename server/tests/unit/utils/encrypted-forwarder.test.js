@@ -10,6 +10,7 @@ vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
 const {
   buildServfail,
+  fitToUdp,
   forwardDoT,
   forwardDoH,
   forwardPlain,
@@ -34,6 +35,60 @@ function encodeQuery(name, { withDo = false } = {}) {
     ];
   return dnsPacket.encode(msg);
 }
+
+describe('fitToUdp', () => {
+  // A query with (or without) an EDNS buffer, and an answer of A and AAAA
+  // records big enough to pass it.
+  const query = (udpPayloadSize) =>
+    dnsPacket.encode({
+      id: 7,
+      type: 'query',
+      flags: dnsPacket.RECURSION_DESIRED,
+      questions: [{ type: 'ANY', name: 'big.example' }],
+      additionals: udpPayloadSize ? [{ type: 'OPT', name: '.', udpPayloadSize }] : [],
+    });
+  const answer = (count) =>
+    dnsPacket.encode({
+      id: 7,
+      type: 'response',
+      flags: dnsPacket.RECURSION_DESIRED | dnsPacket.RECURSION_AVAILABLE,
+      questions: [{ type: 'ANY', name: 'big.example' }],
+      answers: Array.from({ length: count }, (_, i) =>
+        i % 2
+          ? { type: 'A', name: 'big.example', ttl: 60, data: `192.0.2.${i}` }
+          : { type: 'AAAA', name: 'big.example', ttl: 60, data: `2001:db8::${i.toString(16)}` },
+      ),
+      additionals: [{ type: 'OPT', name: '.', udpPayloadSize: 1232 }],
+    });
+
+  it('passes an answer that fits the buffer the client offered', () => {
+    const resp = answer(10);
+    expect(fitToUdp(query(1232), resp)).toBe(resp);
+  });
+
+  it('truncates one larger than the buffer to the question with TC, keeping the OPT', () => {
+    const resp = answer(60);
+    expect(resp.length).toBeGreaterThan(1232);
+    const fitted = fitToUdp(query(1232), resp);
+    const decoded = dnsPacket.decode(fitted);
+    expect(fitted.length).toBeLessThanOrEqual(1232);
+    expect(decoded.flags & dnsPacket.TRUNCATED_RESPONSE).toBeTruthy();
+    expect(decoded.id).toBe(7);
+    expect(decoded.questions).toEqual([{ type: 'ANY', name: 'big.example', class: 'IN' }]);
+    expect(decoded.answers).toEqual([]);
+    expect(decoded.additionals.map((a) => a.type)).toEqual(['OPT']);
+    // A bigger buffer takes it whole.
+    expect(fitToUdp(query(4096), resp)).toBe(resp);
+  });
+
+  it('holds a client without EDNS to 512 bytes', () => {
+    const resp = answer(30);
+    expect(resp.length).toBeGreaterThan(512);
+    expect(
+      dnsPacket.decode(fitToUdp(query(), resp)).flags & dnsPacket.TRUNCATED_RESPONSE,
+    ).toBeTruthy();
+  });
+});
 
 describe('buildServfail', () => {
   it('produces a SERVFAIL preserving id + question', () => {

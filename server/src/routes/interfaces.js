@@ -1,7 +1,8 @@
 import { Router } from 'express';
 import os from 'os';
 import fs from 'fs';
-import { getDb, getSetting, audit } from '../db/init.js';
+import { getDb, getSetting } from '../db/init.js';
+import { recordAudit, settingsSnapshot } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { getDnsBackend, getService } from '../backends/index.js';
 import { rebindProxy } from '../utils/dns-proxy.js';
@@ -16,9 +17,23 @@ import {
 } from '../utils/http-server.js';
 import { validPortOrError, validateInterfaceConfig } from '../utils/validation.js';
 import * as Setting from '../models/setting.js';
+import { switchInProgress } from '../utils/switch-state.js';
+import { queueRegen } from '../utils/after-commit.js';
 import { ipv6Enabled } from '../utils/ipv6-support.js';
 
 const router = Router();
+
+// The settings an interface save writes, for its audit row.
+const INTERFACE_KEYS = [
+  'interface_config',
+  'dns_enabled',
+  'dhcp_enabled',
+  'dns_listen_port',
+  'http_redirect_enabled',
+  'ipv6_enabled',
+  'https_port',
+  'http_port',
+];
 
 // Interface name prefixes to exclude
 const EXCLUDED_PREFIXES = ['br', 'veth', 'docker', 'virbr', 'tun', 'tap'];
@@ -127,7 +142,12 @@ router.get('/config', requirePerm('system:read'), (req, res) => {
 
 // PUT /api/interfaces/config: save interface config and apply
 router.put('/config', requirePerm('system:write'), async (req, res) => {
+  // The switch renders the listen config for the stack it moves to.
+  if (switchInProgress()) {
+    return res.status(409).json({ error: 'A server switch is running; try again when it is done' });
+  }
   const body = req.body || {};
+  const auditBefore = settingsSnapshot(INTERFACE_KEYS);
   const {
     interfaces,
     dns_enabled,
@@ -236,8 +256,10 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
         : false;
     })();
   } catch (err) {
-    console.warn('Failed to validate dnsmasq interface config:', err.message);
-    return res.status(500).json({ error: `dnsmasq configuration update failed: ${err.message}` });
+    console.warn('Failed to validate the DNS server interface config:', err.message);
+    return res
+      .status(500)
+      .json({ error: `${getDnsBackend().label} configuration update failed: ${err.message}` });
   }
 
   // Live-apply the HTTP listener toggle + port changes. Order matters:
@@ -292,6 +314,11 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   } catch {
     dnsmasqStatus = 'restart_failed';
   }
+  // dnsmasq takes its DHCP interfaces with the listen file above. A separate
+  // DHCP server (Kea, and radvd with it) renders them with its scopes.
+  if (dnsmasqSettingsChanged && getService('dhcp') !== getService('dns')) {
+    queueRegen('regenerate_dhcp');
+  }
 
   // Rebind proxy sockets to updated interface addresses
   try {
@@ -300,15 +327,11 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
     console.warn('Failed to rebind proxy:', err.message);
   }
 
-  audit(req.user.id, 'interface_config_updated', 'setting', null, {
-    interfaces,
-    dns_enabled,
-    dhcp_enabled,
-    dns_listen_port,
-    https_port: httpsPortNum,
-    http_port: httpPortNum,
-    http_redirect_enabled,
-    ipv6_enabled,
+  recordAudit({
+    action: 'interface_config_updated',
+    entityType: 'setting',
+    before: auditBefore,
+    after: settingsSnapshot(INTERFACE_KEYS),
   });
 
   res.json({

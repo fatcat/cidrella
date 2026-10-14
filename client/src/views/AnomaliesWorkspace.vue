@@ -155,32 +155,51 @@ const queueRows = computed(() =>
     ip: c.client_ip,
     patternLabel: PATTERNS[c.pattern]?.label || c.pattern,
     scoreLabel: c.latestScore != null ? c.latestScore.toFixed(2) : EMPTY_CELL,
+    // The queue ranks by the newest FLAGGED window; the map plots the newest
+    // window of any kind, so the two numbers can differ.
+    scoreTitle:
+      c.latestScore != null
+        ? `Last flagged score, ${timeAgo(isoish(c.lastAt))}. The map shows the newest window.`
+        : null,
     color: severityColor(c.latestSeverity),
     spark: c.sparkline.map((p) => p.score),
   })),
 );
 const queueNote = computed(() =>
-  state.value === 'ready' ? `${queueRows.value.length} devices, ranked by score` : '',
+  state.value === 'ready'
+    ? `${queueRows.value.length} devices, ranked by last flagged score`
+    : '',
 );
 
 // ── map ──────────────────────────────────────────────────────────────
-function dotColor(row) {
-  if (row.is_anomaly && !row.resolved) return severityColor(row.severity);
-  if (row.flagged_24h > 0) return chartColor('info');
-  return chartColor('track');
-}
+// A device whose newest window is older than this has stopped sending
+// queries; its dot fades, since where it sits says little about now.
+const STALE_WINDOW_MS = 24 * 3600e3;
+
+// The fill is the newest window's own verdict: its severity when that window
+// is flagged, grey otherwise. A calm device flagged earlier in the day keeps
+// the grey fill and gets an outline instead (`recent`), so blue fill means
+// one thing.
 const mapPoints = computed(() =>
-  store.map.map((row) => ({
-    id: row.identity,
-    name: row.hostname || row.client_ip,
-    ip: row.client_ip,
-    score: row.anomaly_score,
-    threat: row.threat_score,
-    severity: row.severity,
-    flagged24h: row.flagged_24h || 0,
-    actionable: !!row.is_anomaly || row.flagged_24h > 0,
-    color: dotColor(row),
-  })),
+  store.map.map((row) => {
+    const flaggedNow = !!row.is_anomaly && !row.resolved;
+    const flagged24h = row.flagged_24h || 0;
+    const windowAt = row.window_start ? Date.parse(isoish(row.window_start)) : NaN;
+    return {
+      id: row.identity,
+      name: row.hostname || row.client_ip,
+      ip: row.client_ip,
+      score: row.anomaly_score,
+      threat: row.threat_score,
+      severity: row.severity,
+      flagged24h,
+      actionable: flaggedNow || flagged24h > 0,
+      color: flaggedNow ? severityColor(row.severity) : chartColor('track'),
+      recent: !flaggedNow && flagged24h > 0,
+      stale: Number.isFinite(windowAt) && Date.now() - windowAt > STALE_WINDOW_MS,
+      windowAge: Number.isFinite(windowAt) ? timeAgo(isoish(row.window_start)) : null,
+    };
+  }),
 );
 const peerScores = computed(() =>
   store.map.map((r) => r.anomaly_score).filter((v) => typeof v === 'number'),

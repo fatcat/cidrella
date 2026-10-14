@@ -7,7 +7,7 @@
       <div class="setting-group">
         <h3>Manual Backup</h3>
         <p class="field-help" style="margin-bottom: 0.75rem">
-          Creates a backup of the database, certificates, and DNSmasq configuration.
+          Creates a backup of the database, certificates, and DNS and DHCP server configuration.
         </p>
         <Button
           label="Create Backup"

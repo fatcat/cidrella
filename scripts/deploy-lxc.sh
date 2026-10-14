@@ -192,31 +192,39 @@ ok "Services stopped."
 
 info "Syncing files to LXC..."
 
+# INSTALL_DIR is the A/B slot symlink on an installed host. Sync into the slot
+# it points at: rsync 3.5 refuses to follow a symlink a non-root user owns, and
+# chown -R on the link would change the link rather than the code.
+SYNC_DIR=$(ssh "$SSH_TARGET" "readlink -f ${INSTALL_DIR}")
+[ -n "$SYNC_DIR" ] || err "Could not resolve ${INSTALL_DIR} on ${LXC_HOST}."
+
 # Server source
 rsync -az --delete \
   --exclude='node_modules' \
   --exclude='__pycache__' \
   --exclude='*.pyc' \
   --exclude='*.pyo' \
-  "$PROJECT_DIR/server/" "${SSH_TARGET}:${INSTALL_DIR}/server/"
+  "$PROJECT_DIR/server/" "${SSH_TARGET}:${SYNC_DIR}/server/"
 
 # Client source, manifest, and built output. Preserve remote node_modules so
 # local deploys do not force a client dependency reinstall.
 rsync -az --delete \
   --exclude='node_modules' \
-  "$PROJECT_DIR/client/" "${SSH_TARGET}:${INSTALL_DIR}/client/"
+  "$PROJECT_DIR/client/" "${SSH_TARGET}:${SYNC_DIR}/client/"
 
 # dnsmasq config templates
 rsync -az --delete \
-  "$PROJECT_DIR/dnsmasq/" "${SSH_TARGET}:${INSTALL_DIR}/dnsmasq/"
+  "$PROJECT_DIR/dnsmasq/" "${SSH_TARGET}:${SYNC_DIR}/dnsmasq/"
 
-# Scripts
+# Scripts. update.sh lives in scripts/ in the repo but at the slot root in a
+# release, so it goes there alone below.
 rsync -az --delete \
-  "$PROJECT_DIR/scripts/" "${SSH_TARGET}:${INSTALL_DIR}/scripts/"
+  --exclude='/update.sh' \
+  "$PROJECT_DIR/scripts/" "${SSH_TARGET}:${SYNC_DIR}/scripts/"
 
 # Root files used by the deployed app and maintenance commands.
-rsync -az "$PROJECT_DIR/package.json" "${SSH_TARGET}:${INSTALL_DIR}/package.json"
-rsync -az "$PROJECT_DIR/update.sh" "${SSH_TARGET}:${INSTALL_DIR}/update.sh"
+rsync -az "$PROJECT_DIR/package.json" "${SSH_TARGET}:${SYNC_DIR}/package.json"
+rsync -az "$PROJECT_DIR/scripts/update.sh" "${SSH_TARGET}:${SYNC_DIR}/update.sh"
 
 ok "Files synced."
 
@@ -251,7 +259,9 @@ ok "Python dependencies installed."
 # ═══════════════════════════════════════════════════════════
 
 info "Fixing code permissions..."
-ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${INSTALL_DIR}"
+# The slot's contents, and the slot symlink back to root as install.sh makes it
+# (an earlier version of this script handed the link to cidrella).
+ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${SYNC_DIR} && { [ ! -L ${INSTALL_DIR} ] || chown -h root:root ${INSTALL_DIR}; }"
 ok "Permissions set."
 
 # Native/LXC systemd deployments use cidrella.service AmbientCapabilities.
@@ -273,7 +283,8 @@ ssh "$SSH_TARGET" "
 UNITS_UPDATED=false
 
 # Compare and update systemd units
-for UNIT in cidrella.service cidrella-dnsmasq.service cidrella-anomaly.service; do
+for UNIT in cidrella.service cidrella-dnsmasq.service cidrella-anomaly.service \
+  cidrella-pdns-auth.service cidrella-pdns-recursor.service; do
   SRC="${INSTALL_DIR}/scripts/systemd/${UNIT}"
   DST="/etc/systemd/system/${UNIT}"
   CHANGED=$(ssh "$SSH_TARGET" "
@@ -347,14 +358,20 @@ sleep 2
 
 # Verify
 CIDRELLA_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella 2>/dev/null || echo failed")
-DNSMASQ_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-dnsmasq 2>/dev/null || echo failed")
+# On the PowerDNS + Kea stack dnsmasq stays off: its unit's condition skips the
+# start while the stop flag exists, which is the expected state, not a failure.
+DNSMASQ_STATUS=$(ssh "$SSH_TARGET" "
+  if [ -f /var/lib/cidrella/runtime/dnsmasq.disabled ]; then echo 'off (stack: PowerDNS + Kea)'
+  else systemctl is-active cidrella-dnsmasq 2>/dev/null || echo failed; fi")
+DNSMASQ_OK=false
+case "$DNSMASQ_STATUS" in active | off*) DNSMASQ_OK=true ;; esac
 ANOMALY_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-anomaly 2>/dev/null || echo failed")
 
-if [ "$CIDRELLA_STATUS" = "active" ] && [ "$DNSMASQ_STATUS" = "active" ]; then
+if [ "$CIDRELLA_STATUS" = "active" ] && $DNSMASQ_OK; then
   ok "Core services running."
 else
   [ "$CIDRELLA_STATUS" != "active" ] && warn "cidrella: ${CIDRELLA_STATUS}"
-  [ "$DNSMASQ_STATUS" != "active" ] && warn "cidrella-dnsmasq: ${DNSMASQ_STATUS}"
+  $DNSMASQ_OK || warn "cidrella-dnsmasq: ${DNSMASQ_STATUS}"
   warn "Check logs: ssh ${SSH_TARGET} journalctl -u cidrella -n 30"
 fi
 

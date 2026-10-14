@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateDisplayString } from '../utils/ip.js';
 import { vlanIdError } from '../utils/validation.js';
@@ -92,7 +93,12 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
     });
     const vlan = create();
 
-    audit(req.user.id, 'vlan_created', 'vlan', vlan.id, { vlan_id, name: name.trim(), subnet_id });
+    recordAudit({
+      action: 'vlan_created',
+      entityType: 'vlan',
+      entityId: vlan.id,
+      details: { vlan_id, name: name.trim(), subnet_id },
+    });
     res.status(201).json(vlan);
   } catch (err) {
     // Race condition: another request assigned the VLAN between our pre-check and transaction
@@ -138,7 +144,15 @@ router.put('/:id', requirePerm('subnets:write'), (req, res) => {
     }
     return row;
   })();
-  audit(req.user.id, 'vlan_updated', 'vlan', vlan.id, { vlan_id: newVlanId, name: newName });
+  recordAudit({
+    action: 'vlan_updated',
+    entityType: 'vlan',
+    entityId: vlan.id,
+    before: vlan,
+    after: updated,
+    only: ['vlan_id', 'name'],
+    details: { vlan_id: newVlanId },
+  });
   res.json(updated);
 });
 
@@ -151,7 +165,12 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
   // Clear dangling vlan_id references in subnets
   SubnetTopology.clearVlanAssignments(db, vlan.vlan_id);
   Vlan.deleteVlan(db, vlan.id);
-  audit(req.user.id, 'vlan_deleted', 'vlan', vlan.id, { vlan_id: vlan.vlan_id, name: vlan.name });
+  recordAudit({
+    action: 'vlan_deleted',
+    entityType: 'vlan',
+    entityId: vlan.id,
+    details: { vlan_id: vlan.vlan_id, name: vlan.name },
+  });
   res.json({ ok: true });
 });
 

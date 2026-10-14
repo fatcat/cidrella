@@ -6,6 +6,7 @@
 #     cidrella account in group _kea, and the cidrella-kea@ unit. Returns
 #     nonzero on failure; Kea is optional (dnsmasq serves DHCP without it),
 #     so callers warn and carry on.
+#   - kea_installed: are the Kea packages installed.
 #
 # It never starts, stops or restarts Kea: CIDRella runs it only while it is
 # the DHCP server, the same rule updates follow for dnsmasq.
@@ -71,16 +72,24 @@ _kea_repo() {
 }
 
 # install_kea <slot>
+# kea_installed: are ISC's Kea packages installed.
+kea_installed() {
+  # shellcheck disable=SC2086
+  dpkg -s $KEA_PACKAGES >/dev/null 2>&1
+}
+
 install_kea() {
   local slot="${1:?slot path required}"
 
-  if ! dpkg -s $KEA_PACKAGES >/dev/null 2>&1; then
+  if ! kea_installed; then
+    info "Kea: installing from ISC's repository (first time only)..."
     _kea_repo || return 1
     # shellcheck disable=SC2086
     if ! DEBIAN_FRONTEND=noninteractive apt-get install -y -qq $KEA_PACKAGES >/dev/null 2>&1; then
       warn "Kea: apt-get install $KEA_PACKAGES failed"
       return 1
     fi
+    ok "Kea installed"
   fi
 
   # ISC's own units would take ports 67 and 547 from dnsmasq. They are not

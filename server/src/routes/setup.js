@@ -1,9 +1,11 @@
 import { Router } from 'express';
 import { effectivePasswordPolicy, validatePolicyPatch } from '../auth/password-policy.js';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { validateInterfaceConfig } from '../utils/validation.js';
 import { getSetupState, setSetupState, upsertSettings } from '../models/setting.js';
+import { STACKS } from '../backends/index.js';
 
 // First-run setup state. The wizard itself is a client concern; the server
 // only keeps the step markers so an interrupted setup resumes, and hands the
@@ -41,8 +43,13 @@ function validatePatch(body) {
       if (d.gateway_position !== undefined && !GATEWAY_POSITIONS.has(d.gateway_position)) {
         return 'deployment.gateway_position must be first or last';
       }
+      if (d.stack !== undefined && !Object.hasOwn(STACKS, d.stack)) {
+        return `deployment.stack must be one of: ${Object.keys(STACKS).join(', ')}`;
+      }
       patch.deployment = { role: d.role, interfaces: d.interfaces ?? {} };
       if (d.gateway_position) patch.deployment.gateway_position = d.gateway_position;
+      // The server stack is only remembered here; Start switches to it.
+      if (d.stack) patch.deployment.stack = d.stack;
     }
   }
   if ('import' in body) {
@@ -97,9 +104,13 @@ router.put('/state', requirePerm('system:write'), (req, res) => {
   const db = getDb();
   if (Object.keys(patch).length > 0) setSetupState(db, patch);
   if (policy) upsertSettings(db, Object.entries(policy));
-  audit(req.user.id, 'setup_step', 'system', null, {
-    ...patch,
-    ...(policy ? { password_policy: policy } : {}),
+  recordAudit({
+    action: 'setup_step',
+    entityType: 'system',
+    details: {
+      ...patch,
+      ...(policy ? { password_policy: policy } : {}),
+    },
   });
   res.json(stateResponse(db));
 });

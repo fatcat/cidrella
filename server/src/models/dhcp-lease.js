@@ -1,13 +1,13 @@
-import { observeDhcpLeases } from '../services/ip-lifecycle-service.js';
+import { OFFLINE_RETIREMENT_MS, observeDhcpLeases } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { addressInRange, isValidAddress } from '../utils/ip.js';
 import { addressFamily, sortKey } from '../utils/address.js';
 import { macFromDuid } from '../utils/duid.js';
-import { isLeaseActive } from '../utils/lease-sql.js';
+import { isLeaseActive, leaseExpiryMs } from '../utils/lease-sql.js';
 import { resolveEffectiveScopeOptions } from './dhcp-scope.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
-export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
+export function replaceLeases(db, leases, { lifecycleValidated = false, now = Date.now() } = {}) {
   const replace = db.transaction(() => {
     const previous = new Map(
       db
@@ -79,8 +79,15 @@ export function replaceLeases(db, leases, { lifecycleValidated = false } = {}) {
         END,
         ?, ?, ?, ?, ?)
     `);
+    // A lease the backend no longer holds is kept, expired, for the offline
+    // window, so its name outlives it while the host is away (ARCHITECTURE.md,
+    // Canonical IP Model). Past that the row goes: the retirement sweep clears
+    // it only for an address it retires, and passes over one that is already
+    // unassigned, whose row would then stay for good.
+    const keepSince = now - OFFLINE_RETIREMENT_MS;
     for (const [key, old] of previous) {
       if (currentKeys.has(key) || reservationKeys.has(key)) continue;
+      if (leaseExpiryMs(old.expires_at) < keepSince) continue;
       retainExpired.run(
         old.ip_address,
         old.mac_address,

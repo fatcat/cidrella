@@ -319,7 +319,7 @@ const chips = computed(() => {
       label: 'DNSSEC',
       value: 'Not validating',
       tone: 'warn',
-      title: 'Enabled, but dnsmasq is not validating (clock not yet synced, or unsupported)',
+      title: 'Enabled, but the resolver is not validating (clock not yet synced, or unsupported)',
     });
   return list;
 });

@@ -1,7 +1,7 @@
 <!-- VLANs. Extracted from System.vue tab 1 (1:1): table + add/edit/delete dialogs
      + its own row context menu. Loads on mount. -->
 <template>
-  <div class="content-card range-types-section">
+  <div class="content-card fill-panel">
     <div class="card-header">
       <h3>VLANs</h3>
       <Button
@@ -268,12 +268,6 @@ onMounted(loadVlans);
   margin: 0;
   font-size: var(--app-fs-lg);
   color: var(--cid-text-color);
-}
-.range-types-section {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-  min-height: 0;
 }
 .form-grid {
   display: flex;

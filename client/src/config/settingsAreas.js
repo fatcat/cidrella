@@ -20,7 +20,7 @@ export const SETTINGS_AREAS = [
     label: 'General',
     icon: 'pi pi-cog',
     group: 'Configuration',
-    blurb: 'Network defaults, naming, scanning, VLANs, interfaces',
+    blurb: 'Network defaults, naming, scanning, VLANs, interfaces, servers',
     dataTrack: 'settings-area-general',
     subtabs: [
       {
@@ -49,6 +49,12 @@ export const SETTINGS_AREAS = [
         label: 'Interfaces',
         dataTrack: 'settings-sec-interfaces',
         component: defineAsyncComponent(() => import('../components/InterfacePanel.vue')),
+      },
+      {
+        id: 'servers',
+        label: 'Servers',
+        dataTrack: 'settings-sec-servers',
+        component: defineAsyncComponent(() => import('../views/settings/ServerStackSettings.vue')),
       },
     ],
   },
@@ -100,9 +106,6 @@ export const SETTINGS_AREAS = [
         fill: true,
         component: defineAsyncComponent(() => import('../views/DhcpBulkChange.vue')),
       },
-      // Server (views/settings/DhcpServerSettings.vue, the dnsmasq/Kea switch)
-      // is hidden until 0.5.3: Kea is offered only as the PowerDNS + Kea stack.
-      // The switch API (/api/dhcp/server) stays, admin-only, for testing.
       {
         id: 'rogue',
         label: 'Rogue Detection',
@@ -250,6 +253,7 @@ export const SETTINGS_AREAS = [
         id: 'logs',
         label: 'Logs',
         dataTrack: 'settings-sec-logging',
+        fill: true,
         component: defineAsyncComponent(() => import('../views/settings/LogsSettings.vue')),
       },
       {

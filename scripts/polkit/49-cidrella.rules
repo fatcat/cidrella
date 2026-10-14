@@ -34,9 +34,10 @@ polkit.addRule(function(action, subject) {
         }
     }
 
-    // dnsmasq reload (config changes) and restart (interface rebind).
+    // dnsmasq reload (config changes) and restart (interface rebind), and
+    // start and stop when the stack switches to and from PowerDNS + Kea.
     if (unit === "cidrella-dnsmasq.service") {
-        if (verb === "reload" || verb === "restart") {
+        if (verb === "start" || verb === "stop" || verb === "reload" || verb === "restart") {
             return polkit.Result.YES;
         }
     }
@@ -44,6 +45,21 @@ polkit.addRule(function(action, subject) {
     // Kea, while it is the DHCP server: started and restarted on a switch
     // or a config change, stopped when dnsmasq takes DHCP back.
     if (unit === "cidrella-kea@dhcp4.service" || unit === "cidrella-kea@dhcp6.service") {
+        if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reload") {
+            return polkit.Result.YES;
+        }
+    }
+
+    // PowerDNS, while it is the DNS server: started and restarted on a
+    // switch or a config change, stopped when dnsmasq takes DNS back.
+    if (unit === "cidrella-pdns-auth.service" || unit === "cidrella-pdns-recursor.service") {
+        if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reload") {
+            return polkit.Result.YES;
+        }
+    }
+
+    // radvd, while the PowerDNS + Kea stack sends the Router Advertisements.
+    if (unit === "cidrella-radvd.service") {
         if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reload") {
             return polkit.Result.YES;
         }

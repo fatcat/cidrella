@@ -1,5 +1,6 @@
 import { Router } from 'express';
-import { getDb, audit } from '../db/init.js';
+import { getDb } from '../db/init.js';
+import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { startScan } from '../utils/scanner.js';
 import { getNextScanTime } from '../utils/scan-scheduler.js';
@@ -68,7 +69,12 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   // Start scan in background (don't await)
   startScan(db, scanId, subnet_id);
 
-  audit(req.user.id, 'scan_started', 'network_scan', scanId, { subnet: subnet.cidr });
+  recordAudit({
+    action: 'scan_started',
+    entityType: 'network_scan',
+    entityId: scanId,
+    details: { subnet: subnet.cidr },
+  });
 
   const scan = ScanRun.findById(db, scanId);
   res.status(201).json(scan);
@@ -172,6 +178,12 @@ router.delete('/:id', requirePerm('subnets:write'), (req, res) => {
     return res.status(409).json({ error: 'Cannot delete a running scan' });
   }
 
+  recordAudit({
+    action: 'scan_deleted',
+    entityType: 'scan',
+    entityId: result.scan.id,
+    details: { subnet_id: result.scan.subnet_id, started_at: result.scan.started_at },
+  });
   res.json({ message: 'Scan deleted' });
 });
 

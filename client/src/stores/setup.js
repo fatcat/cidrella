@@ -12,6 +12,8 @@ export const useSetupStore = defineStore('setup', () => {
   const state = ref({ password: false, totp: null, deployment: null, import: null, done: false });
   const passwordPolicy = ref(null);
   const loaded = ref(false);
+  // GET /api/backend-stack: the stack serving now and the others, installed or not.
+  const servers = ref(null);
 
   // What the operator has picked so far. Seeded from `state` on load so a
   // resumed setup shows the earlier answers.
@@ -21,6 +23,7 @@ export const useSetupStore = defineStore('setup', () => {
     importKind: 'fresh',
     network: { cidr: '', domain: '' }, // Pi-hole path only
     gatewayPosition: 'first', // the default_gateway_position setting, applied at Start
+    stack: null, // the server stack (GET /api/backend-stack), switched to at Start; null keeps it
   });
 
   // Both GET and PUT answer with the markers plus the served policy; one
@@ -39,10 +42,26 @@ export const useSetupStore = defineStore('setup', () => {
     if (state.value.deployment?.gateway_position) {
       draft.gatewayPosition = state.value.deployment.gateway_position;
     }
+    if (state.value.deployment?.stack) draft.stack = state.value.deployment.stack;
     if (state.value.import?.kind) draft.importKind = state.value.import.kind;
     loaded.value = true;
     return state.value;
   }
+
+  async function loadServers() {
+    try {
+      servers.value = (await api.get('/backend-stack')).data;
+    } catch {
+      // The choice is optional: without it Start keeps the servers running now.
+      servers.value = null;
+    }
+    return servers.value;
+  }
+
+  // The stack Start leaves running: the one picked, else the one serving now.
+  const chosenStack = computed(() => draft.stack ?? servers.value?.current ?? null);
+  const stackLabelOf = (name) =>
+    servers.value?.stacks.find((s) => s.name === name)?.label ?? name;
 
   async function mark(patch) {
     const res = await api.put('/setup/state', patch);
@@ -89,21 +108,27 @@ export const useSetupStore = defineStore('setup', () => {
     state.value = { password: false, totp: null, deployment: null, import: null, done: false };
     passwordPolicy.value = null;
     loaded.value = false;
+    servers.value = null;
     draft.role = 'dns';
     draft.interfaces = [];
     draft.importKind = 'fresh';
     draft.network = { cidr: '', domain: '' };
     draft.gatewayPosition = 'first';
+    draft.stack = null;
   }
 
   return {
     state,
     passwordPolicy,
     loaded,
+    servers,
+    chosenStack,
+    stackLabelOf,
     draft,
     interfaceConfig,
     deploymentPayload,
     load,
+    loadServers,
     mark,
     applyInterfaceState,
     reset,

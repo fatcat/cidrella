@@ -1,26 +1,6 @@
 <template>
   <div class="log-viewer">
     <div class="log-toolbar">
-      <div class="log-tabs">
-        <button
-          :class="['log-tab', { active: activeFilter === 'all' }]"
-          @click="switchFilter('all')"
-        >
-          All
-        </button>
-        <button
-          :class="['log-tab', { active: activeFilter === 'dns' }]"
-          @click="switchFilter('dns')"
-        >
-          DNS
-        </button>
-        <button
-          :class="['log-tab', { active: activeFilter === 'dhcp' }]"
-          @click="switchFilter('dhcp')"
-        >
-          DHCP
-        </button>
-      </div>
       <div class="log-actions">
         <InputText v-model="searchText" placeholder="Filter..." size="small" class="log-search" />
         <Button
@@ -42,11 +22,13 @@
           @click="resumeScroll"
         />
         <Button
+          v-if="clearable"
           icon="pi pi-trash"
           size="small"
           severity="danger"
           text
           title="Clear logs"
+          data-track="log-clear"
           @click="clearLogs"
         />
       </div>
@@ -74,12 +56,18 @@ import api from '../api/client.js';
 import Button from '../ui/Button.js';
 import StatusDot from './StatusDot.vue';
 import InputText from '../ui/InputText.js';
+// The log of the backend filling `role` (GET /api/logs/sources). Where one
+// log serves DNS and DHCP (dnsmasq) the server keeps the role's lines.
+const props = defineProps({
+  role: { type: String, required: true },
+  clearable: { type: Boolean, default: true },
+});
+
 const logPre = ref(null);
 const lines = ref([]);
 const connected = ref(false);
 const paused = ref(false);
 const searchText = ref('');
-const activeFilter = ref('all');
 const MAX_LINES = 5000;
 
 let eventSource = null;
@@ -117,7 +105,7 @@ async function connect() {
     // proceed without ticket, server will reject unauthenticated SSE
   }
 
-  const url = `/api/logs/stream?filter=${activeFilter.value}&ticket=${encodeURIComponent(ticket)}`;
+  const url = `/api/logs/stream?role=${encodeURIComponent(props.role)}&ticket=${encodeURIComponent(ticket)}`;
   eventSource = new EventSource(url);
 
   eventSource.addEventListener('connected', () => {
@@ -143,14 +131,6 @@ async function connect() {
   eventSource.onerror = () => {
     connected.value = false;
   };
-}
-
-function switchFilter(filter) {
-  activeFilter.value = filter;
-  lines.value = [];
-  pauseBuffer = [];
-  paused.value = false;
-  connect();
 }
 
 function scrollToTop() {
@@ -186,8 +166,7 @@ function resumeScroll() {
 
 async function clearLogs() {
   try {
-    const { default: api } = await import('../api/client.js');
-    await api.post('/logs/clear');
+    await api.post('/logs/clear', null, { params: { role: props.role } });
     lines.value = [];
     pauseBuffer = [];
     paused.value = false;
@@ -211,43 +190,20 @@ onUnmounted(() => {
 .log-viewer {
   display: flex;
   flex-direction: column;
+  flex: 1;
   height: 100%;
-  min-height: 400px;
+  min-height: 0;
 }
 
 .log-toolbar {
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: flex-end;
   padding: 0.4rem 0.6rem;
   background: var(--cid-surface-ground);
   border-bottom: 1px solid var(--cid-surface-border);
   border-radius: 6px 6px 0 0;
   gap: 0.5rem;
-}
-
-.log-tabs {
-  display: flex;
-  gap: 2px;
-}
-
-.log-tab {
-  padding: 0.3rem 0.75rem;
-  border: none;
-  background: transparent;
-  color: var(--cid-text-muted-color);
-  font-size: 0.8rem;
-  font-weight: 600;
-  border-radius: 4px;
-  cursor: pointer;
-  transition: all 0.15s;
-}
-.log-tab:hover {
-  background: var(--cid-surface-hover);
-}
-.log-tab.active {
-  background: var(--cid-primary-color);
-  color: var(--cid-primary-contrast-color);
 }
 
 .log-actions {
@@ -289,7 +245,7 @@ onUnmounted(() => {
   overflow-x: auto;
   white-space: pre;
   border-radius: 0 0 6px 6px;
-  min-height: 300px;
+  min-height: 0;
 }
 
 .log-output .log-dhcp {
