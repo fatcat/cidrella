@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { anyBackendDown, backendUnits, outageDetail } from '../../../src/utils/backend-status.js';
+import {
+  anyBackendDown,
+  backendUnits,
+  outageDetail,
+  unitState,
+} from '../../../src/utils/backend-status.js';
 
 const status = (name, running = true) => ({
   name,
@@ -9,6 +14,27 @@ const status = (name, running = true) => ({
 });
 
 describe('backendUnits', () => {
+  it('counts a unit whose roles are all switched off as up, and says so', () => {
+    const payload = {
+      backends: {
+        dns: { ...status('pdns'), label: 'PowerDNS' },
+        dhcp: { ...status('kea'), label: 'Kea', off: true },
+        ra: { ...status('radvd'), label: 'radvd' },
+      },
+    };
+    const kea = backendUnits(payload).find((u) => u.key === 'kea');
+    expect(kea).toMatchObject({ running: true, off: true });
+    expect(unitState(kea)).toEqual({ value: 'Off', tone: 'muted' });
+    expect(anyBackendDown(payload)).toBe(false);
+  });
+
+  it('words each state once: off, idle, running, stopped', () => {
+    expect(unitState({ running: true, off: true, idle: false }).value).toBe('Off');
+    expect(unitState({ running: true, off: false, idle: true })).toEqual({ value: 'Idle', tone: 'muted' });
+    expect(unitState({ running: true, off: false, idle: false })).toEqual({ value: 'Running', tone: 'ok' });
+    expect(unitState({ running: false, off: false, idle: false })).toEqual({ value: 'Stopped', tone: 'err' });
+  });
+
   it('merges the roles one daemon fills into one unit', () => {
     const shared = status('dnsmasq');
     expect(backendUnits({ backends: { dns: shared, dhcp: shared, ra: shared } })).toEqual([
@@ -18,6 +44,7 @@ describe('backendUnits', () => {
         roles: ['dns', 'dhcp', 'ra'],
         running: true,
         idle: false,
+        off: false,
         restartPending: false,
       },
     ]);

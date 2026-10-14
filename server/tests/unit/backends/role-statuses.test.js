@@ -28,4 +28,20 @@ describe('roleStatuses', () => {
     expect(out.dhcp.name).toBe('kea');
     expect(out.ra).toBe(out.dhcp);
   });
+
+  it('marks a service off when every role it fills is switched off, RA aside', () => {
+    const pdns = createFakeBackend({ name: 'pdns' });
+    const kea = createFakeBackend({ name: 'kea' });
+    const radvd = createFakeBackend({ name: 'radvd' });
+    const split = { dns: pdns, dhcp: kea, ra: radvd };
+    const dhcpOff = { switchedOff: (role) => role === 'dhcp' };
+    const out = roleStatuses((role) => split[role], dhcpOff);
+    expect([out.dns.off, out.dhcp.off, out.ra.off]).toEqual([false, true, false]);
+
+    // dnsmasq fills all three: off only once DNS and DHCP both are.
+    const one = createFakeBackend({ name: 'dnsmasq' });
+    expect(roleStatuses(() => one, dhcpOff).dns.off).toBe(false);
+    expect(roleStatuses(() => one, { switchedOff: (role) => role !== 'ra' }).dns.off).toBe(true);
+    expect(roleStatuses(() => one).dns.off).toBe(false);
+  });
 });

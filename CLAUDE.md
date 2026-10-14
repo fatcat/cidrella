@@ -149,7 +149,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `utils/service-chips.js` (the backend, proxy and forwarder chips), `utils/backend-status.js`
   (`backendUnits`: the DNS/DHCP backends from a health payload, one unit per daemon named by
   its server label, an idle one (radvd with nothing to advertise) counted as running, with the
-  pre-0.5.1 dnsmasq flag as fallback; every chip or row naming a backend reads it), `utils/ipTableDisplay.js`
+  pre-0.5.1 dnsmasq flag as fallback; a unit whose roles are all switched off is `off`;
+  `unitState` is the one wording and tone for a unit; every chip or row naming a backend reads
+  it), `utils/ipTableDisplay.js`
   (`ipSourceLabel`, the one label for a DNS, DHCP or detection source), and in
   `views/networks-workspace-data.js` the `ipRowFields` adapter that fills every shared IP
   column for the workspace tables (both the Addresses and DHCP adapters spread it; add a
@@ -235,7 +237,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   lease active),
   `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync; `holdLeaseSync` to keep it still;
   it releases a lease holding another client's reservation, `holdsAnotherClientsReservation` in the
-  lifecycle service, and runs after every DHCP apply through `onDhcpApplied` in `services/backend-apply.js`), `readSetting` in `models/setting.js` (one stored setting, null when absent), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
+  lifecycle service, and runs after every DHCP apply through `onDhcpApplied` in `services/backend-apply.js`), `readSetting` in `models/setting.js` (one stored setting, null when absent), `roleSwitchedOff` in `utils/role-switches.js` (is DNS or DHCP switched off in CIDRella: no stack serves it then; the registry and the DNS proxy both ask it), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),
   `createUpstreamPool` in `utils/upstream-pool.js` (every encrypted query to a forwarder
   upstream, DoT or DoH: reused connections, retry, address failover, fail closed),

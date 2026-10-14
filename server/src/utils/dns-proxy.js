@@ -45,6 +45,7 @@ import {
   resolveDnsListenPort,
 } from '../config/defaults.js';
 import { getDnsBackend } from '../backends/index.js';
+import { roleSwitchedOff } from './role-switches.js';
 import { plainUdpQuery } from './plain-dns.js';
 const GEOIP_DIR = path.join(DATA_DIR, 'geoip');
 const DEFAULT_MMDB = path.join(GEOIP_DIR, 'dbip-country-lite.mmdb');
@@ -1125,9 +1126,9 @@ function onTcpConnection(clientSock) {
 }
 
 // Start the DNS proxy, binds one UDP socket per LAN address on port 53
-// DNS switched off (`dns_enabled`, on unless 'false'): the proxy does not
-// listen, whatever stack serves, so the LAN port gets no answer.
-const dnsSwitchedOff = () => getSetting('dns_enabled') === 'false';
+// DNS switched off: the proxy does not listen, whatever stack serves, so the
+// LAN port gets no answer.
+const dnsSwitchedOff = () => roleSwitchedOff('dns');
 
 export function startProxy() {
   if (proxyServers.length > 0) {

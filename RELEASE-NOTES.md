@@ -112,6 +112,10 @@ upgrade changes nothing until someone switches.
   answering on the LAN, which on PowerDNS + Kea meant DNS carried on as if it were on. The
   proxy now does not listen while DNS is off, and its health check no longer reads that as a
   failure and turns on bypass.
+- A DNS or DHCP server switched off in CIDRella now shows as Off, in grey, in the header and
+  on the Analytics status rails, as does the DNS proxy while DNS is off. They showed as
+  running, or the proxy as stopped in red. radvd with nothing to advertise is grey in the
+  header too.
 - Settings > Filtering > Categories shows its last rows. The table took the height of the
   whole section, not what was left under the settings above it, so the bottom of the list sat
   under the panel's edge.

@@ -14,7 +14,7 @@ import { createKeaBackend } from './kea/index.js';
 import { createPdnsBackend } from './pdns/index.js';
 import { createRadvdBackend } from './radvd/index.js';
 import { unitEvents } from './shared/unit-events.js';
-import { getSetting } from '../db/init.js';
+import { roleSwitchedOff } from '../utils/role-switches.js';
 
 const FACTORIES = {
   dnsmasq: createDnsmasqBackend,
@@ -44,7 +44,7 @@ const listeners = new Set();
  */
 export function servesDhcp(name) {
   return (
-    STACKS[stack].dhcp === name && !quiesced.has(name) && getSetting('dhcp_enabled') !== 'false'
+    STACKS[stack].dhcp === name && !quiesced.has(name) && !roleSwitchedOff('dhcp')
   );
 }
 
@@ -127,7 +127,7 @@ export function uniqueServices() {
 /**
  * What the health endpoints report per role: see roleStatuses in contract.js.
  */
-export const backendStatuses = () => roleStatuses(getService);
+export const backendStatuses = () => roleStatuses(getService, { switchedOff: roleSwitchedOff });
 
 /** Does the backend filling the feature's role support it? See featureSupported. */
 export const supports = (id) => featureSupported(getService, id);

@@ -64,4 +64,19 @@ describe('serviceChips: backends', () => {
       ['radvd', 'Idle', 'muted'],
     ]);
   });
+
+  it('shows a daemon switched off, and the DNS proxy, as off rather than failed', () => {
+    const backends = {
+      dns: { name: 'pdns', label: 'PowerDNS', running: true, off: true },
+      dhcp: { name: 'kea', label: 'Kea', running: true, off: true },
+      ra: { name: 'radvd', label: 'radvd', running: false, idle: true },
+    };
+    const chips = serviceChips({ ...base, geoip_proxy: false, backends });
+    expect(chips.slice(0, 4).map((c) => [c.label, c.value, c.tone])).toEqual([
+      ['PowerDNS', 'Off', 'muted'],
+      ['Kea', 'Off', 'muted'],
+      ['radvd', 'Idle', 'muted'],
+      ['DNS proxy', 'Off', 'muted'],
+    ]);
+  });
 });

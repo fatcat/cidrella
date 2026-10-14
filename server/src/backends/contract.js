@@ -197,16 +197,29 @@ export function assertBackendShape(backend) {
  * deprecated legacy keys.
  * Each distinct service is asked once, so roles sharing a daemon cost one
  * status check and report the same object.
+ *
+ * `off` is true when every role the service fills is switched off in
+ * CIDRella (`switchedOff(role)`): the daemon may run, but serves no one.
+ * Router Advertisements have no switch of their own and count only for a
+ * service that does nothing else.
  */
-export function roleStatuses(serviceFor) {
+export function roleStatuses(serviceFor, { switchedOff = () => false } = {}) {
+  const rolesOf = new Map();
+  for (const role of ROLES) {
+    const service = serviceFor(role);
+    rolesOf.set(service, [...(rolesOf.get(service) || []), role]);
+  }
   const byService = new Map();
   return Object.fromEntries(
     ROLES.map((role) => {
       const service = serviceFor(role);
       if (!byService.has(service)) {
         const features = service.capabilities();
+        const roles = rolesOf.get(service);
+        const switchable = roles.length > 1 ? roles.filter((r) => r !== 'ra') : roles;
         byService.set(service, {
           ...service.status(),
+          off: switchable.every((r) => switchedOff(r)),
           features,
           capabilities: legacyCapabilities(features),
         });

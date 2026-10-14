@@ -4,6 +4,8 @@
 // PowerDNS + Kea stack each role is its own unit. `name` is the server's
 // display label (PowerDNS, Kea, radvd). A unit stopped on purpose (radvd with
 // nothing to advertise) is `idle` and counts as running: nothing is missing.
+// A unit whose roles are all switched off in CIDRella is `off` and counts as
+// running too: the daemon may be up, but it serves no one on purpose.
 //
 // A server older than 0.5.1 sends only a dnsmasq flag (`services.dnsmasq` on
 // health, top-level `dnsmasq` on metrics). That reads as one dnsmasq unit.
@@ -14,7 +16,7 @@ const ROLE_OUTAGE = {
   ra: 'Router Advertisements',
 };
 
-/** [{ key, name, roles, running, idle, restartPending }], in role order. */
+/** [{ key, name, roles, running, idle, off, restartPending }], in role order. */
 export function backendUnits(payload) {
   if (!payload) return [];
   if (payload.backends) {
@@ -22,12 +24,14 @@ export function backendUnits(payload) {
     for (const [role, status] of Object.entries(payload.backends)) {
       if (!status?.name) continue;
       const idle = status.idle === true && status.running !== true;
+      const off = status.off === true;
       const unit = units.get(status.name) || {
         key: status.name,
         name: status.label || status.name,
         roles: [],
-        running: status.running === true || idle,
+        running: status.running === true || idle || off,
         idle,
+        off,
         restartPending: status.restartPending === true,
       };
       unit.roles.push(role);
@@ -44,9 +48,20 @@ export function backendUnits(payload) {
       roles: ['dns', 'dhcp', 'ra'],
       running,
       idle: false,
+      off: false,
       restartPending: false,
     },
   ];
+}
+
+/**
+ * A unit's state for a chip: `{ value, tone }`. Switched off and idle are
+ * quiet (muted), not failures.
+ */
+export function unitState(unit) {
+  if (unit.off) return { value: 'Off', tone: 'muted' };
+  if (unit.idle) return { value: 'Idle', tone: 'muted' };
+  return unit.running ? { value: 'Running', tone: 'ok' } : { value: 'Stopped', tone: 'err' };
 }
 
 /** True when any backend unit reports it is not running. */

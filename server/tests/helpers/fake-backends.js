@@ -17,6 +17,7 @@
 import { vi } from 'vitest';
 import { featureReportFor, featureSupported, roleStatuses } from '../../src/backends/contract.js';
 import { declareSupport, featureById } from '../../src/backends/features.js';
+import { roleSwitchedOff } from '../../src/utils/role-switches.js';
 
 export const APPLY_OPS = Object.freeze(['applyDns', 'applyDhcp', 'applyResolver']);
 
@@ -223,7 +224,7 @@ export function fakeBackendsModule(options) {
     onBackendChanged: () => () => {},
     uniqueServices: () => [backend],
     allBackends: () => [backend],
-    backendStatuses: () => roleStatuses(() => backend),
+    backendStatuses: () => roleStatuses(() => backend, { switchedOff: roleSwitchedOff }),
     supports: (id) => featureSupported(() => backend, id),
     featureReport: () => featureReportFor(() => backend),
   };

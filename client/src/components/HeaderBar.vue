@@ -352,7 +352,7 @@ import { useRouter, useRoute } from 'vue-router';
 import Popover from '../ui/Popover.js';
 import Select from '../ui/Select.js';
 import StatusDot from './StatusDot.vue';
-import { anyBackendDown, backendUnits } from '../utils/backend-status.js';
+import { anyBackendDown, backendUnits, unitState } from '../utils/backend-status.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
 import { useAnomalyStore } from '../stores/anomalies.js';
@@ -565,9 +565,8 @@ const backendChips = computed(() => {
     ? units
     : [{ key: 'backend', name: 'DNS/DHCP', roles: ['dns', 'dhcp'], running: false }];
 });
-const backendDisplay = (unit) =>
-  !healthKnown.value ? 'Unknown' : unit.idle ? 'Idle' : unit.running ? 'Running' : 'Down';
-const backendKnownKind = (unit) => (unit.running ? 'ok' : 'err');
+const backendDisplay = (unit) => (healthKnown.value ? unitState(unit).value : 'Unknown');
+const backendKnownKind = (unit) => unitState(unit).tone;
 
 const cpuStatusClass = computed(() => {
   if (cpuPercent.value >= 100) return 'card-err';
@@ -648,12 +647,12 @@ function resourceChip(statusClass) {
 // Ops chip is the narrow-screen aggregate and is display:none on desktop). The
 // DHCP backend's chip is where the rogue-DHCP warning surfaces on desktop: red
 // if it is down (wins), else yellow if an unacknowledged rogue is present,
-// else green.
+// else grey if switched off or idle, else green.
 function backendDotKind(unit) {
   if (!healthKnown.value) return 'muted';
   if (!unit.running) return 'err';
   if (rogueDhcpCount.value > 0 && unit.roles.includes('dhcp')) return 'warn';
-  return 'ok';
+  return unitState(unit).tone;
 }
 const BACKEND_CHIP_CLASS = { muted: 'chip-idle', err: 'chip-err', warn: 'chip-warn', ok: 'chip-ok' };
 const backendChipClass = (unit) => BACKEND_CHIP_CLASS[backendDotKind(unit)];
