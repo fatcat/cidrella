@@ -227,3 +227,30 @@ describe('serverIdFromDuid', () => {
     expect(serverIdFromDuid('not a duid')).toBeNull();
   });
 });
+
+describe('renderKeaConfig, the interfaces each daemon listens on', () => {
+  const interfaces = ['eth0', 'eth1', 'eth2'];
+  const listen = (family, scopes, extra = {}) =>
+    render(family, scopes, { interfaces, ...extra })['interfaces-config'].interfaces;
+  const onEth1 = { eth1: [{ family: 'IPv6', address: 'fd00:5::2' }] };
+
+  it('listens nowhere for a family with no subnet', () => {
+    // Kea answers a DHCPv6 Solicit it has no subnet for, and a client can
+    // loop on that answer; dnsmasq stayed silent.
+    expect(listen(6, [])).toEqual([]);
+    expect(listen(4, [])).toEqual([]);
+    expect(listen(6, [v6Scope({ mode: 'slaac' })], { sysIfaces: onEth1 })).toEqual([]);
+  });
+
+  it('listens for DHCPv6 only on the links its subnets sit on', () => {
+    expect(listen(6, [v6Scope()], { sysIfaces: onEth1 })).toEqual(['eth1']);
+    expect(listen(6, [v6Scope({ mode: 'stateless', pools: [] })], { sysIfaces: onEth1 })).toEqual([
+      'eth1',
+    ]);
+  });
+
+  it('keeps every interface for a DHCPv6 subnet it cannot place, and for DHCPv4', () => {
+    expect(listen(6, [v6Scope()], { sysIfaces: {} })).toEqual(interfaces);
+    expect(listen(4, [v4Scope()])).toEqual(interfaces);
+  });
+});

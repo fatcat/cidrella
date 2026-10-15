@@ -136,6 +136,12 @@ covers what came after them, from the 0.5.3 candidates.
   Assistant's hourly reverse lookup of every address on a network sends them, which showed as
   a spike of refused answers on the hour in Analytics > Performance. The DNS proxy now asks the
   backend with Recursion Desired set, on either stack, and returns the client's own flag.
+- On PowerDNS + Kea, Kea's DHCPv6 server no longer answers on a network without DHCPv6. It
+  listened on every DHCP interface, with no DHCPv6 network or none on that link, and answered
+  each request with "no addresses available". A client that takes that answer as an offer
+  asks again at once, without end: one on a LAN without DHCPv6 sent about 8,000 requests an
+  hour. Kea now listens only on the links its DHCPv6 networks are on, and DHCPv4 on no
+  interface when there are no DHCPv4 scopes, as dnsmasq did.
 - A change to the DHCP DNS Servers default now survives a restart. At every start CIDRella
   wrote the default back to its own address plus 9.9.9.9, so removing the fallback resolver
   (in Settings or with Bulk Change) lasted only until the next restart or update, and clients

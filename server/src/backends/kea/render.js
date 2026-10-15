@@ -343,6 +343,32 @@ export function serverIdFromDuid(duid) {
   return null;
 }
 
+// A daemon that could not open a socket on every listed interface stops
+// instead of running deaf. An interface still coming up at boot (an IPv6
+// link-local address arrives a moment after the link) gets five tries, five
+// seconds apart, first.
+const SOCKET_RETRIES = {
+  'service-sockets-require-all': true,
+  'service-sockets-max-retries': 5,
+  'service-sockets-retry-wait-time': 5000,
+};
+
+/**
+ * The interfaces a family's daemon listens on: none without a subnet, and for
+ * DHCPv6 only the links its subnets sit on. Kea's DHCPv6 server answers a
+ * Solicit it has no subnet for with an Advertise saying no addresses are
+ * available, and a client that takes that as an offer asks again at once:
+ * one on a LAN with no DHCPv6 network sent about 8,000 an hour, with no
+ * end. dnsmasq never answered there. A DHCPv6 subnet that cannot be placed
+ * on a link keeps every interface, so it is still served.
+ */
+function listenOn(family, subnets, interfaces) {
+  if (!subnets.length) return [];
+  if (family !== 6 || subnets.some((s) => !s.interface)) return [...interfaces];
+  const links = new Set(subnets.map((s) => s.interface));
+  return interfaces.filter((name) => links.has(name));
+}
+
 /**
  * The configuration object for one family.
  *   scopes        loadDhcpScopes(db), both families
@@ -372,15 +398,9 @@ export function renderKeaConfig(
   });
 
   const body = {
-    // A daemon that could not open a socket on every listed interface stops
-    // instead of running deaf. An interface still coming up at boot (an
-    // IPv6 link-local address arrives a moment after the link) gets five
-    // tries, five seconds apart, first.
     'interfaces-config': {
-      interfaces: [...interfaces],
-      'service-sockets-require-all': true,
-      'service-sockets-max-retries': 5,
-      'service-sockets-retry-wait-time': 5000,
+      interfaces: listenOn(family, subnets, interfaces),
+      ...SOCKET_RETRIES,
     },
     'lease-database': {
       type: 'memfile',
