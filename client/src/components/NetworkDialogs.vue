@@ -140,7 +140,7 @@
     <div v-if="wizardStep === 2" class="form-grid wizard-network-grid">
       <div class="field">
         <label>CIDR *</label>
-        <InputText v-model="wizardNet.cidr" placeholder="10.0.0.0/8" class="w-full" />
+        <InputText v-model="wizardNet.cidr" :placeholder="cidrPlaceholder" class="w-full" />
         <small v-if="wizardCidrError" class="field-error">{{ wizardCidrError }}</small>
       </div>
       <div class="field">
@@ -493,7 +493,7 @@
     <div class="form-grid">
       <div class="field">
         <label>CIDR *</label>
-        <InputText v-model="supernetForm.cidr" placeholder="10.0.0.0/8" class="w-full" />
+        <InputText v-model="supernetForm.cidr" :placeholder="cidrPlaceholder" class="w-full" />
         <small v-if="supernetValidationError" class="field-error">{{
           supernetValidationError
         }}</small>
@@ -796,7 +796,7 @@
       <template v-if="networkDialogMode === 'create'">
         <div class="field">
           <label>CIDR *</label>
-          <InputText v-model="networkForm.cidr" placeholder="10.0.0.0/8" class="w-full" />
+          <InputText v-model="networkForm.cidr" :placeholder="cidrPlaceholder" class="w-full" />
           <small v-if="createCidrError" class="field-error">{{ createCidrError }}</small>
           <small v-else-if="configurationPreviewError" class="field-error">
             {{ configurationPreviewError }}
@@ -1272,6 +1272,11 @@ const store = useSubnetStore();
 const toast = useToast();
 // The global IPv6 switch: an IPv6 CIDR is refused inline while it is off.
 const { ipv6: ipv6Supported } = useFeatures();
+// The CIDR fields' hint: an IPv6 ULA example beside the IPv4 one while IPv6 is
+// on, since an IPv6 CIDR is refused while it is off.
+const cidrPlaceholder = computed(() =>
+  ipv6Supported.value ? '10.0.0.0/8, fd00::/8' : '10.0.0.0/8',
+);
 
 // What each DHCPv6 mode does, for the mode picker.
 const DHCP_V6_MODE_HELP = Object.freeze({
