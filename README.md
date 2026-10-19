@@ -15,7 +15,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 * **DNSSEC validation**: Turns on dnsmasq DNSSEC validation against the root trust anchor.
 * **Encrypted forwarders (DoT/DoH)**: Optionally encrypt CIDRella→upstream DNS via DNS-over-TLS or DNS-over-HTTPS through a built-in stub (no external daemon), with preset unfiltered resolvers (Cloudflare/Google/Quad9/AdGuard) or custom. 
 * **DHCP management**: Scopes, global defaults for new scopes, per-scope options, DHCP Reservations, dynamic lease tracking, bulk updates, and DHCP-derived DNS records.
-* **Choice of DHCP & DNS servers**: dnsmasq, or PowerDNS with ISC Kea (and radvd for Router Advertisements). Pick one in the setup wizard or switch later under Settings, General, Servers.
+* **Choice of DHCP & DNS servers**: dnsmasq, or PowerDNS with Kea. Selectable during install or switch later.
 * **IPv6**: Off by default. Turn it on under Settings, General, Interfaces to list the host's IPv6 addresses, listen on them, manage IPv6 networks, SLAAC, stateless or stateful DHCPv6 per network, DUID reservations, AAAA and ip6.arpa. Run the DHCPv6 and Router Advertisement checks.
 * **Rogue DHCP and router detection**: Scheduled active probes (DHCPv4 DISCOVER broadcast, DHCPv6 SOLICIT multicast) that flag unauthorized DHCP servers answering on CIDRella's segments, plus rogue IPv6 routers read from the Router Advertisements the kernel accepted.
 * **IP liveness and rogue detection**: Passive DHCP/DNS observations plus ARP-first active probes with ICMP fallback, scan history, and rogue IP classification.
