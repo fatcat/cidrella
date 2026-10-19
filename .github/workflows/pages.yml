@@ -31,9 +31,12 @@ jobs:
 
       - name: Assemble the site
         run: |
-          mkdir _site
-          cp -rL site/. _site/
-          rm -f _site/screenshots/*.md
+          # Only the page's own file types are published, never whatever else
+          # sits in docs/screenshots (notes, an editor's temp copy of an image).
+          mkdir -p _site/screenshots
+          find site -maxdepth 1 -type f -exec cp {} _site/ \;
+          cp -L site/logo-text.png site/favicon.ico site/favicon-32x32.png _site/
+          cp -L site/screenshots/*.png _site/screenshots/
 
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 

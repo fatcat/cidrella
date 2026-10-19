@@ -25,3 +25,6 @@ server/assets/geo-cities.bin
 /resume-claude.sh
 /resume-codex.sh
 /REVIEW_LOOP.md
+
+# Windows editors save temp copies beside the file they edit (image~RF1234.TMP)
+*.TMP
