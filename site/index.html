@@ -1,0 +1,332 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>CIDRella: IP address management with DNS and DHCP</title>
+<meta name="description" content="CIDRella is a lightweight IP address management appliance for home labs and small to medium networks: subnets, DNS and DHCP in one place, on dnsmasq or PowerDNS with Kea.">
+<link rel="canonical" href="https://fatcat.github.io/cidrella/">
+<meta property="og:title" content="CIDRella">
+<meta property="og:description" content="IP address management with DNS and DHCP built in, for home labs and small to medium networks.">
+<meta property="og:type" content="website">
+<meta property="og:url" content="https://fatcat.github.io/cidrella/">
+<meta property="og:image" content="https://fatcat.github.io/cidrella/screenshots/ip-table.png">
+<meta name="twitter:card" content="summary_large_image">
+<link rel="icon" href="favicon.ico" sizes="any">
+<link rel="icon" type="image/png" sizes="32x32" href="favicon-32x32.png">
+<script type="application/ld+json">
+{
+  "@context": "https://schema.org",
+  "@type": "SoftwareApplication",
+  "name": "CIDRella",
+  "applicationCategory": "NetworkingApplication",
+  "operatingSystem": "Linux",
+  "license": "https://www.apache.org/licenses/LICENSE-2.0",
+  "url": "https://fatcat.github.io/cidrella/",
+  "codeRepository": "https://github.com/fatcat/cidrella",
+  "downloadUrl": "https://github.com/fatcat/cidrella/releases/latest",
+  "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" }
+}
+</script>
+<style>
+:root {
+  --pumpkin: #eea576;
+  --vine: #a8c890;
+  --pumpkin-ink: #a85a2c;
+  --vine-ink: #4f7a3c;
+  --bg: #f5f6f1;
+  --surface: #ffffff;
+  --text: #22261f;
+  --muted: #5d6458;
+  --line: #dde1d4;
+  --code-bg: #1f2420;
+  --code-text: #e6eadf;
+  --shadow: 0 18px 50px -24px rgba(34, 38, 31, 0.35);
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --pumpkin-ink: #f1b48d;
+    --vine-ink: #b9d6a3;
+    --bg: #171a17;
+    --surface: #20241f;
+    --text: #e6eadf;
+    --muted: #a3ab9b;
+    --line: #333a31;
+    --code-bg: #0f120f;
+    --shadow: 0 18px 50px -24px rgba(0, 0, 0, 0.7);
+  }
+}
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.6 system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+a { color: var(--vine-ink); text-underline-offset: 3px; }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--pumpkin); outline-offset: 3px; border-radius: 4px; }
+code, pre { font-family: ui-monospace, "SFMono-Regular", "Cascadia Mono", Menlo, Consolas, monospace; }
+.wrap { max-width: 1120px; margin: 0 auto; padding-inline: 20px; }
+
+/* Header */
+.top { padding-block: 20px; }
+.top nav { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+.top .links { display: flex; gap: 20px; font-size: 0.95rem; }
+.top .links a { color: var(--muted); text-decoration: none; }
+.top .links a:hover { color: var(--text); }
+.wordmark { font-weight: 700; font-size: 1.15rem; letter-spacing: -0.01em; color: var(--text); text-decoration: none; }
+.wordmark span { color: var(--vine-ink); }
+
+/* Hero */
+.hero { padding-block: 32px 8px; display: grid; gap: 28px; grid-template-columns: minmax(0, 1fr); text-align: center; }
+.hero img.logo { width: min(400px, 80%); height: auto; margin: 0 auto; display: block; background: #fefefe; border-radius: 14px; padding: 6px 18px; box-shadow: var(--shadow); }
+.hero h1 { margin: 0; font-size: clamp(1.6rem, 3.2vw, 2.4rem); line-height: 1.2; letter-spacing: -0.02em; text-wrap: balance; max-width: 24ch; margin-inline: auto; }
+.hero p.lede { margin: 0 auto; max-width: 62ch; color: var(--muted); font-size: 1.08rem; text-wrap: pretty; }
+.cta { display: flex; gap: 12px; justify-content: center; flex-wrap: wrap; }
+.btn { display: inline-flex; align-items: center; gap: 8px; padding: 11px 20px; border-radius: 8px; font-weight: 600; text-decoration: none; border: 1px solid transparent; }
+.btn.primary { background: var(--pumpkin); color: #2a1a10; }
+.btn.primary:hover { background: #f2b48c; }
+.btn.ghost { border-color: var(--line); color: var(--text); background: var(--surface); }
+.btn.ghost:hover { border-color: var(--vine); }
+.facts { display: flex; gap: 8px 20px; justify-content: center; flex-wrap: wrap; color: var(--muted); font-size: 0.88rem; margin: 0; padding: 0; list-style: none; }
+.facts li::before { content: ""; display: inline-block; width: 7px; height: 7px; border-radius: 50%; background: var(--vine); margin-right: 8px; vertical-align: middle; }
+.shot-hero { margin: 36px auto 0; max-width: 1040px; border-radius: 10px; overflow: hidden; box-shadow: var(--shadow); border: 1px solid var(--line); background: #2e3440; }
+.shot-hero img { display: block; width: 100%; height: auto; }
+
+/* Sections */
+section.block { padding-block: 72px 0; }
+section.block > h2 { font-size: clamp(1.35rem, 2.4vw, 1.75rem); letter-spacing: -0.015em; margin: 0 0 8px; text-wrap: balance; }
+section.block > p.sub { margin: 0 0 32px; color: var(--muted); max-width: 66ch; }
+.eyebrow { display: block; font-size: 0.75rem; font-weight: 600; letter-spacing: 0.12em; text-transform: uppercase; color: var(--pumpkin-ink); margin-bottom: 8px; }
+
+/* Features */
+.features { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 28px 36px; }
+.features h3 { margin: 0 0 6px; font-size: 1.02rem; }
+.features p { margin: 0; color: var(--muted); font-size: 0.95rem; }
+
+/* Stacks */
+.stacks { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; }
+.stack { background: var(--surface); border: 1px solid var(--line); border-radius: 10px; padding: 22px 24px; }
+.stack h3 { margin: 0 0 4px; font-size: 1.1rem; }
+.stack .tag { font-size: 0.8rem; color: var(--muted); }
+.stack dl { margin: 16px 0 0; display: grid; grid-template-columns: max-content 1fr; gap: 6px 16px; font-size: 0.93rem; }
+.stack dt { color: var(--muted); }
+.stack dd { margin: 0; }
+.stacks-note { margin-top: 16px; color: var(--muted); font-size: 0.93rem; }
+
+/* Gallery */
+.gallery { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 32px; }
+@media (max-width: 720px) { .gallery { grid-template-columns: minmax(0, 1fr); } }
+.gallery figure { margin: 0; }
+.gallery a.thumb { display: block; border-radius: 8px; overflow: hidden; border: 1px solid var(--line); background: #2e3440; aspect-ratio: 1632 / 1168; }
+.gallery a.thumb img { display: block; width: 100%; height: 100%; object-fit: cover; object-position: top left; transition: transform 0.25s ease; }
+.gallery a.thumb:hover img { transform: scale(1.02); }
+@media (prefers-reduced-motion: reduce) { .gallery a.thumb img { transition: none; } }
+.gallery figcaption { margin-top: 10px; font-size: 0.9rem; color: var(--muted); }
+.gallery figcaption strong { display: block; color: var(--text); font-size: 0.98rem; margin-bottom: 2px; }
+
+/* Install */
+.install { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 24px; }
+.install h3 { margin: 0 0 8px; font-size: 1.02rem; }
+.install p { margin: 0 0 12px; color: var(--muted); font-size: 0.93rem; }
+pre { margin: 0; background: var(--code-bg); color: var(--code-text); border-radius: 8px; padding: 16px 18px; overflow-x: auto; font-size: 0.86rem; line-height: 1.7; }
+pre .c { color: #8f9a86; }
+.notice { margin-top: 28px; padding: 16px 20px; border-radius: 8px; background: var(--surface); border: 1px solid var(--line); font-size: 0.93rem; }
+.notice strong { color: var(--pumpkin-ink); }
+
+/* Footer */
+footer { margin-top: 88px; padding-block: 28px 40px; border-top: 1px solid var(--line); color: var(--muted); font-size: 0.88rem; }
+footer .wrap { display: flex; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+footer a { color: var(--muted); }
+
+/* Lightbox */
+dialog.lightbox { border: 0; padding: 0; background: transparent; max-width: min(96vw, 1640px); max-height: 94vh; }
+dialog.lightbox::backdrop { background: rgba(10, 12, 10, 0.86); }
+dialog.lightbox img { display: block; max-width: 100%; max-height: 86vh; height: auto; border-radius: 6px; }
+dialog.lightbox p { margin: 10px 4px 0; color: #e6eadf; font-size: 0.92rem; }
+dialog.lightbox button { position: fixed; top: 16px; right: 20px; background: rgba(255,255,255,0.12); color: #fff; border: 0; border-radius: 50%; width: 40px; height: 40px; font-size: 1.4rem; cursor: pointer; }
+</style>
+</head>
+<body>
+<header class="top">
+  <nav class="wrap" aria-label="Main">
+    <a class="wordmark" href="#">CIDR<span>ella</span></a>
+    <div class="links">
+      <a href="#features">Features</a>
+      <a href="#screenshots">Screenshots</a>
+      <a href="#install">Install</a>
+      <a href="https://github.com/fatcat/cidrella">GitHub</a>
+    </div>
+  </nav>
+</header>
+
+<main>
+  <div class="wrap hero">
+    <img class="logo" src="logo-text.png" width="521" height="239" alt="CIDRella">
+    <h1>Plan your networks, run their DNS and DHCP, from one place.</h1>
+    <p class="lede">CIDRella is an IP address management appliance for home labs and small to medium networks. It sits between a spreadsheet and NetBox: subnets, addresses, DNS records and DHCP scopes in one model, served by dnsmasq, or by PowerDNS and Kea.</p>
+    <div class="cta">
+      <a class="btn primary" href="https://github.com/fatcat/cidrella/releases/latest">Download the latest release</a>
+      <a class="btn ghost" href="https://github.com/fatcat/cidrella">View on GitHub</a>
+    </div>
+    <ul class="facts">
+      <li>Apache-2.0</li>
+      <li>Signed releases</li>
+      <li>IPv4 and IPv6</li>
+      <li>Runs in 1 to 2 GB of RAM</li>
+    </ul>
+  </div>
+  <div class="wrap">
+    <figure class="shot-hero" style="margin-inline:auto">
+      <img src="screenshots/ip-table.png" width="1635" height="1167" alt="The Addresses table for a /22 network: status, type, online state, MAC, last seen and vendor for each address.">
+    </figure>
+  </div>
+
+  <section class="block wrap" id="features">
+    <span class="eyebrow">What it does</span>
+    <h2>Addresses, names and leases that agree with each other</h2>
+    <p class="sub">An address has one state, and DNS, DHCP and the scanner all read it. Reserve an address and its DHCP reservation, forward record and PTR follow.</p>
+    <div class="features">
+      <div>
+        <h3>IP address management</h3>
+        <p>Nested subnets, folders, VLANs and named ranges, in a table or a grid with one cell per address.</p>
+      </div>
+      <div>
+        <h3>DNS</h3>
+        <p>Forward and reverse zones with A, AAAA, CNAME, MX, TXT, SRV and PTR records. DNSSEC validation, and upstreams over plain DNS, DNS over TLS or DNS over HTTPS.</p>
+      </div>
+      <div>
+        <h3>DHCP</h3>
+        <p>Scopes, reservations, option defaults and live leases, with bulk changes across scopes and DNS records made from leases.</p>
+      </div>
+      <div>
+        <h3>Filtering</h3>
+        <p>Category blocklists on a refresh schedule and country allow or block lists, applied by CIDRella's own DNS proxy, with a pause per host.</p>
+      </div>
+      <div>
+        <h3>Watching the network</h3>
+        <p>Liveness scans, rogue hosts, rogue DHCP servers and IPv6 routers, device and OS fingerprints from DHCP, and anomaly detection for beaconing and DGA-like names.</p>
+      </div>
+      <div>
+        <h3>Operations</h3>
+        <p>Signed in-app updates with automatic rollback, scheduled backups, an audit trail of who changed what, role-based access, two-factor sign-in and a Pi-hole import.</p>
+      </div>
+    </div>
+  </section>
+
+  <section class="block wrap" id="stacks">
+    <span class="eyebrow">Your choice of servers</span>
+    <h2>dnsmasq, or PowerDNS and Kea</h2>
+    <p class="sub">Pick one in the setup wizard and switch later under Settings, General, Servers, in either direction. Leases carry over.</p>
+    <div class="stacks">
+      <div class="stack">
+        <h3>dnsmasq</h3>
+        <span class="tag">The default. One small daemon.</span>
+        <dl>
+          <dt>DNS</dt><dd>dnsmasq</dd>
+          <dt>DHCP</dt><dd>dnsmasq, IPv4 and IPv6</dd>
+          <dt>Router Advertisements</dt><dd>dnsmasq</dd>
+        </dl>
+      </div>
+      <div class="stack">
+        <h3>PowerDNS + Kea</h3>
+        <span class="tag">New in 0.6.0. Each role in its own server.</span>
+        <dl>
+          <dt>DNS</dt><dd>PowerDNS Authoritative and Recursor</dd>
+          <dt>DHCP</dt><dd>ISC Kea, IPv4 and IPv6</dd>
+          <dt>Router Advertisements</dt><dd>radvd</dd>
+        </dl>
+      </div>
+    </div>
+    <p class="stacks-note">Either way, CIDRella writes the configuration, and its DNS proxy in front of the DNS server applies filtering and logs every query.</p>
+  </section>
+
+  <section class="block wrap" id="screenshots">
+    <span class="eyebrow">A look around</span>
+    <h2>Screenshots</h2>
+    <p class="sub">Taken on a live install. Select one to see it full size.</p>
+    <div class="gallery">
+      <figure><a class="thumb" href="screenshots/ip-table.png"><img loading="lazy" src="screenshots/ip-table.png" width="1635" height="1167" alt="Addresses table"></a>
+        <figcaption><strong>Addresses</strong>Every address in a network: status, type, online state, MAC, last seen, device OS and vendor.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/grid-view.png"><img loading="lazy" src="screenshots/grid-view.png" width="1629" height="1173" alt="Address grid"></a>
+        <figcaption><strong>Address grid</strong>One cell per address, colored by what holds it, with ranges outlined.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/dns-table.png"><img loading="lazy" src="screenshots/dns-table.png" width="1630" height="1169" alt="DNS records table"></a>
+        <figcaption><strong>DNS records</strong>Records with the TTL actually served and where each came from: a lease, a reservation or by hand.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/dhcp-table.png"><img loading="lazy" src="screenshots/dhcp-table.png" width="1633" height="1166" alt="DHCP table"></a>
+        <figcaption><strong>DHCP</strong>Every address in a scope with its reservation, lease state and expiry.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/dashboard.png"><img loading="lazy" src="screenshots/dashboard.png" width="1632" height="1167" alt="Analytics dashboard"></a>
+        <figcaption><strong>Network health</strong>What needs attention, address use, resolver latency, cache hits, and what was blocked.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/performance.png"><img loading="lazy" src="screenshots/performance.png" width="1633" height="1170" alt="Resolver performance"></a>
+        <figcaption><strong>Resolver performance</strong>Queries per minute, p95 latency, failures by cause, and each upstream's answers.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/anomalies.png"><img loading="lazy" src="screenshots/anomalies.png" width="1636" height="1170" alt="Anomaly triage map"></a>
+        <figcaption><strong>Anomaly triage</strong>Each device placed by how far it strays from its own baseline, with a ranked queue.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/filtering.png"><img loading="lazy" src="screenshots/filtering.png" width="1631" height="1171" alt="Filtering settings"></a>
+        <figcaption><strong>Filtering</strong>Blocklist categories, their refresh schedule, and a pause for a chosen period.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/dns-settings.png"><img loading="lazy" src="screenshots/dns-settings.png" width="1630" height="1157" alt="DNS settings"></a>
+        <figcaption><strong>DNS settings</strong>Upstreams over plain DNS, DoT or DoH, with a backup for failover or load balancing.</figcaption></figure>
+      <figure><a class="thumb" href="screenshots/dhcp-settings.png"><img loading="lazy" src="screenshots/dhcp-settings.png" width="1631" height="1168" alt="DHCP option defaults"></a>
+        <figcaption><strong>DHCP settings</strong>Option defaults by code, which ones new scopes get, and how many scopes use each.</figcaption></figure>
+    </div>
+  </section>
+
+  <section class="block wrap" id="install">
+    <span class="eyebrow">Getting it running</span>
+    <h2>Install</h2>
+    <p class="sub">Native on Debian or Ubuntu with systemd, or in Docker. Linux on x86-64.</p>
+    <div class="install">
+      <div>
+        <h3>Native install</h3>
+        <p>Read the script before you run it. It installs the dependencies, downloads the latest signed release, checks its signature and sets up the services.</p>
+<pre><code>curl -sSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh -o install.sh
+less install.sh   <span class="c"># review it first</span>
+sudo bash install.sh</code></pre>
+      </div>
+      <div>
+        <h3>Docker</h3>
+        <p>Builds the image from source. Good for trying it out; updates come from rebuilding, not from the app.</p>
+<pre><code>git clone https://github.com/fatcat/cidrella.git
+cd cidrella
+docker compose up -d --build</code></pre>
+      </div>
+    </div>
+    <div class="notice"><strong>Install only from the <a href="https://github.com/fatcat/cidrella/releases">GitHub releases</a>.</strong> Every release tarball is signed with minisign and checked before it is installed or applied as an update. Each release also links a VirusTotal scan. Full details are in <a href="https://github.com/fatcat/cidrella/blob/main/docs/INSTALL-NATIVE.md">INSTALL-NATIVE.md</a> and <a href="https://github.com/fatcat/cidrella/blob/main/docs/INSTALL-DOCKER.md">INSTALL-DOCKER.md</a>.</div>
+  </section>
+</main>
+
+<footer>
+  <div class="wrap">
+    <span>CIDRella is licensed under <a href="https://github.com/fatcat/cidrella/blob/main/LICENSE">Apache-2.0</a>. Pronounced cider-ella.</span>
+    <span><a href="https://github.com/fatcat/cidrella">Source</a> · <a href="https://github.com/fatcat/cidrella/releases">Releases</a> · <a href="https://github.com/fatcat/cidrella/blob/main/RELEASE-NOTES.md">Release notes</a> · <a href="https://github.com/fatcat/cidrella/issues">Issues</a></span>
+  </div>
+</footer>
+
+<dialog class="lightbox" aria-label="Screenshot">
+  <button type="button" aria-label="Close">×</button>
+  <img alt="">
+  <p></p>
+</dialog>
+<script>
+(() => {
+  const box = document.querySelector('dialog.lightbox');
+  if (!box || typeof box.showModal !== 'function') return;
+  const img = box.querySelector('img');
+  const cap = box.querySelector('p');
+  document.querySelectorAll('.gallery a.thumb').forEach((a) => {
+    a.addEventListener('click', (e) => {
+      e.preventDefault();
+      img.src = a.href;
+      img.alt = a.querySelector('img').alt;
+      const fc = a.parentElement.querySelector('figcaption');
+      const title = fc.querySelector('strong').textContent;
+      cap.textContent = title + ': ' + fc.textContent.slice(title.length);
+      box.showModal();
+    });
+  });
+  box.querySelector('button').addEventListener('click', () => box.close());
+  box.addEventListener('click', (e) => { if (e.target === box) box.close(); });
+})();
+</script>
+</body>
+</html>

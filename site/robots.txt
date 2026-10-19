@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://fatcat.github.io/cidrella/sitemap.xml
