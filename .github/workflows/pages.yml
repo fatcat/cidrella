@@ -38,6 +38,40 @@ jobs:
           cp -L site/logo-text.png site/favicon.ico site/favicon-32x32.png _site/
           cp -L site/screenshots/*.png _site/screenshots/
 
+      # /virustotal/ is a stable address for the README badge: a redirect to
+      # VirusTotal's report on the latest release's tarball, found by its
+      # SHA-256. virustotal.yml rebuilds the site after each scan, so the
+      # redirect moves to a new release without a commit.
+      - name: Point /virustotal/ at the latest release's report
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
+            --jq '.assets[] | select(.name | endswith(".tar.gz")) | [.name, (.digest // ""), .browser_download_url] | @tsv' | head -1)
+          IFS=$'\t' read -r name digest url <<< "$asset"
+          sha=${digest#sha256:}
+          if ! [[ $sha =~ ^[0-9a-f]{64}$ ]]; then
+            sha=$(curl -sSfL "$url" | sha256sum | cut -c1-64)
+          fi
+          report="https://www.virustotal.com/gui/file/$sha"
+          mkdir -p _site/virustotal
+          cat > _site/virustotal/index.html <<HTML
+          <!doctype html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8">
+          <meta name="robots" content="noindex">
+          <meta http-equiv="refresh" content="0; url=$report">
+          <link rel="canonical" href="$report">
+          <title>VirusTotal report for $name</title>
+          </head>
+          <body>
+          <p>Going to the <a href="$report">VirusTotal report for $name</a>.</p>
+          </body>
+          </html>
+          HTML
+          echo "$name -> $report"
+
       - uses: actions/configure-pages@45bfe0192ca1faeb007ade9deae92b16b8254a0d # v6.0.0
 
       - uses: actions/upload-pages-artifact@fc324d3547104276b827a68afc52ff2a11cc49c9 # v5.0.0

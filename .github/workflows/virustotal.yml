@@ -26,6 +26,9 @@ jobs:
     permissions:
       # Appends the analysis links to the release notes.
       contents: write
+      # Rebuilds the Pages site, whose /virustotal/ redirect follows the
+      # latest release.
+      actions: write
     steps:
       - name: Scan the release tarball
         if: github.event_name == 'release'
@@ -74,3 +77,9 @@ jobs:
           done
           printf '%s\n\n🛡 VirusTotal analysis:%s\n' "$body" "$links" > notes.md
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
+
+      - name: Rebuild the site so its VirusTotal link follows this release
+        if: github.event_name == 'release' && !github.event.release.prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main
