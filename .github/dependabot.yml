@@ -45,6 +45,11 @@ updates:
     schedule:
       interval: weekly
       day: monday
+    groups:
+      # CodeQL refuses to run when its init and analyze steps differ in
+      # version, so every github/codeql-action step moves in one PR.
+      codeql:
+        patterns: ["github/codeql-action*"]
 
   # The Dockerfile's base image is pinned by digest; this keeps the digest current.
   - package-ecosystem: docker
