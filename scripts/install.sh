@@ -566,10 +566,12 @@ if [ -d "$INSTALL_DIR/server/node_modules/express" ]; then
 else
   info "Installing Node.js dependencies (this may take a moment)..."
   cd "$INSTALL_DIR/server"
+  # npm ci installs exactly what the shipped package-lock.json names, the same
+  # tree build-release.sh bundles, and no install scripts run, as in the build.
   if [ -x "$INSTALL_DIR/runtime/node/bin/npm" ]; then
-    PATH="$INSTALL_DIR/runtime/node/bin:$PATH" "$INSTALL_DIR/runtime/node/bin/npm" install --omit=dev --silent 2>&1 | tail -5
+    PATH="$INSTALL_DIR/runtime/node/bin:$PATH" "$INSTALL_DIR/runtime/node/bin/npm" ci --omit=dev --ignore-scripts --silent 2>&1 | tail -5
   elif command -v npm >/dev/null 2>&1; then
-    npm install --omit=dev --silent 2>&1 | tail -5
+    npm ci --omit=dev --ignore-scripts --silent 2>&1 | tail -5
   else
     err "Bundled node_modules are missing and no npm binary is available."
     err "Expected bundled npm at $INSTALL_DIR/runtime/node/bin/npm."

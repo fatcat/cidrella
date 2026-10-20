@@ -1068,13 +1068,15 @@ ok "Syntax check passed (using $PREFLIGHT_NODE)"
 
 # Verify bundled node_modules exist. The new build pipeline bundles them
 if [ ! -d "$TARGET_SLOT/server/node_modules/express" ]; then
-  warn "Bundled node_modules not found in tarball, running npm install as fallback"
+  warn "Bundled node_modules not found in tarball, running npm ci as fallback"
   cd "$TARGET_SLOT/server"
+  # npm ci installs exactly what the shipped package-lock.json names, the same
+  # tree build-release.sh bundles, and no install scripts run, as in the build.
   if [ -x "$TARGET_SLOT/runtime/node/bin/npm" ]; then
-    PATH="$TARGET_SLOT/runtime/node/bin:$PATH" "$TARGET_SLOT/runtime/node/bin/npm" install --omit=dev --silent 2>&1 | tail -3
+    PATH="$TARGET_SLOT/runtime/node/bin:$PATH" "$TARGET_SLOT/runtime/node/bin/npm" ci --omit=dev --ignore-scripts --silent 2>&1 | tail -3
   elif command -v npm >/dev/null 2>&1; then
     warn "Target slot bundled npm not found; falling back to system npm."
-    npm install --omit=dev --silent 2>&1 | tail -3
+    npm ci --omit=dev --ignore-scripts --silent 2>&1 | tail -3
   else
     err "Bundled node_modules are missing and no npm binary is available."
     err "Expected bundled npm at $TARGET_SLOT/runtime/node/bin/npm."

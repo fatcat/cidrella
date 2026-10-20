@@ -290,8 +290,9 @@ apply_npm_updates() {
       # dependencies, but npm may prune dev dependencies from node_modules
       # while doing so. Restore the local development install so commit hooks
       # and follow-up tests continue to use the project's pinned Vitest/Vite
-      # toolchain instead of npx fetching a temporary copy.
-      (cd "$PROJECT_DIR/$dir" && npm install)
+      # toolchain instead of npx fetching a temporary copy. npm ci installs
+      # exactly the lockfile the update just wrote.
+      (cd "$PROJECT_DIR/$dir" && npm ci)
     fi
   done
 }
@@ -1147,7 +1148,9 @@ if [ "$DRY_RUN" = false ]; then
   # the bundled bin/ makes npm → bundled node → node-gyp → bundled headers,
   # so the .node files match the runtime we ship.
   cp "$PROJECT_DIR/server/package.json" "$STAGING_DIR/server/package.json"
-  cp "$PROJECT_DIR/server/package-lock.json" "$STAGING_DIR/server/package-lock.json" 2>/dev/null || true
+  # npm ci below needs it, and install.sh and update.sh fall back to npm ci
+  # with the copy that ships.
+  cp "$PROJECT_DIR/server/package-lock.json" "$STAGING_DIR/server/package-lock.json"
 
   cd "$STAGING_DIR/server"
   # --ignore-scripts: dependency lifecycle hooks (preinstall/install/postinstall)
