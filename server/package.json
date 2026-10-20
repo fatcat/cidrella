@@ -23,7 +23,7 @@
   "devDependencies": {
     "fast-check": "^4.10.2",
     "supertest": "^7.2.2",
-    "vitest": "^4.0.18"
+    "vitest": "^5.0.5"
   },
   "overrides": {
     "rolldown": "1.2.6"
