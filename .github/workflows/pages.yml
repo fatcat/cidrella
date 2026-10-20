@@ -43,6 +43,9 @@ jobs:
       # SHA-256. virustotal.yml rebuilds the site after each scan, so the
       # redirect moves to a new release without a commit.
       - name: Point /virustotal/ at the latest release's report
+        # An explicit bash runs with pipefail (the default shell does not), so a
+        # failed download below is caught instead of hashing empty input.
+        shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
