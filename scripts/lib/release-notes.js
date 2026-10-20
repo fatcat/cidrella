@@ -29,6 +29,10 @@
  *   node scripts/lib/release-notes.js --newest <notes-file>
  *   node scripts/lib/release-notes.js --has-version <x.y.z> <notes-file>
  *   node scripts/lib/release-notes.js --tag <x.y.z> <notes-file>   (prints the [tag], if any)
+ *   node scripts/lib/release-notes.js --section <x.y.z> <notes-file>
+ *     (prints that version's notes for the GitHub release page: the prose under
+ *     its heading, without the heading, the YAML metadata block, or the `---`
+ *     separator before the next release)
  */
 
 const fs = require('fs');
@@ -82,24 +86,51 @@ function parseHeadersFile(notesPath) {
   return parseHeaders(fs.readFileSync(notesPath, 'utf8'));
 }
 
+/**
+ * The notes for one version, as a release page shows them: everything from its
+ * heading to the next release heading, less the heading itself, the fenced YAML
+ * metadata block right under it, and the trailing `---` separator. Null when
+ * the notes have no heading for that version.
+ */
+function sectionBody(source, version) {
+  const lines = String(source).split('\n');
+  const { headers } = parseHeaders(source);
+  const index = headers.findIndex((h) => h.version === version);
+  if (index === -1) return null;
+  const start = headers[index].line; // the line after the heading (1-based)
+  const end = index + 1 < headers.length ? headers[index + 1].line - 1 : lines.length;
+  let body = lines.slice(start, end);
+
+  let first = body.findIndex((line) => line.trim() !== '');
+  if (first !== -1 && /^```ya?ml\s*$/.test(body[first].trim())) {
+    const close = body.findIndex((line, i) => i > first && line.trim() === '```');
+    if (close !== -1) body = body.slice(close + 1);
+  }
+  while (body.length && body[body.length - 1].trim() === '') body.pop();
+  if (body.length && body[body.length - 1].trim() === '---') body.pop();
+  return body.join('\n').trim();
+}
+
 module.exports = {
   RELEASE_HEADER_RE,
   RELEASE_HEADER_HINT_RE,
   malformedHeaderMessage,
   parseHeaders,
   parseHeadersFile,
+  sectionBody,
 };
 
 // ─── CLI, so build-release.sh asks this module instead of grepping ─────────
 if (require.main === module) {
   const argv = process.argv.slice(2);
   const mode = argv[0];
-  const notesPath = mode === '--has-version' || mode === '--tag' ? argv[2] : argv[1];
+  const notesPath = ['--has-version', '--tag', '--section'].includes(mode) ? argv[2] : argv[1];
 
   if (!mode || !notesPath) {
     console.error('usage: release-notes.js --newest <notes-file>');
     console.error('       release-notes.js --has-version <x.y.z> <notes-file>');
     console.error('       release-notes.js --tag <x.y.z> <notes-file>');
+    console.error('       release-notes.js --section <x.y.z> <notes-file>');
     process.exit(2);
   }
 
@@ -137,6 +168,16 @@ if (require.main === module) {
     const header = parsed.headers.find((h) => h.version === argv[1]);
     if (!header) process.exit(1);
     process.stdout.write(header.tag || '');
+    process.exit(0);
+  }
+
+  if (mode === '--section') {
+    const body = sectionBody(fs.readFileSync(notesPath, 'utf8'), argv[1]);
+    if (!body) {
+      console.error(`  ERROR: ${notesPath} has no notes for v${argv[1]}.`);
+      process.exit(1);
+    }
+    process.stdout.write(body + '\n');
     process.exit(0);
   }
 

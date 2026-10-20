@@ -695,6 +695,12 @@ if [ -f "$PROJECT_DIR/RELEASE-NOTES.md" ]; then
     exit 1
   fi
   echo "  RELEASE-NOTES.md has v${NOTES_VERSION} entry: OK"
+  # The GitHub release page shows this section (step 7). Check it now, before
+  # anything is tagged, rather than after the tag is pushed.
+  if ! node "$PROJECT_DIR/scripts/lib/release-notes.js" --section "${NOTES_VERSION}" "$PROJECT_DIR/RELEASE-NOTES.md" >/dev/null; then
+    echo "ERROR: the v${NOTES_VERSION} section of RELEASE-NOTES.md has no notes under its heading."
+    exit 1
+  fi
   # A version marked "[pre-release]" never gets a final build: the published
   # manifest leaves it out, so hosts could not see the release just cut.
   NOTES_TAG=$(node "$PROJECT_DIR/scripts/lib/release-notes.js" --tag "${NOTES_VERSION}" "$PROJECT_DIR/RELEASE-NOTES.md")
@@ -1351,6 +1357,24 @@ else
   echo "  [DRY RUN] Would run: minisign -Sm dist/releases.json"
 fi
 
+# The release page carries this version's section of RELEASE-NOTES.md, then a
+# link to the whole file (a section can point at notes before it). GitHub's
+# generated list of merged PRs follows it on a final release, and the
+# VirusTotal workflow appends the scan link after that.
+# A dry run writes nothing in the tree, so its copy goes to a temp file.
+if [ "$DRY_RUN" = true ]; then
+  RELEASE_BODY=$(mktemp)
+else
+  RELEASE_BODY="$DIST_DIR/release-body.md"
+fi
+{
+  if [ "$PRE_RELEASE" = true ]; then
+    printf 'Pre-release of v%s for validation.\n\n' "$BASE_VERSION"
+  fi
+  node "$PROJECT_DIR/scripts/lib/release-notes.js" --section "$BASE_VERSION" "$PROJECT_DIR/RELEASE-NOTES.md"
+  printf "\nEvery release's notes are in [RELEASE-NOTES.md](https://github.com/fatcat/cidrella/blob/%s/RELEASE-NOTES.md).\n" "$TAG"
+} > "$RELEASE_BODY"
+
 if [ "$BUILD_ONLY" = true ]; then
   echo ""
   echo "=== Build complete (--build-only) ==="
@@ -1368,7 +1392,7 @@ if [ "$BUILD_ONLY" = true ]; then
     echo "    dist/$TARBALL dist/${TARBALL}.minisig \\"
     echo "    --title 'CIDRella $TAG (pre-release)' --prerelease \\"
     echo "    --target $RELEASE_COMMIT \\"
-    echo "    --notes 'Pre-release of ${BASE_VERSION} for validation. See RELEASE-NOTES.md.'"
+    echo "    --notes-file dist/release-body.md"
     echo ""
     echo "To withdraw: gh release delete $TAG --cleanup-tag --yes"
     echo "To promote:  rebuild without --pre, then gh release create v${BASE_VERSION} ..."
@@ -1378,7 +1402,7 @@ if [ "$BUILD_ONLY" = true ]; then
     echo "  gh release create $TAG \\"
     echo "    dist/$TARBALL dist/${TARBALL}.minisig \\"
     echo "    dist/releases.json dist/releases.json.minisig \\"
-    echo "    --title 'CIDRella $TAG' --generate-notes"
+    echo "    --title 'CIDRella $TAG' --notes-file dist/release-body.md --generate-notes"
   fi
   print_dependency_override_note
   exit 0
@@ -1415,7 +1439,7 @@ if [ "$DRY_RUN" = false ]; then
       --title "CIDRella $TAG (pre-release)" \
       --prerelease \
       --target "$RELEASE_COMMIT" \
-      --notes "Pre-release of v${BASE_VERSION} for validation. See RELEASE-NOTES.md for the v${BASE_VERSION} entry."
+      --notes-file "$RELEASE_BODY"
 
     RELEASE_URL=$(gh release view "$TAG" --json url -q '.url')
     echo ""
@@ -1441,6 +1465,7 @@ if [ "$DRY_RUN" = false ]; then
       "$DIST_DIR/releases.json" \
       "$DIST_DIR/releases.json.minisig" \
       --title "CIDRella $TAG" \
+      --notes-file "$RELEASE_BODY" \
       --generate-notes
 
     RELEASE_URL=$(gh release view "$TAG" --json url -q '.url')
@@ -1454,6 +1479,8 @@ if [ "$DRY_RUN" = false ]; then
   fi
 else
   echo "  [DRY RUN] Would run: gh release create $TAG …"
+  echo "  [DRY RUN] Release page body: $(wc -l < "$RELEASE_BODY") lines"
+  rm -f "$RELEASE_BODY"
   echo ""
   echo "=== Dry run complete ==="
 fi

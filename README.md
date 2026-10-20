@@ -1,6 +1,7 @@
 # CIDRella
 
 [![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/fatcat/cidrella/badge)](https://scorecard.dev/viewer/?uri=github.com/fatcat/cidrella)
+[![VirusTotal: every release scanned](https://img.shields.io/badge/VirusTotal-every%20release%20scanned-394EFF?logo=virustotal&logoColor=white)](https://github.com/fatcat/cidrella/releases/latest)
 
 Have a home network lab and need something better than a spreadsheet to plan and track your networks? Perhaps a small business, or even a medium-sized business. Need integrated address planning, DNS and DHCP all rolled into one, but found other solutions much too complicated (Netbox) or too simple (Pi-hole)? CIDRella is lightweight IP Address Management system that requires minimal system resources (can be deployed as a container or LXC) and minimal learning curve.
 
