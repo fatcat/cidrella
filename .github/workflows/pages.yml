@@ -47,13 +47,21 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           asset=$(gh api "repos/$GITHUB_REPOSITORY/releases/latest" \
-            --jq '.assets[] | select(.name | endswith(".tar.gz")) | [.name, (.digest // ""), .browser_download_url] | @tsv' | head -1)
+            --jq '.assets[] | select(.name | endswith(".tar.gz")) | [.name, (.digest // ""), .browser_download_url] | @tsv' | head -1) || asset=''
           IFS=$'\t' read -r name digest url <<< "$asset"
           sha=${digest#sha256:}
-          if ! [[ $sha =~ ^[0-9a-f]{64}$ ]]; then
-            sha=$(curl -sSfL "$url" | sha256sum | cut -c1-64)
+          if ! [[ $sha =~ ^[0-9a-f]{64}$ ]] && [ -n "$url" ]; then
+            sha=$(curl -sSfL "$url" | sha256sum | cut -c1-64) || sha=''
           fi
-          report="https://www.virustotal.com/gui/file/$sha"
+          if [[ $sha =~ ^[0-9a-f]{64}$ ]]; then
+            report="https://www.virustotal.com/gui/file/$sha"
+          else
+            # No tarball to name: send the badge to the release page, where
+            # the scan link would be, rather than fail the whole deploy.
+            name='the latest release'
+            report="https://github.com/$GITHUB_REPOSITORY/releases/latest"
+            echo '::warning::No release tarball found; /virustotal/ points at the releases page.'
+          fi
           mkdir -p _site/virustotal
           cat > _site/virustotal/index.html <<HTML
           <!doctype html>
