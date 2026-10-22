@@ -37,7 +37,9 @@ describe('API client on 401', () => {
   });
 
   it('calls any other 401 a revoked session', async () => {
-    await expect(rejected(failure('/networks', 401, { error: 'Invalid token' }))).rejects.toBeTruthy();
+    await expect(
+      rejected(failure('/networks', 401, { error: 'Invalid token' })),
+    ).rejects.toBeTruthy();
     expect(auth.logout).toHaveBeenCalledWith('revoked');
   });
 

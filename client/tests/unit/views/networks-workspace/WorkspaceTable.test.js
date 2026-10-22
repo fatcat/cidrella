@@ -110,7 +110,6 @@ describe('WorkspaceTable', () => {
   });
 });
 
-
 describe('WorkspaceTable Filtering column', () => {
   const ToggleStub = {
     props: ['modelValue', 'disabled', 'ariaLabel'],

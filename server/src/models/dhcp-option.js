@@ -303,11 +303,7 @@ export function syncServerDnsDefault(db) {
   const existing = db
     .prepare('SELECT value FROM dhcp_option_defaults WHERE option_code = 6 AND address_family = 4')
     .get()?.value;
-  const newValue = serverDnsDefaultValue(
-    existing,
-    serverIp,
-    readSetting(db, SERVER_DNS_SETTING),
-  );
+  const newValue = serverDnsDefaultValue(existing, serverIp, readSetting(db, SERVER_DNS_SETTING));
   upsertSetting(db, SERVER_DNS_SETTING, serverIp);
 
   if (upsertServerDnsDefault(db, newValue)) {

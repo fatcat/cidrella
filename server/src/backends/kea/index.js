@@ -96,7 +96,8 @@ export function createKeaBackend(deps = {}) {
   const access =
     deps.access ||
     ((file) => {
-      if (!findExecutable(file)) throw Object.assign(new Error(`${file} not found`), { code: 'ENOENT' });
+      if (!findExecutable(file))
+        throw Object.assign(new Error(`${file} not found`), { code: 'ENOENT' });
     });
   const wait = deps.wait || pause;
 

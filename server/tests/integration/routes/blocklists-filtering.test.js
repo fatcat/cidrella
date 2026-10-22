@@ -37,13 +37,12 @@ beforeAll(async () => {
 });
 afterAll(() => cleanupTestDb(tmpDir));
 afterEach(async () => {
-  db.exec("DELETE FROM filtering_exemptions; DELETE FROM dhcp_leases; DELETE FROM audit_log;");
+  db.exec('DELETE FROM filtering_exemptions; DELETE FROM dhcp_leases; DELETE FROM audit_log;');
   db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('ipv6_enabled', 'false')").run();
   await request(app).put('/api/blocklists/pause').send({ minutes: 0 });
 });
 
-const auditActions = () =>
-  db.prepare('SELECT action FROM audit_log ORDER BY id').pluck().all();
+const auditActions = () => db.prepare('SELECT action FROM audit_log ORDER BY id').pluck().all();
 
 describe('PUT /api/blocklists/pause', () => {
   it('pauses for the chosen minutes, shows when it ends, and resumes on 0', async () => {

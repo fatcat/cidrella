@@ -166,9 +166,7 @@ const queueRows = computed(() =>
   })),
 );
 const queueNote = computed(() =>
-  state.value === 'ready'
-    ? `${queueRows.value.length} devices, ranked by last flagged score`
-    : '',
+  state.value === 'ready' ? `${queueRows.value.length} devices, ranked by last flagged score` : '',
 );
 
 // ── map ──────────────────────────────────────────────────────────────

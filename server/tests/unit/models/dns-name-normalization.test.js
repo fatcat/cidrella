@@ -117,9 +117,7 @@ describe('fqdnForRecordName (zone-file rule)', () => {
   });
 
   it('does not double the zone on a name that already carries it', () => {
-    expect(fqdnForRecordName('_sip._tcp.example.lan', 'example.lan')).toBe(
-      '_sip._tcp.example.lan',
-    );
+    expect(fqdnForRecordName('_sip._tcp.example.lan', 'example.lan')).toBe('_sip._tcp.example.lan');
     expect(fqdnForRecordName('@', 'example.lan')).toBe('example.lan');
   });
 });

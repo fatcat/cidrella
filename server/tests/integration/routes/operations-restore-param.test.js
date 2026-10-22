@@ -47,7 +47,9 @@ const send = (query) =>
     .send(Buffer.from('not really a tarball'));
 
 const lastAudit = () =>
-  db.prepare("SELECT details FROM audit_log WHERE action = 'backup_restored' ORDER BY id DESC").get();
+  db
+    .prepare("SELECT details FROM audit_log WHERE action = 'backup_restored' ORDER BY id DESC")
+    .get();
 
 describe('POST /api/operations/restore ?dhcp=', () => {
   it('rejects anything but enabled or disabled', async () => {

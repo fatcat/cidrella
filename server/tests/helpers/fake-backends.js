@@ -169,9 +169,10 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
     capabilities: () =>
       declareSupport(backend.roles, {
         ...Object.fromEntries(
-          FAKE_SUPPORTED.filter((id) => backend.roles.includes(featureById(id).role)).map(
-            (id) => [id, true],
-          ),
+          FAKE_SUPPORTED.filter((id) => backend.roles.includes(featureById(id).role)).map((id) => [
+            id,
+            true,
+          ]),
         ),
         ...capabilities,
       }),

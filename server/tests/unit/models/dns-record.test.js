@@ -48,7 +48,9 @@ describe('PTR record ownership', () => {
 
   it('projects nibble PTR owners in ip6.arpa zones to canonical IPv6', () => {
     const zone = '1.0.0.0.0.0.0.0.6.0.0.0.0.0.d.f.ip6.arpa';
-    expect(DnsRecord.ipForPtrRecord('0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0', zone)).toBe('fd00:6:0:1::10');
+    expect(DnsRecord.ipForPtrRecord('0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.0', zone)).toBe(
+      'fd00:6:0:1::10',
+    );
     // Too few nibbles, or a label that is not a nibble.
     expect(DnsRecord.ipForPtrRecord('0.1', zone)).toBeNull();
     expect(DnsRecord.ipForPtrRecord('0.1.0.0.0.0.0.0.0.0.0.0.0.0.0.g', zone)).toBeNull();

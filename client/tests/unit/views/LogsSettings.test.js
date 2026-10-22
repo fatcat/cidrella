@@ -55,7 +55,8 @@ vi.mock('../../../src/ui/Tab.js', async () => {
       props: ['value'],
       setup(props, { slots, attrs }) {
         const tabs = inject('tabs');
-        return () => h('button', { ...attrs, onClick: () => tabs.set(props.value) }, slots.default?.());
+        return () =>
+          h('button', { ...attrs, onClick: () => tabs.set(props.value) }, slots.default?.());
       },
     },
   };

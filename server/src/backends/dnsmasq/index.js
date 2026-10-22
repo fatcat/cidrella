@@ -199,7 +199,10 @@ export function createDnsmasqBackend() {
     installed: () =>
       dnsmasqUnitInstalled()
         ? { ok: true }
-        : { ok: false, reason: 'dnsmasq is not run by CIDRella here (no cidrella-dnsmasq.service)' },
+        : {
+            ok: false,
+            reason: 'dnsmasq is not run by CIDRella here (no cidrella-dnsmasq.service)',
+          },
     awaitStopped: (opts) => awaitDnsmasqStopped(opts),
     // systemd has it running once restart() returns; under s6 the
     // supervisor starts it a moment later.

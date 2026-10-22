@@ -43,9 +43,7 @@ const listeners = new Set();
  * its configuration, with no addresses to hand out.
  */
 export function servesDhcp(name) {
-  return (
-    STACKS[stack].dhcp === name && !quiesced.has(name) && !roleSwitchedOff('dhcp')
-  );
+  return STACKS[stack].dhcp === name && !quiesced.has(name) && !roleSwitchedOff('dhcp');
 }
 
 /** The adapter instance by name, whatever role it fills now. */

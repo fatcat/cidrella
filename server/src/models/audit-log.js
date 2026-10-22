@@ -13,7 +13,12 @@ const columnCache = new WeakMap();
 function auditColumns(db) {
   let cols = columnCache.get(db);
   if (!cols) {
-    cols = new Set(db.prepare('PRAGMA table_info(audit_log)').all().map((c) => c.name));
+    cols = new Set(
+      db
+        .prepare('PRAGMA table_info(audit_log)')
+        .all()
+        .map((c) => c.name),
+    );
     columnCache.set(db, cols);
   }
   return cols;

@@ -186,9 +186,7 @@
                 "
                 class="scope-option-default"
               >
-                {{
-                  hasDefault(opt.code) ? defaultValues[opt.code] : 'the default has no value'
-                }}
+                {{ hasDefault(opt.code) ? defaultValues[opt.code] : 'the default has no value' }}
               </span>
               <template v-else-if="form.selectedOptions.includes(opt.code)">
                 <Select

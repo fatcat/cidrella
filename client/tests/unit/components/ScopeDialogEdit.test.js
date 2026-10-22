@@ -315,7 +315,9 @@ describe('ScopeDialog on an IPv6 network', () => {
             },
           });
         if (url === '/subnets')
-          return Promise.resolve({ data: { folders: [{ id: 1, name: 'Lab', subnets: [subnet] }] } });
+          return Promise.resolve({
+            data: { folders: [{ id: 1, name: 'Lab', subnets: [subnet] }] },
+          });
         return Promise.reject(new Error(`Unexpected GET ${url}`));
       });
       const wrapper = mountDialog();
@@ -583,4 +585,3 @@ describe('network fills from a picked range', () => {
     expect(wrapper.vm.form.optionValues[6]).toBeUndefined();
   });
 });
-

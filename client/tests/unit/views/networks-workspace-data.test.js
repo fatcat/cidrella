@@ -134,7 +134,7 @@ describe('networks workspace data adapter', () => {
     expect(free.pool).toBeNull();
   });
 
-  it('shows the TTL the server answers with, marked when it is not the record\'s own', () => {
+  it("shows the TTL the server answers with, marked when it is not the record's own", () => {
     const zone = { id: 4, name: 'example.test', type: 'forward', soa_minimum_ttl: 3600 };
     const record = { id: 1, record_type: 'A', name: 'a', value: '10.0.0.1', enabled: 1 };
     const [none, ignored, own, unknown] = mapDnsRows([

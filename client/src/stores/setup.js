@@ -60,8 +60,7 @@ export const useSetupStore = defineStore('setup', () => {
 
   // The stack Start leaves running: the one picked, else the one serving now.
   const chosenStack = computed(() => draft.stack ?? servers.value?.current ?? null);
-  const stackLabelOf = (name) =>
-    servers.value?.stacks.find((s) => s.name === name)?.label ?? name;
+  const stackLabelOf = (name) => servers.value?.stacks.find((s) => s.name === name)?.label ?? name;
 
   async function mark(patch) {
     const res = await api.put('/setup/state', patch);

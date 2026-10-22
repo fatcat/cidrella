@@ -32,9 +32,8 @@ const download = () =>
 
 const { default: geoipRouter } = await import('../../../src/routes/geoip.js');
 const { getDb, setSetting, getSetting } = await import('../../../src/db/init.js');
-const { evaluateResolvedPolicy, isGeoipLoaded, unloadMmdb } = await import(
-  '../../../src/utils/dns-proxy.js'
-);
+const { evaluateResolvedPolicy, isGeoipLoaded, unloadMmdb } =
+  await import('../../../src/utils/dns-proxy.js');
 const { default: request } = await import('supertest');
 
 let tmpDir, app;
@@ -47,7 +46,11 @@ beforeAll(async () => {
   const mmdb = path.join(tmpDir, 'test-country.mmdb');
   fs.writeFileSync(mmdb, 'placeholder');
   setSetting('geoip_db_path', mmdb);
-  getDb().prepare("INSERT INTO geoip_rules (country_code, country_name, enabled) VALUES ('RU', 'Russia', 1)").run();
+  getDb()
+    .prepare(
+      "INSERT INTO geoip_rules (country_code, country_name, enabled) VALUES ('RU', 'Russia', 1)",
+    )
+    .run();
 });
 afterAll(() => cleanupTestDb(tmpDir));
 beforeEach(() => {

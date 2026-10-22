@@ -43,10 +43,7 @@ const estateInterfaces = () => ({
     { family: 'IPv6', address: 'fd00:61::2', internal: false },
     { family: 'IPv6', address: 'fd00:63::2', internal: false },
   ],
-  eth1: [
-    ...ESTATE_INTERFACES.eth1,
-    { family: 'IPv6', address: 'fd00:62::2', internal: false },
-  ],
+  eth1: [...ESTATE_INTERFACES.eth1, { family: 'IPv6', address: 'fd00:62::2', internal: false }],
 });
 
 const backend = () =>

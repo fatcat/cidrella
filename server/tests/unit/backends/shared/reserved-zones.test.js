@@ -24,9 +24,7 @@ describe('reservedLocalDomains', () => {
     expect(SITE_LOCAL_DOMAINS).toEqual(expect.arrayContaining(cgnat));
     expect(SITE_LOCAL_DOMAINS).not.toContain('63.100.in-addr.arpa');
     expect(SITE_LOCAL_DOMAINS).not.toContain('128.100.in-addr.arpa');
-    expect(reservedLocalDomains({ addresses: ['9.9.9.9'] })).toEqual(
-      expect.arrayContaining(cgnat),
-    );
+    expect(reservedLocalDomains({ addresses: ['9.9.9.9'] })).toEqual(expect.arrayContaining(cgnat));
     expect(reservedLocalDomains({ addresses: ['100.64.0.53'] })).not.toContain(
       '64.100.in-addr.arpa',
     );

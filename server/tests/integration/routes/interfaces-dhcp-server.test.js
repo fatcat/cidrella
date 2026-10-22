@@ -62,7 +62,9 @@ describe('PUT /api/interfaces/config and the DHCP server', () => {
 
   it('queues nothing when only a web setting changes', async () => {
     backends.split.value = true;
-    const res = await request(app).put('/api/interfaces/config').send({ http_redirect_enabled: true });
+    const res = await request(app)
+      .put('/api/interfaces/config')
+      .send({ http_redirect_enabled: true });
     expect(res.status).toBe(200);
     expect(queueRegen).not.toHaveBeenCalledWith('regenerate_dhcp');
   });

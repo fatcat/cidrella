@@ -390,4 +390,3 @@ export async function ensureDefaults() {
 export function setSetting(key, value) {
   return upsertSettingWithConflict(getDb(), key, value);
 }
-

@@ -31,8 +31,8 @@
     </div>
     <p class="field-help dhcp-defaults-note">
       A default reaches a {{ familyLabel }} scope only when the scope uses it (Use default in the
-      scope's options), and an edit here reaches every scope that does. Add to new scopes picks
-      the defaults a newly created scope uses. To change the options of existing scopes, use Bulk
+      scope's options), and an edit here reaches every scope that does. Add to new scopes picks the
+      defaults a newly created scope uses. To change the options of existing scopes, use Bulk
       Change.
       <template v-if="isV6">
         Routers, prefixes and address lifetimes come from Router Advertisements and are not options;

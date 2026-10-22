@@ -33,7 +33,7 @@ describe('Recursion Desired toward the backend', () => {
     expect(asksRecursion(Buffer.from([0x12]))).toBe(false);
   });
 
-  it("gives the client back its own RD bit and keeps QR, AA and RA", () => {
+  it('gives the client back its own RD bit and keeps QR, AA and RA', () => {
     const reply = header(0x85); // QR + AA + RD
     reply[3] = 0x83; // RA + NXDOMAIN
     expect(withClientRd(Buffer.from(reply), false)[2]).toBe(0x84);

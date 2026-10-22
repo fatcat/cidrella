@@ -30,9 +30,18 @@ describe('backendUnits', () => {
 
   it('words each state once: off, idle, running, stopped', () => {
     expect(unitState({ running: true, off: true, idle: false }).value).toBe('Off');
-    expect(unitState({ running: true, off: false, idle: true })).toEqual({ value: 'Idle', tone: 'muted' });
-    expect(unitState({ running: true, off: false, idle: false })).toEqual({ value: 'Running', tone: 'ok' });
-    expect(unitState({ running: false, off: false, idle: false })).toEqual({ value: 'Stopped', tone: 'err' });
+    expect(unitState({ running: true, off: false, idle: true })).toEqual({
+      value: 'Idle',
+      tone: 'muted',
+    });
+    expect(unitState({ running: true, off: false, idle: false })).toEqual({
+      value: 'Running',
+      tone: 'ok',
+    });
+    expect(unitState({ running: false, off: false, idle: false })).toEqual({
+      value: 'Stopped',
+      tone: 'err',
+    });
   });
 
   it('merges the roles one daemon fills into one unit', () => {

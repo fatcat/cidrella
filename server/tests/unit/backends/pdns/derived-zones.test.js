@@ -40,10 +40,7 @@ describe('PTRs from the forward records', () => {
   it('makes a whole-network reverse zone for a private network, both families', () => {
     const zones = desiredZones({
       zones: [LAB],
-      records: [
-        record(LAB, 'nas', 'A', '10.5.0.20'),
-        record(LAB, 'nas', 'AAAA', 'fd00:5::20'),
-      ],
+      records: [record(LAB, 'nas', 'A', '10.5.0.20'), record(LAB, 'nas', 'AAAA', 'fd00:5::20')],
       networks: ['10.5.0.0/24', 'fd00:5::/64'],
     });
     expect(ptrOf(zones, '0.5.10.in-addr.arpa.', '20.0.5.10.in-addr.arpa.')).toEqual([
@@ -60,10 +57,7 @@ describe('PTRs from the forward records', () => {
   it('makes a zone of the one address in public space, so the rest resolves upstream', () => {
     const zones = desiredZones({
       zones: [LAB],
-      records: [
-        record(LAB, 'www', 'A', '203.1.7.9'),
-        record(LAB, 'www', 'AAAA', '2001:4860::9'),
-      ],
+      records: [record(LAB, 'www', 'A', '203.1.7.9'), record(LAB, 'www', 'AAAA', '2001:4860::9')],
       networks: ['203.1.7.0/24', '2001:4860::/48'],
     });
     expect(ptrOf(zones, '9.7.1.203.in-addr.arpa.', '9.7.1.203.in-addr.arpa.')).toEqual([

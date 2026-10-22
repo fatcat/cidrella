@@ -1,9 +1,13 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 
-vi.mock('../../../src/utils/arp-cache.js', () => ({ lookupArpMac: vi.fn(() => 'aa:bb:cc:dd:ee:04') }));
+vi.mock('../../../src/utils/arp-cache.js', () => ({
+  lookupArpMac: vi.fn(() => 'aa:bb:cc:dd:ee:04'),
+}));
 vi.mock('../../../src/utils/nd-cache.js', () => ({
-  lookupNdEntry: vi.fn((ip) => (ip === 'fd00:a::1600' ? { mac: 'aa:bb:cc:dd:ee:16', interface: 'eth0' } : null)),
+  lookupNdEntry: vi.fn((ip) =>
+    ip === 'fd00:a::1600' ? { mac: 'aa:bb:cc:dd:ee:16', interface: 'eth0' } : null,
+  ),
 }));
 
 const { recordDnsQueryLiveness } = await import('../../../src/utils/ip-liveness.js');
@@ -39,7 +43,12 @@ describe('recordDnsQueryLiveness with IPv6 sources', () => {
     const result = recordDnsQueryLiveness(db, 'fd00:a::1600', { createRogue: true });
     expect(result.ignored).toBeFalsy();
     const row = db.prepare("SELECT * FROM ip_addresses WHERE ip_address = 'fd00:a::1600'").get();
-    expect(row).toMatchObject({ subnet_id: v6, is_online: 1, last_seen_mac: 'aa:bb:cc:dd:ee:16', address_family: 6 });
+    expect(row).toMatchObject({
+      subnet_id: v6,
+      is_online: 1,
+      last_seen_mac: 'aa:bb:cc:dd:ee:16',
+      address_family: 6,
+    });
   });
 
   it('ignores a source outside every managed network', () => {

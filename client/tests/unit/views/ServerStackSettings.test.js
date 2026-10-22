@@ -89,9 +89,7 @@ describe('ServerStackSettings', () => {
     api.get.mockResolvedValue({
       data: {
         ...STATE,
-        targets: [
-          { ...STATE.targets[0], blocked: 'radvd is not installed: radvd was not found' },
-        ],
+        targets: [{ ...STATE.targets[0], blocked: 'radvd is not installed: radvd was not found' }],
         stacks: [
           STATE.stacks[0],
           {

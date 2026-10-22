@@ -106,12 +106,7 @@
             <template v-else-if="column.key === 'filtering_enabled'">
               <!-- A control, not a fact: clicks and keys stay in the cell so
                    flipping it never selects or opens the row. -->
-              <span
-                v-if="row.filtering != null"
-                class="filtering-cell"
-                @click.stop
-                @keydown.stop
-              >
+              <span v-if="row.filtering != null" class="filtering-cell" @click.stop @keydown.stop>
                 <ToggleSwitch
                   :model-value="row.filtering"
                   :disabled="!filteringEditable || filteringBusy.includes(row.address)"

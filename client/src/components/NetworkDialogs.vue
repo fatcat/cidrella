@@ -590,7 +590,10 @@
       </div>
 
       <div
-        v-if="authoritativeDivideTargets.length > 0 && authoritativeDivideTargets.length <= MAX_DIVIDE_COUNT"
+        v-if="
+          authoritativeDivideTargets.length > 0 &&
+          authoritativeDivideTargets.length <= MAX_DIVIDE_COUNT
+        "
         class="divide-preview"
       >
         <h4>

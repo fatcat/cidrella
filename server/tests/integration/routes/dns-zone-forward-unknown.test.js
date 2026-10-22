@@ -71,9 +71,9 @@ describe('zone forward_unknown', () => {
   });
 
   it('refuses anything but a boolean', async () => {
-    expect((await create({ name: 'bad.test', type: 'forward', forward_unknown: 'yes' })).status).toBe(
-      400,
-    );
+    expect(
+      (await create({ name: 'bad.test', type: 'forward', forward_unknown: 'yes' })).status,
+    ).toBe(400);
     const zone = await create({ name: 'good.test', type: 'forward' });
     expect((await update(zone.body.id, { forward_unknown: 1 })).status).toBe(400);
   });

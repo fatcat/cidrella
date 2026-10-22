@@ -4,7 +4,11 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import { sortKey } from '../../utils/address.js';
 import { ipForPtrRecord } from '../../models/dns-record.js';
-import { MANAGED_LOCAL_DOMAINS, forwardedAddresses, reservedLocalDomains } from '../shared/reserved-zones.js';
+import {
+  MANAGED_LOCAL_DOMAINS,
+  forwardedAddresses,
+  reservedLocalDomains,
+} from '../shared/reserved-zones.js';
 import {
   LOCAL_RECORD_TTL,
   loadDnsZones,

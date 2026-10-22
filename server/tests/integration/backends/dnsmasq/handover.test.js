@@ -43,10 +43,7 @@ describe('the 0.5.2 not-serving file', () => {
   it('is removed, and the scope files are the same as without it', () => {
     regenerateScopeConfigs(db, { confDir });
     const serving = files();
-    fs.writeFileSync(
-      path.join(confDir, 'dhcp-not-serving.conf'),
-      'dhcp-ignore=tag:!nosuchtag\n',
-    );
+    fs.writeFileSync(path.join(confDir, 'dhcp-not-serving.conf'), 'dhcp-ignore=tag:!nosuchtag\n');
     expect(regenerateScopeConfigs(db, { confDir })).toBe(true);
     expect(files()).toEqual(serving);
     expect(regenerateScopeConfigs(db, { confDir })).toBe(false);

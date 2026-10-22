@@ -66,9 +66,7 @@ export function failoverFigureOf(summary) {
   return {
     label: 'Failovers',
     value: on ? summary.failovers : null,
-    sub: on
-      ? 'queries one provider could not answer, sent to the next'
-      : 'nothing was forwarded',
+    sub: on ? 'queries one provider could not answer, sent to the next' : 'nothing was forwarded',
     tone: summary.failovers ? 'warn' : 'ok',
     series: summary.rows.map((r) => r.failovers),
   };

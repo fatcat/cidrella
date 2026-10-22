@@ -203,7 +203,8 @@ const loading = ref(false);
 function gainsAndLosses(name) {
   const target = setup.servers?.targets.find((t) => t.name === name);
   if (!target) return '';
-  const part = (lead, list) => (list.length ? `${lead} ${list.map((f) => f.label).join(', ')}.` : '');
+  const part = (lead, list) =>
+    list.length ? `${lead} ${list.map((f) => f.label).join(', ')}.` : '';
   return [part('Adds', target.gained), part('Loses', target.lost)].filter(Boolean).join(' ');
 }
 const saving = ref(false);

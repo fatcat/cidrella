@@ -354,10 +354,12 @@ describe('option 51 by family', () => {
             )
             .run().lastInsertRowid;
     const rangeId =
-      family === 4 ? createRange(subnetId) : createRange(subnetId, 'fd00:51::1000', 'fd00:51::1fff');
-    db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code = 51 AND address_family = ?').run(
-      family,
-    );
+      family === 4
+        ? createRange(subnetId)
+        : createRange(subnetId, 'fd00:51::1000', 'fd00:51::1fff');
+    db.prepare(
+      'DELETE FROM dhcp_option_defaults WHERE option_code = 51 AND address_family = ?',
+    ).run(family);
     db.prepare(
       `INSERT INTO dhcp_option_defaults (option_code, value, enabled_by_default, address_family)
        VALUES (51, ?, 0, ?)`,

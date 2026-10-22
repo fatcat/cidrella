@@ -381,8 +381,7 @@ describe('canonical cross-model network transformations', () => {
     const parent = await createAndConfigure('10.239.0.0/24', { create_dhcp_scope: true });
     const children = await previewAndDivide(parent.id, { new_prefix: 25 });
     const scopeIds = children.map(
-      (child) =>
-        getDb().prepare('SELECT id FROM dhcp_scopes WHERE subnet_id = ?').get(child.id).id,
+      (child) => getDb().prepare('SELECT id FROM dhcp_scopes WHERE subnet_id = ?').get(child.id).id,
     );
     const link = getDb().prepare(
       `INSERT OR REPLACE INTO dhcp_scope_options (scope_id, option_code, value, address_family)

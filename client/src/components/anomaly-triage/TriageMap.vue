@@ -98,14 +98,16 @@
       <span><i class="sw" :style="{ background: warnColor }"></i> Flagged, medium</span>
       <span><i class="sw" :style="{ background: infoColor }"></i> Flagged, low</span>
       <span><i class="sw within"></i> Within baseline</span>
-      <span><i class="sw recent" :style="{ borderColor: infoColor }"></i> Within baseline now, flagged
-        in the last 24 hours</span>
+      <span
+        ><i class="sw recent" :style="{ borderColor: infoColor }"></i> Within baseline now, flagged
+        in the last 24 hours</span
+      >
       <span v-if="stale"><i class="sw stale"></i> No window in the last day</span>
       <span v-if="unscored"><i class="sw hollow"></i> Threat shape not scored yet</span>
     </div>
     <p class="map-foot">
-      Each dot is the device's newest window. Its size is how many windows were flagged in the
-      last 24 hours; a ring means 3 or more.
+      Each dot is the device's newest window. Its size is how many windows were flagged in the last
+      24 hours; a ring means 3 or more.
       <template v-if="unscored">
         Hollow dots sit on the bottom edge until the detector's next scoring cycle fills in their
         threat shape.

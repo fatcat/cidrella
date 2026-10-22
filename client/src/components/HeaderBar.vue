@@ -654,7 +654,12 @@ function backendDotKind(unit) {
   if (rogueDhcpCount.value > 0 && unit.roles.includes('dhcp')) return 'warn';
   return unitState(unit).tone;
 }
-const BACKEND_CHIP_CLASS = { muted: 'chip-idle', err: 'chip-err', warn: 'chip-warn', ok: 'chip-ok' };
+const BACKEND_CHIP_CLASS = {
+  muted: 'chip-idle',
+  err: 'chip-err',
+  warn: 'chip-warn',
+  ok: 'chip-ok',
+};
 const backendChipClass = (unit) => BACKEND_CHIP_CLASS[backendDotKind(unit)];
 function backendTitle(unit) {
   const base = `${unit.name}: ${backendDisplay(unit)}`;

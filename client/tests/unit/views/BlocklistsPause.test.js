@@ -80,7 +80,12 @@ describe('Disable filtering', () => {
     const wrapper = mountPage();
     await flushPromises();
     const options = pauseControl(wrapper).findAll('.option');
-    expect(options.map((o) => o.text())).toEqual(['5 minutes', '15 minutes', '30 minutes', '1 hour']);
+    expect(options.map((o) => o.text())).toEqual([
+      '5 minutes',
+      '15 minutes',
+      '30 minutes',
+      '1 hour',
+    ]);
 
     await options[1].trigger('click');
     await flushPromises();

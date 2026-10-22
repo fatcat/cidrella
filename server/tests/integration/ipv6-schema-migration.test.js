@@ -184,7 +184,9 @@ describe('IPv6 schema migrations 070-073', () => {
     });
     expect(
       upgraded
-        .prepare('SELECT option_code FROM dhcp_scope_options WHERE value IS NULL ORDER BY option_code')
+        .prepare(
+          'SELECT option_code FROM dhcp_scope_options WHERE value IS NULL ORDER BY option_code',
+        )
         .all()
         .map((row) => row.option_code),
     ).toEqual([42, 66]);

@@ -206,7 +206,9 @@ export function createUnitControl({
     const deadline = Date.now() + timeoutMs;
     while (isRunning()) {
       if (Date.now() >= deadline) {
-        throw new Error(`${processName} is still running ${timeoutMs / 1000} s after it was stopped`);
+        throw new Error(
+          `${processName} is still running ${timeoutMs / 1000} s after it was stopped`,
+        );
       }
       await new Promise((resolve) => setTimeout(resolve, intervalMs));
     }

@@ -28,9 +28,7 @@ describe('networkOptionFills', () => {
   });
 
   it('IPv6: the search list and DNS only, no fallback, nothing the network lacks', () => {
-    expect(
-      networkOptionFills({ family: 6, domain: 'six.test', serverIp: 'fd00:60::53' }),
-    ).toEqual([
+    expect(networkOptionFills({ family: 6, domain: 'six.test', serverIp: 'fd00:60::53' })).toEqual([
       { code: 24, value: 'six.test', overwrite: false },
       { code: 23, value: 'fd00:60::53', overwrite: false },
     ]);
@@ -61,11 +59,17 @@ describe('networkOptionFills', () => {
       28: '10.60.0.255',
       119: 'lab.test',
     });
-    const v6 = fillScopeOptions([{ code: 23, value: '' }, { code: 24, value: USE_DEFAULT }], {
-      parsed: parseNetwork('fd00:60::/64'),
-      domain: 'six.test',
-      serverIp: 'fd00:60::53',
-    });
+    const v6 = fillScopeOptions(
+      [
+        { code: 23, value: '' },
+        { code: 24, value: USE_DEFAULT },
+      ],
+      {
+        parsed: parseNetwork('fd00:60::/64'),
+        domain: 'six.test',
+        serverIp: 'fd00:60::53',
+      },
+    );
     expect(v6.get(23)).toBe('fd00:60::53');
     expect(v6.get(24)).toBe(USE_DEFAULT);
   });

@@ -30,7 +30,9 @@ function setIdle(minutes) {
 
 function addUser(username, role = 'admin') {
   return db
-    .prepare('INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, ?, 0)')
+    .prepare(
+      'INSERT INTO users (username, password_hash, role, must_change_password) VALUES (?, ?, ?, 0)',
+    )
     .run(username, bcrypt.hashSync(PASSWORD, 4), role).lastInsertRowid;
 }
 
@@ -253,12 +255,9 @@ describe('tokens', () => {
       )
       .run().lastInsertRowid;
     const { token, hash, prefix } = generateApiToken();
-    db.prepare('INSERT INTO api_tokens (user_id, name, token_hash, prefix) VALUES (?, ?, ?, ?)').run(
-      id,
-      'poller',
-      hash,
-      prefix,
-    );
+    db.prepare(
+      'INSERT INTO api_tokens (user_id, name, token_hash, prefix) VALUES (?, ?, ?, ?)',
+    ).run(id, 'poller', hash, prefix);
     advance(120 * MINUTE);
     expect((await as(token, request(app).get('/api/poll'))).status).toBe(200);
   });
