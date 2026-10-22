@@ -6,6 +6,15 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.6.1 — 2026-10-22
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+Bug fix release. Lapsed DHCP lease records get released and returning clients get their name back instead of an incremented name. Both bugs related to the introduction of Kea DHCP.
+
 ## v0.6.0 — 2026-10-18
 
 ```yaml
