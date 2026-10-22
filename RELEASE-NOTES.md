@@ -11,7 +11,7 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 ```yaml
 min_from: "0.4.17"
 breaking: false
-security: false
+security: true
 ```
 
 Bug fix release. Lapsed DHCP lease records get released, returning clients get their name
@@ -45,7 +45,11 @@ three showed up with Kea DHCP.
 
 ### Changed
 
-- The bundled Node.js runtime is 24.22.1.
+- **Node.js 24.22.1, a security update.** Node's October 21, 2026 security release fixes four
+  high-severity issues, among them an out-of-bounds write in the Brotli decoder that permits
+  remote code execution (CVE-2026-111497) and two TLS certificate hostname check bypasses
+  (CVE-2026-105483, CVE-2026-106069). The bundled runtime (native installs) and the Docker
+  image's base are both 24.22.1 now; the Docker image was on 24.21.0.
 - A GitHub release page now opens with that version's section of these notes.
 
 ## v0.6.0 — 2026-10-18
