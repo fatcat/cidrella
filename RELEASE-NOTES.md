@@ -13,7 +13,33 @@ min_from: "0.4.17"
 breaking: false
 security: false
 ```
-Bug fix release. Lapsed DHCP lease records get released and returning clients get their name back instead of an incremented name. Both bugs related to the introduction of Kea DHCP.
+
+Bug fix release. Lapsed DHCP lease records get released and returning clients get their name
+back instead of an incremented name. Both bugs showed up with Kea DHCP.
+
+### Fixed
+
+- **A lapsed lease's DNS name no longer outlives it.** When a lease lapsed while its host was
+  still online, the address lost its DHCP name but the A record and PTR the lease made stayed
+  in DNS for good. They now go when the lease lapses. Records already left behind this way,
+  including ones whose address has no row, are removed by the stale-address sweep after the
+  upgrade.
+- **A returning client gets its own name back.** A client that came back on a new address
+  found its old, lapsed record holding its name and took the next suffix. Under Kea, which
+  hands a returning client the next free address, one laptop collected `name` and `name-00`
+  through `name-13` in two weeks. A DHCPv4 client now takes back its name and the old record
+  is removed. A returning DHCPv6 client still takes a suffix: its address keeps no MAC to
+  match it by (ADR 005).
+
+### Known issues
+
+- Under Kea a returning client usually gets a new address rather than its last one, so its
+  address history splits across addresses (REVIEW.md KEA-ADDRESS-AFFINITY-01).
+
+### Changed
+
+- The bundled Node.js runtime is 24.22.1.
+- A GitHub release page now opens with that version's section of these notes.
 
 ## v0.6.0 — 2026-10-18
 
