@@ -88,7 +88,7 @@ function toDate(value) {
   return value ? new Date(`${value}T00:00:00Z`) : null;
 }
 
-async function fetchJson(url) {
+async function fetchJson(url, { retries = 1 } = {}) {
   const response = await fetch(url, {
     headers: {
       'User-Agent': 'cidrella-release-health-check',
@@ -96,6 +96,11 @@ async function fetchJson(url) {
     },
   });
   if (!response.ok) {
+    // GitHub's API has answered a one-off 404 for a release that exists.
+    if (retries > 0) {
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+      return fetchJson(url, { retries: retries - 1 });
+    }
     throw new Error(`${url} returned HTTP ${response.status}`);
   }
   return response.json();
@@ -206,11 +211,14 @@ function parseDockerfile(projectRoot) {
   const text = fs.readFileSync(dockerfile, 'utf8');
   const fromMatches = [...text.matchAll(/^FROM\s+node:([^\s]+)(?:\s+AS\s+([^\s]+))?/gim)];
   const nodeImages = fromMatches.map((match) => {
-    const tag = match[1];
+    // node:24.22.1-alpine@sha256:... : the digest fixes the image, and the tag
+    // is the only place its Node version can be read without pulling it.
+    const [tag, digest = ''] = match[1].split('@');
     const versionMatch = tag.match(/^(\d+)(?:\.(\d+)\.(\d+))?(-.*)?$/);
     return {
-      image: `node:${tag}`,
+      image: `node:${match[1]}`,
       tag,
+      digest,
       stage: match[2] || '',
       major: versionMatch ? Number.parseInt(versionMatch[1], 10) : null,
       pinnedPatch: Boolean(versionMatch && versionMatch[2] && versionMatch[3]),
@@ -409,7 +417,13 @@ function printReport(report) {
           `    Docker base ${image.image}${stage}: Node major aligned with required runtime baseline.`,
         );
       }
-      if (!image.pinnedPatch) {
+      if (!image.pinnedPatch && image.digest) {
+        // A digest under a major-only tag never moves, and nothing here can
+        // tell which Node it holds: the 2026-10-11 pin sat on 24.21.0 unseen.
+        console.log(
+          `    WARNING: node:${image.tag}${stage} is pinned by digest, but the tag names no Node version, so it cannot be checked for security releases. Name the version in the tag (node:${image.latestSameMajor}-alpine@sha256:...).`,
+        );
+      } else if (!image.pinnedPatch) {
         console.log(
           `      Patch/security note: ${image.image} is a floating major tag; Docker publishing must rebuild/pull to pick up current ${image.latestSameMajor}.`,
         );
