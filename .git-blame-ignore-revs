@@ -20,3 +20,6 @@ b9dd88948f7e0ab6dd73626b41135e78dbc57921
 # Second Prettier pass, 2026-09-12. 6 files the first pass left unstable
 # (method chain with an object literal argument). Formatting only.
 5e5a2a0a2990d0f88e334529575375d6a1ef3132
+
+# Prettier 3.9.10 sweep, 2026-10-22. 48 files, formatting only.
+4341f408548f8266c913df0ca21e30bd15ff71a8
