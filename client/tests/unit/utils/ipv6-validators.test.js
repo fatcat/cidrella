@@ -36,6 +36,11 @@ describe('networkValidationError', () => {
     expect(networkValidationError('fc00::/6', { ipv6: true, supernet: true })).toMatch(
       /extends beyond/,
     );
+    expect(networkValidationError('::/64', { ipv6: true, supernet: true })).toMatch(
+      /::ffff:0:0\/96/,
+    );
+    // The mapped spelling of an IPv4 block is that IPv4 block.
+    expect(networkValidationError('::ffff:10.5.0.0/120', { supernet: true })).toBeNull();
   });
 });
 

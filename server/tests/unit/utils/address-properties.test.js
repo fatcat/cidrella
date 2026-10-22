@@ -7,6 +7,8 @@ import fc from 'fast-check';
 import {
   IPV4_BITS,
   IPV6_BITS,
+  V4_MAPPED_PREFIX as V4_MAPPED_FIRST,
+  V4_MAPPED_LAST,
   canonicalizeIp,
   formatIp,
   parseIp,
@@ -21,13 +23,11 @@ import {
   parseNetwork,
   splitNetwork,
   subtractNetwork,
+  validateNetworkBounds,
 } from '../../../src/utils/cidr.js';
 
 const MAX_V4 = (1n << 32n) - 1n;
 const MAX_V6 = (1n << 128n) - 1n;
-// ::ffff:0:0/96, which parseIp folds to IPv4.
-const V4_MAPPED_FIRST = 0xffffn << 32n;
-const V4_MAPPED_LAST = V4_MAPPED_FIRST + MAX_V4;
 
 const v4Value = fc.bigInt({ min: 0n, max: MAX_V4 });
 const v6Value = fc
@@ -59,9 +59,9 @@ const network = family.chain((fam) =>
 const cidrOf = ({ family: fam, value, prefix }) => `${bigToAddress(value, fam)}/${prefix}`;
 
 // An IPv6 network reaching into ::ffff:0:0/96 has children and addresses that
-// reparse as IPv4 (REVIEW.md CIDR-V4-MAPPED-01). Kept out until that is fixed;
-// random values almost never land there, so without this the tests would only
-// fail now and then.
+// reparse as IPv4, so validateNetworkBounds refuses it and no such network
+// exists to split or subtract. Random values almost never land there, so the
+// rule is checked on its own below.
 function overlapsMapped(n) {
   if (n.family !== 6) return false;
   const net = parseNetwork(cidrOf(n));
@@ -242,6 +242,36 @@ describe('network properties', () => {
         expect(networksOverlap(nb.cidr, na.cidr)).toBe(expected);
       }),
     );
+  });
+
+  it('refuses exactly the IPv6 networks that reach into ::ffff:0:0/96', () => {
+    // Prefixes 80 to 128 around the mapped range, where random values never go.
+    const nearMapped = fc.record({
+      family: fc.constant(6),
+      value: fc.bigInt({ min: V4_MAPPED_FIRST - (1n << 40n), max: V4_MAPPED_LAST + (1n << 40n) }),
+      prefix: fc.integer({ min: 80, max: IPV6_BITS }),
+    });
+    fc.assert(
+      fc.property(fc.oneof(network, nearMapped), (n) => {
+        const net = parseNetwork(cidrOf(n));
+        if (net.family !== 6) return;
+        const { valid } = validateNetworkBounds(net.cidr);
+        if (overlapsMapped(n)) expect(valid).toBe(false);
+        // Outside the mapped range only the reserved-range rule refuses.
+        else if (!valid) expect(validateNetworkBounds(net.cidr).error).not.toMatch(/IPv4-mapped/);
+      }),
+    );
+  });
+
+  it.each([
+    ['::fffe:0:0/95', false],
+    ['::/64', false],
+    ['::/0', false],
+    ['2600::/12', true],
+    // A mapped network folds to its IPv4 block, which is fine.
+    ['::ffff:10.0.0.0/120', true],
+  ])('validates %s as %s', (cidr, valid) => {
+    expect(validateNetworkBounds(cidr).valid).toBe(valid);
   });
 
   it('puts a child inside its parent', () => {

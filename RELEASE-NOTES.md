@@ -39,6 +39,9 @@ three showed up with Kea DHCP.
   alike, as dnsmasq usually does. A held address is not reserved: when a pool has nothing
   else free, Kea gives it to a new client. This takes effect for leases that lapse after the
   upgrade.
+- **An IPv6 network can no longer overlap the IPv4-mapped range** (`::ffff:0:0/96`). Its
+  addresses read as IPv4, so `::fffe:0:0/95` split into `0.0.0.0/0`. Creating one is now
+  refused, in the form and the API. Nobody allocates there (it sits in reserved `::/8`).
 
 ### Changed
 

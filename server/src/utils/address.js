@@ -107,8 +107,10 @@ function parseV6(str, embeddedV4) {
   return v;
 }
 
-// ::ffff:0:0/96, the IPv4-mapped range.
-const V4_MAPPED_PREFIX = 0xffffn << 32n;
+// ::ffff:0:0/96, the IPv4-mapped range: its first and last address. parseIp
+// folds every address in it to IPv4, so no IPv6 network may reach into it.
+export const V4_MAPPED_PREFIX = 0xffffn << 32n;
+export const V4_MAPPED_LAST = V4_MAPPED_PREFIX + 0xffffffffn;
 const V4_MAPPED_MASK = (1n << 128n) - (1n << 32n);
 
 /**

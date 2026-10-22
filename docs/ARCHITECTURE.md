@@ -160,6 +160,10 @@ placeholders. Releasing an IPv6 address to `unassigned` removes its
 bare-address placeholder PTR with it; IPv4 keeps one for every address.
 Point-to-point and host prefixes (/31, /32, /127, /128) reserve nothing, so
 none of their addresses is a `system` row (RFC 3021, RFC 6164).
+An IPv4-mapped address (`::ffff:10.0.0.1`) is the IPv4 address it maps, so
+`::ffff:10.0.0.0/120` is the network `10.0.0.0/24`, and no IPv6 network may
+overlap `::ffff:0:0/96` (`validateNetworkBounds` refuses one): its addresses
+and children would read back as IPv4.
 
 Known limitation: anomaly detection identifies a client by its DHCPv4 lease
 MAC, falling back to its address (`resolveIdentity` in `models/anomaly.js`,

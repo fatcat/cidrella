@@ -12,26 +12,6 @@ was suggested.
 
 ---
 
-## Found writing the address property tests (2026-10-20)
-
-#### CIDR-V4-MAPPED-01: An IPv6 network overlapping ::ffff:0:0/96 splits into an IPv4 /0
-
-**low**, confirmed in the code. `server/src/utils/cidr.js` (`parseNetwork`, the IPv4-mapped fold;
-`validateNetworkBounds`, which accepts the network).
-
-- **What happens:** `::fffe:0:0/95` passes `validateNetworkBounds`. `splitNetwork` of it to /96
-  returns `::fffe:0:0/96` and `0.0.0.0/0`, and `subtractNetwork` returns `::ffff:0:0/96`, which
-  reparses as IPv4. Its own `last` address (`::ffff:ffff:ffff`) is not inside it by
-  `networkContains`.
-- **Why:** `parseIp` folds every IPv4-mapped address to IPv4, so any child or address of an IPv6
-  network that falls in `::ffff:0:0/96` changes family when its text is parsed again. Nobody
-  allocates there (it is inside the reserved `::/8`), which is why it is low.
-- **Fix:** Refuse an IPv6 network that overlaps `::ffff:0:0/96` in `validateNetworkBounds` (the
-  mapped form of an IPv4 network, which already folds, is unaffected). Then drop the
-  `overlapsMapped` filter in `tests/unit/utils/address-properties.test.js`.
-
----
-
 ## Found tracing a rogue DHCP alert (2026-10-14)
 
 #### ROGUE-PROBE-V4-01: The IPv4 rogue probe did not see a Kea server that was serving the LAN

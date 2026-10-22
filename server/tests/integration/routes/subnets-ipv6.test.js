@@ -75,6 +75,21 @@ describe('IPv6 networks', () => {
     expect(overlap.body.error).toContain(LAB);
   });
 
+  it('refuses an IPv6 network reaching into the IPv4-mapped range, and folds a mapped IPv4 one', async () => {
+    // Its addresses would read back as IPv4: ::fffe:0:0/95 split to /96 gave
+    // 0.0.0.0/0.
+    for (const cidr of ['::fffe:0:0/95', '::/64']) {
+      const res = await request(app).post('/api/subnets').send({ cidr });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('::ffff:0:0/96');
+    }
+    const mapped = await request(app)
+      .post('/api/subnets')
+      .send({ cidr: '::ffff:192.168.50.0/120', name: 'mapped' });
+    expect(mapped.status).toBe(201);
+    expect(mapped.body).toMatchObject({ cidr: '192.168.50.0/24', address_family: 4 });
+  });
+
   it('previews configuration with IPv6 gateway semantics and the stateful default pool', async () => {
     const res = await request(app)
       .post('/api/subnets/configuration-preview')

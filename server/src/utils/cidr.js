@@ -22,7 +22,14 @@
  *     IPv6-ready yet, and letting a v6 string through `isValidCidr` today
  *     would fail deeper down with a worse message.
  */
-import { parseIp, formatIp, IPV4_BITS, IPV6_BITS } from './address.js';
+import {
+  parseIp,
+  formatIp,
+  IPV4_BITS,
+  IPV6_BITS,
+  V4_MAPPED_PREFIX,
+  V4_MAPPED_LAST,
+} from './address.js';
 
 // ---------------------------------------------------------------------------
 // Address primitives
@@ -413,10 +420,22 @@ export const RESERVED_RANGES = [
 
 /**
  * A supernet that touches a reserved range must sit entirely inside it.
- * Public space is allowed freely.
+ * Public space is allowed freely. No IPv6 network may overlap ::ffff:0:0/96:
+ * its addresses parse as IPv4, so its children and addresses would change
+ * family when read back (::fffe:0:0/95 split to /96 gave 0.0.0.0/0).
  */
 export function validateNetworkBounds(cidr) {
   const parsed = parseNetwork(cidr);
+  if (
+    parsed.family === 6 &&
+    parsed.networkBig <= V4_MAPPED_LAST &&
+    V4_MAPPED_PREFIX <= parsed.lastBig
+  ) {
+    return {
+      valid: false,
+      error: `${cidr} overlaps ::ffff:0:0/96, the IPv4-mapped addresses, which CIDRella reads as IPv4. Choose an IPv6 network outside it.`,
+    };
+  }
   for (const reserved of RESERVED_RANGES) {
     const res = parseNetwork(reserved.cidr);
     if (res.family !== parsed.family) continue;
