@@ -228,6 +228,22 @@ describe('serverIdFromDuid', () => {
   });
 });
 
+describe('renderKeaConfig, lease affinity', () => {
+  // Kea's one-hour default let a client that slept longer come back on the
+  // next address up (REVIEW.md KEA-ADDRESS-AFFINITY-01, from prod).
+  it.each([
+    [4, v4Scope()],
+    [6, v6Scope()],
+  ])(
+    'holds a lapsed DHCPv%i lease for a week so its client gets the address back',
+    (family, scope) => {
+      expect(render(family, [scope])['expired-leases-processing']).toEqual({
+        'hold-reclaimed-time': 604800,
+      });
+    },
+  );
+});
+
 describe('renderKeaConfig, the interfaces each daemon listens on', () => {
   const interfaces = ['eth0', 'eth1', 'eth2'];
   const listen = (family, scopes, extra = {}) =>

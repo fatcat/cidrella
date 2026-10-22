@@ -15,6 +15,9 @@
       "name": "$DATA_DIR/kea/kea-leases4.csv",
       "lfc-interval": 3600
     },
+    "expired-leases-processing": {
+      "hold-reclaimed-time": 604800
+    },
     "control-sockets": [
       {
         "socket-type": "http",
@@ -170,6 +173,9 @@
       "persist": true,
       "name": "$DATA_DIR/kea/kea-leases6.csv",
       "lfc-interval": 3600
+    },
+    "expired-leases-processing": {
+      "hold-reclaimed-time": 604800
     },
     "control-sockets": [
       {

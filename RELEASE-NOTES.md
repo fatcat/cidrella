@@ -14,8 +14,9 @@ breaking: false
 security: false
 ```
 
-Bug fix release. Lapsed DHCP lease records get released and returning clients get their name
-back instead of an incremented name. Both bugs showed up with Kea DHCP.
+Bug fix release. Lapsed DHCP lease records get released, returning clients get their name
+back instead of an incremented name, and under Kea they get their last address back too. All
+three showed up with Kea DHCP.
 
 ### Fixed
 
@@ -30,11 +31,14 @@ back instead of an incremented name. Both bugs showed up with Kea DHCP.
   through `name-13` in two weeks. A DHCPv4 client now takes back its name and the old record
   is removed. A returning DHCPv6 client still takes a suffix: its address keeps no MAC to
   match it by (ADR 005).
-
-### Known issues
-
-- Under Kea a returning client usually gets a new address rather than its last one, so its
-  address history splits across addresses (REVIEW.md KEA-ADDRESS-AFFINITY-01).
+- **Under Kea a returning client gets its last address back.** Kea kept a lapsed lease for
+  an hour, then gave a client that came back later the next free address, so a laptop that
+  slept for hours at a time moved one address up the pool each time it woke, and its history,
+  liveness and anomaly identity split across every address it passed through. Kea now keeps a
+  lapsed or released lease for a week and gives it back to the same client, DHCPv4 and DHCPv6
+  alike, as dnsmasq usually does. A held address is not reserved: when a pool has nothing
+  else free, Kea gives it to a new client. This takes effect for leases that lapse after the
+  upgrade.
 
 ### Changed
 

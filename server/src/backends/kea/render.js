@@ -353,6 +353,15 @@ const SOCKET_RETRIES = {
   'service-sockets-retry-wait-time': 5000,
 };
 
+// How long Kea keeps a lapsed or released lease, so the client that held it
+// gets the same address back (lease affinity). Kea's default is an hour, and
+// its iterative allocator hands a client that comes back later the next free
+// address: a laptop that sleeps four hours at a time walked up the pool one
+// address per wake. A held lease reserves nothing: once a pool has no free
+// address, Kea gives held ones to new clients (measured on Kea 3.0.4, both
+// families).
+const LEASE_AFFINITY_SECONDS = 7 * 24 * 3600;
+
 /**
  * The interfaces a family's daemon listens on: none without a subnet, and for
  * DHCPv6 only the links its subnets sit on. Kea's DHCPv6 server answers a
@@ -408,6 +417,7 @@ export function renderKeaConfig(
       name: leaseFilePath(family),
       'lfc-interval': 3600,
     },
+    'expired-leases-processing': { 'hold-reclaimed-time': LEASE_AFFINITY_SECONDS },
     'control-sockets': controlSockets(family),
     'hooks-libraries': hooks(family),
     // T1 and T2 at half and seven eighths of the lease, as dnsmasq sends.

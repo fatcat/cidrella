@@ -68,4 +68,7 @@ found its own old record holding its name and took the next suffix, and a
 lease that lapsed with its host online left a record nothing removed. Under a
 server that hands a returning client the next free address (Kea's default),
 one laptop collected `name` and `name-00` through `name-13` in two weeks.
-Retirement now removes those leftover records as well.
+Retirement now removes those leftover records as well, and CIDRella now has
+Kea hold a lapsed lease for a week and give its client the same address back
+(ARCHITECTURE.md, backend stacks), so a returning client, DHCPv6 included,
+usually finds its address and its name again.

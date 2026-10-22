@@ -334,6 +334,14 @@ Never a mix. `services/stack-switch.js` moves every role and the leases from
 one stack to the other, and boot (`selectStackAtBoot`) stops every daemon
 outside the stack. Nothing else changes which adapter answers a role.
 
+A returning DHCP client should land on its last address under either stack,
+because address history, liveness and anomaly identity are keyed by address.
+dnsmasq does this on its own. Kea keeps a lapsed or released lease for a week
+(`hold-reclaimed-time`, rendered in `backends/kea/render.js`) and gives it back
+to the same client; Kea's one-hour default let a client that slept longer move
+one address up the pool per wake. A held address is not reserved: Kea gives it
+to a new client once its pool has nothing else free.
+
 The dnsmasq adapter (`backends/dnsmasq/`) generates its files from database
 state using atomic writes. Different file classes have different reload
 behavior:
