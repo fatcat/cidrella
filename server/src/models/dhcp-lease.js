@@ -222,23 +222,40 @@ export function assignLeaseNames(db, leases, { fallbackName = () => null } = {})
   const zoneRecords = new Map();
   const recordsIn = (zone) => {
     if (!zoneRecords.has(zone.id)) {
+      // holder_mac: the MAC last seen at a lease record's address, which the
+      // address keeps after its lease lapses.
       zoneRecords.set(
         zone.id,
         db
           .prepare(
-            `SELECT lower(name) AS name, type, value, source FROM dns_records
-             WHERE zone_id = ? AND type IN ('A', 'AAAA', 'CNAME')`,
+            `SELECT lower(r.name) AS name, r.type, r.value, r.source,
+               (SELECT lower(a.mac_address) FROM ip_addresses a
+                WHERE a.ip_address = r.value AND a.mac_address IS NOT NULL LIMIT 1) AS holder_mac
+             FROM dns_records r
+             WHERE r.zone_id = ? AND r.type IN ('A', 'AAAA', 'CNAME')`,
           )
           .all(zone.id),
       );
     }
     return zoneRecords.get(zone.id);
   };
+  // The addresses this lease set keeps. A lease record at any other address
+  // is left over from a lease that lapsed.
+  const leasedIps = new Set(leases.map((lease) => lease.ip));
   // Names settled in this batch, per zone: name -> [{ type, ip }].
   const claimed = new Map();
-  const isFree = (zone, name, ip) => {
+  const isFree = (zone, name, ip, mac) => {
     const type = recordTypeFor(ip);
-    const clash = (other) => other.type === 'CNAME' || (other.type === type && other.value !== ip);
+    // A name held only by this client's own lapsed lease is its name to take
+    // back: a client that comes back on a new address is not a second client.
+    const ownLapsedName = (record) =>
+      record.source === 'dhcp' &&
+      !leasedIps.has(record.value) &&
+      Boolean(mac) &&
+      record.holder_mac === mac.toLowerCase();
+    const clash = (other) =>
+      other.type === 'CNAME' ||
+      (other.type === type && other.value !== ip && !ownLapsedName(other));
     if (recordsIn(zone).some((record) => record.name === name && clash(record))) return false;
     return !(claimed.get(zone.id)?.get(name) || []).some((other) =>
       clash({ type: other.type, value: other.ip }),
@@ -305,7 +322,7 @@ export function assignLeaseNames(db, leases, { fallbackName = () => null } = {})
     const base = candidate.slice(0, MAX_LABEL - 3);
     const options = [candidate, ...NAME_SUFFIXES.map((suffix) => `${base}${suffix}`)];
     const free = options.find((option) =>
-      isFree(zone, normalizeRecordNameForZone(option, zone.name), lease.ip),
+      isFree(zone, normalizeRecordNameForZone(option, zone.name), lease.ip, vendorMac(lease)),
     );
     if (!free) {
       console.warn(
@@ -391,6 +408,9 @@ export function syncDhcpDnsRecords(db, leases) {
     return Boolean(result?.updated);
   };
   const activeIps = new Set();
+  // zone id|name|type of every record a lease or reservation now answers.
+  const activeNames = new Set();
+  const nameKey = (zoneId, name, type) => `${zoneId}|${name}|${type}`;
 
   for (const l of entries) {
     if (!l.hostname || !l.subnetId) continue;
@@ -410,6 +430,7 @@ export function syncDhcpDnsRecords(db, leases) {
     // builder produced "s24-ultra.example.com", and SQLite `=` is
     // case-sensitive. See REVIEW.md, duplicate-logic audit #8.
     const recordName = normalizeRecordNameForZone(l.hostname, domain);
+    activeNames.add(nameKey(zone.id, recordName, recordTypeFor(l.ip)));
 
     const existing = findRecord.get(zone.id, recordName, recordTypeFor(l.ip), l.ip);
     if (existing) {
@@ -444,7 +465,7 @@ export function syncDhcpDnsRecords(db, leases) {
     const placeholders = zoneIds.map(() => '?').join(',');
     const staleRecords = db
       .prepare(
-        `SELECT r.id, r.name, r.value, r.source, z.name AS zone_name
+        `SELECT r.id, r.zone_id, r.name, r.type, r.value, r.source, z.name AS zone_name
        FROM dns_records r
        JOIN dns_zones z ON z.id = r.zone_id
        WHERE r.source IN ('dhcp', 'reservation') AND r.zone_id IN (${placeholders})`,
@@ -455,8 +476,16 @@ export function syncDhcpDnsRecords(db, leases) {
         // A vanished dynamic lease loses allocation authority immediately, but
         // its generated name remains with the learned host metadata until the
         // one-hour continuous-offline retirement boundary. A replacement name
-        // for the same active IP still removes this stale row immediately.
-        if (r.source === 'dhcp' && !activeIps.has(r.value)) continue;
+        // for the same active IP still removes this stale row immediately, and
+        // so does an active lease now answering the same name (its client came
+        // back on a new address, ADR 005), so the name never answers with both.
+        if (
+          r.source === 'dhcp' &&
+          !activeIps.has(r.value) &&
+          !activeNames.has(nameKey(r.zone_id, r.name, r.type))
+        ) {
+          continue;
+        }
         if (!activeIps.has(r.value)) {
           clearPtrForARecord(db, r.name, r.value, r.zone_name);
         }

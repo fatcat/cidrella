@@ -38,6 +38,23 @@ are read from dnsmasq and before they are stored. DNS records, PTRs,
 Operator-chosen names are not renamed: a DHCP Reservation's name or a manual
 record's name only makes a name taken for leases.
 
+Amended 2026-10-21:
+
+- **A client's own lapsed name is not taken.** A name held only by a DHCP
+  lease record whose lease has lapsed, at an address whose last-seen MAC is
+  the asking client's, goes back to that client on its new address, and the
+  old record is removed at once so the name never answers with both. A
+  DHCPv4 client is known by its MAC. A DHCPv6 address keeps no MAC (the MAC
+  a DUID embeds names a client but is never stored) and loses its DUID when
+  the lease lapses, so a returning DHCPv6 client still takes a suffix.
+- **A lapsed lease's record does not outlive it.** When a lease lapses while
+  its host is online, its name goes at once (the hostname rule in
+  ARCHITECTURE.md), and so do the record and PTR it made. Otherwise the record
+  is removed when the address retires after its hour offline, and an address
+  still named by such a record stays a retirement candidate until it is. A
+  record whose address has no row and no lease goes once the lease sync has
+  left it untouched for that hour.
+
 ## Consequences
 
 A renewal no longer moves a name, so it changes no record and restarts
@@ -45,3 +62,10 @@ nothing. Two clients sending one name resolve as `name` and `name-00` and show
 those names in every table. When a holder's lease and its one-hour retention
 end, its name becomes free; a client already on a suffixed name keeps it
 rather than moving.
+
+Before the 2026-10-21 amendment, a client that came back on a new address
+found its own old record holding its name and took the next suffix, and a
+lease that lapsed with its host online left a record nothing removed. Under a
+server that hands a returning client the next free address (Kea's default),
+one laptop collected `name` and `name-00` through `name-13` in two weeks.
+Retirement now removes those leftover records as well.

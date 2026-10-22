@@ -517,6 +517,15 @@ export function bulkMarkStale(db, staleMinutes) {
  * fixed retirement boundary. Static and still-valid SLAAC allocations are not
  * candidates.
  */
+// An address a DHCP lease's DNS record still names. Once its lease is gone that
+// record has nothing left to remove it but retirement, whatever else the
+// address lost with the lease (its detection source, when it lapsed while the
+// host was online), so the address stays a candidate until the record goes.
+const HOLDS_LEASE_RECORD_SQL = `EXISTS (
+  SELECT 1 FROM dns_records lr
+  WHERE lr.source = 'dhcp' AND lr.type IN ('A', 'AAAA') AND lr.value = ip_addresses.ip_address
+)`;
+
 export function findRetirementCandidates(db, cutoff, now, limit = 500) {
   return db
     .prepare(
@@ -545,9 +554,11 @@ export function findRetirementCandidates(db, cutoff, now, limit = 500) {
               AND COALESCE(r.source, 'manual') = 'manual'
               AND r.value = ip_addresses.ip_address
           )
-          AND (is_rogue = 1 OR detection_source IN (
-            'dhcp_lease', 'slaac', 'scanner', 'passive', 'neighbor_discovery'
-          ))
+          AND (
+            is_rogue = 1
+            OR detection_source IN ('dhcp_lease', 'slaac', 'scanner', 'passive', 'neighbor_discovery')
+            OR ${HOLDS_LEASE_RECORD_SQL}
+          )
         )
       )
     ORDER BY datetime(offline_since_at), id
@@ -569,6 +580,7 @@ export function startMissingRetirementWindows(db, now) {
         allocation_state IN ('dynamic_dhcp', 'slaac')
         OR is_rogue = 1
         OR detection_source IN ('dhcp_lease', 'slaac', 'scanner', 'passive', 'neighbor_discovery')
+        OR ${HOLDS_LEASE_RECORD_SQL}
       )
   `,
     )

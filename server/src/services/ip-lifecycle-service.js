@@ -22,6 +22,7 @@ import {
 import {
   deleteDynamicDhcpRecordsByIps,
   dropUnallocatedIpv6Ptr,
+  findRowlessDhcpRecordAddresses,
   fqdnForRecordName,
 } from '../models/dns-record.js';
 import {
@@ -33,6 +34,7 @@ import { activeLeaseSql, leaseExpiryMs } from '../utils/lease-sql.js';
 import { leaseDurationMs } from '../utils/lease-time.js';
 import { parseIp } from '../utils/address.js';
 import { recordAudit, sample } from './audit.js';
+import { queueRegen } from '../utils/after-commit.js';
 
 export const OFFLINE_RETIREMENT_MS = 60 * 60 * 1000;
 
@@ -719,9 +721,12 @@ export function reconcileExpiredDhcpAllocations(db) {
     // holder that is still online has simply stopped being ours (a static
     // address by hand, another DHCP server, a reset lease file), so the
     // canonical selector, which yields nothing for an unowned address, wins
-    // now rather than an hour after it finally goes quiet.
+    // now rather than an hour after it finally goes quiet. The DNS record and
+    // PTR the lease made go now too: clearing the source below takes the
+    // address out of the retirement sweep, which would otherwise remove them.
     if (row.is_online) {
       IpSync.syncCanonicalHostname(db, row.subnet_id, row.ip_address, { clearSource: true });
+      if (deleteDynamicDhcpRecordsByIps(db, [row]) > 0) queueRegen('regenerate_dns');
     }
   }
   return expired.length;
@@ -801,7 +806,12 @@ export async function retireStaleDynamicAddresses(
     if (!releaseFailed) eligible.push(row);
   }
 
+  let rowless = [];
   db.transaction(() => {
+    // A lease record whose address has no row (it was never kept, or was
+    // removed) has no address to retire, so it goes on its own clock.
+    rowless = findRowlessDhcpRecordAddresses(db, cutoff);
+    dnsRecordsRemoved += deleteDynamicDhcpRecordsByIps(db, rowless);
     if (eligible.length === 0) return;
 
     for (const row of eligible) {
@@ -828,7 +838,7 @@ export async function retireStaleDynamicAddresses(
       deleteLeasesByAddress(db, row.subnet_id, row.ip_address);
       IpAddress.retireLearnedMetadata(db, row);
     }
-    dnsRecordsRemoved = deleteDynamicDhcpRecordsByIps(db, eligible);
+    dnsRecordsRemoved += deleteDynamicDhcpRecordsByIps(db, eligible);
   })();
 
   const result = {
@@ -845,7 +855,7 @@ export async function retireStaleDynamicAddresses(
   lastRetirementDiagnostics = { last_run_at: nowIso, ...result };
   // One row per sweep that retired something; each address's own history is
   // in ip_events.
-  if (eligible.length > 0) {
+  if (eligible.length > 0 || dnsRecordsRemoved > 0) {
     recordAudit({
       action: 'stale_addresses_retired',
       entityType: 'ip_address',
@@ -853,6 +863,7 @@ export async function retireStaleDynamicAddresses(
       db,
       details: {
         addresses: sample(eligible.map((row) => row.ip_address)),
+        ...(rowless.length ? { records_without_address_row: sample(rowless) } : {}),
         dns_records_removed: dnsRecordsRemoved,
         leases_removed: result.leasesRemoved,
       },

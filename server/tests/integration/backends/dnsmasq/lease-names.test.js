@@ -16,6 +16,7 @@ let parseLeaseFile;
 let ingestLeases;
 let syncLeasesNow;
 let invalidateSubnetCache;
+let retireStaleDynamicAddresses;
 let leaseFile;
 
 const FAR = 4102444800;
@@ -30,6 +31,8 @@ beforeAll(async () => {
   ({ parseLeaseFile } = await import('../../../../src/backends/dnsmasq/dhcp.js'));
   ({ ingestLeases, syncLeasesNow } = await import('../../../../src/services/dhcp-lease-sync.js'));
   ({ invalidateSubnetCache } = await import('../../../../src/utils/ip-sync.js'));
+  ({ retireStaleDynamicAddresses } =
+    await import('../../../../src/services/ip-lifecycle-service.js'));
   leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
   fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
 
@@ -255,4 +258,179 @@ describe('DHCP lease names (ADR 005)', () => {
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('all 256 suffixes are taken'));
     warn.mockRestore();
   });
+});
+
+// A client that leaves and comes back on another address (Kea hands out the
+// next free one) used to find its own old record holding its name, and took
+// -00, -01 and so on every time; the old records were never removed.
+describe('a client coming back on a new address (ADR 005)', () => {
+  const nameRecords = (base) =>
+    db
+      .prepare(
+        `SELECT r.name, r.type, r.value FROM dns_records r
+         WHERE r.source = 'dhcp' AND (r.name = ? OR r.name LIKE ? OR r.value LIKE ?)
+         ORDER BY r.type, r.name, r.value`,
+      )
+      .all(base, `${base}-%`, `${base}%`);
+  const setLiveness = (ip, online, offlineSince = null) =>
+    db
+      .prepare('UPDATE ip_addresses SET is_online = ?, offline_since_at = ? WHERE ip_address = ?')
+      .run(online ? 1 : 0, offlineSince, ip);
+
+  // IPv4 by the lease's MAC, IPv6 by the MAC its DUID-LL embeds. The IPv6
+  // subnet is the one the DHCPv6 naming test above made.
+  const families = [
+    {
+      family: 'IPv4',
+      lease: (mac, ip, name) => `${mac} ${ip} ${name} *`,
+      mac: 'aa:bb:cc:00:01:01',
+      other: 'aa:bb:cc:00:01:02',
+      first: '10.0.1.101',
+      second: '10.0.1.102',
+      third: '10.0.1.103',
+      ptr: (ip) => ip.split('.').pop(),
+      type: 'A',
+    },
+    {
+      family: 'IPv6',
+      lease: (mac, ip, name) => `${parseInt(mac.slice(-2), 16)} ${ip} ${name} 00:03:00:01:${mac}`,
+      mac: 'aa:bb:cc:00:06:01',
+      other: 'aa:bb:cc:00:06:02',
+      first: 'fd00:a1::1101',
+      second: 'fd00:a1::1102',
+      third: 'fd00:a1::1103',
+      type: 'AAAA',
+    },
+  ];
+
+  it('suffixes a returning DHCPv6 client, whose address keeps no MAC to know it by', () => {
+    const f = families[1];
+    const base = 'laptopv6-unknown';
+    renew([f.lease(f.mac, f.first, base)]);
+    setLiveness(f.first, false, new Date().toISOString());
+    renew([f.lease(f.mac, f.second, base)]);
+    expect(leaseName(f.second)).toBe(`${base}-00`);
+  });
+
+  for (const f of families.slice(0, 1)) {
+    it(`gives the client its own name back, and still suffixes another client (${f.family})`, () => {
+      const base = `laptop${f.family.toLowerCase()}`;
+      renew([f.lease(f.mac, f.first, base)]);
+      expect(leaseName(f.first)).toBe(base);
+
+      // The lease is gone and the host went quiet: the old record is still in
+      // its retention window when the client asks again from a new address.
+      setLiveness(f.first, false, new Date().toISOString());
+      renew([f.lease(f.mac, f.second, base)]);
+      expect(leaseName(f.second)).toBe(base);
+      expect(nameRecords(base).filter((r) => r.type === f.type)).toEqual([
+        { name: base, type: f.type, value: f.second },
+      ]);
+      if (f.ptr) {
+        expect(
+          db
+            .prepare("SELECT name, value FROM dns_records WHERE type = 'PTR' AND value LIKE ?")
+            .all(`${base}.%`),
+        ).toEqual([{ name: f.ptr(f.second), value: `${base}.example.test` }]);
+      }
+
+      // A different client asking for the name still gets a suffix.
+      renew([f.lease(f.mac, f.second, base), f.lease(f.other, f.third, base)]);
+      expect(leaseName(f.second)).toBe(base);
+      expect(leaseName(f.third)).toBe(`${base}-00`);
+    });
+  }
+
+  it('gives the name back the same way when retirement ran before the client returned', async () => {
+    const f = families[0];
+    const base = 'laptopafter';
+    renew([f.lease(f.mac, f.first, base)]);
+    db.prepare('DELETE FROM dhcp_leases WHERE ip_address = ?').run(f.first);
+    renew([f.lease(f.other, f.third, 'bystander')]);
+    setLiveness(f.first, false, new Date(Date.now() - 2 * 3600 * 1000).toISOString());
+    await retireStaleDynamicAddresses(db, { releaseLease: () => ({ released: true }) });
+    expect(nameRecords(base)).toEqual([]);
+
+    renew([f.lease(f.other, f.third, 'bystander'), f.lease(f.mac, f.second, base)]);
+    expect(leaseName(f.second)).toBe(base);
+    expect(nameRecords(base).filter((r) => r.type === f.type)).toEqual([
+      { name: base, type: f.type, value: f.second },
+    ]);
+  });
+
+  for (const f of families) {
+    it(`retires a lease record whose address has no row, once it is an hour stale (${f.family})`, async () => {
+      const zoneId = db.prepare("SELECT id FROM dns_zones WHERE name = 'example.test'").get().id;
+      const ip = f.family === 'IPv4' ? '10.0.1.199' : 'fd00:a1::1199';
+      const insert = db.prepare(
+        `INSERT INTO dns_records (zone_id, name, type, value, source, enabled, updated_at)
+         VALUES (?, ?, ?, ?, 'dhcp', 1, ?)`,
+      );
+      insert.run(zoneId, `rowless${f.family}`.toLowerCase(), f.type, ip, '2000-01-01 00:00:00');
+      const freshIp = f.family === 'IPv4' ? '10.0.1.198' : 'fd00:a1::1198';
+      insert.run(
+        zoneId,
+        `fresh${f.family}`.toLowerCase(),
+        f.type,
+        freshIp,
+        new Date().toISOString(),
+      );
+      expect(
+        db.prepare('SELECT 1 FROM ip_addresses WHERE ip_address IN (?, ?)').all(ip, freshIp),
+      ).toEqual([]);
+
+      await retireStaleDynamicAddresses(db, { releaseLease: () => ({ released: true }) });
+      const left = db
+        .prepare('SELECT value FROM dns_records WHERE value IN (?, ?) ORDER BY value')
+        .all(ip, freshIp)
+        .map((r) => r.value);
+      expect(left).toEqual([freshIp]);
+      db.prepare('DELETE FROM dns_records WHERE value = ?').run(freshIp);
+    });
+
+    it(`removes a lease's record at once when it lapses while the host is online (${f.family})`, () => {
+      const base = `tv${f.family.toLowerCase()}`;
+      const keep = f.lease(f.other, f.third, 'keeper');
+      renew([f.lease(f.mac, f.first, base), keep]);
+      expect(nameRecords(base).filter((r) => r.type === f.type)).toHaveLength(1);
+
+      setLiveness(f.first, true);
+      if (f.family === 'IPv6') {
+        // A DHCPv6 lease holds its address for its valid lifetime.
+        db.prepare("UPDATE ip_addresses SET valid_until = '2000-01-01' WHERE ip_address = ?").run(
+          f.first,
+        );
+      }
+      renew([keep]);
+      expect(nameRecords(base)).toEqual([]);
+      expect(canonicalName(f.first)).toBeNull();
+    });
+
+    it(`retires a lapsed lease's record that an earlier release left behind (${f.family})`, async () => {
+      const base = `stale${f.family.toLowerCase()}`;
+      renew([f.lease(f.mac, f.first, base)]);
+      // What a lease that lapsed with the host online left before this fix:
+      // the address unassigned with no detection source, the record still up.
+      const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      db.prepare(
+        `UPDATE ip_addresses SET allocation_state = 'unassigned', allocation_source_type = NULL,
+           allocation_source_id = NULL, hostname = NULL, detection_source = NULL,
+           is_online = 0, offline_since_at = ?, dhcp_version = NULL, dhcp_duid = NULL
+         WHERE ip_address = ?`,
+      ).run(twoHoursAgo, f.first);
+      db.prepare('DELETE FROM dhcp_leases WHERE ip_address = ?').run(f.first);
+      expect(nameRecords(base).filter((r) => r.type === f.type)).toHaveLength(1);
+
+      const result = await retireStaleDynamicAddresses(db, {
+        releaseLease: () => ({ released: true }),
+      });
+      expect(result.dnsRecordsRemoved).toBeGreaterThanOrEqual(1);
+      expect(nameRecords(base)).toEqual([]);
+      expect(
+        db
+          .prepare('SELECT mac_address, offline_since_at FROM ip_addresses WHERE ip_address = ?')
+          .get(f.first),
+      ).toEqual({ mac_address: null, offline_since_at: null });
+    });
+  }
 });

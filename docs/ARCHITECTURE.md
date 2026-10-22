@@ -115,7 +115,11 @@ A DHCP lease's name is its effective name (ADR 005), decided when leases are
 read from dnsmasq and before they are stored: unique within its forward zone
 and sticky to the address that holds it. A client whose name another address
 holds gets the first free suffix `-00` through `-FF`; a client that sends no
-name keeps the name its address holds before any vendor fallback applies.
+name keeps the name its address holds before any vendor fallback applies. A
+name held only by the same client's lapsed lease (known by its MAC, so
+DHCPv4) is that client's to take back on a new address, and the old record
+goes. A lapsed lease's DNS record and PTR go with its name: at once when the
+host is online, at retirement otherwise.
 
 Leases reach CIDRella from the DHCP backend in one shape (`BackendLease` in
 `backends/contract.js`). Only dnsmasq writes a DHCP Reservation's lease with

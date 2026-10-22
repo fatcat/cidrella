@@ -12,6 +12,31 @@ was suggested.
 
 ---
 
+## Found tracing duplicate lease names on prod (2026-10-21)
+
+#### KEA-ADDRESS-AFFINITY-01: Under Kea a returning client gets a new address every time
+
+**medium** (a parity gap with dnsmasq), seen on prod; the Kea behavior is documented, the fix is
+not chosen. `server/src/backends/kea/render.js` (no `allocator` or lease-reuse settings).
+
+- **What happens:** On prod (PowerDNS + Kea, 10 to 15 minute leases) one Mac,
+  `c8:e0:eb:16:e1:0d`, held 20 addresses in two weeks, each lease at the next address up
+  (10.0.0.48, .49, .51, .52, .55 on 10-20 and 10-21). Under dnsmasq a returning client usually
+  lands on its old address. Names no longer pile up (ADR 005, amended 2026-10-21), but the
+  address history, liveness and anomaly identity, which are keyed by address, split across every
+  address the device passes through.
+- **Why:** Kea's default allocator is `iterative` (Kea 2.4.0 release notes: sequential
+  allocation since 2011), and Kea's lease file keeps no row for the client once its lease is gone,
+  so nothing ties it to its last address. A November 2025 kea-users thread suggests a long
+  `offer-lifetime` for clients that do not finish DORA.
+- **Fix:** Read the Kea 3 ARM on lease reclamation (`hold-reclaimed-time`, keeping
+  expired-reclaimed leases for reuse by the same client) and the `allocator` choices, pick the
+  setting that hands a returning client its last address, render it, and add it to the live Kea
+  check (`KEA_LIVE=1`). Measure on testerella: release and renew one client and see whether it
+  keeps its address.
+
+---
+
 ## Found writing the address property tests (2026-10-20)
 
 #### CIDR-V4-MAPPED-01: An IPv6 network overlapping ::ffff:0:0/96 splits into an IPv4 /0

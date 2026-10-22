@@ -847,6 +847,27 @@ export function deleteRecord(db, zone, record) {
   del();
 }
 
+/**
+ * Addresses a DHCP lease's A or AAAA record still names with no address row to
+ * retire and no lease, untouched since `cutoff`: the lease sync refreshes a
+ * record's updated_at while its lease lasts. Nothing else would remove these.
+ */
+export function findRowlessDhcpRecordAddresses(db, cutoff) {
+  return db
+    .prepare(
+      `
+    SELECT DISTINCT r.value AS ip_address
+    FROM dns_records r
+    WHERE r.source = 'dhcp' AND r.type IN ('A', 'AAAA')
+      AND datetime(r.updated_at) <= datetime(?)
+      AND NOT EXISTS (SELECT 1 FROM ip_addresses a WHERE a.ip_address = r.value)
+      AND NOT EXISTS (SELECT 1 FROM dhcp_leases l WHERE l.ip_address = r.value)
+  `,
+    )
+    .all(cutoff)
+    .map((row) => row.ip_address);
+}
+
 export function deleteDynamicDhcpRecordsByIps(db, addresses) {
   const recordsById = new Map();
   for (const address of addresses || []) {
