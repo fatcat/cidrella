@@ -246,11 +246,19 @@ describe('network properties', () => {
 
   it('refuses exactly the IPv6 networks that reach into ::ffff:0:0/96', () => {
     // Prefixes 80 to 128 around the mapped range, where random values never go.
-    const nearMapped = fc.record({
-      family: fc.constant(6),
-      value: fc.bigInt({ min: V4_MAPPED_FIRST - (1n << 40n), max: V4_MAPPED_LAST + (1n << 40n) }),
-      prefix: fc.integer({ min: 80, max: IPV6_BITS }),
-    });
+    // Each is written as its network address: a prefix under 96 then lies
+    // below the mapped range and stays IPv6, where an address inside it would
+    // be read as IPv4 with a prefix parseNetwork refuses.
+    const nearMapped = fc
+      .record({
+        value: fc.bigInt({ min: V4_MAPPED_FIRST - (1n << 40n), max: V4_MAPPED_LAST + (1n << 40n) }),
+        prefix: fc.integer({ min: 80, max: IPV6_BITS }),
+      })
+      .map(({ value, prefix }) => ({
+        family: 6,
+        value: value & ~((1n << BigInt(IPV6_BITS - prefix)) - 1n),
+        prefix,
+      }));
     fc.assert(
       fc.property(fc.oneof(network, nearMapped), (n) => {
         const net = parseNetwork(cidrOf(n));
