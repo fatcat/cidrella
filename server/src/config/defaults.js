@@ -137,6 +137,11 @@ export const DHCP_FINGERPRINT_POLL_MS = 5000; // tail dnsmasq.log for DHCP finge
 export const PROXY_HEALTH_CHECK_MS = 3000; // 3 seconds
 export const PROXY_MAX_RESTART_ATTEMPTS = 3;
 export const PROXY_RESTART_DELAY_MS = 2000; // 2 seconds between restart attempts
+// While bypassed, how long before trying the proxy again: the first wait, then
+// doubling up to the last. A failed try costs a few seconds of DNS while the
+// backend moves off the LAN port and back, so tries back off.
+export const PROXY_RECOVERY_FIRST_MS = 5 * 60 * 1000;
+export const PROXY_RECOVERY_MAX_MS = 60 * 60 * 1000;
 // DNS-over-TCP relay (used by DNSSEC-aware / large responses).
 export const PROXY_TCP_IDLE_TIMEOUT_MS = 10000; // close idle client TCP conns
 export const PROXY_MAX_TCP_CONNECTIONS = 1000; // concurrent client TCP conn cap

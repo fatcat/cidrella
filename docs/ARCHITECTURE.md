@@ -375,6 +375,26 @@ with `USE_DEFAULT` (`services/subnet-dhcp-topology.js`), which
 `writeScopeOptionRows` stores as NULL; copies between scopes (divide, merge)
 carry the value as-is, so links survive.
 
+### Proxy bypass
+
+The DNS proxy holds the LAN port and the backend answers it on an internal
+port. When the proxy stops listening and three restarts fail, bypass puts the
+backend on the LAN port (`dns_proxy_bypass`, `activateBypass` in
+`utils/dns-proxy.js`), so names still resolve without filtering, GeoIP
+blocking or the query log. Bypass ends on its own:
+
+- While bypassed, the health monitor tries the proxy again: the backend back
+  on its internal port, then the proxy on the LAN port. The first try comes
+  after 5 minutes and each failed one doubles the wait, up to an hour, since
+  a try costs a few seconds of DNS while the backend moves. A try waits while
+  no listen address can be bound at all.
+- A restart forgets a stored bypass before the backends are applied
+  (`clearBypassAtBoot`), so the proxy is always tried first.
+
+Entering and leaving bypass each write an audit row; a failed try is only
+logged. An interface change while bypassed leaves the proxy alone, and it
+binds the new addresses when it recovers.
+
 ### Why an answer failed
 
 The DNS proxy sorts every failed answer into one cause with `failureCause` in

@@ -14,24 +14,6 @@ was suggested.
 
 ## Found building the audit trail (2026-10-11)
 
-#### PROXY-BYPASS-01: Proxy bypass never ends on its own
-
-**high**, confirmed in the code, not yet reproduced. `server/src/utils/dns-proxy.js`
-(`startHealthMonitor`, `deactivateBypass`).
-
-- **What happens:** Once the health check puts the backend on port 53 (bypass), it stays there.
-  Filtering, GeoIP blocking and the query log stay off until someone deletes the
-  `dns_proxy_bypass` setting by hand, through restarts and updates too.
-- **Why:** The health check returns at `if (bypassMode) return;` before it tries the proxy
-  again, so the `if (bypassMode) deactivateBypass()` after a successful restart can never run.
-  The setting is stored, so after a restart the backend takes port 53 first, the proxy cannot
-  bind, and the next check turns bypass back on.
-- **Fix:** While bypassed, probe whether the proxy could serve (bind a test socket on an
-  alternate port, or check that the condition that killed it has cleared), then clear the
-  setting, apply the listen config so the backend leaves port 53, start the proxy and call
-  `deactivateBypass`. Clear `dns_proxy_bypass` at boot so a restart always tries the proxy
-  first. Both transitions already write audit rows.
-
 #### TEST-MIGRATION-HELPER-01: Ten migration tests each build their own database
 
 **low**, confirmed in the code. `server/tests/integration/*-migration.test.js` and

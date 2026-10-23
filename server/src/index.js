@@ -76,7 +76,7 @@ import {
   sweepStaleRestoreArtifacts,
   applyRestoreCarryover,
 } from './utils/backup.js';
-import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
+import { clearBypassAtBoot, startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { allBackends, uniqueServices } from './backends/index.js';
@@ -255,6 +255,9 @@ async function main() {
   // doubles as "make sure DNS is up" and change-detection must not lose that.
   // (The blocklist scheduler's one-time legacy blocklist.conf blanking ~10s
   // in has its own restart guard and stays separate on purpose.)
+  // A proxy bypass from before the restart would put the DNS backend on the
+  // LAN port and keep the proxy out; the proxy is always tried first.
+  clearBypassAtBoot(getDb());
   applyAtBoot(getDb());
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).

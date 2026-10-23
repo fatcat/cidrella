@@ -37,6 +37,8 @@ import {
   PROXY_HEALTH_CHECK_MS,
   PROXY_MAX_RESTART_ATTEMPTS,
   PROXY_RESTART_DELAY_MS,
+  PROXY_RECOVERY_FIRST_MS,
+  PROXY_RECOVERY_MAX_MS,
   PROXY_TCP_IDLE_TIMEOUT_MS,
   PROXY_MAX_TCP_CONNECTIONS,
   PROXY_TCP_RELAY_TIMEOUT_MS,
@@ -80,6 +82,20 @@ let countryHits = new Map();
 // Bypass mode, when proxy dies and can't restart, dnsmasq takes over port 53
 let bypassMode = false;
 let healthTimer = null;
+// A restart or recovery runs longer than one health interval; this keeps the
+// next tick from starting a second one alongside it.
+let healthBusy = false;
+// While bypassed: when the proxy is next tried, and how long the wait after
+// a failed try will be.
+let recoveryAt = 0;
+let recoveryWaitMs = PROXY_RECOVERY_FIRST_MS;
+
+// The next try after `ms`; each failed try after it waits twice as long.
+function scheduleRecovery(ms) {
+  recoveryAt = Date.now() + ms;
+  recoveryWaitMs = Math.min(ms * 2, PROXY_RECOVERY_MAX_MS);
+  return ms;
+}
 
 // GeoIP rule cache, reloaded on settings change, avoids per-query DB hits
 let geoipRuleSet = null; // Set<string>, enabled country codes
@@ -1167,7 +1183,13 @@ export function startProxy() {
   proxyStartedAt = Date.now();
   cancelBindRetries();
 
-  // Create socket for forwarding to dnsmasq
+  // Create socket for forwarding to dnsmasq. A restart attempt that bound
+  // nothing left the last one open.
+  try {
+    dnsmasqSocket?.close();
+  } catch {
+    /* already closed */
+  }
   dnsmasqSocket = dgram.createSocket('udp4');
   dnsmasqSocket.on('error', (err) => {
     proxyLog('error', 'dnsmasq socket error', { error: err.message });
@@ -1190,6 +1212,9 @@ export function startProxy() {
     bindUdp(addr, listenPort, addresses.length);
     bindTcp(addr, listenPort);
   }
+  // Watched from the start, not from the first bind: a proxy that binds
+  // nothing at boot is the case the health monitor exists for.
+  if (!healthTimer) startHealthMonitor();
 }
 
 // An address can be on the interface but not usable yet: an IPv6 address
@@ -1271,9 +1296,6 @@ function bindUdp(addr, listenPort, total, attempt = 0) {
       proxyStartupMs = Date.now() - proxyStartedAt;
       proxyLog('info', 'Proxy fully started', { sockets: total, startupMs: proxyStartupMs });
     }
-    // Watch from the first bound socket on, not only once every address has
-    // bound: one address still waiting must not leave the rest unwatched.
-    if (!healthTimer) startHealthMonitor();
   });
 
   proxyServers.push({ socket: sock, address: addr, bound: false });
@@ -1348,42 +1370,129 @@ export function stopProxy() {
 
 // Rebind proxy sockets (called when interface config changes)
 export function rebindProxy() {
+  // The backend holds the LAN port while bypassed, so the proxy could not
+  // bind, and stopProxy would end the health monitor that tries it again.
+  if (bypassMode) {
+    proxyLog('info', 'Bypass is on, the proxy binds the new interfaces when it recovers');
+    return;
+  }
   proxyLog('info', 'Rebinding proxy to updated interface config');
   stopProxy();
   startProxy();
 }
 
-// Health monitor, detects proxy death, attempts restart, fails open if unrecoverable
+// Health monitor, detects proxy death, attempts restart, fails open if
+// unrecoverable, and while bypassed tries the proxy again now and then.
 function startHealthMonitor() {
   stopHealthMonitor();
   healthTimer = setInterval(async () => {
-    if (proxyServers.length > 0) return; // proxy is alive
-    if (bypassMode) return; // already bypassed, nothing to do
+    if (healthBusy) return;
     if (dnsSwitchedOff()) return; // down on purpose, not dead
-
-    proxyLog('warn', 'Proxy appears dead, attempting restart');
-
-    for (let attempt = 1; attempt <= PROXY_MAX_RESTART_ATTEMPTS; attempt++) {
+    if (bypassMode) {
+      if (Date.now() < recoveryAt) return;
+      healthBusy = true;
       try {
-        startProxy();
-        // Give sockets a moment to bind
-        await new Promise((r) => setTimeout(r, 500));
-        if (proxyServers.length > 0) {
-          proxyLog('info', 'Proxy restarted successfully', { attempt });
-          if (bypassMode) deactivateBypass();
-          return;
-        }
-      } catch (err) {
-        proxyLog('error', 'Restart attempt failed', { attempt, error: err.message });
+        await tryRecovery();
+      } finally {
+        healthBusy = false;
       }
-      if (attempt < PROXY_MAX_RESTART_ATTEMPTS) {
-        await new Promise((r) => setTimeout(r, PROXY_RESTART_DELAY_MS));
-      }
+      return;
     }
+    if (proxyServers.length > 0) return; // proxy is alive
 
-    // All restart attempts failed, activate bypass
-    activateBypass();
+    healthBusy = true;
+    try {
+      await restartOrBypass();
+    } finally {
+      healthBusy = false;
+    }
   }, PROXY_HEALTH_CHECK_MS);
+}
+
+async function restartOrBypass() {
+  proxyLog('warn', 'Proxy appears dead, attempting restart');
+
+  for (let attempt = 1; attempt <= PROXY_MAX_RESTART_ATTEMPTS; attempt++) {
+    try {
+      startProxy();
+      // Give sockets a moment to bind
+      await new Promise((r) => setTimeout(r, 500));
+      if (proxyServers.length > 0) {
+        proxyLog('info', 'Proxy restarted successfully', { attempt });
+        return;
+      }
+    } catch (err) {
+      proxyLog('error', 'Restart attempt failed', { attempt, error: err.message });
+    }
+    if (attempt < PROXY_MAX_RESTART_ATTEMPTS) {
+      await new Promise((r) => setTimeout(r, PROXY_RESTART_DELAY_MS));
+    }
+  }
+
+  // All restart attempts failed, activate bypass
+  activateBypass();
+}
+
+// Can the proxy bind any of its listen addresses at all: each tried on a
+// port of its own choosing, since the backend holds the LAN port. Nothing to
+// try means the condition that stopped the proxy has not cleared.
+async function listenAddressUsable() {
+  for (const addr of getListenAddresses()) {
+    const usable = await new Promise((resolve) => {
+      const sock = dgram.createSocket(net.isIP(addr) === 6 ? 'udp6' : 'udp4');
+      sock.once('error', () => {
+        sock.close();
+        resolve(false);
+      });
+      sock.bind(0, addr, () => {
+        sock.close();
+        resolve(true);
+      });
+    });
+    if (usable) return true;
+  }
+  return false;
+}
+
+// One try at leaving bypass: the backend back on its internal port, then the
+// proxy on the LAN port. If the proxy binds nothing, bypass goes back on and
+// the next try waits twice as long.
+async function tryRecovery() {
+  const wait = () => scheduleRecovery(recoveryWaitMs);
+  if (switchInProgress()) return;
+  if (!(await listenAddressUsable())) {
+    wait();
+    return;
+  }
+  proxyLog('info', 'Bypass is on, trying the proxy again');
+  try {
+    const db = getDb();
+    Setting.deleteSetting(db, 'dns_proxy_bypass');
+    applyListenNow(db);
+  } catch (err) {
+    proxyLog('error', 'Could not move the backend off the LAN port', { error: err.message });
+    setBypassListen();
+    wait();
+    return;
+  }
+  try {
+    startProxy();
+  } catch (err) {
+    proxyLog('error', 'Proxy start failed', { error: err.message });
+  }
+  for (let i = 0; i < 6 && !proxyServers.some((s) => s.bound); i++) {
+    await new Promise((r) => setTimeout(r, 500));
+  }
+  if (proxyServers.some((s) => s.bound)) {
+    deactivateBypass({ reason: 'the proxy bound its addresses again' });
+    return;
+  }
+  // Binds still waiting on an address would only fail on the LAN port again.
+  cancelBindRetries();
+  setBypassListen();
+  proxyLog('warn', 'The proxy still cannot bind, bypass stays on', {
+    nextTryMinutes: Math.round(wait() / 60000),
+  });
 }
 
 function stopHealthMonitor() {
@@ -1412,7 +1521,10 @@ function activateBypass() {
   // tries again once it is done.
   if (switchInProgress()) return;
   bypassMode = true;
-  proxyLog('error', 'All restart attempts failed, activating bypass mode (dnsmasq takes port 53)');
+  proxyLog(
+    'error',
+    'All restart attempts failed, activating bypass mode (the DNS backend takes the LAN port)',
+  );
   // Filtering, GeoIP and the query log stop with the proxy out of the path.
   try {
     recordAudit({
@@ -1427,19 +1539,25 @@ function activateBypass() {
   } catch (err) {
     proxyLog('error', 'Could not record the bypass in the audit log', { error: err.message });
   }
+  scheduleRecovery(PROXY_RECOVERY_FIRST_MS);
+  setBypassListen();
+}
+
+// The backend on the LAN port. Must be synchronous before the restart:
+// queueRegen would defer the conf write into a microtask that fires AFTER
+// the restart.
+function setBypassListen() {
   try {
-    // Temporarily override: dnsmasq listens on port 53 + LAN IPs.
-    // Must be synchronous before the restart, queueRegen would defer
-    // the conf write into a microtask that fires AFTER the restart.
     setSetting('dns_proxy_bypass', 'true');
     applyListenNow(getDb());
-    proxyLog('info', 'dnsmasq reconfigured for bypass mode (port 53 on LAN)');
+    proxyLog('info', 'DNS backend reconfigured for bypass mode (LAN port)');
   } catch (err) {
-    proxyLog('error', 'Failed to reconfigure dnsmasq for bypass', { error: err.message });
+    proxyLog('error', 'Failed to reconfigure the DNS backend for bypass', { error: err.message });
   }
 }
 
-function deactivateBypass() {
+// Called with the backend already off the LAN port and the proxy bound.
+function deactivateBypass({ reason }) {
   bypassMode = false;
   proxyLog('info', 'Bypass deactivated, proxy recovered');
   try {
@@ -1447,17 +1565,36 @@ function deactivateBypass() {
       action: 'dns_proxy_bypass_deactivated',
       entityType: 'dns_proxy',
       source: 'proxy-health',
+      details: { reason },
     });
   } catch (err) {
     proxyLog('error', 'Could not record the recovery in the audit log', { error: err.message });
   }
+}
+
+/**
+ * At boot, before the backends are applied: forget a bypass left from before
+ * the restart, so the backend takes its internal port and the proxy the LAN
+ * port. If the proxy still cannot serve, the health monitor turns bypass on
+ * again. Without this a bypass outlived every restart and update.
+ */
+export function clearBypassAtBoot(db) {
+  if (Setting.readSetting(db, 'dns_proxy_bypass') !== 'true') return false;
+  Setting.deleteSetting(db, 'dns_proxy_bypass');
+  proxyLog('info', 'Bypass was on before the restart, trying the proxy first');
   try {
-    const db = getDb();
-    Setting.deleteSetting(db, 'dns_proxy_bypass');
-    applyListenNow(db);
+    recordAudit({
+      action: 'dns_proxy_bypass_deactivated',
+      entityType: 'dns_proxy',
+      source: 'boot',
+      details: { reason: 'a restart tries the proxy first' },
+    });
   } catch (err) {
-    proxyLog('error', 'Failed to deactivate bypass', { error: err.message });
+    proxyLog('error', 'Could not record the cleared bypass in the audit log', {
+      error: err.message,
+    });
   }
+  return true;
 }
 
 // Check if proxy is in bypass mode
