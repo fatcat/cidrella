@@ -12,26 +12,6 @@ was suggested.
 
 ---
 
-## Found tracing a rogue DHCP alert (2026-10-14)
-
-#### ROGUE-PROBE-V4-01: The IPv4 rogue probe did not see a Kea server that was serving the LAN
-
-**high**, seen on the LAN; the cause is plausible, not confirmed. `server/src/utils/dhcp-probe.js`
-(the DISCOVER send, `dest = iface.broadcast || '255.255.255.255'`).
-
-- **What happens:** From 2026-10-10 to 10-14, testerella's Kea DHCPv4 handed out real leases on
-  10.0.0.0/22 (forensic log, `DHCP4_LEASE_OFFER` to client MACs at 10:37 and 10:40 UTC on 10-14).
-  Prod's probe ran every 15 minutes on the same segment and reported only the DHCPv6 server on
-  that host. Kea logged no offer at prod's probe time (10:38:59 UTC).
-- **Why (plausible):** The DISCOVER goes to the subnet's directed broadcast (10.0.3.255 on prod),
-  not to 255.255.255.255 as a client's does. Kea on a raw socket may ignore a directed broadcast,
-  and other servers may too.
-- **Fix:** Send the DISCOVER to 255.255.255.255 out the probed interface (bind the socket to the
-  interface address, or `SO_BINDTODEVICE`), as a client does. Then check against a real Kea and
-  dnsmasq that each answers the probe.
-
----
-
 ## Found building the audit trail (2026-10-11)
 
 #### PROXY-BYPASS-01: Proxy bypass never ends on its own

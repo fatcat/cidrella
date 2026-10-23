@@ -6,7 +6,8 @@
 // only, never REQUEST, so no lease is consumed and the probe is non-disruptive.
 //
 // No raw sockets and no new capability beyond the privileged-port bind we
-// already do for :53, a single UDP socket on :68 with the broadcast flag set.
+// already do for :53: UDP sockets on :68 with the broadcast flag set, one
+// listening on every address and one sending from each probed interface.
 // Pure-JS packet build/parse, no dependency.
 //
 // L2-scoped: only sees servers on the same broadcast domain as a CIDRella
@@ -23,6 +24,7 @@ import { upsertRogueEvent, authorizedIpSet } from '../models/rogue-dhcp.js';
 
 const DHCP_SERVER_PORT = 67;
 const DHCP_CLIENT_PORT = 68;
+const LIMITED_BROADCAST = '255.255.255.255';
 const MAGIC_COOKIE = 0x63825363;
 const PROBE_WINDOW_MS = 4000;
 // Grace on top of the listen window before the watchdog calls a probe stalled.
@@ -178,23 +180,12 @@ export function getSelfIps() {
   return localIpv4Set();
 }
 
-function directedBroadcast(address, netmask) {
-  try {
-    const a = address.split('.').map(Number);
-    const m = netmask.split('.').map(Number);
-    if (a.length !== 4 || m.length !== 4) return null;
-    return a.map((o, i) => o | (~m[i] & 0xff)).join('.');
-  } catch {
-    return null;
-  }
-}
-
 // LAN IPv4 interfaces to probe on. Rogue DHCP detection is only meaningful where
 // CIDRella actually serves DHCP, so this mirrors dnsmasq.js's DHCP-serving logic
 // exactly: nothing when DHCP is globally off; with interface_config, only
 // interfaces flagged `cfg.dhcp` (NOT dns-only ones); on a fresh deploy (no config)
 // dnsmasq binds DHCP to all real interfaces, so we probe them all. We additionally
-// need the MAC (for chaddr) and the directed broadcast (for per-segment egress).
+// need the MAC (for chaddr) and the address (the DISCOVER leaves from it).
 export function getLanInterfaces() {
   const sysIfaces = os.networkInterfaces();
   const result = [];
@@ -207,7 +198,6 @@ export function getLanInterfaces() {
         ifName,
         address: a.address,
         mac: a.mac,
-        broadcast: directedBroadcast(a.address, a.netmask),
       });
     }
   };
@@ -303,6 +293,7 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
 
   return new Promise((resolve) => {
     let sock = null;
+    const senders = []; // one DISCOVER socket per interface
     let settled = false;
     let watchdog = null;
 
@@ -310,10 +301,12 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
       if (settled) return;
       settled = true;
       if (watchdog) clearTimeout(watchdog);
-      try {
-        sock?.close();
-      } catch {
-        /* ignore */
+      for (const s of [sock, ...senders]) {
+        try {
+          s?.close();
+        } catch {
+          /* ignore */
+        }
       }
       probeSupported = supported;
       probeInProgress = false;
@@ -350,28 +343,7 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
     }, windowMs + PROBE_WATCHDOG_GRACE_MS);
     if (watchdog.unref) watchdog.unref();
 
-    try {
-      sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
-    } catch (err) {
-      probeLog('error', 'Could not create probe socket', { error: err.message });
-      finish(probeSupported, { outcome: 'error', error: err.message });
-      return;
-    }
-
-    sock.on('error', (err) => {
-      if (err.code === 'EACCES' || err.code === 'EADDRINUSE') {
-        probeLog(
-          'warn',
-          `Cannot bind UDP :68 (${err.code}). Rogue DHCP detection is unavailable on this host`,
-        );
-        finish(false, { error: `cannot bind UDP :68 (${err.code})` });
-      } else {
-        probeLog('error', 'Probe socket error', { error: err.message, code: err.code });
-        finish(probeSupported, { outcome: 'error', error: err.message });
-      }
-    });
-
-    sock.on('message', (msg, rinfo) => {
+    const onMessage = (msg, rinfo) => {
       try {
         const offer = parseOffer(msg);
         if (!offer || !xidMap.has(offer.xid)) return; // not a reply to our probe
@@ -397,7 +369,69 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
       } catch (err) {
         probeLog('warn', 'Failed to parse DHCP offer', { error: err.message });
       }
+    };
+
+    try {
+      sock = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+    } catch (err) {
+      probeLog('error', 'Could not create probe socket', { error: err.message });
+      finish(probeSupported, { outcome: 'error', error: err.message });
+      return;
+    }
+
+    sock.on('error', (err) => {
+      if (err.code === 'EACCES' || err.code === 'EADDRINUSE') {
+        probeLog(
+          'warn',
+          `Cannot bind UDP :68 (${err.code}). Rogue DHCP detection is unavailable on this host`,
+        );
+        finish(false, { error: `cannot bind UDP :68 (${err.code})` });
+      } else {
+        probeLog('error', 'Probe socket error', { error: err.message, code: err.code });
+        finish(probeSupported, { outcome: 'error', error: err.message });
+      }
     });
+    sock.on('message', onMessage);
+
+    // The DISCOVER goes to 255.255.255.255, as a client's does. Kea's packet
+    // filter takes only that or its own address, so it never saw the
+    // directed broadcast (10.0.3.255) this used to send. A limited broadcast
+    // leaves by the interface whose address the sending socket is bound to,
+    // so each interface gets a socket of its own; the OFFERs come back to
+    // 255.255.255.255:68, which only the wildcard socket above receives.
+    const sendFrom = (iface, pkt) => {
+      let tx;
+      try {
+        tx = dgram.createSocket({ type: 'udp4', reuseAddr: true });
+      } catch (err) {
+        probeLog('warn', 'Could not create DISCOVER socket', {
+          iface: iface.ifName,
+          error: err.message,
+        });
+        return;
+      }
+      senders.push(tx);
+      tx.on('error', (err) => {
+        probeLog('warn', 'DISCOVER socket error', { iface: iface.ifName, error: err.message });
+      });
+      // A server that answers by unicast reaches this socket, not the wildcard.
+      tx.on('message', onMessage);
+      tx.bind(DHCP_CLIENT_PORT, iface.address, () => {
+        try {
+          tx.setBroadcast(true);
+        } catch {
+          /* ignore */
+        }
+        tx.send(pkt, DHCP_SERVER_PORT, LIMITED_BROADCAST, (err) => {
+          if (err)
+            probeLog('warn', 'DISCOVER send failed', {
+              iface: iface.ifName,
+              from: iface.address,
+              error: err.message,
+            });
+        });
+      });
+    };
 
     sock.bind(DHCP_CLIENT_PORT, '0.0.0.0', () => {
       try {
@@ -409,16 +443,7 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
       ifaces.forEach((iface, i) => {
         const xid = (base | (i & 0xffff)) >>> 0;
         xidMap.set(xid, iface.ifName);
-        const pkt = buildDiscover({ xid, mac: iface.mac });
-        const dest = iface.broadcast || '255.255.255.255';
-        sock.send(pkt, DHCP_SERVER_PORT, dest, (err) => {
-          if (err)
-            probeLog('warn', 'DISCOVER send failed', {
-              iface: iface.ifName,
-              dest,
-              error: err.message,
-            });
-        });
+        sendFrom(iface, buildDiscover({ xid, mac: iface.mac }));
       });
       setTimeout(() => finish(true), windowMs);
     });
