@@ -216,13 +216,15 @@ describe('releaseKeaLease', () => {
 });
 
 describe('keaPacketCounters', () => {
-  it('sums packets received and sent over the families served', async () => {
+  it('reads packets received and sent per family served', async () => {
     const stats = (r, s, f) => async () => ({
       arguments: { [`pkt${f}-received`]: [[r, 'now']], [`pkt${f}-sent`]: [[s, 'now']] },
     });
-    expect(await keaPacketCounters({ 4: stats(10, 8, 4), 6: stats(3, 2, 6) }, [4, 6])).toEqual({
-      received: 13,
-      sent: 10,
+    const commands = { 4: stats(10, 8, 4), 6: stats(3, 2, 6) };
+    expect(await keaPacketCounters(commands, [4, 6])).toEqual({
+      4: { received: 10, sent: 8 },
+      6: { received: 3, sent: 2 },
     });
+    expect(await keaPacketCounters(commands, [4])).toEqual({ 4: { received: 10, sent: 8 } });
   });
 });

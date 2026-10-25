@@ -361,7 +361,7 @@ export function createKeaBackend(deps = {}) {
         return newestLegalLog(4);
       },
       querySourceIp: () => null,
-      dhcpDirection: () => null,
+      dhcpMessage: () => null,
       isDhcpLine: isLegalLine,
       createDhcpParser: createLegalLogParser,
       // An audit log, kept as long as the audit log is; the viewer never clears it.

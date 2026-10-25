@@ -78,8 +78,9 @@ export const DNS_OPS = Object.freeze([
  *   optional; replace the backend's leases with those another backend
  *   handed out (a switch), under the DHCPv6 server DUID they carry. Called while the
  *   backend answers no DHCP; the leases count once it serves again.
- * - dhcpCounters?() -> Promise<{ received, sent }>: optional; DHCP packets
- *   since the daemon started, for a backend whose log does not show them all
+ * - dhcpCounters?() -> Promise<{ 4?: { received, sent }, 6?: { received, sent } }>:
+ *   optional; DHCP packets since the daemon started, per family served, for a
+ *   backend whose log does not show them all
  */
 export const DHCP_OPS = Object.freeze([
   'applyScopes',
@@ -112,13 +113,13 @@ export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
  *   service has the applied configuration
  * - restart() -> void
  * - prepare() -> void: create what the backend needs on disk before it starts
- * - logSource() -> null, or { path, querySourceIp(line), dhcpDirection(line),
+ * - logSource() -> null, or { path, querySourceIp(line), dhcpMessage(line),
  *   isDhcpLine(line), createDhcpParser?() } for a backend whose log the
  *   liveness, metrics, log viewer and fingerprint readers can use;
  *   createDhcpParser only for a backend that serves DHCP.
  *   `path` is read on every poll, so a log that moves to a new file is
- *   followed (createLogFollower in utils/log-reader.js). dhcpDirection
- *   answers 'client', 'server' or null. Readers take the DNS role's log for
+ *   followed (createLogFollower in utils/log-reader.js). dhcpMessage
+ *   answers { direction: 'client' | 'server', family: 4 | 6 } or null. Readers take the DNS role's log for
  *   queries and the DHCP role's for DHCP. `clearable: false` marks an audit
  *   log the log viewer must not truncate. `proxyQueries: true` asks the DNS
  *   proxy to write its query lines into `path` (utils/query-log.js), for a

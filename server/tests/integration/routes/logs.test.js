@@ -55,7 +55,7 @@ beforeEach(() => {
     path: file,
     isDhcpLine: (line) => line.startsWith('DHCP'),
     querySourceIp: () => null,
-    dhcpDirection: () => null,
+    dhcpMessage: () => null,
     createDhcpParser: () => null,
   });
 });

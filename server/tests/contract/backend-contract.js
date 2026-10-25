@@ -84,7 +84,7 @@ export function runBackendContract(label, makeHarness) {
       if (log !== null) {
         // null until the backend has written a log (Kea's legal log).
         expect(log.path === null || typeof log.path === 'string').toBe(true);
-        for (const fn of ['querySourceIp', 'dhcpDirection', 'isDhcpLine']) {
+        for (const fn of ['querySourceIp', 'dhcpMessage', 'isDhcpLine']) {
           expect(typeof log[fn]).toBe('function');
         }
         // Only a backend that serves DHCP has DHCP lines to reassemble.

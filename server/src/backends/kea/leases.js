@@ -224,18 +224,21 @@ export async function importKeaLeases(commands, leases, { families = [4, 6], ...
 }
 
 /**
- * DHCP packets received and sent since each daemon started, summed over the
- * families served: { received, sent }. The metrics aggregator turns the
- * totals into per-minute counts.
+ * DHCP packets received and sent since each daemon started, per family
+ * served: { 4: { received, sent }, 6: { received, sent } }, a family missing
+ * when not served. The metrics aggregator turns the totals into per-minute
+ * counts.
  */
 export async function keaPacketCounters(commands, families) {
-  const totals = { received: 0, sent: 0 };
+  const counters = {};
   for (const family of families) {
     const stats = await statistics(commands[family]);
-    totals.received += current(stats[`pkt${family}-received`]);
-    totals.sent += current(stats[`pkt${family}-sent`]);
+    counters[family] = {
+      received: current(stats[`pkt${family}-received`]),
+      sent: current(stats[`pkt${family}-sent`]),
+    };
   }
-  return totals;
+  return counters;
 }
 
 // Kea's memfile lease types (lease6 "lease_type").

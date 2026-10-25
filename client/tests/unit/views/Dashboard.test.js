@@ -16,6 +16,10 @@ const minute = (i, extra = {}) => ({
   dhcp_requests: 3,
   dhcp_client_msgs: 2,
   dhcp_server_msgs: 1,
+  dhcp4_client_msgs: 1,
+  dhcp4_server_msgs: 1,
+  dhcp6_client_msgs: 1,
+  dhcp6_server_msgs: 0,
   blocklist_blocks: 1,
   geoip_blocks: 0,
   ...extra,
@@ -159,9 +163,12 @@ describe('Dashboard health board', () => {
       'Answered 25',
       'Blocked by list 3',
       'Blocked by GeoIP 2',
-      'Client requests 6',
+      'Client requests 3',
       'Server replies 3',
+      'Client requests 3',
+      'Server replies 0',
     ]);
+    expect(wrapper.findAll('.panel h2').map((h) => h.text())).toContain('DHCPv6 traffic');
     expect(wrapper.text()).toContain('truenas');
     expect(wrapper.text()).toContain('10.0.0.9');
     expect(wrapper.find('[data-track="dashboard-top-domain"]').attributes('href')).toBe(
@@ -201,15 +208,22 @@ describe('Dashboard health board', () => {
     wrapper.unmount();
   });
 
-  it('draws rows from before the DHCP split as client messages', async () => {
+  it('draws rows without a family split on the DHCPv4 chart, the oldest as client messages', async () => {
+    const noFamily = { dhcp4_client_msgs: 0, dhcp4_server_msgs: 0, dhcp6_client_msgs: 0 };
     payloads['/metrics/timeseries'] = [
-      minute(0, { dhcp_requests: 5, dhcp_client_msgs: 0, dhcp_server_msgs: 0 }),
+      minute(0, { dhcp_requests: 5, dhcp_client_msgs: 0, dhcp_server_msgs: 0, ...noFamily }),
+      minute(1, { dhcp_requests: 3, dhcp_client_msgs: 2, dhcp_server_msgs: 1, ...noFamily }),
     ];
     const wrapper = await mountBoard();
     const legends = wrapper
       .findAll('.series-chart .chip')
       .map((c) => c.text().replace(/\s+/g, ' '));
-    expect(legends.slice(-2)).toEqual(['Client requests 5', 'Server replies 0']);
+    expect(legends.slice(-4)).toEqual([
+      'Client requests 7',
+      'Server replies 1',
+      'Client requests 0',
+      'Server replies 0',
+    ]);
     wrapper.unmount();
   });
 });

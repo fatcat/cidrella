@@ -31,7 +31,7 @@ import {
 import { removeLegacyLeaseHosts, retireLegacyBlocklistConf } from './legacy.js';
 import { LEASE_FILE, readServerDuid, readSettledLeaseFile } from './lease-file.js';
 import { releaseDnsmasqLease } from './lease-release.js';
-import { LOG_FILE, dhcpDirection, isDhcpLine, querySourceIp } from './log-format.js';
+import { LOG_FILE, dhcpMessage, isDhcpLine, querySourceIp } from './log-format.js';
 import { createDhcpLogParser } from './dhcp-log-parser.js';
 import { declareSupport } from '../features.js';
 import { atomicWrite } from '../shared/validated-files.js';
@@ -234,7 +234,7 @@ export function createDnsmasqBackend() {
     logSource: () => ({
       path: LOG_FILE,
       querySourceIp,
-      dhcpDirection,
+      dhcpMessage,
       isDhcpLine,
       createDhcpParser: createDhcpLogParser,
     }),

@@ -524,7 +524,7 @@ export function createPdnsBackend(deps = {}) {
       path: LOG_FILE,
       proxyQueries: true,
       querySourceIp,
-      dhcpDirection: () => null,
+      dhcpMessage: () => null,
       isDhcpLine: () => false,
     }),
   };
