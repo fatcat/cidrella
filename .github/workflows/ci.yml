@@ -20,6 +20,9 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # Full history: SonarQube Cloud reads blame to tell new code from old.
+          fetch-depth: 0
 
       - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
@@ -47,10 +50,11 @@ jobs:
         run: npm run lint
 
       - name: Server tests
-        run: npm run test:server
+        # --coverage writes server/coverage/lcov.info for the SonarQube scan.
+        run: npm run test:server -- --coverage
 
       - name: Client tests
-        run: npm run test:client
+        run: npm run test:client -- --coverage
 
       - name: Anomaly sidecar tests
         # Plain unittest over stdlib-only rule code (threat shape). The runner
@@ -110,6 +114,31 @@ jobs:
         # so this fires only on NEW duplication. Namespace imports are exempt,
         # since a local wrapper delegating to Namespace.fn() is deliberate.
         run: node scripts/check-duplicate-exports.js .
+
+      - name: SonarQube Cloud setup
+        # Dependabot and fork pull requests get no Actions secrets, so the scan
+        # is skipped there rather than failing. The token is only ever in the
+        # env of this step and the scan, never of npm or the tests.
+        id: sonar
+        if: always()
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        run: |
+          echo "scan=$([ -n "$SONAR_TOKEN" ] && echo yes || echo no)" >> "$GITHUB_OUTPUT"
+          echo "version=$(node -p "require('./package.json').version")" >> "$GITHUB_OUTPUT"
+
+      - name: SonarQube Cloud scan
+        # Advisory: findings and the quality gate show on sonarcloud.io and the
+        # pull request, and a failed scan never fails CI. Runs after a failed
+        # gate above too, so a red build still gets its analysis. Settings are
+        # in sonar-project.properties.
+        if: always() && steps.sonar.outputs.scan == 'yes'
+        continue-on-error: true
+        uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+        with:
+          args: -Dsonar.projectVersion=${{ steps.sonar.outputs.version }}
 
   docker:
     # The image went unbuilt for months and stopped building twice over
