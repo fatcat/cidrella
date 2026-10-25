@@ -294,7 +294,14 @@ export function useWorkspaceActions(ctx) {
       }),
 
     // DHCP
-    'dhcp.scope.create': async () => (await ensureProtocolDialogs()).dhcp.openScopeDialog(),
+    // On a network the dialog opens on it, either family, with its pool
+    // suggested; elsewhere, or on a divided network (no scope lives on one),
+    // it opens on the network picker.
+    'dhcp.scope.create': async () => {
+      const network = currentNetworkTarget()?.raw;
+      const leaf = network && !network.children?.length ? network : undefined;
+      await (await ensureProtocolDialogs()).dhcp.openScopeDialog(null, leaf);
+    },
     // From a selection the dialog opens on this network with the selected run
     // as the pool.
     'dhcp.scope.create-here': async (target) => {
