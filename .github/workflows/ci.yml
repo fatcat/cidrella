@@ -137,6 +137,10 @@ jobs:
         uses: SonarSource/sonarqube-scan-action@d209202bc7d53ff1cc128f7f907dac145c9d6ae9 # v8.3.0
         env:
           SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          # The JavaScript security (taint) analysis ran out of the default
+          # heap, a quarter of the runner's 16 GB, on the first scan
+          # (2026-10-25). Half of it leaves room for the rest of the runner.
+          SONAR_SCANNER_JAVA_OPTS: -Xmx8g
         with:
           args: -Dsonar.projectVersion=${{ steps.sonar.outputs.version }}
 

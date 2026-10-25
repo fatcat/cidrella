@@ -18,6 +18,8 @@ export default defineConfig({
     coverage: {
       provider: 'v8',
       include: ['src/**/*.{js,vue}'],
+      // Generated, and left out of the Sonar analysis (sonar-project.properties).
+      exclude: ['src/utils/country-geo.js'],
       reporter: [['lcov', { projectRoot: '..' }]],
       reportsDirectory: 'coverage',
     },
