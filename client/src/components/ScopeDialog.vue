@@ -125,20 +125,6 @@
         <InputText v-model="form.end_ip" class="w-full" placeholder="e.g. 192.168.1.254" />
       </div>
       <div class="field">
-        <label>Lease time *</label>
-        <InputText
-          v-model="form.lease_time"
-          class="w-full"
-          placeholder="e.g. 12h or 3600"
-          :disabled="showRangePicker && !form.subnet_id"
-          data-track="dhcp-scope-lease-time"
-        />
-        <small class="field-help">
-          Seconds, or a number with s, m, h or d. A client renews at half the lease; one that sleeps
-          past the end leases again when it wakes.
-        </small>
-      </div>
-      <div class="field">
         <label>Description</label>
         <InputText
           v-model="form.description"
@@ -175,10 +161,21 @@
       <div v-if="optionsExpanded" class="scope-options-list">
         <template v-for="group in optionGroups" :key="group.name">
           <div class="scope-option-group-header">{{ group.label }}</div>
-          <div v-for="opt in group.options" :key="opt.code" class="scope-option-row">
+          <div
+            v-for="opt in group.options"
+            :key="opt.lease ? 'lease' : opt.code"
+            class="scope-option-row"
+          >
             <div class="scope-option-check">
               <input
-                v-if="!opt.builtIn"
+                v-if="opt.lease"
+                type="checkbox"
+                checked
+                disabled
+                title="Every scope has a lease time"
+              />
+              <input
+                v-else-if="!opt.builtIn"
                 type="checkbox"
                 :checked="form.selectedOptions.includes(opt.code)"
                 @change="toggleOption(opt.code, $event.target.checked)"
@@ -186,7 +183,7 @@
             </div>
             <div class="scope-option-info">
               <span class="scope-option-label">{{ opt.label }}</span>
-              <span class="scope-option-code">({{ opt.code }})</span>
+              <span v-if="opt.code != null" class="scope-option-code">({{ opt.code }})</span>
               <i
                 class="pi pi-question-circle scope-option-help"
                 @click="showOptionHelp($event, opt)"
@@ -194,14 +191,15 @@
             </div>
             <div class="scope-option-value">
               <span v-if="opt.builtIn" class="scope-option-default">always on</span>
-              <span
-                v-else-if="
-                  form.selectedOptions.includes(opt.code) && form.useDefault.includes(opt.code)
-                "
-                class="scope-option-default"
-              >
-                {{ hasDefault(opt.code) ? defaultValues[opt.code] : 'the default has no value' }}
-              </span>
+              <InputNumber
+                v-else-if="opt.lease"
+                v-model="form.lease_time"
+                size="small"
+                :useGrouping="false"
+                :min="1"
+                suffix=" s"
+                data-track="dhcp-scope-lease-time"
+              />
               <template v-else-if="form.selectedOptions.includes(opt.code)">
                 <Select
                   v-if="opt.type === 'select'"
@@ -236,23 +234,6 @@
                 default: {{ defaultValues[opt.code] }}
               </span>
             </div>
-            <label
-              v-if="
-                form.selectedOptions.includes(opt.code) &&
-                (hasDefault(opt.code) || form.useDefault.includes(opt.code))
-              "
-              class="scope-option-use-default"
-              title="Serve the default's value, and follow it when the default changes"
-            >
-              <Checkbox
-                :modelValue="form.useDefault.includes(opt.code)"
-                binary
-                :inputId="`scope-option-${opt.code}-use-default`"
-                data-track="scope-option-use-default"
-                @update:modelValue="(on) => setUseDefault(opt.code, on)"
-              />
-              Use default
-            </label>
           </div>
         </template>
       </div>
@@ -305,7 +286,6 @@ import { ref, reactive, computed, watch, nextTick } from 'vue';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import Dialog from '../ui/Dialog.js';
-import Checkbox from '../ui/Checkbox.js';
 import InputText from '../ui/InputText.js';
 import InputNumber from '../ui/InputNumber.js';
 import Select from '../ui/Select.js';
@@ -331,7 +311,11 @@ import SelectButton from '../ui/SelectButton.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { networkOptionFills } from '@shared/dhcp-network-options.js';
-import { isValidLeaseTime } from '@shared/lease-time.js';
+import { leaseSeconds } from '@shared/lease-time.js';
+import {
+  ADDRESS_LIFETIME_ROW,
+  leaseTimeSeconds,
+} from '../composables/useDhcpOptionCatalog.js';
 import { apiError, EMPTY_CELL } from '../utils/format.js';
 import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
 import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
@@ -496,10 +480,18 @@ const filteredRanges = computed(() => {
 const optionGroups = computed(() => {
   const order = optionGroupOrder.value.map((g) => g.name);
   const groups = {};
+  // Lease time is the first row of the list and the one control for it:
+  // DHCPv4's Lease Time (51), which is the scope's lease_time rather than an
+  // option row, and for DHCPv6, which has no such option, the Address
+  // lifetime row without a code. A new scope starts from the family's default
+  // (defaultLeaseTimeValue).
+  const catalog51 = optionCatalog.value.find((opt) => Number(opt.code) === 51);
+  const leaseRow =
+    loadedFamily === 4 && catalog51
+      ? { ...catalog51, code: 51, label: 'Lease time', lease: true }
+      : { ...ADDRESS_LIFETIME_ROW, code: null };
+  groups[leaseRow.group || 'Common'] = [leaseRow];
   for (const opt of optionCatalog.value) {
-    // The Lease time field is the one duration control; option 51 would be
-    // a second one for the same scope column (H-07). The field starts from
-    // the 51 default for a new scope (defaultLeaseTimeValue).
     if (Number(opt.code) === 51) continue;
     const g = opt.group || 'Common';
     if (!groups[g]) groups[g] = [];
@@ -534,18 +526,13 @@ function showOptionHelp(event, opt) {
   helpPopoverRef.value.toggle(event);
 }
 
-// What a new scope's Lease time starts as: the DHCPv4 Lease Time (51) default
-// when it is marked Add to new scopes, as the server picks it (defaultLeaseTime).
+// What a new scope's lease time starts as, in seconds: the family's default
+// as the server picks it (the catalog's leaseTime, from defaultLeaseTime).
+// The fallback is CIDRella's shipped default, for a catalog that did not load.
+const DEFAULT_LEASE_SECONDS = 3600;
+const catalogLeaseSeconds = ref(null);
 function defaultLeaseTimeValue() {
-  const value = defaultValues[51];
-  if (
-    loadedFamily === 4 &&
-    enabledDefaultCodes.value.includes(51) &&
-    isValidLeaseTime(String(value ?? ''))
-  ) {
-    return String(value);
-  }
-  return '24h';
+  return catalogLeaseSeconds.value ?? DEFAULT_LEASE_SECONDS;
 }
 
 function emptyForm() {
@@ -554,14 +541,11 @@ function emptyForm() {
     subnet_id: null,
     start_ip: '',
     end_ip: '',
-    lease_time: '24h',
+    lease_time: DEFAULT_LEASE_SECONDS,
     description: '',
     enabled: true,
     selectedOptions: [],
     optionValues: {},
-    // Codes that use the default (Use default): served with whatever the
-    // default holds, now and after later edits of it.
-    useDefault: [],
     v6_mode: null,
   };
 }
@@ -634,6 +618,7 @@ async function loadOptions(family = scopeFamily.value) {
     defaultValues[Number(code)] = value;
   }
   enabledDefaultCodes.value = (data.enabledDefaults || []).map(Number).filter(Number.isInteger);
+  catalogLeaseSeconds.value = leaseTimeSeconds(data.leaseTime);
   loadedFamily = fam;
 }
 
@@ -649,8 +634,7 @@ async function reloadOptions() {
 // The values a scope takes from its network, by the server's own rule
 // (networkOptionFills, through @shared): topology values replace what is set,
 // the rest fill a blank. `overwrite: false` fills blanks only, for an existing
-// scope whose stored values stand. A topology value replaces a linked default
-// too, as it does on the server.
+// scope whose stored values stand.
 function networkFills({ family, cidr, gateway, domain, serverIp }) {
   return networkOptionFills({
     family,
@@ -662,34 +646,28 @@ function networkFills({ family, cidr, gateway, domain, serverIp }) {
   });
 }
 
-function applyNetworkFills(selected, values, network, { overwrite = true, linked = null } = {}) {
+function applyNetworkFills(selected, values, network, { overwrite = true } = {}) {
   for (const fill of networkFills(network)) {
-    const replace = overwrite && fill.overwrite;
-    if (replace && linked?.includes(fill.code)) linked.splice(linked.indexOf(fill.code), 1);
-    setOptionValue(selected, values, fill.code, fill.value, { overwrite: replace });
+    setOptionValue(selected, values, fill.code, fill.value, {
+      overwrite: overwrite && fill.overwrite,
+    });
   }
 }
 
 // A new scope takes the add-to-new-scopes options: one with a default value
-// uses the default (linked), one without is left for a network fill.
-function selectEnabledDefaults(selected, linked) {
+// starts from a copy of it, one without is left for a network fill. The
+// defaults play no part after that (see ARCHITECTURE.md DHCP option layering).
+function selectEnabledDefaults(selected, values) {
   for (const code of enabledDefaultCodes.value) {
+    if (Number(code) === 51) continue;
     addOptionSelection(selected, code);
-    if (hasDefault(code) && !linked.includes(Number(code))) linked.push(Number(code));
+    if (hasDefault(code) && (values[code] == null || values[code] === '')) {
+      values[code] = defaultValues[code];
+    }
   }
 }
 
 const hasDefault = (code) => defaultValues[code] != null && defaultValues[code] !== '';
-
-function setUseDefault(code, on) {
-  const linked = form.value.useDefault.filter((c) => c !== code);
-  if (on) linked.push(code);
-  else if (form.value.optionValues[code] == null || form.value.optionValues[code] === '') {
-    // Start an own value from the default's.
-    form.value.optionValues[code] = defaultValues[code];
-  }
-  form.value.useDefault = linked;
-}
 
 function addOptionSelection(selected, code) {
   const numericCode = Number(code);
@@ -739,10 +717,11 @@ async function resolveHostnameField(code) {
 function toggleOption(code, checked) {
   if (checked) {
     addOptionSelection(form.value.selectedOptions, code);
-    // An option with a default uses it; otherwise pre-fill from the network.
+    // Start from the default's value, else from the network.
+    if (form.value.optionValues[code] != null && form.value.optionValues[code] !== '') return;
     if (hasDefault(code)) {
-      setUseDefault(code, true);
-    } else if (form.value.optionValues[code] == null || form.value.optionValues[code] === '') {
+      form.value.optionValues[code] = defaultValues[code];
+    } else {
       const fill = networkFills({
         family: scopeFamily.value,
         cidr: editing.value?.subnet_cidr,
@@ -754,7 +733,6 @@ function toggleOption(code, checked) {
     }
   } else {
     form.value.selectedOptions = form.value.selectedOptions.filter((c) => c !== code);
-    form.value.useDefault = form.value.useDefault.filter((c) => c !== code);
     delete form.value.optionValues[code];
   }
 }
@@ -789,16 +767,14 @@ watch(
       // pool suggestion still applies to stateful.
       await loadOptions(6);
       if (form.value.subnet_id !== subnetId) return;
+      if (previousFamily !== 6) form.value.lease_time = defaultLeaseTimeValue();
       form.value.selectedOptions = [];
       form.value.optionValues = {};
-      form.value.useDefault = [];
-      selectEnabledDefaults(form.value.selectedOptions, form.value.useDefault);
-      applyNetworkFills(
-        form.value.selectedOptions,
-        form.value.optionValues,
-        { family: 6, domain: subnet.domain_name },
-        { linked: form.value.useDefault },
-      );
+      selectEnabledDefaults(form.value.selectedOptions, form.value.optionValues);
+      applyNetworkFills(form.value.selectedOptions, form.value.optionValues, {
+        family: 6,
+        domain: subnet.domain_name,
+      });
       if (subnet.name && !form.value.description) {
         form.value.description = `${subnet.name} DHCP Scope`;
       }
@@ -818,24 +794,19 @@ watch(
     if (previousFamily === 6) {
       await loadOptions(4);
       if (form.value.subnet_id !== subnetId) return;
+      form.value.lease_time = defaultLeaseTimeValue();
       form.value.selectedOptions = [];
       form.value.optionValues = {};
-      form.value.useDefault = [];
     }
 
-    selectEnabledDefaults(form.value.selectedOptions, form.value.useDefault);
+    selectEnabledDefaults(form.value.selectedOptions, form.value.optionValues);
 
-    applyNetworkFills(
-      form.value.selectedOptions,
-      form.value.optionValues,
-      {
-        family: 4,
-        cidr: subnet.cidr,
-        gateway: subnet.gateway_address,
-        domain: subnet.domain_name,
-      },
-      { linked: form.value.useDefault },
-    );
+    applyNetworkFills(form.value.selectedOptions, form.value.optionValues, {
+      family: 4,
+      cidr: subnet.cidr,
+      gateway: subnet.gateway_address,
+      domain: subnet.domain_name,
+    });
     if (subnet.name && !form.value.description) {
       form.value.description = `${subnet.name} DHCP Scope`;
     }
@@ -870,30 +841,23 @@ watch(
         if (form.value.range_id !== rangeId) return;
         form.value.selectedOptions = [];
         form.value.optionValues = {};
-        form.value.useDefault = [];
-        selectEnabledDefaults(form.value.selectedOptions, form.value.useDefault);
-        applyNetworkFills(
-          form.value.selectedOptions,
-          form.value.optionValues,
-          { family: 6, domain: range.subnet_domain_name, serverIp: range.server_ip },
-          { linked: form.value.useDefault },
-        );
+        selectEnabledDefaults(form.value.selectedOptions, form.value.optionValues);
+        applyNetworkFills(form.value.selectedOptions, form.value.optionValues, {
+          family: 6,
+          domain: range.subnet_domain_name,
+          serverIp: range.server_ip,
+        });
       });
       return;
     }
 
-    applyNetworkFills(
-      form.value.selectedOptions,
-      form.value.optionValues,
-      {
-        family: 4,
-        cidr: range.subnet_cidr,
-        gateway: range.subnet_gateway,
-        domain: range.subnet_domain_name,
-        serverIp: range.server_ip,
-      },
-      { linked: form.value.useDefault },
-    );
+    applyNetworkFills(form.value.selectedOptions, form.value.optionValues, {
+      family: 4,
+      cidr: range.subnet_cidr,
+      gateway: range.subnet_gateway,
+      domain: range.subnet_domain_name,
+      serverIp: range.server_ip,
+    });
   },
 );
 
@@ -966,11 +930,12 @@ async function save() {
     toast.add({ severity: 'warn', summary: 'Check the pool', detail: poolError.value, life: 5000 });
     return;
   }
-  if (!isValidLeaseTime(String(form.value.lease_time ?? '').trim())) {
+  const leaseTime = Number(form.value.lease_time);
+  if (!Number.isInteger(leaseTime) || leaseTime < 1) {
     toast.add({
       severity: 'warn',
       summary: 'Check the lease time',
-      detail: 'Seconds, or a number with s, m, h or d, such as 12h or 3600.',
+      detail: 'A whole number of seconds, such as 3600.',
       life: 5000,
     });
     return;
@@ -981,21 +946,14 @@ async function save() {
   try {
     // Send all selected options to the server. The server strips inherited
     // values using fresh subnet data from the DB (avoids stale client-side list).
-    const linked = new Set(form.value.useDefault);
     const options = form.value.selectedOptions
       .filter(
-        (code) =>
-          linked.has(code) ||
-          (form.value.optionValues[code] != null && form.value.optionValues[code] !== ''),
+        (code) => form.value.optionValues[code] != null && form.value.optionValues[code] !== '',
       )
-      .map((code) =>
-        linked.has(code)
-          ? { code, use_default: true }
-          : { code, value: String(form.value.optionValues[code]) },
-      );
+      .map((code) => ({ code, value: String(form.value.optionValues[code]) }));
 
     const payload = {
-      lease_time: String(form.value.lease_time).trim(),
+      lease_time: String(leaseTime),
       description: form.value.description || null,
       enabled: form.value.enabled,
       options,
@@ -1130,16 +1088,10 @@ async function openEdit(scope) {
 
   const selOpts = [];
   const optVals = {};
-  const linked = [];
   if (scope.options && Array.isArray(scope.options)) {
     for (const o of scope.options) {
-      // A row with no value uses the default.
-      if (o.value == null) {
-        addOptionSelection(selOpts, o.option_code);
-        linked.push(Number(o.option_code));
-      } else {
+      if (o.value != null && o.value !== '')
         setOptionValue(selOpts, optVals, o.option_code, o.value);
-      }
     }
   }
 
@@ -1164,12 +1116,11 @@ async function openEdit(scope) {
     subnet_id: scope.subnet_id,
     start_ip: scope.start_ip || '',
     end_ip: scope.end_ip || '',
-    lease_time: scope.lease_time || '24h',
+    lease_time: leaseSeconds(scope.lease_time) || DEFAULT_LEASE_SECONDS,
     description: scope.description || '',
     enabled: !!scope.enabled,
     selectedOptions: selOpts,
     optionValues: optVals,
-    useDefault: linked,
     v6_mode: scope.v6_mode || null,
   };
   optionsExpanded.value = form.value.selectedOptions.length > 0;
@@ -1195,24 +1146,18 @@ async function openNewWithPicker(subnetCtx) {
 
   const autoSelected = [];
   const autoValues = {};
-  const autoLinked = [];
-  selectEnabledDefaults(autoSelected, autoLinked);
+  selectEnabledDefaults(autoSelected, autoValues);
 
   // Network-dependent overrides from subnet context
   let autoStartIp = '';
   let autoEndIp = '';
   if (subnetCtx) {
-    applyNetworkFills(
-      autoSelected,
-      autoValues,
-      {
-        family: scopeFamily.value,
-        cidr: subnetCtx.cidr,
-        gateway: subnetCtx.gateway_address,
-        domain: subnetCtx.domain_name,
-      },
-      { linked: autoLinked },
-    );
+    applyNetworkFills(autoSelected, autoValues, {
+      family: scopeFamily.value,
+      cidr: subnetCtx.cidr,
+      gateway: subnetCtx.gateway_address,
+      domain: subnetCtx.domain_name,
+    });
     if (subnetCtx.start_ip && subnetCtx.end_ip) {
       // The caller chose the pool.
       autoStartIp = subnetCtx.start_ip;
@@ -1241,7 +1186,6 @@ async function openNewWithPicker(subnetCtx) {
       subnetCtx?.name || subnetCtx?.cidr ? `${subnetCtx.name || subnetCtx.cidr} DHCP Scope` : '',
     selectedOptions: autoSelected,
     optionValues: autoValues,
-    useDefault: autoLinked,
   };
   if (poolSuggested) suggestedPool = { start: autoStartIp, end: autoEndIp };
   await loadNetwork(form.value.subnet_id);
@@ -1273,15 +1217,14 @@ async function openNewForRange(opts) {
 
   const autoSelected = [];
   const autoValues = {};
-  const autoLinked = [];
-  selectEnabledDefaults(autoSelected, autoLinked);
+  selectEnabledDefaults(autoSelected, autoValues);
 
-  applyNetworkFills(
-    autoSelected,
-    autoValues,
-    { family: scopeFamily.value, cidr: opts.cidr, gateway: opts.gateway, domain: opts.domainName },
-    { linked: autoLinked },
-  );
+  applyNetworkFills(autoSelected, autoValues, {
+    family: scopeFamily.value,
+    cidr: opts.cidr,
+    gateway: opts.gateway,
+    domain: opts.domainName,
+  });
 
   form.value = {
     ...emptyForm(),
@@ -1292,7 +1235,6 @@ async function openNewForRange(opts) {
     subnet_id: opts.subnetId,
     selectedOptions: autoSelected,
     optionValues: autoValues,
-    useDefault: autoLinked,
   };
   optionsExpanded.value = form.value.selectedOptions.length > 0;
   await loadNetwork(form.value.subnet_id);
@@ -1391,15 +1333,6 @@ defineExpose({ openEdit, openNewWithPicker, openNewForRange, reloadOptions });
   padding: 0.35rem 0.75rem;
   border-top: 1px solid color-mix(in srgb, var(--cid-surface-border) 50%, transparent);
   font-size: 0.8rem;
-}
-.scope-option-use-default {
-  display: flex;
-  align-items: center;
-  gap: 0.35rem;
-  flex-shrink: 0;
-  color: var(--cid-text-muted-color);
-  white-space: nowrap;
-  cursor: pointer;
 }
 .scope-option-row:first-child {
   border-top: 1px solid var(--cid-surface-border);

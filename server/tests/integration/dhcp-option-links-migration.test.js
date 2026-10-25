@@ -192,8 +192,6 @@ describe('migration 086: linked default options', () => {
 
     for (const sql of migrations((version) => version === MIGRATION)) db.exec(sql);
 
-    for (const id of [a, b, c, d]) expect(served(db, id), `scope ${id}`).toEqual(expected[id]);
-
     const rows = db
       .prepare(
         'SELECT scope_id, option_code, value, address_family FROM dhcp_scope_options ORDER BY scope_id, option_code',
@@ -213,11 +211,32 @@ describe('migration 086: linked default options', () => {
       { scope_id: d, option_code: 56, value: null, address_family: 6 },
     ]);
 
-    // Linked from here on: an edit of the default reaches the scope.
+    // Migration 091 retired the links: each becomes the scope's own copy, and
+    // the whole upgrade still serves what the scope served before.
+    for (const sql of migrations((version) => version > MIGRATION && version <= 91)) db.exec(sql);
+    for (const id of [a, b, c, d]) expect(served(db, id), `scope ${id}`).toEqual(expected[id]);
+    expect(
+      db.prepare('SELECT COUNT(*) AS n FROM dhcp_scope_options WHERE value IS NULL').get().n,
+    ).toBe(0);
+    expect(
+      db
+        .prepare(
+          'SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ? ORDER BY option_code',
+        )
+        .all(b),
+    ).toEqual([
+      { option_code: 6, value: '10.0.0.53' },
+      // The NTP column it served, copied in: the default it was linked to
+      // would have taken over once the scope had rows of its own.
+      { option_code: 42, value: '10.80.2.9' },
+      { option_code: 66, value: 'tftp.test' },
+    ]);
+
+    // Own values from here on: an edit of the default reaches no scope.
     db.prepare(
       "UPDATE dhcp_option_defaults SET value = '10.0.0.124' WHERE option_code = 42 AND address_family = 4",
     ).run();
-    expect(served(db, a)[42]).toBe('10.0.0.124');
+    expect(served(db, a)[42]).toBe('10.0.0.123');
     db.close();
   });
 });

@@ -361,24 +361,36 @@ generators should read and emit, not invent persistence semantics.
 
 `resolveEffectiveScopeOptions` (`models/dhcp-scope.js`) is the one place a
 scope's served options are worked out; dnsmasq and Kea render its
-`effective.options` and never read the option tables. A default
-(`dhcp_option_defaults`) reaches a scope only through a linked row: a
-`dhcp_scope_options` row with `value IS NULL` (`isLinkedOption`), shown as Use
-default. A linked row serves the default's current value, so an edit of the
-default reaches every scope using it, and an empty default serves nothing.
-`enabled_by_default` (Add to new scopes) only picks the defaults a new scope
-links. Precedence, lowest first: IPv4 linked default, the scope's own rows, the
-legacy scope columns (only when the scope has no rows with its own value), the
-network; IPv6 linked default, legacy columns, own rows, the network. IPv4
-option 51 is the scope's `lease_time`, which a scope never links to a default:
-the defaults editor and Bulk Change show it as 51, a ticked 51 with a value in
-Bulk Change writes `lease_time` on the selected scopes as their own, and a new
-scope starts with the 51 default when it is marked Add to new scopes
-(`defaultLeaseTime` in `models/dhcp-option.js`, else the `default_lease_time`
-setting). The scope dialog edits it as the Lease time field. Writers mark a link
-with `USE_DEFAULT` (`services/subnet-dhcp-topology.js`), which
-`writeScopeOptionRows` stores as NULL; copies between scopes (divide, merge)
-carry the value as-is, so links survive.
+`effective.options` and never read the option tables. The defaults
+(`dhcp_option_defaults`) are a template for new scopes and nothing more: a
+scope created by the dialog, the configure step or a divide copies the
+defaults marked Add to new scopes (`enabled_by_default`) as its own rows
+(`insertScopeOptionsFromDefaults`), and after that the scope stands alone. An
+existing scope changes through its dialog or Bulk Change; an edit of a default
+reaches no existing scope. (Migration 086 had made a scope follow a default
+through a `value IS NULL` row, Use default; migration 091 turned every such row
+into the scope's own copy and retired the model.) Precedence, lowest first:
+IPv4 the scope's own rows, the legacy scope columns (only when the scope has no
+rows), the network; IPv6 legacy columns, own rows, the network.
+
+Every scope has one lease time, its `lease_time`, never an option row, and
+every option list shows it as its first row. IPv4: option 51, as the defaults
+editor, Bulk Change and the scope dialog show it. The 51 default is always
+added to new scopes (its checkbox is locked, `replaceDefaultOptions` keeps it
+on) and is shipped as 3600. IPv6 has no lease-time option, so the row is
+Address lifetime, with no code: the valid and preferred lifetimes of a stateful
+lease (dnsmasq's `dhcp-range`, Kea's `valid-lifetime` and
+`preferred-lifetime`), and the advertised prefix lifetimes in stateless and
+SLAAC modes (dnsmasq's `ra-only`/`ra-stateless` range, radvd's
+`AdvValidLifetime` and `AdvPreferredLifetime`, which also bound RDNSS and
+DNSSL). Its default is the `default_lease_time` setting, shipped as `1h`; IPv4
+falls back to it only when the 51 default holds no lease time
+(`defaultLeaseTime` in `models/dhcp-option.js`, which every scope-creating path
+and `GET /dhcp/options` as `leaseTime` ask). The API carries the IPv6 one as
+`leaseTime` beside the options, never as an option code: the defaults `PUT`
+saves it, and Bulk Change sets it on the selected scopes when its row is
+ticked, a SLAAC-only scope included (that scope takes the lifetime and no
+options), reporting the change with `field: 'address_lifetime'` and no code.
 
 ### Proxy bypass
 

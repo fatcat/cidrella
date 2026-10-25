@@ -254,17 +254,18 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `createReservoir` / `quantileOfSorted` in `utils/samples.js` (latency samples and their
   percentiles),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
-  enabled set, blanks filled from its network; new scopes and Bulk Change; `USE_DEFAULT` there
-  marks an option linked to its default, written as a NULL row), `networkOptionFills` in
+  enabled set, blanks filled from its network; new scopes and Bulk Change), `networkOptionFills` in
   `utils/dhcp-network-options.js` (what a scope takes from its network, either family; DNS is
   CIDRella's address alone, never an outside fallback; the scope dialog imports it through
   `@shared`),
-  `resolveEffectiveScopeOptions` and `isLinkedOption` in `models/dhcp-scope.js` (what a scope
-  serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
-  `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default) and
-  `defaultLeaseTime` there (the lease time a new scope starts with: the Lease Time (51) default
-  marked Add to new scopes, else the `default_lease_time` setting; every scope-creating path
-  asks it),
+  `resolveEffectiveScopeOptions` in `models/dhcp-scope.js` (what a scope serves; the defaults
+  are copied at creation and never read after, see ARCHITECTURE.md DHCP option layering),
+  `defaultLeaseTime` in `models/dhcp-option.js` (the lease time a new scope starts with: IPv4
+  the Lease Time (51) default, always added to new scopes and shipped as 3600; IPv6 the
+  `default_lease_time` setting, the Address lifetime row; every scope-creating path asks it,
+  and `GET /dhcp/options` reports it as `leaseTime`), client `ADDRESS_LIFETIME_ROW`,
+  `LIFETIME_KEY` and `editorEntries` in `composables/useDhcpOptionCatalog.js` (the DHCPv6
+  lifetime row the option tables show, keyed 0, and sent as `leaseTime`),
   `models/session.js` (every sign-in session rule: idle and 24 hour limits, ending sessions
   with a reason; see ARCHITECTURE.md Sign-in sessions), `models/filtering-exemption.js`
   (every rule for a host with DNS filtering off: keyed by MAC, else address; `exemptAddressSet`

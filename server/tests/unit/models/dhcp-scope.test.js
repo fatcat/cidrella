@@ -273,7 +273,7 @@ describe('DHCPv6 scope options', () => {
     expect(scope.effective.router_suppressed).toBe(false);
   });
 
-  it('layers linked IPv6 defaults, the scope columns and explicit rows in that order', () => {
+  it('layers the IPv6 scope columns and explicit rows, never the defaults', () => {
     const subnetId = createV6Subnet();
     const rangeId = createRange(subnetId, 'fd00:50::1000', 'fd00:50::1fff');
     // Startup seeded 23 and 24 for IPv6; replace the rows this test pins.
@@ -300,11 +300,11 @@ describe('DHCPv6 scope options', () => {
     db.prepare(
       'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, 24, ?, 6)',
     ).run(scopeId, 'explicit.test');
-    // Linked rows (Use default) for 23, 32 and 56; 31 has a default the scope does not use.
-    const link = db.prepare(
-      'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, NULL, 6)',
-    );
-    for (const code of [23, 32, 56]) link.run(scopeId, code);
+    // An own row for 32; 23 and 56 come from the scope columns; 31 and the
+    // defaults for 23 and 56 reach no existing scope.
+    db.prepare(
+      "INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, 32, '7200', 6)",
+    ).run(scopeId);
 
     const effective = Object.fromEntries(
       DhcpScope.resolveEffectiveScopeOptions(db, loadScope(scopeId)).options.map((option) => [
@@ -319,7 +319,7 @@ describe('DHCPv6 scope options', () => {
     });
     expect(effective[56]).toEqual({ option_code: 56, value: 'fd00:50::7', source: 'legacy_scope' });
     expect(effective[24]).toEqual({ option_code: 24, value: 'explicit.test', source: 'scope' });
-    expect(effective[32]).toEqual({ option_code: 32, value: '7200', source: 'default' });
+    expect(effective[32]).toEqual({ option_code: 32, value: '7200', source: 'scope' });
     expect(effective[31]).toBeUndefined();
     db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code IN (23, 31, 32, 56)').run();
   });
@@ -341,7 +341,7 @@ describe('option 51 by family', () => {
       ).options.map((option) => [option.option_code, option]),
     );
 
-  function scopeWithLinked51(family) {
+  function scopeWith51(family) {
     const subnetId =
       family === 4
         ? createSubnet()
@@ -371,22 +371,22 @@ describe('option 51 by family', () => {
       )
       .run(rangeId, subnetId, family, family === 6 ? 'stateful' : null).lastInsertRowid;
     db.prepare(
-      'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, 51, NULL, ?)',
-    ).run(scopeId, family);
+      'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, 51, ?, ?)',
+    ).run(scopeId, family === 4 ? '3600' : 'v6-option-51', family);
     return scopeId;
   }
 
   afterAll(() => db.prepare('DELETE FROM dhcp_option_defaults WHERE option_code = 51').run());
 
-  it('IPv4: a linked 51 serves nothing, lease time stays the scope field', () => {
-    expect(effectiveOf(scopeWithLinked51(4))[51]).toBeUndefined();
+  it('IPv4: a 51 row serves nothing, lease time stays the scope field', () => {
+    expect(effectiveOf(scopeWith51(4))[51]).toBeUndefined();
   });
 
-  it('IPv6: a linked 51 serves the default like any other option', () => {
-    expect(effectiveOf(scopeWithLinked51(6))[51]).toEqual({
+  it('IPv6: a 51 row serves like any other option', () => {
+    expect(effectiveOf(scopeWith51(6))[51]).toEqual({
       option_code: 51,
       value: 'v6-option-51',
-      source: 'default',
+      source: 'scope',
     });
   });
 });

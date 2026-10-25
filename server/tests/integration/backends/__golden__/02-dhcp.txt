@@ -1,7 +1,7 @@
 ##### files
 === conf.d/dhcp-scope-1.conf ===
 # DHCP scope for 10.60.0.0/24 (10.60.0.100 - 10.60.0.199)
-dhcp-range=set:scope1,10.60.0.100,10.60.0.199,255.255.255.0,1h
+dhcp-range=set:scope1,10.60.0.100,10.60.0.199,255.255.255.0,3600
 dhcp-option=tag:scope1,3,10.60.0.1
 dhcp-option=tag:scope1,6,10.60.0.2
 dhcp-option=tag:scope1,15,golden.test

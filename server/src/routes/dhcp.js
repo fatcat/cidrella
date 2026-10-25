@@ -52,13 +52,14 @@ import {
   replaceDefaultOptions,
   getDefaultOptions,
   SHIPPED_DEFAULT_OPTIONS,
-  linkedOptionCounts,
   defaultLeaseTime,
+  saveDefaultAddressLifetime,
 } from '../models/dhcp-option.js';
 import { bulkChangeScopeOptions } from '../models/dhcp-bulk-options.js';
 import { scopeMatches } from '../models/workspace-view.js';
 import { UNGROUPED } from '../utils/validation.js';
-import { isValidLeaseTime } from '../utils/lease-time.js';
+import { isValidLeaseTime, leaseSeconds } from '../utils/lease-time.js';
+import { DEFAULTS } from '../config/defaults.js';
 
 const router = Router();
 
@@ -119,7 +120,7 @@ function optionCodeError(code, family) {
   return null;
 }
 
-// No value and no opt-in: the scope leaves the option out, nothing to check.
+// No value: the scope leaves the option out, nothing to check.
 const isBlankOption = (opt) => opt.value == null || opt.value === '';
 
 function validateScopeOption(opt, family = 4) {
@@ -127,15 +128,6 @@ function validateScopeOption(opt, family = 4) {
   const code = Number(opt.code);
   const codeErr = optionCodeError(code, family);
   if (codeErr) return codeErr;
-  // Use default: the scope follows the default's value and sends none itself.
-  if (opt.use_default !== undefined && typeof opt.use_default !== 'boolean')
-    return 'use_default must be true or false';
-  if (opt.use_default === true) {
-    if (opt.value != null && opt.value !== '')
-      return 'an option that uses the default takes no value';
-    if (family === 4 && code === 51) return "lease time is the scope's own, not a default";
-    return null;
-  }
   const value = opt.value;
   if (value == null || value === '') return null; // caller skips empty values
   if (typeof value !== 'string') return 'value must be a string';
@@ -422,7 +414,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   // a half-populated scope behind.
   if (Array.isArray(options)) {
     for (const opt of options) {
-      if (opt == null || (isBlankOption(opt) && opt.use_default === undefined)) continue;
+      if (opt == null || isBlankOption(opt)) continue;
       const err = validateScopeOption(opt, subnet.address_family);
       if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
     }
@@ -598,7 +590,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
 
   if (Array.isArray(options)) {
     for (const opt of options) {
-      if (opt == null || (isBlankOption(opt) && opt.use_default === undefined)) continue;
+      if (opt == null || isBlankOption(opt)) continue;
       const err = validateScopeOption(opt, scopeSubnet.address_family);
       if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
     }
@@ -666,10 +658,16 @@ function bulkOptionsRequest(req, res) {
     res.status(400).json({ error: 'save_defaults must be true or false' });
     return null;
   }
+  const lifetime = addressLifetimeParam(body, family);
+  if (lifetime.error) {
+    res.status(400).json({ error: lifetime.error });
+    return null;
+  }
   return {
     family,
     options: body.options,
     enabled,
+    leaseTime: lifetime.leaseTime,
     saveDefaults: body.save_defaults === true,
   };
 }
@@ -717,6 +715,7 @@ router.post('/scopes/bulk-options', requirePerm('dhcp:write'), (req, res) => {
       scopes: sample(result.applied),
       options: request.options,
       enabled: request.enabled,
+      ...(request.leaseTime ? { address_lifetime: request.leaseTime } : {}),
       defaults_saved: request.saveDefaults,
     },
   });
@@ -1424,8 +1423,9 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
     catalog,
     defaults,
     enabledDefaults,
-    // How many scopes use each default, so the editor can say who an edit reaches.
-    linkedCounts: linkedOptionCounts(db, family),
+    // The lease time a new scope of this family starts with: DHCPv4's is also
+    // its 51 default, DHCPv6's is the Address lifetime row.
+    leaseTime: defaultLeaseTime(db, family),
     // What CIDRella ships, for the Bulk Change tab's reset.
     shipped: {
       defaults: Object.fromEntries(
@@ -1434,6 +1434,7 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
           .map((option) => [option.code, option.value]),
       ),
       enabledDefaults: SHIPPED_DEFAULT_OPTIONS[family].map((option) => option.code),
+      ...(family === 6 ? { leaseTime: DEFAULTS.default_lease_time } : {}),
     },
     groups: DHCP_OPTION_GROUPS,
     customRange: catalogFor.customRange,
@@ -1537,7 +1538,25 @@ function defaultsForAudit(db, family) {
       Object.entries(defaults).map(([code, value]) => [`option_${code}`, value]),
     ),
     enabled_by_default: [...enabledDefaults].sort((a, b) => a - b),
+    ...(family === 6 ? { address_lifetime: defaultLeaseTime(db, 6) } : {}),
   };
+}
+
+// The DHCPv6 Address lifetime a defaults or Bulk Change request carries as
+// `leaseTime` (seconds, or with an s/m/h/d unit). DHCPv4's lease time is its
+// option 51, so a DHCPv4 request may not carry one. Returns { leaseTime } or
+// { error }; leaseTime is null when the request leaves it alone.
+function addressLifetimeParam(body, family) {
+  const value = body?.leaseTime;
+  if (value === undefined || value === null || value === '') return { leaseTime: null };
+  if (family !== 6) {
+    return { error: 'leaseTime is for DHCPv6; a DHCPv4 lease time is option 51' };
+  }
+  const text = String(value);
+  if (!isValidLeaseTime(text) || !(leaseSeconds(text) > 0)) {
+    return { error: 'leaseTime must be a whole number of seconds, minutes, hours or days' };
+  }
+  return { leaseTime: text };
 }
 
 // PUT /api/dhcp/options/defaults: set global defaults for one family
@@ -1549,10 +1568,15 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   if (family === 6 && refuseIpv6Unless(res)) return;
   const bodyErr = defaultsBodyError(options, enabledDefaults, family);
   if (bodyErr) return res.status(400).json({ error: bodyErr });
+  const lifetime = addressLifetimeParam(req.body, family);
+  if (lifetime.error) return res.status(400).json({ error: lifetime.error });
 
   const db = getDb();
   const before = defaultsForAudit(db, family);
-  const updated = replaceDefaultOptions(db, options, enabledDefaults, family);
+  const updated = db.transaction(() => {
+    if (lifetime.leaseTime) saveDefaultAddressLifetime(db, lifetime.leaseTime);
+    return replaceDefaultOptions(db, options, enabledDefaults, family);
+  })();
   recordAudit({
     action: 'dhcp_option_defaults_updated',
     entityType: 'dhcp',
@@ -1562,7 +1586,7 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   });
   req.afterCommit('regenerate_dhcp');
 
-  res.json({ family, ...updated });
+  res.json({ family, ...updated, leaseTime: defaultLeaseTime(db, family) });
 });
 
 export default router;

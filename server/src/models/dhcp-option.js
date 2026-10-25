@@ -57,6 +57,9 @@ export function deleteCustomOption(db, entry) {
 export function replaceDefaultOptions(db, options, enabledDefaults, family = 4) {
   const fam = familyOf(family);
   const enabledSet = new Set((enabledDefaults || []).map(Number));
+  // Every scope has a lease time, so the DHCPv4 Lease Time (51) default is
+  // always added to new scopes; the editors lock its checkbox.
+  if (fam === 4) enabledSet.add(LEASE_TIME_OPTION);
   const replace = db.transaction(() => {
     db.prepare('DELETE FROM dhcp_option_defaults WHERE address_family = ?').run(fam);
     const insert = db.prepare(`
@@ -99,6 +102,8 @@ export const SHIPPED_DEFAULT_OPTIONS = Object.freeze({
     { code: 15, value: null },
     { code: 119, value: null },
     { code: 42, value: DHCP_DEFAULT_NTP_SERVERS },
+    // The lease time a new scope starts with, in seconds (defaultLeaseTime).
+    { code: 51, value: '3600' },
   ]),
   6: Object.freeze([
     { code: 23, value: null },
@@ -134,36 +139,34 @@ export function seedDefaultOptions(db) {
   seed();
 }
 
-/** How many scopes use each default (linked rows: Use default), by option code. */
-export function linkedOptionCounts(db, family = 4) {
-  return Object.fromEntries(
-    db
-      .prepare(
-        `SELECT option_code, COUNT(*) AS scopes FROM dhcp_scope_options
-         WHERE value IS NULL AND address_family = ? GROUP BY option_code`,
-      )
-      .all(familyOf(family))
-      .map((row) => [row.option_code, row.scopes]),
-  );
-}
+const LEASE_TIME_OPTION = 51;
 
 /**
  * The lease time a new scope starts with. DHCPv4: the Lease Time (51) row of
- * the defaults editor when it is marked Add to new scopes and holds a lease
- * time, the one place the UI offers a default for it; otherwise, and for
- * DHCPv6 (whose 51 is another option), the `default_lease_time` setting. A
- * scope never links to the 51 default: lease time is always the scope's own.
+ * the defaults editor (shipped as 3600, always added to new scopes). DHCPv6
+ * has no lease-time option, so its default, the Address lifetime row of the
+ * DHCPv6 editor, is the `default_lease_time` setting; DHCPv4 falls back to it
+ * only when its 51 row holds no lease time. Like every default, it is copied
+ * at creation: lease time is always the scope's own.
  */
 export function defaultLeaseTime(db, family = 4) {
   if (familyOf(family) === 4) {
     const row = db
       .prepare(
-        'SELECT value FROM dhcp_option_defaults WHERE address_family = 4 AND option_code = 51 AND enabled_by_default = 1',
+        'SELECT value FROM dhcp_option_defaults WHERE address_family = 4 AND option_code = ? AND enabled_by_default = 1',
       )
-      .get();
+      .get(LEASE_TIME_OPTION);
     if (row && isValidLeaseTime(String(row.value ?? ''))) return String(row.value);
   }
   return readSetting(db, 'default_lease_time') ?? DEFAULTS.default_lease_time;
+}
+
+/**
+ * Save the DHCPv6 Address lifetime default (see defaultLeaseTime). DHCPv4's
+ * is its 51 row, saved with the other options.
+ */
+export function saveDefaultAddressLifetime(db, leaseTime) {
+  upsertSetting(db, 'default_lease_time', String(leaseTime));
 }
 
 export function getDefaultOptions(db, family = 4) {

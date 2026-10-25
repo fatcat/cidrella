@@ -111,6 +111,7 @@ beforeEach(() => {
           ],
           defaults: { 56: 'fd00::123' },
           enabledDefaults: [23, 24, 56],
+          leaseTime: '1h',
         },
       });
     if (url === '/dhcp/options')
@@ -143,7 +144,7 @@ describe('ScopeDialog pools, ranges and options', () => {
     expect(pools.text()).toContain('10.0.0.10');
     expect(pools.text()).toContain('10.0.0.100');
     expect(pools.text()).toContain('2 pool intervals');
-    expect(wrapper.findAll('input').length).toBe(2); // lease time and description, no start/end
+    expect(wrapper.findAll('input').length).toBe(1); // description only, no start/end
 
     await saveButton(wrapper).trigger('click');
     await flushPromises();
@@ -151,7 +152,7 @@ describe('ScopeDialog pools, ranges and options', () => {
     const [, payload] = dhcpStore.updateScope.mock.calls[0];
     expect(payload).not.toHaveProperty('start_ip');
     expect(payload).not.toHaveProperty('end_ip');
-    expect(payload.lease_time).toBe('12h');
+    expect(payload.lease_time).toBe('43200');
 
     await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });
     await flushPromises();
@@ -166,14 +167,20 @@ describe('ScopeDialog pools, ranges and options', () => {
 
   // Prod's three scopes had 15 and 10 minute leases that no screen offered to
   // change (2026-10-25): the form carried lease_time with no control for it.
-  it('shows the lease time, saves an edit, and refuses one it cannot read', async () => {
+  // The lease time is the first row of the option list, in seconds, and the
+  // one control for it.
+  it('shows the lease time as the first option row, saves an edit, and refuses a bad one', async () => {
     const wrapper = mountDialog();
     await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });
+    wrapper.vm.optionsExpanded = true;
     await flushPromises();
-    const field = wrapper.find('[data-track="dhcp-scope-lease-time"]');
-    expect(field.element.value).toBe('12h');
+    const firstRow = wrapper.find('.scope-option-row');
+    expect(firstRow.text()).toContain('Lease time');
+    expect(firstRow.find('input[type="checkbox"]').element.disabled).toBe(true);
+    expect(firstRow.find('[data-track="dhcp-scope-lease-time"]').exists()).toBe(true);
+    expect(wrapper.vm.form.lease_time).toBe(43200);
 
-    await field.setValue('abc');
+    wrapper.vm.form.lease_time = 0;
     await saveButton(wrapper).trigger('click');
     await flushPromises();
     expect(dhcpStore.updateScope).not.toHaveBeenCalled();
@@ -181,13 +188,13 @@ describe('ScopeDialog pools, ranges and options', () => {
       expect.objectContaining({ summary: 'Check the lease time' }),
     );
 
-    await field.setValue(' 3600 ');
+    wrapper.vm.form.lease_time = 3600;
     await saveButton(wrapper).trigger('click');
     await flushPromises();
     expect(dhcpStore.updateScope.mock.calls[0][1].lease_time).toBe('3600');
   });
 
-  it('starts a new scope from the Lease Time default marked Add to new scopes', async () => {
+  it("starts a new scope from the family's default lease time, as the server reports it", async () => {
     const fallback = api.get.getMockImplementation();
     api.get.mockImplementation((url, config) =>
       url === '/dhcp/options' && config?.params?.family !== 6
@@ -196,8 +203,9 @@ describe('ScopeDialog pools, ranges and options', () => {
               family: 4,
               catalog: [{ code: 51, label: 'Lease time', type: 'number', group: 'Common' }],
               groups: [{ name: 'Common', label: 'Common' }],
-              defaults: { 51: '3600' },
+              defaults: { 51: '2h' },
               enabledDefaults: [51],
+              leaseTime: '2h',
             },
           })
         : fallback(url, config),
@@ -205,17 +213,28 @@ describe('ScopeDialog pools, ranges and options', () => {
     const wrapper = mountDialog();
     await wrapper.vm.openNewWithPicker({ id: 11, name: 'Lab', cidr: '10.0.0.0/24' });
     await flushPromises();
-    expect(wrapper.vm.form.lease_time).toBe('3600');
+    expect(wrapper.vm.form.lease_time).toBe(7200);
+
+    // A DHCPv6 network starts from the DHCPv6 default, under its own label.
+    const v6 = mountDialog();
+    await v6.vm.openNewWithPicker({ id: 12, name: 'Six', cidr: 'fd00:1234::/64' });
+    v6.vm.optionsExpanded = true;
+    await flushPromises();
+    expect(v6.vm.form.lease_time).toBe(3600);
+    const firstRow = v6.find('.scope-option-row');
+    expect(firstRow.text()).toContain('Address lifetime');
+    expect(firstRow.find('.scope-option-code').exists()).toBe(false);
   });
 
-  it('T-27 never offers option 51 beside the lease time control', async () => {
+  it('T-27 offers option 51 once, as the lease time row', async () => {
     const wrapper = mountDialog();
     await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });
     wrapper.vm.optionsExpanded = true;
     await flushPromises();
     const codes = wrapper.findAll('.scope-option-code').map((node) => node.text());
     expect(codes).toContain('(3)');
-    expect(codes).not.toContain('(51)');
+    expect(codes.filter((code) => code === '(51)')).toHaveLength(1);
+    expect(codes[0]).toBe('(51)');
   });
 
   it('T-23 keeps a created range selected so the retry creates only the scope', async () => {
@@ -275,105 +294,41 @@ describe('ScopeDialog on an IPv6 network', () => {
 
   it('offers the DHCPv6 modes, hides the pool for a SLAAC mode, and sends the mode', async () => {
     const wrapper = mountDialog();
-    // NTP Servers (56) is stored linked: a row with no value uses the default.
-    await wrapper.vm.openEdit({ ...scope6, options: [{ option_code: 56, value: null }] });
+    // NTP Servers (56) is the scope's own row.
+    await wrapper.vm.openEdit({ ...scope6, options: [{ option_code: 56, value: 'fd00::123' }] });
     await flushPromises();
     expect(wrapper.find('[data-track="scope-v6-mode"]').exists()).toBe(true);
     expect(wrapper.vm.form.v6_mode).toBe('stateless');
     // Lease time and description only: no Start/End for a stateless scope.
     // The options block is the IPv6 catalog, fetched by family, with no
     // DHCPv4 code in it.
-    expect(formInputs(wrapper).length).toBe(2);
+    expect(formInputs(wrapper).length).toBe(1);
     expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 6 } });
     wrapper.vm.optionsExpanded = true;
     await flushPromises();
     const codes = wrapper.findAll('.scope-option-code').map((node) => node.text());
     expect(codes).toEqual(['(23)', '(24)', '(56)', '(14)']);
     // Rapid Commit is dnsmasq's to send: no checkbox, read as always on.
-    const rapid = wrapper.findAll('.scope-option-row').at(3);
+    const rapid = wrapper.findAll('.scope-option-row').at(4); // after the lease time row
     expect(rapid.find('input').exists()).toBe(false);
     expect(rapid.text()).toContain('always on');
     expect(wrapper.vm.form.optionValues[3]).toBeUndefined();
     expect(wrapper.vm.form.optionValues[1]).toBeUndefined();
-    // On edit the scope's own rows load: the linked NTP row as Use default,
-    // then the search list from the network's domain. DNS Servers (23) stays
-    // unselected because this scope has no server_ip.
+    // On edit the scope's own rows load: the NTP row, then the search list
+    // from the network's domain. DNS Servers (23) stays unselected because
+    // this scope has no server_ip.
     expect(wrapper.vm.form.selectedOptions).toEqual([56, 24]);
-    expect(wrapper.vm.form.useDefault).toEqual([56]);
     expect(wrapper.vm.form.optionValues[24]).toBe('six.test');
-    const ntp = wrapper.findAll('.scope-option-row').at(2);
-    expect(ntp.text()).toContain('fd00::123');
-    expect(ntp.find('#scope-option-56-use-default').element.checked).toBe(true);
+    expect(wrapper.vm.form.optionValues[56]).toBe('fd00::123');
 
     await saveButton(wrapper).trigger('click');
     await flushPromises();
     const [, payload] = dhcpStore.updateScope.mock.calls[0];
     expect(payload.v6_mode).toBe('stateless');
     expect(payload.options).toEqual([
-      { code: 56, use_default: true },
+      { code: 56, value: 'fd00::123' },
       { code: 24, value: 'six.test' },
     ]);
-  });
-
-  // DHCP-01: a default reaches a scope only when the scope uses it.
-  describe('Use default', () => {
-    it('leaves a default the scope does not use unselected on edit', async () => {
-      const wrapper = mountDialog();
-      await wrapper.vm.openEdit(scope6);
-      await flushPromises();
-      expect(wrapper.vm.form.selectedOptions).toEqual([24]);
-      expect(wrapper.vm.form.useDefault).toEqual([]);
-      await saveButton(wrapper).trigger('click');
-      await flushPromises();
-      const [, payload] = dhcpStore.updateScope.mock.calls[0];
-      expect(payload.options).toEqual([{ code: 24, value: 'six.test' }]);
-    });
-
-    it('ticks an option with a default as Use default, and unticking Use default starts an own value from it', async () => {
-      const wrapper = mountDialog();
-      await wrapper.vm.openEdit(scope6);
-      await flushPromises();
-      wrapper.vm.optionsExpanded = true;
-      await flushPromises();
-      const ntp = () => wrapper.findAll('.scope-option-row').at(2);
-      await ntp().find('input[type="checkbox"]').setValue(true);
-      expect(wrapper.vm.form.useDefault).toEqual([56]);
-      await ntp().find('#scope-option-56-use-default').setValue(false);
-      expect(wrapper.vm.form.useDefault).toEqual([]);
-      expect(wrapper.vm.form.optionValues[56]).toBe('fd00::123');
-      await saveButton(wrapper).trigger('click');
-      await flushPromises();
-      const [, payload] = dhcpStore.updateScope.mock.calls[0];
-      expect(payload.options).toContainEqual({ code: 56, value: 'fd00::123' });
-    });
-
-    it('links an IPv4 scope row the same way', async () => {
-      api.get.mockImplementation((url) => {
-        if (url === '/dhcp/options')
-          return Promise.resolve({
-            data: {
-              family: 4,
-              catalog: [{ code: 42, label: 'NTP Servers', type: 'ip-list', group: 'Common' }],
-              groups: [{ name: 'Common', label: 'Common' }],
-              defaults: { 42: '10.0.0.123' },
-              enabledDefaults: [42],
-            },
-          });
-        if (url === '/subnets')
-          return Promise.resolve({
-            data: { folders: [{ id: 1, name: 'Lab', subnets: [subnet] }] },
-          });
-        return Promise.reject(new Error(`Unexpected GET ${url}`));
-      });
-      const wrapper = mountDialog();
-      await wrapper.vm.openEdit({ ...scope, options: [{ option_code: 42, value: null }] });
-      await flushPromises();
-      expect(wrapper.vm.form.useDefault).toEqual([42]);
-      await saveButton(wrapper).trigger('click');
-      await flushPromises();
-      const [, payload] = dhcpStore.updateScope.mock.calls[0];
-      expect(payload.options).toContainEqual({ code: 42, use_default: true });
-    });
   });
 
   it('shows the pool again for a stateful scope', async () => {
@@ -386,7 +341,7 @@ describe('ScopeDialog on an IPv6 network', () => {
       pools: [{ start_ip: 'fd00:1234::1000', end_ip: 'fd00:1234::1fff' }],
     });
     await flushPromises();
-    expect(formInputs(wrapper).length).toBe(4); // start, end, lease time, description
+    expect(formInputs(wrapper).length).toBe(3); // start, end, description
     await saveButton(wrapper).trigger('click');
     await flushPromises();
     const [, payload] = dhcpStore.updateScope.mock.calls[0];
@@ -419,8 +374,8 @@ describe('ScopeDialog on an IPv6 network', () => {
       });
       await flushPromises();
       expect(wrapper.vm.form.v6_mode).toBe('stateful');
-      // The add-to-new-scopes default with a value is linked, not copied.
-      expect(wrapper.vm.form.useDefault).toEqual([56]);
+      // The add-to-new-scopes default with a value is copied in.
+      expect(wrapper.vm.form.optionValues[56]).toBe('fd00::123');
 
       await saveButton(wrapper).trigger('click');
       await flushPromises();
@@ -431,7 +386,7 @@ describe('ScopeDialog on an IPv6 network', () => {
       expect(dhcpStore.createScope).toHaveBeenCalledWith(
         expect.objectContaining({
           v6_mode: 'stateful',
-          options: expect.arrayContaining([{ code: 56, use_default: true }]),
+          options: expect.arrayContaining([{ code: 56, value: 'fd00::123' }]),
         }),
       );
     });
@@ -612,9 +567,7 @@ describe('network fills from a picked range', () => {
     });
   });
 
-  // Picking an IPv6 range passed the option values where the linked list
-  // belongs, and threw on the first default with a value.
-  it('IPv6: links the NTP default and fills DNS and the search list', async () => {
+  it('IPv6: copies the NTP default and fills DNS and the search list', async () => {
     const wrapper = await pickRange({
       id: 6,
       subnet_id: 12,
@@ -625,8 +578,11 @@ describe('network fills from a picked range', () => {
       start_ip: 'fd00:1234::10',
       end_ip: 'fd00:1234::20',
     });
-    expect(wrapper.vm.form.useDefault).toEqual([56]);
-    expect(wrapper.vm.form.optionValues).toMatchObject({ 23: 'fd00:1234::53', 24: 'six.test' });
+    expect(wrapper.vm.form.optionValues).toMatchObject({
+      23: 'fd00:1234::53',
+      24: 'six.test',
+      56: 'fd00::123',
+    });
     expect(wrapper.vm.form.optionValues[6]).toBeUndefined();
   });
 });

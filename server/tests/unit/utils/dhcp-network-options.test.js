@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { networkOptionFills } from '../../../src/utils/dhcp-network-options.js';
 import { parseNetwork } from '../../../src/utils/ip.js';
-import { fillScopeOptions, USE_DEFAULT } from '../../../src/services/subnet-dhcp-topology.js';
+import { fillScopeOptions } from '../../../src/services/subnet-dhcp-topology.js';
 
 // DHCP-02: one rule for what a scope takes from its network, shared with the
 // scope dialog through @shared.
@@ -42,7 +42,7 @@ describe('networkOptionFills', () => {
       [
         { code: 6, value: '' },
         { code: 15, value: 'own.test' },
-        { code: 1, value: USE_DEFAULT },
+        { code: 1, value: '255.255.0.0' },
       ],
       {
         parsed: parseNetwork('10.60.0.0/24'),
@@ -62,7 +62,7 @@ describe('networkOptionFills', () => {
     const v6 = fillScopeOptions(
       [
         { code: 23, value: '' },
-        { code: 24, value: USE_DEFAULT },
+        { code: 24, value: 'default.test' },
       ],
       {
         parsed: parseNetwork('fd00:60::/64'),
@@ -71,6 +71,6 @@ describe('networkOptionFills', () => {
       },
     );
     expect(v6.get(23)).toBe('fd00:60::53');
-    expect(v6.get(24)).toBe(USE_DEFAULT);
+    expect(v6.get(24)).toBe('default.test');
   });
 });

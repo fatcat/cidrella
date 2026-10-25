@@ -20,7 +20,10 @@
         description="Options appear here once a scope or global option is defined."
       />
     </template>
-    <Column field="code" header="Code" style="width: 4rem" />
+    <Column field="code" header="Code" style="width: 4rem">
+      <!-- The DHCPv6 Address lifetime is not an option, so it shows no code. -->
+      <template #body="{ data }">{{ data.lease ? '' : data.code }}</template>
+    </Column>
     <Column field="label" header="Option" style="min-width: 12rem">
       <template #body="{ data }">
         {{ data.label }}
@@ -51,13 +54,16 @@
             placeholder="—"
           />
           <InputNumber
-            v-else-if="data.type === 'number'"
+            v-else-if="data.type === 'number' || data.lease"
             :modelValue="values[data.code]"
             @update:modelValue="setValue(data.code, $event)"
             @input="setValue(data.code, $event.value)"
             class="w-full"
             size="small"
             :useGrouping="false"
+            :min="data.lease ? 1 : undefined"
+            :suffix="data.lease ? ' s' : undefined"
+            :data-track="data.lease ? 'dhcp-option-address-lifetime' : undefined"
             placeholder="—"
           />
           <InputText
@@ -76,25 +82,20 @@
       <template #body="{ data }">
         <Checkbox
           v-if="!data.builtIn"
-          :modelValue="!!enabled[data.code]"
+          :modelValue="lockedCodes.has(data.code) || !!enabled[data.code]"
+          :disabled="lockedCodes.has(data.code)"
           binary
           :ariaLabel="`${enabledHeader}: ${data.label}`"
+          :title="lockedCodes.has(data.code) ? 'Every scope has a lease time' : undefined"
           @update:modelValue="enabled[data.code] = $event"
         />
-      </template>
-    </Column>
-    <Column v-if="usage" header="Used by" style="width: 7rem">
-      <template #body="{ data }">
-        <span class="text-sm muted" data-track="dhcp-option-used-by">
-          {{ usedByLabel(data.code) }}
-        </span>
       </template>
     </Column>
     <Column header="" style="width: 3rem">
       <template #body="{ data }">
         <div class="action-buttons">
           <Button
-            v-if="!data.builtIn"
+            v-if="!data.builtIn && !lockedCodes.has(data.code)"
             icon="pi pi-times"
             severity="secondary"
             text
@@ -138,8 +139,7 @@
 <script setup>
 // The DHCP option editor table: one row per catalog option with its value and
 // a checkbox column. Settings uses it for the family's defaults ("Add to new
-// scopes", with the Used by counts) and Bulk Change for what scopes get
-// ("Apply"). Values and checks
+// scopes") and Bulk Change for what scopes get ("Apply"). Values and checks
 // are code-keyed objects the parent owns.
 import { ref, computed } from 'vue';
 import Button from '../../ui/Button.js';
@@ -154,7 +154,6 @@ import EmptyState from '../EmptyState.vue';
 import api from '../../api/client.js';
 import { useToast } from '../../ui/useToast.js';
 import { resolveHostname, placeholderForType } from '../../utils/resolveHostname.js';
-import { EMPTY_CELL, countOf } from '../../utils/format.js';
 
 const props = defineProps({
   family: { type: Number, default: 4 },
@@ -162,11 +161,11 @@ const props = defineProps({
   loading: { type: Boolean, default: false },
   valueHeader: { type: String, default: 'Default Value' },
   enabledHeader: { type: String, default: 'Add to new scopes' },
-  // Code to the number of scopes that use the default (Use default), as GET
-  // /dhcp/options answers linkedCounts. Shows a Used by column when set.
-  usage: { type: Object, default: null },
   // Codes whose value or check differs from where the editor started.
   changedCodes: { type: Set, default: () => new Set() },
+  // Codes always checked, with no Clear: the lease time rows of the defaults
+  // editor, since every scope has a lease time.
+  lockedCodes: { type: Set, default: () => new Set() },
   deletableCustom: { type: Boolean, default: false },
   // Tick a row when a value is typed into it while blank (Bulk Change,
   // where a value only reaches a scope with Apply ticked).
@@ -199,11 +198,6 @@ function getOptionPlaceholder(code, type) {
 }
 
 const isBlank = (value) => value == null || value === '';
-
-function usedByLabel(code) {
-  const count = props.usage?.[code] ?? 0;
-  return count ? countOf(count, 'scope') : EMPTY_CELL;
-}
 
 // InputNumber commits its model only on blur, so its typing arrives through
 // @input; both paths land here.

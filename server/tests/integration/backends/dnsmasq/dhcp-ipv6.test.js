@@ -77,9 +77,9 @@ describe('DHCPv6 scopes', () => {
       .get(stateful.id);
     expect(pool).toEqual({ start_ip: 'fd00:a::1000', end_ip: 'fd00:a::1fff' });
     // Inherited IPv6 defaults only: the search list from the network domain,
-    // the baked IPv6 NTP pool, linked so it follows the default (DNS Servers
-    // stays unset because the test host has no address in the prefix), and
-    // never the IPv4 mask, router or broadcast codes.
+    // the baked IPv6 NTP pool copied from the default (DNS Servers stays
+    // unset because the test host has no address in the prefix), and never
+    // the IPv4 mask, router or broadcast codes.
     const options = db
       .prepare(
         'SELECT option_code, value, address_family FROM dhcp_scope_options WHERE scope_id = ?',
@@ -87,7 +87,7 @@ describe('DHCPv6 scopes', () => {
       .all(stateful.id);
     expect(options).toEqual([
       { option_code: 24, value: 'stateful.test', address_family: 6 },
-      { option_code: 56, value: null, address_family: 6 },
+      { option_code: 56, value: DHCP6_DEFAULT_NTP_SERVERS, address_family: 6 },
     ]);
     const effective = (await request(app).get('/api/dhcp/scopes')).body.find(
       (s) => s.id === stateful.id,
@@ -95,7 +95,7 @@ describe('DHCPv6 scopes', () => {
     expect(effective.find((o) => o.option_code === 56)).toEqual({
       option_code: 56,
       value: DHCP6_DEFAULT_NTP_SERVERS,
-      source: 'default',
+      source: 'scope',
     });
     expect(scopeFor(subnets.slaac)).toMatchObject({ v6_mode: 'slaac' });
     expect(scopeFor(subnets.stateless)).toMatchObject({ v6_mode: 'stateless' });
@@ -598,6 +598,7 @@ describe('DHCPv6 option defaults and scope options', () => {
       family: 6,
       defaults: { 56: 'fd00:a::123', 32: '7200' },
       enabledDefaults: [23, 24, 56],
+      leaseTime: '1h',
     });
     const v4After = (await request(app).get('/api/dhcp/options')).body;
     expect(v4After.defaults).toEqual(v4Before.defaults);
@@ -700,7 +701,7 @@ describe('DHCPv6 option defaults and scope options', () => {
           { code: 32, value: '600' },
           { code: 200, value: 'https://vendor.example/cfg' },
           { code: 31, value: 'not an address' },
-          { code: 56, use_default: true },
+          { code: 56, value: 'fd00:a::123' },
         ],
       });
     expect(res.status).toBe(200);
@@ -718,7 +719,7 @@ describe('DHCPv6 option defaults and scope options', () => {
     expect(conf).toContain(`dhcp-option=${tag},option6:domain-search,a.test,b.test`);
     expect(conf).toContain(`dhcp-option=${tag},option6:information-refresh-time,600`);
     expect(conf).toContain(`dhcp-option=${tag},option6:200,https://vendor.example/cfg`);
-    // NTP uses the default, so it follows the edit an earlier test made to it.
+    // NTP is the scope's own value.
     expect(conf).toContain(`dhcp-option=${tag},option6:ntp-server,[fd00:a::123]`);
     // An unresolvable address list is dropped, and IPv4 spellings never appear.
     expect(conf).not.toContain('option6:sntp-server');

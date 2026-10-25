@@ -12,11 +12,9 @@ vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => toast }));
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 
 const DHCP = (await import('../../../src/views/DHCP.vue')).default;
-const { EMPTY_CELL } = await import('../../../src/utils/format.js');
 const DhcpOptionTable = (await import('../../../src/components/dhcp/DhcpOptionTable.vue')).default;
 const placeholder = (wrapper, code, type) =>
   wrapper.findComponent(DhcpOptionTable).vm.getOptionPlaceholder(code, type);
-const usedBy = (wrapper, code) => wrapper.findComponent(DhcpOptionTable).vm.usedByLabel(code);
 
 const catalogs = {
   4: {
@@ -29,7 +27,6 @@ const catalogs = {
     groups: [{ name: 'Common', label: 'Common' }],
     defaults: { 6: '10.0.0.2,9.9.9.9' },
     enabledDefaults: [6, 15],
-    linkedCounts: { 6: 2 },
   },
   6: {
     family: 6,
@@ -42,7 +39,7 @@ const catalogs = {
     groups: [{ name: 'Common', label: 'Common' }],
     defaults: {},
     enabledDefaults: [23, 24],
-    linkedCounts: { 56: 1 },
+    leaseTime: '1h',
   },
 };
 
@@ -101,15 +98,16 @@ describe('DHCP option defaults editor by family', () => {
     const wrapper = mountEditor();
     await flushPromises();
     expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 4 } });
-    // DHCP-01: a default reaches only the scopes that use it, counted per row.
-    expect(wrapper.text()).toContain('only where that scope is set to Use default');
-    expect(usedBy(wrapper, 6)).toBe('2 scopes');
-    expect(usedBy(wrapper, 15)).toBe(EMPTY_CELL);
+    // A default reaches a scope only when it is created.
+    expect(wrapper.text()).toContain('affect only new scopes');
     expect(wrapper.text()).not.toContain('Router Advertisements');
     expect(wrapper.find('[data-track="dhcp-save-defaults"]').exists()).toBe(true);
     expect(wrapper.find('[data-track="dhcp-save-defaults-v6"]').exists()).toBe(false);
     expect(placeholder(wrapper, 6, 'ip-list')).toBe('e.g. 192.168.1.1, 192.168.1.2');
     expect(placeholder(wrapper, 15, 'text')).toBe("Defaults to network's domain");
+    // Lease Time (51) is always added to new scopes.
+    expect([...wrapper.findComponent(DhcpOptionTable).props('lockedCodes')]).toEqual([51]);
+    expect(wrapper.findComponent(DhcpOptionTable).props('rows')[0].code).toBe(6);
 
     wrapper.vm.defaultValues[15] = 'lab.test';
     await flushPromises();
@@ -129,11 +127,15 @@ describe('DHCP option defaults editor by family', () => {
     const wrapper = mountEditor({ family: 6 });
     await flushPromises();
     expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 6 } });
-    expect(wrapper.text()).toContain('only where that scope is set to Use default');
-    expect(usedBy(wrapper, 56)).toBe('1 scope');
+    expect(wrapper.text()).toContain('affect only new scopes');
     expect(wrapper.text()).toContain('Router Advertisements');
     expect(wrapper.find('[data-track="dhcp-save-defaults-v6"]').exists()).toBe(true);
     expect(wrapper.find('[data-track="dhcp-save-defaults"]').exists()).toBe(false);
+    // The Address lifetime row leads, locked on, in seconds.
+    const table = wrapper.findComponent(DhcpOptionTable);
+    expect(table.props('rows')[0]).toMatchObject({ code: 0, label: 'Address lifetime' });
+    expect([...table.props('lockedCodes')]).toEqual([0]);
+    expect(wrapper.vm.defaultValues[0]).toBe(3600);
     expect(placeholder(wrapper, 56, 'ip-list')).toBe('e.g. fd00::53, 2606:4700:4700::1111');
     expect(placeholder(wrapper, 23, 'ip-list')).toBe(
       "Defaults to CIDRella's IPv6 address on the network",
@@ -149,6 +151,7 @@ describe('DHCP option defaults editor by family', () => {
       family: 6,
       options: [{ code: 56, value: 'fd00::123' }],
       enabledDefaults: [23, 24, 56],
+      leaseTime: '3600',
     });
 
     wrapper.vm.customOptionForm = { code: 200, label: 'Vendor', name: '', type: 'text' };
