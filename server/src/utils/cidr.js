@@ -30,6 +30,7 @@ import {
   V4_MAPPED_PREFIX,
   V4_MAPPED_LAST,
 } from './address.js';
+import { RESERVED_RANGES } from './special-ranges.js';
 
 // ---------------------------------------------------------------------------
 // Address primitives
@@ -401,22 +402,8 @@ export function addressInRange(ip, startIp, endIp) {
   return addressRangesOverlap(ip, ip, startIp, endIp);
 }
 
-// Well-known reserved and private ranges, both families.
-export const RESERVED_RANGES = [
-  { cidr: '10.0.0.0/8', name: 'RFC1918 Class A' },
-  { cidr: '172.16.0.0/12', name: 'RFC1918 Class B' },
-  { cidr: '192.168.0.0/16', name: 'RFC1918 Class C' },
-  { cidr: '100.64.0.0/10', name: 'CGNAT (RFC6598)' },
-  { cidr: '169.254.0.0/16', name: 'Link-Local (RFC3927)' },
-  { cidr: '127.0.0.0/8', name: 'Loopback (RFC1122)' },
-  { cidr: '224.0.0.0/4', name: 'Multicast (RFC5771)' },
-  { cidr: '240.0.0.0/4', name: 'Reserved (RFC1112)' },
-  { cidr: 'fc00::/7', name: 'Unique Local (RFC4193)' },
-  { cidr: 'fe80::/10', name: 'Link-Local (RFC4291)' },
-  { cidr: '::1/128', name: 'Loopback (RFC4291)' },
-  { cidr: 'ff00::/8', name: 'Multicast (RFC4291)' },
-  { cidr: '2001:db8::/32', name: 'Documentation (RFC3849)' },
-];
+// Well-known reserved and private ranges, both families (special-ranges.js).
+export { RESERVED_RANGES };
 
 /**
  * A supernet that touches a reserved range must sit entirely inside it.

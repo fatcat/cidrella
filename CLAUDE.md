@@ -178,7 +178,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
   for the range dialogs' form grammar, `assets/analytics-layout.css` for
   the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
-  `utils/ip.js` and `utils/cidr.js`, `utils/dns-names.js` (`fqdnForRecordName`,
+  `utils/ip.js` and `utils/cidr.js`, `utils/special-ranges.js` (the one table of special-purpose
+  blocks, both families: which ones scans treat as private, which an outbound fetch refuses, and
+  the named reserved ranges a supernet must stay inside), `trimTrailingSlashes` in
+  `utils/validation.js` (never `replace(/\/+$/, '')`, which is quadratic on a run of slashes), `utils/dns-names.js` (`fqdnForRecordName`,
   `normalizeRecordNameForZone`, `normalizeDnsName`: the zone-file rule for record names, a
   trailing dot is absolute and anything else is under the zone; SQL that builds an FQDN must
   agree with it), `utils/reverse-zones.js` (`generateReverseName(s)`,

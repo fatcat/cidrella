@@ -9,6 +9,7 @@ import { reservationIpRejectionReason } from './dhcp.js';
 import { text as textParser } from 'express';
 import { validateOutboundUrl, requestPinnedOutboundUrl } from '../utils/url-guard.js';
 import { validateConfigSafeValue, isValidRecordName } from '../utils/config-value-validation.js';
+import { trimTrailingSlashes } from '../utils/validation.js';
 import { addressFamily, canonicalizeIp, isValidIpv6 } from '../utils/address.js';
 import { findSubnetForIp } from '../utils/ip-sync.js';
 import { ipv6Enabled, IPV6_DISABLED_ERROR } from '../utils/ipv6-support.js';
@@ -197,13 +198,10 @@ function validateImportRecord(record, zoneName, db = null, zone = null, batchFqd
  */
 async function normalizeUrl(url) {
   if (typeof url !== 'string' || !url) return { error: 'URL is required' };
-  // Length cap before any regex work, the trailing-slash strip below is
-  // quadratic on pathological all-slash inputs (CodeQL js/polynomial-redos).
   if (url.length > 2048) return { error: 'URL is too long' };
-  const trimmed = url.replace(/\/+$/, '');
-  const check = await validateOutboundUrl(trimmed);
+  const check = await validateOutboundUrl(trimTrailingSlashes(url));
   if (!check.ok) return { error: check.reason };
-  return { baseUrl: check.url.replace(/\/+$/, ''), outbound: check };
+  return { baseUrl: trimTrailingSlashes(check.url), outbound: check };
 }
 
 function appendPath(norm, path) {

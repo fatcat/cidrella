@@ -25,6 +25,18 @@ export function sanitizeForLog(v) {
 }
 
 /**
+ * `s` without its trailing slashes. A loop, not `replace(/\/+$/, '')`: that
+ * regex retries from every slash in a long run, so a path of 16,000 slashes
+ * (inside Node's header limit) takes a measurable slice of the one event loop
+ * the DNS proxy shares (Sonar S5852, REVIEW AUTH-PATH-REDOS-01).
+ */
+export function trimTrailingSlashes(s) {
+  let end = s.length;
+  while (end > 0 && s.charCodeAt(end - 1) === 47) end--;
+  return end === s.length ? s : s.slice(0, end);
+}
+
+/**
  * Require `v` to be a real JS integer in [1, 65535]. Rejects numeric
  * strings, single-element arrays, booleans, and everything else that
  * would be silently coerced by `Number()` or `parseInt()`. Returns an

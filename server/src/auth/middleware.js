@@ -2,6 +2,7 @@ import jwt from 'jsonwebtoken';
 import { getDb } from '../db/init.js';
 import { looksLikeApiToken, resolveApiToken } from './tokens.js';
 import * as Session from '../models/session.js';
+import { trimTrailingSlashes } from '../utils/validation.js';
 
 // Paths that don't require authentication.
 //
@@ -59,7 +60,7 @@ export function authMiddleware(req, res, next) {
   }
 
   // Skip auth for public paths
-  const normalizedPath = req.path.replace(/\/+$/, '') || '/';
+  const normalizedPath = trimTrailingSlashes(req.path) || '/';
   if (PUBLIC_PATHS.includes(normalizedPath)) {
     return next();
   }

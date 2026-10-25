@@ -14,6 +14,7 @@ import {
   addressRangesOverlap,
   addressInRange,
 } from './cidr.js';
+import { NON_GLOBAL_IPV4_RANGES, NON_GLOBAL_IPV6_RANGES } from './special-ranges.js';
 
 // The pure CIDR arithmetic lives in cidr.js so the client can share it; every
 // server caller keeps importing it from here.
@@ -92,39 +93,8 @@ export function rangesOverlap(startA, endA, startB, endB) {
   return addressRangesOverlap(startA, endA, startB, endB);
 }
 
-// IPv4 blocks that are not globally routable. Automatic scans may inherit the
-// global scan setting for these ranges. Globally routable space requires an
-// explicit per-network opt-in so merely documenting a public prefix cannot
-// turn CIDRella into an Internet scanner or classify unrelated hosts as rogue.
-const NON_GLOBAL_IPV4_RANGES = [
-  '0.0.0.0/8',
-  '10.0.0.0/8',
-  '100.64.0.0/10',
-  '127.0.0.0/8',
-  '169.254.0.0/16',
-  '172.16.0.0/12',
-  '192.0.0.0/24',
-  '192.0.2.0/24',
-  '192.168.0.0/16',
-  '198.18.0.0/15',
-  '198.51.100.0/24',
-  '203.0.113.0/24',
-  '224.0.0.0/4',
-  '240.0.0.0/4',
-];
-
-// The IPv6 counterpart: unspecified, loopback, unique local, link-local,
-// multicast, documentation, and the IPv4-mapped block.
-const NON_GLOBAL_IPV6_RANGES = [
-  '::/128',
-  '::1/128',
-  '::ffff:0:0/96',
-  'fc00::/7',
-  'fe80::/10',
-  'ff00::/8',
-  '2001:db8::/32',
-];
-
+// Not globally routable: automatic scans may inherit the global scan setting
+// here, public space needs a per-network opt-in (see special-ranges.js).
 export function isGloballyRoutableCidr(cidr) {
   const family = parseNetwork(cidr).family;
   const special = family === 6 ? NON_GLOBAL_IPV6_RANGES : NON_GLOBAL_IPV4_RANGES;
