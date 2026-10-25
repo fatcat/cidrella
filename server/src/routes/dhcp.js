@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, getSetting } from '../db/init.js';
+import { getDb } from '../db/init.js';
 import { recordAudit, sample } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
@@ -53,6 +53,7 @@ import {
   getDefaultOptions,
   SHIPPED_DEFAULT_OPTIONS,
   linkedOptionCounts,
+  defaultLeaseTime,
 } from '../models/dhcp-option.js';
 import { bulkChangeScopeOptions } from '../models/dhcp-bulk-options.js';
 import { scopeMatches } from '../models/workspace-view.js';
@@ -445,7 +446,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
       address_family: subnet.address_family,
       v6_mode: v6.mode,
     },
-    { subnet, defaultLeaseTime: getSetting('default_lease_time') },
+    { subnet, defaultLeaseTime: defaultLeaseTime(db, subnet.address_family) },
   );
 
   recordAudit({

@@ -1,4 +1,3 @@
-import { getSetting } from '../db/init.js';
 import { networkOptionFills } from '../utils/dhcp-network-options.js';
 import {
   parseNetwork,
@@ -11,6 +10,7 @@ import {
 } from '../utils/ip.js';
 import { addressFamily } from '../utils/address.js';
 import { dynamicPoolConflict } from '../models/dhcp-scope.js';
+import { defaultLeaseTime } from '../models/dhcp-option.js';
 import { dhcpV6ModesFor } from '../utils/cidr.js';
 
 function nearestPow2(n) {
@@ -118,13 +118,7 @@ export function createAutoScopeV6(db, subnetId, parsed, domainName, { mode, pool
     VALUES (?, ?, ?, ?, 'Auto-created DHCPv6 scope', 6, ?)
   `,
     )
-    .run(
-      rangeResult.lastInsertRowid,
-      subnetId,
-      getSetting('default_lease_time'),
-      domainName || null,
-      mode,
-    );
+    .run(rangeResult.lastInsertRowid, subnetId, defaultLeaseTime(db, 6), domainName || null, mode);
   db.prepare(
     `
     INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
@@ -209,13 +203,15 @@ export function fillScopeOptions(enabled, { parsed, gateway, domain, serverIp })
 
 /**
  * Store a scope's option rows from fillScopeOptions: USE_DEFAULT as a linked
- * row, blank values skipped.
+ * row, blank values skipped. DHCPv4 Lease Time (51) is the scope's lease_time
+ * column, never a row (defaultLeaseTime picks it for a new scope).
  */
 export function writeScopeOptionRows(db, scopeId, family, optionValues) {
   const insertOpt = db.prepare(
     'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, ?)',
   );
   for (const [code, value] of optionValues) {
+    if (family === 4 && Number(code) === 51) continue;
     if (value === USE_DEFAULT) insertOpt.run(scopeId, code, null, family);
     else if (value != null && value !== '') insertOpt.run(scopeId, code, String(value), family);
   }
@@ -249,13 +245,7 @@ export function createAutoScope(db, subnetId, parsed, gateway, domainName, pool)
     VALUES (?, ?, ?, ?, ?, 'Auto-created DHCP scope')
   `,
     )
-    .run(
-      rangeResult.lastInsertRowid,
-      subnetId,
-      getSetting('default_lease_time'),
-      gateway,
-      effectiveDomain,
-    );
+    .run(rangeResult.lastInsertRowid, subnetId, defaultLeaseTime(db, 4), gateway, effectiveDomain);
   db.prepare(
     `
     INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)

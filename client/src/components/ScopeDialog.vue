@@ -125,6 +125,20 @@
         <InputText v-model="form.end_ip" class="w-full" placeholder="e.g. 192.168.1.254" />
       </div>
       <div class="field">
+        <label>Lease time *</label>
+        <InputText
+          v-model="form.lease_time"
+          class="w-full"
+          placeholder="e.g. 12h or 3600"
+          :disabled="showRangePicker && !form.subnet_id"
+          data-track="dhcp-scope-lease-time"
+        />
+        <small class="field-help">
+          Seconds, or a number with s, m, h or d. A client renews at half the lease; one that sleeps
+          past the end leases again when it wakes.
+        </small>
+      </div>
+      <div class="field">
         <label>Description</label>
         <InputText
           v-model="form.description"
@@ -317,6 +331,7 @@ import SelectButton from '../ui/SelectButton.js';
 import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { networkOptionFills } from '@shared/dhcp-network-options.js';
+import { isValidLeaseTime } from '@shared/lease-time.js';
 import { apiError, EMPTY_CELL } from '../utils/format.js';
 import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
 import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';
@@ -482,8 +497,9 @@ const optionGroups = computed(() => {
   const order = optionGroupOrder.value.map((g) => g.name);
   const groups = {};
   for (const opt of optionCatalog.value) {
-    // Lease time is the one duration control; option 51 would be a second
-    // one that the server also derives from lease_time (H-07).
+    // The Lease time field is the one duration control; option 51 would be
+    // a second one for the same scope column (H-07). The field starts from
+    // the 51 default for a new scope (defaultLeaseTimeValue).
     if (Number(opt.code) === 51) continue;
     const g = opt.group || 'Common';
     if (!groups[g]) groups[g] = [];
@@ -516,6 +532,20 @@ function showOptionHelp(event, opt) {
     rfcUrl: opt.rfcUrl || '',
   };
   helpPopoverRef.value.toggle(event);
+}
+
+// What a new scope's Lease time starts as: the DHCPv4 Lease Time (51) default
+// when it is marked Add to new scopes, as the server picks it (defaultLeaseTime).
+function defaultLeaseTimeValue() {
+  const value = defaultValues[51];
+  if (
+    loadedFamily === 4 &&
+    enabledDefaultCodes.value.includes(51) &&
+    isValidLeaseTime(String(value ?? ''))
+  ) {
+    return String(value);
+  }
+  return '24h';
 }
 
 function emptyForm() {
@@ -936,6 +966,15 @@ async function save() {
     toast.add({ severity: 'warn', summary: 'Check the pool', detail: poolError.value, life: 5000 });
     return;
   }
+  if (!isValidLeaseTime(String(form.value.lease_time ?? '').trim())) {
+    toast.add({
+      severity: 'warn',
+      summary: 'Check the lease time',
+      detail: 'Seconds, or a number with s, m, h or d, such as 12h or 3600.',
+      life: 5000,
+    });
+    return;
+  }
   saving.value = true;
   scopeError.value = '';
   let createdRange = null;
@@ -956,7 +995,7 @@ async function save() {
       );
 
     const payload = {
-      lease_time: form.value.lease_time || '24h',
+      lease_time: String(form.value.lease_time).trim(),
       description: form.value.description || null,
       enabled: form.value.enabled,
       options,
@@ -1193,6 +1232,7 @@ async function openNewWithPicker(subnetCtx) {
 
   form.value = {
     ...emptyForm(),
+    lease_time: defaultLeaseTimeValue(),
     v6_mode: initialV6Mode(Boolean(subnetCtx?.start_ip && subnetCtx?.end_ip)),
     subnet_id: subnetCtx?.id || null,
     start_ip: autoStartIp,
@@ -1245,6 +1285,7 @@ async function openNewForRange(opts) {
 
   form.value = {
     ...emptyForm(),
+    lease_time: defaultLeaseTimeValue(),
     // A range was chosen, so it is the pool.
     v6_mode: initialV6Mode(true),
     range_id: opts.rangeId,

@@ -261,7 +261,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `@shared`),
   `resolveEffectiveScopeOptions` and `isLinkedOption` in `models/dhcp-scope.js` (what a scope
   serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
-  `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default),
+  `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default) and
+  `defaultLeaseTime` there (the lease time a new scope starts with: the Lease Time (51) default
+  marked Add to new scopes, else the `default_lease_time` setting; every scope-creating path
+  asks it),
   `models/session.js` (every sign-in session rule: idle and 24 hour limits, ending sessions
   with a reason; see ARCHITECTURE.md Sign-in sessions), `models/filtering-exemption.js`
   (every rule for a host with DNS filtering off: keyed by MAC, else address; `exemptAddressSet`

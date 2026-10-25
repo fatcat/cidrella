@@ -370,7 +370,12 @@ default reaches every scope using it, and an empty default serves nothing.
 links. Precedence, lowest first: IPv4 linked default, the scope's own rows, the
 legacy scope columns (only when the scope has no rows with its own value), the
 network; IPv6 linked default, legacy columns, own rows, the network. IPv4
-option 51 is the scope's `lease_time`, never a default. Writers mark a link
+option 51 is the scope's `lease_time`, which a scope never links to a default:
+the defaults editor and Bulk Change show it as 51, a ticked 51 with a value in
+Bulk Change writes `lease_time` on the selected scopes as their own, and a new
+scope starts with the 51 default when it is marked Add to new scopes
+(`defaultLeaseTime` in `models/dhcp-option.js`, else the `default_lease_time`
+setting). The scope dialog edits it as the Lease time field. Writers mark a link
 with `USE_DEFAULT` (`services/subnet-dhcp-topology.js`), which
 `writeScopeOptionRows` stores as NULL; copies between scopes (divide, merge)
 carry the value as-is, so links survive.

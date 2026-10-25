@@ -143,7 +143,7 @@ describe('ScopeDialog pools, ranges and options', () => {
     expect(pools.text()).toContain('10.0.0.10');
     expect(pools.text()).toContain('10.0.0.100');
     expect(pools.text()).toContain('2 pool intervals');
-    expect(wrapper.findAll('input').length).toBe(1); // description only, no start/end
+    expect(wrapper.findAll('input').length).toBe(2); // lease time and description, no start/end
 
     await saveButton(wrapper).trigger('click');
     await flushPromises();
@@ -162,6 +162,50 @@ describe('ScopeDialog pools, ranges and options', () => {
       start_ip: '10.0.0.10',
       end_ip: '10.0.0.50',
     });
+  });
+
+  // Prod's three scopes had 15 and 10 minute leases that no screen offered to
+  // change (2026-10-25): the form carried lease_time with no control for it.
+  it('shows the lease time, saves an edit, and refuses one it cannot read', async () => {
+    const wrapper = mountDialog();
+    await wrapper.vm.openEdit({ ...scope, pools: [scope.pools[0]] });
+    await flushPromises();
+    const field = wrapper.find('[data-track="dhcp-scope-lease-time"]');
+    expect(field.element.value).toBe('12h');
+
+    await field.setValue('abc');
+    await saveButton(wrapper).trigger('click');
+    await flushPromises();
+    expect(dhcpStore.updateScope).not.toHaveBeenCalled();
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({ summary: 'Check the lease time' }),
+    );
+
+    await field.setValue(' 3600 ');
+    await saveButton(wrapper).trigger('click');
+    await flushPromises();
+    expect(dhcpStore.updateScope.mock.calls[0][1].lease_time).toBe('3600');
+  });
+
+  it('starts a new scope from the Lease Time default marked Add to new scopes', async () => {
+    const fallback = api.get.getMockImplementation();
+    api.get.mockImplementation((url, config) =>
+      url === '/dhcp/options' && config?.params?.family !== 6
+        ? Promise.resolve({
+            data: {
+              family: 4,
+              catalog: [{ code: 51, label: 'Lease time', type: 'number', group: 'Common' }],
+              groups: [{ name: 'Common', label: 'Common' }],
+              defaults: { 51: '3600' },
+              enabledDefaults: [51],
+            },
+          })
+        : fallback(url, config),
+    );
+    const wrapper = mountDialog();
+    await wrapper.vm.openNewWithPicker({ id: 11, name: 'Lab', cidr: '10.0.0.0/24' });
+    await flushPromises();
+    expect(wrapper.vm.form.lease_time).toBe('3600');
   });
 
   it('T-27 never offers option 51 beside the lease time control', async () => {
@@ -236,9 +280,10 @@ describe('ScopeDialog on an IPv6 network', () => {
     await flushPromises();
     expect(wrapper.find('[data-track="scope-v6-mode"]').exists()).toBe(true);
     expect(wrapper.vm.form.v6_mode).toBe('stateless');
-    // Description only: no Start/End for a stateless scope. The options block
-    // is the IPv6 catalog, fetched by family, with no DHCPv4 code in it.
-    expect(formInputs(wrapper).length).toBe(1);
+    // Lease time and description only: no Start/End for a stateless scope.
+    // The options block is the IPv6 catalog, fetched by family, with no
+    // DHCPv4 code in it.
+    expect(formInputs(wrapper).length).toBe(2);
     expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 6 } });
     wrapper.vm.optionsExpanded = true;
     await flushPromises();
@@ -341,7 +386,7 @@ describe('ScopeDialog on an IPv6 network', () => {
       pools: [{ start_ip: 'fd00:1234::1000', end_ip: 'fd00:1234::1fff' }],
     });
     await flushPromises();
-    expect(formInputs(wrapper).length).toBe(3); // start, end, description
+    expect(formInputs(wrapper).length).toBe(4); // start, end, lease time, description
     await saveButton(wrapper).trigger('click');
     await flushPromises();
     const [, payload] = dhcpStore.updateScope.mock.calls[0];

@@ -7,6 +7,9 @@
  *     not use is not served, whatever the default holds.
  *   - GET /options counts the scopes using each default.
  *   - Divide copies links as links, and an IPv6 scope's rows keep family 6.
+ *   - A new DHCPv4 scope starts with the Lease Time (51) default when it is
+ *     marked Add to new scopes, else the default_lease_time setting; the
+ *     scope never links to it.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
@@ -26,6 +29,7 @@ vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => ({
   startLeaseWatcher: vi.fn(),
 }));
 
+const { getSetting } = await import('../../../src/db/init.js');
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
 const { default: dhcpRouter } = await import('../../../src/routes/dhcp.js');
 const { default: request } = await import('supertest');
@@ -215,5 +219,35 @@ describe('divide keeps links', () => {
       });
       expect(rows(child.id).every((r) => r.address_family === family)).toBe(true);
     }
+  });
+});
+
+describe('the lease time a new scope starts with', () => {
+  const leaseTime = (scopeId) =>
+    db.prepare('SELECT lease_time FROM dhcp_scopes WHERE id = ?').get(scopeId).lease_time;
+
+  it('is the Lease Time (51) default when marked Add to new scopes, never linked', async () => {
+    await setDefaults(4, [{ code: 51, value: '3600' }], [1, 3, 15, 51]);
+    const { scopeId } = await network('10.71.1.0/24', { gateway_address: '10.71.1.1' });
+    expect(leaseTime(scopeId)).toBe('3600');
+    expect(rows(scopeId).map((row) => row.option_code)).not.toContain(51);
+    const scope = (await request(app).get('/api/dhcp/scopes')).body.find((s) => s.id === scopeId);
+    expect(scope.effective.lease_time).toBe('3600');
+  });
+
+  it('falls back to the default_lease_time setting when 51 is not added to new scopes', async () => {
+    await setDefaults(4, [{ code: 51, value: '3600' }], [1, 3, 15]);
+    const { scopeId } = await network('10.71.2.0/24', { gateway_address: '10.71.2.1' });
+    expect(leaseTime(scopeId)).toBe(getSetting('default_lease_time'));
+    expect(leaseTime(scopeId)).not.toBe('3600');
+  });
+
+  it('ignores the 51 default for a DHCPv6 scope, whose 51 is another option', async () => {
+    await setDefaults(4, [{ code: 51, value: '3600' }], [1, 3, 15, 51]);
+    const { scopeId } = await network('fd71:1::/64', {
+      gateway_policy: 'first',
+      dhcp_v6_mode: 'stateful',
+    });
+    expect(leaseTime(scopeId)).toBe(getSetting('default_lease_time'));
   });
 });

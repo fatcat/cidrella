@@ -1,5 +1,10 @@
 import os from 'os';
-import { DHCP_DEFAULT_NTP_SERVERS, DHCP6_DEFAULT_NTP_SERVERS } from '../config/defaults.js';
+import {
+  DEFAULTS,
+  DHCP_DEFAULT_NTP_SERVERS,
+  DHCP6_DEFAULT_NTP_SERVERS,
+} from '../config/defaults.js';
+import { isValidLeaseTime } from '../utils/lease-time.js';
 import { readSetting, upsertSetting } from './setting.js';
 
 // DHCPv4 and DHCPv6 option codes are separate namespaces, so every table here
@@ -140,6 +145,25 @@ export function linkedOptionCounts(db, family = 4) {
       .all(familyOf(family))
       .map((row) => [row.option_code, row.scopes]),
   );
+}
+
+/**
+ * The lease time a new scope starts with. DHCPv4: the Lease Time (51) row of
+ * the defaults editor when it is marked Add to new scopes and holds a lease
+ * time, the one place the UI offers a default for it; otherwise, and for
+ * DHCPv6 (whose 51 is another option), the `default_lease_time` setting. A
+ * scope never links to the 51 default: lease time is always the scope's own.
+ */
+export function defaultLeaseTime(db, family = 4) {
+  if (familyOf(family) === 4) {
+    const row = db
+      .prepare(
+        'SELECT value FROM dhcp_option_defaults WHERE address_family = 4 AND option_code = 51 AND enabled_by_default = 1',
+      )
+      .get();
+    if (row && isValidLeaseTime(String(row.value ?? ''))) return String(row.value);
+  }
+  return readSetting(db, 'default_lease_time') ?? DEFAULTS.default_lease_time;
 }
 
 export function getDefaultOptions(db, family = 4) {
