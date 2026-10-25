@@ -248,7 +248,7 @@ export function createKeaBackend(deps = {}) {
           }
         };
         const timer = setInterval(poll, DHCP_LEASE_WATCH_MS);
-        poll();
+        void poll();
         return () => clearInterval(timer);
       },
       releaseLease: (lease) => releaseKeaLease(commands, lease),

@@ -1156,7 +1156,7 @@ function onTcpConnection(clientSock) {
     buf = Buffer.concat([buf, chunk]);
     const { messages, rest } = extractTcpMessages(buf);
     buf = rest;
-    for (const m of messages) handleTcpQuery(m, clientSock);
+    for (const m of messages) void handleTcpQuery(m, clientSock);
     // Guard against a peer that sends a huge length prefix but never the body.
     if (buf.length > 0xffff + 2) cleanup();
   });

@@ -258,7 +258,7 @@ function bindSources() {
     log: createLogFollower(tail.source),
   }));
   lastDhcpCounters = null;
-  if (countsItself) dhcpCounterCounts();
+  if (countsItself) void dhcpCounterCounts();
 }
 
 /**

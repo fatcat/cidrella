@@ -261,7 +261,7 @@ export function startVendorScheduler() {
 
   if (!count || count.cnt === 0) {
     // Empty table, refresh immediately
-    refreshVendorDb();
+    void refreshVendorDb();
   } else {
     // Table has data, schedule refresh after 24h
     console.log(`MAC vendor DB: ${count.cnt} entries loaded, next refresh in 24h`);

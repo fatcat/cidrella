@@ -96,7 +96,7 @@ export function useSessionActivity({ onSignedOut = () => {} } = {}) {
       channel?.postMessage({ type: 'input', at });
     }
     // Someone came back while the warning shows: tell the server now.
-    if (idleWarning.value) report();
+    if (idleWarning.value) void report();
   }
 
   function onInput(event) {
@@ -120,14 +120,14 @@ export function useSessionActivity({ onSignedOut = () => {} } = {}) {
   function tick() {
     now.value = Date.now();
     if (!auth.session) return;
-    if (lastInput > lastReport && now.value - lastReport >= REPORT_EVERY_MS) report();
+    if (lastInput > lastReport && now.value - lastReport >= REPORT_EVERY_MS) void report();
     const { idleDeadline, expiresAt } = auth.session;
     const past = (deadline) => deadline != null && now.value >= deadline + DEADLINE_GRACE_MS;
-    if (past(idleDeadline) || past(expiresAt)) check();
+    if (past(idleDeadline) || past(expiresAt)) void check();
   }
 
   function stay() {
-    report();
+    void report();
   }
 
   async function signOutNow() {

@@ -382,7 +382,7 @@ export function createPdnsBackend(deps = {}) {
           plan = await syncZones(db);
         } catch (err) {
           if (err.name === 'PdnsError' && err.status === null) {
-            if (activate) restartAll();
+            if (activate) void restartAll();
             return { changed: true, activation: 'restart', activated: activate };
           }
           throw err;
@@ -430,7 +430,7 @@ export function createPdnsBackend(deps = {}) {
     activate({ force = false } = {}) {
       const down = DAEMONS.filter((daemon) => !units[daemon].isRunning());
       if (force || units.auth.restartPending()) {
-        restartAll();
+        void restartAll();
         return 'restarted';
       }
       if (down.length) {

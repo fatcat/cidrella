@@ -188,7 +188,7 @@ export function resumeInterruptedScans(db) {
     console.log(
       `[scanner] Resuming interrupted scan #${scan.id} for subnet ${scan.subnet_id} (${scan.scanned_ips}/${scan.total_ips} done)`,
     );
-    startScan(db, scan.id, scan.subnet_id);
+    startScanInBackground(db, scan.id, scan.subnet_id);
   }
 }
 
@@ -205,6 +205,28 @@ export function resumeInterruptedScans(db) {
  * @returns {Promise<{ method: 'arp+icmp', results?: Object }>}
  */
 export async function startScan(db, scanId, subnetId, options = {}) {
+  try {
+    return await runScan(db, scanId, subnetId, options);
+  } catch (err) {
+    // A throw outside the probe loop's own handler (the setup, or IPv6
+    // refused) must still end the row: a scan left pending or running makes
+    // createPendingIfIdle refuse every later scan of the subnet.
+    ScanRun.markFailed(db, scanId, err.message);
+    throw err;
+  }
+}
+
+/**
+ * Start a scan nobody waits for (a manual full scan, the scheduler, the resume
+ * at boot). A failure is already recorded on the scan row; this logs it.
+ */
+export function startScanInBackground(db, scanId, subnetId) {
+  startScan(db, scanId, subnetId).catch((err) => {
+    console.error(`[scanner] Scan #${scanId} of subnet ${subnetId} failed: ${err.message}`);
+  });
+}
+
+async function runScan(db, scanId, subnetId, options) {
   const { targetIps = null, updateModel = true } = options;
   const isTargeted = Array.isArray(targetIps) && targetIps.length > 0;
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);

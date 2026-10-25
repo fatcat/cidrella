@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { getDb } from '../db/init.js';
 import { recordAudit } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { startScan } from '../utils/scanner.js';
+import { startScan, startScanInBackground } from '../utils/scanner.js';
 import { getNextScanTime } from '../utils/scan-scheduler.js';
 import { networkContains, isValidAddress } from '../utils/ip.js';
 import { MAX_SCAN_SIZE } from '../config/defaults.js';
@@ -66,8 +66,7 @@ router.post('/', requirePerm('subnets:write'), (req, res) => {
   }
   const scanId = pending.scanId;
 
-  // Start scan in background (don't await)
-  startScan(db, scanId, subnet_id);
+  startScanInBackground(db, scanId, subnet_id);
 
   recordAudit({
     action: 'scan_started',

@@ -17,22 +17,6 @@ was suggested.
 The real findings left after triage. The rules switched off as noise, and why, are in
 `sonar-project.properties`.
 
-#### SCAN-SETUP-STRANDED-01: A throw in a scan's setup leaves it marked running
-
-**medium**, confirmed in the code. `server/src/utils/scanner.js:207` (`startScan`), whose only
-`try` starts at line 366.
-
-- **What happens:** Every caller starts a scan without awaiting it (`routes/scans.js:70`,
-  `utils/scan-scheduler.js:61`, the resume path at `scanner.js:191`). If anything between the
-  subnet lookup and line 366 throws (a database error, a bad target list), the rejection reaches
-  only the global handler in `index.js`, which logs it. The scan row stays `running`, so
-  `createPendingIfIdle` (`models/scan-run.js:87`) refuses every new scan of that subnet, manual
-  or scheduled, and the UI shows a scan that never ends. A restart resumes it, and the same
-  throw strands it again.
-- **Why:** The error handling was written around the probe loop, not the setup before it.
-- **Fix:** Wrap the whole body so any throw ends in `ScanRun.markFailed(db, scanId, message)`,
-  and add a test that a setup failure leaves the row `failed`.
-
 #### TZ-REGEX-01: The has-a-timezone check is not anchored as meant, and is copied
 
 **low**, confirmed in the code. `client/src/utils/dateFormat.js:12` (`hasTZ`) and

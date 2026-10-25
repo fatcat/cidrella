@@ -35,14 +35,14 @@ configureApi({
   token: () => useAuthStore().token,
   onUnauthorized(reason) {
     useAuthStore().logout(reason);
-    router.push('/login');
+    void router.push('/login');
   },
 });
 app.use(router);
 
 // Dev-only interaction tracking, tree-shaken out of production builds
 if (import.meta.env.VITE_TRACKING) {
-  import('./utils/tracker.js').then(({ initTracker }) => {
+  void import('./utils/tracker.js').then(({ initTracker }) => {
     initTracker({ router, apiClient: api, pinia });
   });
 }
