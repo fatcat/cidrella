@@ -30,10 +30,9 @@
       />
     </div>
     <p class="field-help dhcp-defaults-note">
-      A default reaches a {{ familyLabel }} scope only when the scope uses it (Use default in the
-      scope's options), and an edit here reaches every scope that does. Add to new scopes picks the
-      defaults a newly created scope uses. To change the options of existing scopes, use Bulk
-      Change.
+      Changes made to the DHCP scope defaults affect only new scopes. To change the options of an
+      existing scope simply edit the scope in question from IP Management > DHCP. To edit more than
+      one scope's options use "Bulk Change."
       <template v-if="isV6">
         Routers, prefixes and address lifetimes come from Router Advertisements and are not options;
         a SLAAC-only scope sends no options at all.
@@ -133,7 +132,6 @@ const props = defineProps({
   family: { type: Number, default: 4 },
 });
 const isV6 = computed(() => Number(props.family) === 6);
-const familyLabel = computed(() => (isV6.value ? 'DHCPv6' : 'DHCPv4'));
 // The IPv4 editor keeps its historic tracking ids; the IPv6 one is suffixed.
 const track = (id) => (isV6.value ? `${id}-v6` : id);
 
@@ -269,6 +267,8 @@ onMounted(async () => {
 
 .dhcp-defaults-note {
   margin: 0 0 0.75rem;
+  /* Two points above the field-help size: this note is the page's one explanation. */
+  font-size: calc(var(--app-fs-xs) + 2pt);
 }
 
 .form-grid {

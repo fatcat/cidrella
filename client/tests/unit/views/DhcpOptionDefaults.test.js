@@ -102,7 +102,7 @@ describe('DHCP option defaults editor by family', () => {
     await flushPromises();
     expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 4 } });
     // DHCP-01: a default reaches only the scopes that use it, counted per row.
-    expect(wrapper.text()).toContain('reaches a DHCPv4 scope only when the scope uses it');
+    expect(wrapper.text()).toContain('affect only new scopes');
     expect(usedBy(wrapper, 6)).toBe('2 scopes');
     expect(usedBy(wrapper, 15)).toBe(EMPTY_CELL);
     expect(wrapper.text()).not.toContain('Router Advertisements');
@@ -129,7 +129,7 @@ describe('DHCP option defaults editor by family', () => {
     const wrapper = mountEditor({ family: 6 });
     await flushPromises();
     expect(api.get).toHaveBeenCalledWith('/dhcp/options', { params: { family: 6 } });
-    expect(wrapper.text()).toContain('reaches a DHCPv6 scope only when the scope uses it');
+    expect(wrapper.text()).toContain('affect only new scopes');
     expect(usedBy(wrapper, 56)).toBe('1 scope');
     expect(wrapper.text()).toContain('Router Advertisements');
     expect(wrapper.find('[data-track="dhcp-save-defaults-v6"]').exists()).toBe(true);
