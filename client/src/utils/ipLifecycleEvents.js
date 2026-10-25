@@ -109,12 +109,24 @@ export function eventSourceLabel(source) {
   return SOURCE_LABELS[source] || String(source).replaceAll('_', ' ');
 }
 
+// A `*_changed` event is a transition, so a side it lacks is shown as none:
+// a lease expiring clears the hostname, and "daniels-mbp" alone read as the
+// name being set again, not removed.
+const NO_VALUE = '(none)';
+
+function changeValues(event) {
+  const isChange = String(event.event_type || '').endsWith('_changed');
+  if (isChange && (event.old_value || event.new_value)) {
+    return `${event.old_value || NO_VALUE} → ${event.new_value || NO_VALUE}`;
+  }
+  return event.old_value && event.new_value
+    ? `${event.old_value} → ${event.new_value}`
+    : event.new_value || event.old_value || '';
+}
+
 /** "old → new · via source", dropping whichever parts the row lacks. */
 export function eventDetail(event) {
-  const values =
-    event.old_value && event.new_value
-      ? `${event.old_value} → ${event.new_value}`
-      : event.new_value || event.old_value || '';
+  const values = changeValues(event);
   const source = eventSourceLabel(event.source);
   const actor = eventActorLabel(event);
   return [values, source ? `via ${source}` : '', actor ? `by ${actor}` : '']
