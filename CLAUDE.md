@@ -71,10 +71,12 @@ repository), ports 5300, 5353, 5356 and 8053 free on loopback, and outbound DNS 
 
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.
-CI runs the suites with `--coverage` (lcov into `server/coverage/` and `client/coverage/`) and
-then a SonarQube Cloud scan, project `fatcat_cidrella`, configured in
-`sonar-project.properties`. The scan is advisory: it never fails CI, and it is skipped where
-the `SONAR_TOKEN` secret is absent (Dependabot and fork pull requests).
+SonarQube Cloud (project `fatcat_cidrella`, configured in `sonar-project.properties`) runs in
+its own workflow, `.github/workflows/sonar.yml`: on a pull request to main and on demand (Run
+workflow, any branch), never on a plain push. It runs the suites with `--coverage` (lcov into
+`server/coverage/` and `client/coverage/`; `npm test` does not) and then the scan. It is not a
+required check, and it is skipped where the `SONAR_TOKEN` secret is absent (Dependabot and fork
+pull requests).
 Dependabot delivers grouped weekly dependency PRs. Prefer merging those over manual
 lockfile bumps.
 
