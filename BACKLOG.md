@@ -238,6 +238,63 @@ the DHCP leases table columns for DUID/IAID default to hidden. No IPv6 NTP defau
 
 ## Deferred design work
 
+### Process isolation and event-loop blocking (target 0.6.3)
+
+Found 2026-10-25, while fixing AUTH-PATH-REDOS-01: a slow request handler stalled DNS, because
+the DNS proxy runs in the same Node process as the web API and login. A survey of the main
+process turned up three pieces of work, in this order.
+
+1. **Stop blocking the event loop with synchronous child processes.** Every one of these freezes
+   the whole process, the DNS proxy included, until it returns:
+   - `utils/backup.js`: archive build and restore run `tar` (and `cp`) through `spawnSync` and
+     `execFileSync`. A scheduled backup stops DNS answers for as long as tar runs.
+   - `backends/shared/unit-control.js`: start, stop, restart and reload use synchronous
+     `systemctl` (or `pkill`), and `systemctl restart` waits for the unit to come up. A PowerDNS
+     or Kea restart can take seconds.
+   - Smaller: the Kea config check (`kea-dhcp4 -t`, `backends/kea/index.js`), `df` and `ping` in
+     `routes/health.js`, `ip -6 neigh` in `utils/nd-cache.js`, `ip -6 route` in
+     `utils/ra-monitor.js`, `utils/ntp-status.js`, and the rest of the `execFileSync` callers
+     (`grep -rln "execSync\|execFileSync\|spawnSync" server/src`).
+
+   Fix: async `execFile`/`spawn` with a timeout. Callers that rely on the call finishing before
+   the next line (bypass's `setBypassListen`, the after-commit hooks) have to await it, so check
+   each one's ordering rather than converting blindly. No new process needed.
+
+2. **Move the DNS proxy into its own service.** A `cidrella-dns-proxy` systemd unit, and an s6
+   longrun in Docker. What the shared process costs today:
+   - One event loop: any slow handler delays every DNS answer.
+   - Port 53 belongs to the proxy, and the backend sits on an internal port behind it, so every
+     `systemctl restart cidrella` in `update.sh` leaves port 53 unanswered until the new process
+     boots and binds again. That undoes the old rule that updates never restart the DNS daemon.
+     Inferred from the code, not timed.
+   - The health monitor and bypass (`startHealthMonitor`, `activateBypass` in
+     `utils/dns-proxy.js`) live in the same process. They catch the proxy's sockets closing, not
+     the process crashing or the loop hanging, so neither puts the backend on port 53. A crash
+     waits out `RestartSec=5` plus boot.
+
+   Shape: the main app becomes the outside watchdog that turns bypass on and off. Updates leave
+   the unit running unless its code changed (`update.sh` must learn when to restart it, across
+   the A/B slots). The coupling to replace, as of `1f33247`: the proxy imports settings, the
+   database, `recordAudit`, the backend registry and `applyListenNow`; nine modules import from
+   it (`index.js`, `services/dhcp-lease-sync.js`, `routes/interfaces.js`, `routes/geoip.js`,
+   `routes/blocklists.js`, `routes/metrics.js`, `routes/analytics.js`, `utils/blocklist.js`,
+   `utils/metrics-aggregator.js`) to reload its blocklist, GeoIP and filtering state, read
+   status and the `getAndReset*` counters, and rebind. Each becomes a message or a database
+   poll. A worker thread was considered and is the smaller step, but it fixes only the shared
+   event loop, not crashes or update restarts.
+
+3. **Take raw sockets away from the web process.** `cidrella.service` runs the login page and
+   every API route with `CAP_NET_RAW` and `CAP_NET_BIND_SERVICE`, plus the polkit and sudo
+   rights to control daemons and start updates. A bug in any route gets all of it. Moving the
+   network probes (the scanner, the DHCP probes, rogue DHCP detection) out with the proxy lets
+   the web process drop `CAP_NET_RAW`; it keeps `CAP_NET_BIND_SERVICE` only if it serves on 443.
+   Daemon control behind a small privileged helper is cleaner still, but a bigger job; decide
+   that once 2 is done.
+
+Looked at and fine in-process: the scanner's tool runs (async `execFile`), DuckDB (its own
+threads), the blocklist refresh (streamed), lease sync, the vendor and update checks, and the
+metrics aggregator.
+
 ### PowerDNS + Kea stack (shipped in 0.6.0), what is left
 
 Decided 2026-10-07: a host runs one of two stacks, **dnsmasq** (DNS, DHCP, RAs) or
