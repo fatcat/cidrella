@@ -15,7 +15,8 @@ import './assets/utilities.css';
 
 import App from './App.vue';
 import router from './router/index.js';
-import api from './api/client.js';
+import api, { configureApi } from './api/client.js';
+import { useAuthStore } from './stores/auth.js';
 import { useDebugStore } from './stores/debug.js';
 import { useThemeStore } from './stores/theme.js';
 import { migrateStorageKeys } from './utils/storage.js';
@@ -29,6 +30,14 @@ const app = createApp(App);
 const pinia = createPinia();
 
 app.use(pinia);
+// Before the router: its first navigation may already call the API.
+configureApi({
+  token: () => useAuthStore().token,
+  onUnauthorized(reason) {
+    useAuthStore().logout(reason);
+    router.push('/login');
+  },
+});
 app.use(router);
 
 // Dev-only interaction tracking, tree-shaken out of production builds

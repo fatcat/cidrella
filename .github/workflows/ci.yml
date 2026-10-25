@@ -71,7 +71,8 @@ jobs:
         # models/dhcp-lease.js -> utils/after-commit.js) went in 0.5.1, when
         # after-commit stopped importing the hook handlers and index.js began
         # registering them at boot. Any cycle fails the gate. madge can't
-        # parse Vue SFCs, so client/ is out of scope here.
+        # parse Vue SFCs, so client/ has its own check,
+        # scripts/check-client-cycles.js, run by `npm run lint` above.
         #
         # Only static imports count. The repo-root .madgerc sets
         # skipAsyncImports, so a lazy `await import()` inside a function body

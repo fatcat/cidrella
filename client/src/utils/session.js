@@ -18,6 +18,11 @@ const MESSAGES = {
   restore: () => 'A backup was restored. Sign in again.',
 };
 
+/** Why a 401 ended the session: the server's SESSION_ENDED reason, else revoked. */
+export function endedReason(data) {
+  return data?.code === 'SESSION_ENDED' ? data.reason || 'revoked' : 'revoked';
+}
+
 export function rememberSignOut(reason, idleTimeoutSeconds = null) {
   try {
     sessionStorage.setItem(

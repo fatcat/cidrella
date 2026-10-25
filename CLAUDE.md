@@ -30,7 +30,7 @@ npm test               # full suite: server then client
 npm run test:server    # server unit + integration (vitest)
 npm run test:client    # client unit (vitest)
 npm run test:sidecar   # anomaly sidecar rules (python3 unittest, stdlib only, no venv needed)
-npm run lint           # ESLint (flat config, correctness-focused), must exit 0
+npm run lint           # ESLint (flat config, correctness-focused) + import guards, must exit 0
 npm run build:client   # production client build, a build failure is a test failure
 npm run check:reuse    # duplicate helpers, duplicate scoped CSS, hand-built confirm dialogs (baselined)
 npm run hunt:workspace # 300 seeded random walks through the Networks workspace (model test)
@@ -293,7 +293,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `npm run lint` refuses an import of a backend adapter (`server/src/backends/<name>/`) from
   outside `server/src/backends/` (ESLint for static imports, `scripts/check-backend-imports.js`
   for `vi.mock` and `import()` strings; tests of the adapters live under `tests/*/backends/`), a vendor import outside `src/ui`, a raw `<select>`/`<input>` outside
-  the baselined files, and a `dot`/`pill`/`badge` class outside the status components;
+  the baselined files, a `dot`/`pill`/`badge` class outside the status components, and an import
+  cycle in `client/src` (`scripts/check-client-cycles.js`, static imports in `.js` and `.vue`,
+  baseline 0; a low module takes a callback the higher one registers, as `configureApi` in
+  `api/client.js` does, instead of importing it);
   `npm run check:reuse` runs `check-duplicate-exports.js` (a local copy of an exported helper),
   `check-scoped-css-dupes.js` (an identical rule in two scoped style blocks; `--drift` lists
   same-name-different-body candidates as a report) and `check-confirm-dialogs.js` (a Dialog
