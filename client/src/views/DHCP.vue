@@ -30,9 +30,9 @@
       />
     </div>
     <p class="field-help dhcp-defaults-note">
-      Changes made to the DHCP scope defaults affect only new scopes. To change the options of an
-      existing scope simply edit the scope in question from IP Management > DHCP. To edit more than
-      one scope's options use "Bulk Change."
+      A default reaches an existing scope only where that scope is set to Use default. To change the
+      options of one existing scope, edit it from IP Management > DHCP. To edit more than one
+      scope's options, use "Bulk Change."
       <template v-if="isV6">
         Routers, prefixes and address lifetimes come from Router Advertisements and are not options;
         a SLAAC-only scope sends no options at all.
