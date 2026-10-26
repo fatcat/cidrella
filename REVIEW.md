@@ -17,43 +17,6 @@ was suggested.
 The real findings left after triage. The rules switched off as noise, and why, are in
 `sonar-project.properties`.
 
-#### TZ-REGEX-01: The has-a-timezone check is not anchored as meant, and is copied
-
-**low**, confirmed in the code. `client/src/utils/dateFormat.js:12` (`hasTZ`) and
-`client/src/views/networks-workspace/AddressDetailsPanel.vue:602` (`formatEventTime`).
-
-- **What happens:** `/Z|[+-]\d{2}:\d{2}$/` reads as "contains a Z anywhere, or ends in an
-  offset", not "ends in Z or an offset". No real timestamp misfires today, but any string with a
-  Z in it would skip the UTC suffix. The panel carries its own copy instead of the shared one.
-- **Why:** The alternation binds looser than the anchor (Sonar S5850).
-- **Fix:** `/(?:Z|[+-]\d{2}:\d{2})$/`, export `hasTZ` from `dateFormat.js`, and use it in the
-  panel. `server/src/utils/lease-sql.js:66` already has the anchored form.
-
-#### ADDRESS-SORT-SPLIT-01: The workspace address sort key splits with a quadratic regex
-
-**low**, confirmed and measured. `client/src/views/networks-workspace-data.js:426`
-(`addressOrderKey`, used by `compareCellValues`).
-
-- **What happens:** `split(/\s+[–-]\s+/)` retries from every space in a run with no dash after
-  it: a cell value of 40,000 spaces took 1.1 s to sort on (Node 24, 2026-10-25). It runs in the
-  viewer's browser on table sorts only, so no real value is anywhere near that long.
-- **Why:** `\s+` with no anchor backtracks (Sonar S8786).
-- **Fix:** Find the first ` – ` or ` - ` with `indexOf` (or match the address prefix directly)
-  instead of splitting on the regex.
-
-#### CURL-PROTO-01: The install, update and build scripts follow redirects to any protocol
-
-**low**, confirmed in the code. `curl -fsSL` without `--proto '=https' --proto-redir '=https'`
-in `scripts/install.sh:452,487,495`, `scripts/update.sh:704,799,805,1157,1184,1672`,
-`scripts/build-release.sh:1074,1086`, `scripts/lib/kea-install.sh:49` and
-`scripts/lib/pdns-install.sh:56`.
-
-- **What happens:** A redirect to plain HTTP is followed. Nothing is exploitable through it today:
-  release tarballs are checked with minisign, the Kea and PowerDNS keys by fingerprint, and the
-  bundled Node by SHA-256 (though its checksum file comes over the same channel).
-- **Why:** The stricter form was adopted in `scripts/lib/rotation.sh:250` and never spread.
-- **Fix:** Add `--proto '=https' --proto-redir '=https'` to each, matching `rotation.sh`.
-
 #### A11Y-ROLES-01: Two elements carry roles that hide what they do
 
 **low**, confirmed in the code. `client/src/components/anomaly-triage/TriageQueue.vue:37` and

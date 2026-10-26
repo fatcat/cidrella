@@ -46,7 +46,7 @@ _kea_repo() {
 
   local tmp
   tmp=$(mktemp -d) || return 1
-  if ! curl -fsSL "$KEA_REPO_URL/gpg.key" -o "$tmp/key.asc"; then
+  if ! curl --proto '=https' --proto-redir '=https' -fsSL "$KEA_REPO_URL/gpg.key" -o "$tmp/key.asc"; then
     warn "Kea: could not download ISC's signing key from $KEA_REPO_URL/gpg.key"
     rm -rf "$tmp"
     return 1

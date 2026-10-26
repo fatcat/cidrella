@@ -53,7 +53,7 @@ _pdns_repo() {
 
   local tmp
   tmp=$(mktemp -d) || return 1
-  if ! curl -fsSL "$PDNS_REPO_URL/FD380FBB-pub.asc" -o "$tmp/key.asc"; then
+  if ! curl --proto '=https' --proto-redir '=https' -fsSL "$PDNS_REPO_URL/FD380FBB-pub.asc" -o "$tmp/key.asc"; then
     warn "PowerDNS: could not download the signing key from $PDNS_REPO_URL/FD380FBB-pub.asc"
     rm -rf "$tmp"
     return 1

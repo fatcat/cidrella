@@ -1071,7 +1071,7 @@ if [ "$DRY_RUN" = false ]; then
 
   if [ ! -f "$NODE_CACHED_TARBALL" ]; then
     echo "  Downloading $NODE_TARBALL..."
-    curl -fsSL "$NODE_DOWNLOAD_URL" -o "$NODE_CACHED_TARBALL"
+    curl --proto '=https' --proto-redir '=https' -fsSL "$NODE_DOWNLOAD_URL" -o "$NODE_CACHED_TARBALL"
   else
     echo "  Using cached $NODE_TARBALL"
   fi
@@ -1083,7 +1083,7 @@ if [ "$DRY_RUN" = false ]; then
   # which is the threat model here. A stronger defense (GPG sig check against
   # pinned keys) is tracked in PLAN.md.
   echo "  Verifying SHA-256 against nodejs.org SHASUMS256.txt..."
-  EXPECTED_SHA=$(curl -fsSL "$NODE_SHASUMS_URL" | awk -v f="$NODE_TARBALL" '$2 == f {print $1}')
+  EXPECTED_SHA=$(curl --proto '=https' --proto-redir '=https' -fsSL "$NODE_SHASUMS_URL" | awk -v f="$NODE_TARBALL" '$2 == f {print $1}')
   if [ -z "$EXPECTED_SHA" ]; then
     echo "  ERROR: $NODE_TARBALL not found in $NODE_SHASUMS_URL"
     echo "  (Is BUNDLED_NODE_VERSION=$BUNDLED_NODE_VERSION still published?)"

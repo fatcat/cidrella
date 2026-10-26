@@ -150,7 +150,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   a toggling legend; `dashboard/AllocationBar` wraps it), `TopList` (a ranked list with bars,
   every top-10), `dashboard/FigureCard`; `utils/format.js` (`apiError`,
   `formatNumber`, `displayOnlineStatus`, `EMPTY_CELL`), `utils/chart-config.js` (colors,
-  `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`, `utils/keyboard.js` (`MOD_LABEL`, `isModShortcut`: Ctrl, or Command on a Mac, for every shortcut and its hint),
+  `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js` (`hasTZ`: does a timestamp already end in a timezone), `utils/keyboard.js` (`MOD_LABEL`, `isModShortcut`: Ctrl, or Command on a Mac, for every shortcut and its hint),
   `utils/proxy-perf.js` (the resolution and process figures from the proxy-perf rows),
   `utils/service-chips.js` (the backend, proxy and forwarder chips), `utils/backend-status.js`
   (`backendUnits`: the DNS/DHCP backends from a health payload, one unit per daemon named by
@@ -301,7 +301,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
   this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6
   gates SQL cannot express; the scheduler and the stale sweep both apply both). Add to this list when you
-  make something shared. Five guards enforce what they can detect, each baselined so it fails
+  make something shared. These guards enforce what they can detect, each baselined so it fails
   only on NEW instances (fix one by deleting its baseline entry, never by adding one):
   `npm run lint` refuses an import of a backend adapter (`server/src/backends/<name>/`) from
   outside `server/src/backends/` (ESLint for static imports, `scripts/check-backend-imports.js`
@@ -309,7 +309,14 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   the baselined files, a `dot`/`pill`/`badge` class outside the status components, and an import
   cycle in `client/src` (`scripts/check-client-cycles.js`, static imports in `.js` and `.vue`,
   baseline 0; a low module takes a callback the higher one registers, as `configureApi` in
-  `api/client.js` does, instead of importing it);
+  `api/client.js` does, instead of importing it), and in shipped code (`server/src`,
+  `client/src`) a regex that backtracks super-linearly or whose alternation binds looser than
+  its anchor (`eslint-plugin-regexp`, `sonarjs/anchor-precedence`), a call statement that drops
+  the promise of an async function (`cidrella/no-floating-async` in
+  `scripts/eslint-rules/no-floating-async.js`; `await` it, `return` it, `.catch()` it, or `void`
+  it when the function handles its own errors; client files with old instances are baselined in
+  `eslint.config.mjs`), and a redirect-following `curl` in `scripts/` without
+  `--proto '=https' --proto-redir '=https'` (`scripts/check-curl-https.js`);
   `npm run check:reuse` runs `check-duplicate-exports.js` (a local copy of an exported helper),
   `check-scoped-css-dupes.js` (an identical rule in two scoped style blocks; `--drift` lists
   same-name-different-body candidates as a report) and `check-confirm-dialogs.js` (a Dialog

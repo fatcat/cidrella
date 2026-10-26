@@ -15,7 +15,7 @@
     "hunt:workspace": "cd client && MODEL_SEEDS=${MODEL_SEEDS:-300} MODEL_STEPS=${MODEL_STEPS:-30} npx vitest run tests/unit/views/networks-workspace/model/workspace-model.test.js",
     "test:sidecar": "python3 -m unittest discover -s server/anomaly/tests",
     "test:watch": "cd server && npx vitest",
-    "lint": "eslint . && node scripts/check-backend-imports.js && node scripts/check-client-cycles.js",
+    "lint": "eslint . && node scripts/check-backend-imports.js && node scripts/check-client-cycles.js && node scripts/check-curl-https.js",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check:db-ownership": "node scripts/check-db-ownership.js",
@@ -27,6 +27,8 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "eslint": "^10.13.0",
+    "eslint-plugin-regexp": "^3.3.1",
+    "eslint-plugin-sonarjs": "^4.2.2",
     "eslint-plugin-vue": "^10.11.1",
     "globals": "^17.13.0",
     "prettier": "3.9.10"

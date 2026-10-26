@@ -701,7 +701,7 @@ else
   fi
 
   info "Checking for updates..."
-  RELEASE_JSON=$(curl -fsSL "$RELEASE_URL" 2>/dev/null || true)
+  RELEASE_JSON=$(curl --proto '=https' --proto-redir '=https' -fsSL "$RELEASE_URL" 2>/dev/null || true)
   if [ -z "$RELEASE_JSON" ]; then
     err "Failed to fetch release info from GitHub."
     write_progress "failed" 5 "Update failed" "Failed to fetch release info from GitHub"
@@ -796,13 +796,13 @@ else
   # Download
   info "Downloading: $TARBALL_URL"
   TMPDIR=$(mktemp -d)
-  curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
+  curl --proto '=https' --proto-redir '=https' -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
   TARBALL_SIZE=$(du -h "$TMPDIR/cidrella.tar.gz" | cut -f1)
   ok "Downloaded $TARBALL_SIZE"
   emit_event download pass "tag=$TAG_NAME" "size=$TARBALL_SIZE"
   track_progress "downloading" 25 "Download complete ($TARBALL_SIZE)"
 
-  curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
+  curl --proto '=https' --proto-redir '=https' -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
 fi
 
 # ─── Fetch + apply rotation announcements (v0.4.9+) ─────

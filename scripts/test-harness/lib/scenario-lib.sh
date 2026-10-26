@@ -284,7 +284,7 @@ refresh_apt_lists() {
 install_latest_release() {
   wait_for_apt || return 1
   refresh_apt_lists
-  curl -fsSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh \
+  curl --proto '=https' --proto-redir '=https' -fsSL https://raw.githubusercontent.com/fatcat/cidrella/main/scripts/install.sh \
     -o /tmp/install.sh || return 1
   yes y | bash /tmp/install.sh > /tmp/install-output.log 2>&1
 }
@@ -301,7 +301,7 @@ install_release_tag() {
   wait_for_apt || return 1
   refresh_apt_lists
   case "$tag" in v*) : ;; *) tag="v$tag" ;; esac
-  curl -fsSL "https://raw.githubusercontent.com/fatcat/cidrella/${tag}/scripts/install.sh" \
+  curl --proto '=https' --proto-redir '=https' -fsSL "https://raw.githubusercontent.com/fatcat/cidrella/${tag}/scripts/install.sh" \
     -o /tmp/install.sh || return 1
   yes y | bash /tmp/install.sh --version "${tag#v}" > /tmp/install-output.log 2>&1
 }

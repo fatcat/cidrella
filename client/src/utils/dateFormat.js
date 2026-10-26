@@ -8,8 +8,8 @@ function hourOption() {
   return {}; // locale default
 }
 
-/** True if the string already carries a timezone indicator (Z or ±HH:MM) */
-const hasTZ = (s) => /Z|[+-]\d{2}:\d{2}$/.test(String(s));
+/** True if the string already ends in a timezone indicator (Z or ±HH:MM) */
+export const hasTZ = (s) => /(?:Z|[+-]\d{2}:\d{2})$/.test(String(s));
 
 /**
  * Elapsed time since an ISO timestamp, as "just now" / "5m ago" / "3h ago" / "2d ago".

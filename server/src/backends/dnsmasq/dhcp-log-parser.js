@@ -15,7 +15,9 @@ import { normalizeOpt55 } from '../../utils/device-classifier.js';
 // "<ts> dnsmasq-dhcp[pid]: <xid> <content>". Include the process id in the
 // accumulator key so an xid reused after a dnsmasq restart cannot inherit the
 // previous process's partial transaction.
-const DHCP_LINE_RE = /dnsmasq-dhcp\[(\d+)\]:\s+(\d+)\s+(.*)$/;
+// The content group starts at a non-space (or is empty) so it cannot trade
+// characters with the whitespace before it, which keeps the match linear.
+const DHCP_LINE_RE = /dnsmasq-dhcp\[(\d+)\]:\s+(\d+)\s+(\S.*|)$/;
 // DHCPv6 message lines. REQUEST, RELEASE and DECLINE share their names with
 // DHCPv4, so those are told apart by the client DUID (seven or more colon
 // separated bytes) where a DHCPv4 line has an address and a MAC.

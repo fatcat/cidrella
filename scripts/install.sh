@@ -449,7 +449,7 @@ else
 fi
 
 # Fetch release info
-RELEASE_JSON=$(curl -fsSL "$RELEASE_URL" 2>/dev/null || true)
+RELEASE_JSON=$(curl --proto '=https' --proto-redir '=https' -fsSL "$RELEASE_URL" 2>/dev/null || true)
 if [ -z "$RELEASE_JSON" ]; then
   err "Failed to fetch release info from GitHub."
   err "URL: $RELEASE_URL"
@@ -484,7 +484,7 @@ info "Downloading: $TARBALL_URL"
 TMPDIR=$(mktemp -d)
 trap "rm -rf '$TMPDIR'" EXIT
 
-curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
+curl --proto '=https' --proto-redir '=https' -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
 
 # Download and verify signature
 # Derive the signature from the tarball we actually chose, never by an
@@ -492,7 +492,7 @@ curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
 MINISIG_URL="${TARBALL_URL}.minisig"
 
 if command -v minisign &>/dev/null; then
-  curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" || {
+  curl --proto '=https' --proto-redir '=https' -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" || {
     err "Failed to download signature file. Aborting."
     exit 1
   }

@@ -421,9 +421,11 @@ export function countOnline(rows) {
 // The order key of a cell that holds an address, a network ('2001:db8::/64')
 // or an address range ('10.0.0.5 – 10.0.0.9'), or null for anything else.
 function addressOrderKey(value) {
-  const head = String(value ?? '')
-    .trim()
-    .split(/\s+[–-]\s+/)[0];
+  const text = String(value ?? '').trim();
+  // The part before a spaced dash. Found with a fixed-width match, not by
+  // splitting on /\s+[–-]\s+/, which is quadratic on a long run of spaces.
+  const dash = /\s[–-]\s/.exec(text);
+  const head = dash ? text.slice(0, dash.index).trimEnd() : text;
   const [address, prefix] = head.split('/');
   const key = sortKey(address);
   if (!key) return null;

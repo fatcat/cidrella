@@ -320,6 +320,7 @@
 import { computed, ref, watch } from 'vue';
 import api from '../../api/client.js';
 import { apiError, EMPTY_CELL } from '../../utils/format.js';
+import { hasTZ } from '../../utils/dateFormat.js';
 import { eventDetail, eventLabel, eventTone } from '../../utils/ipLifecycleEvents.js';
 
 const props = defineProps({
@@ -599,7 +600,7 @@ async function probeNow() {
 
 function formatEventTime(value) {
   if (!value) return dash;
-  const date = new Date(String(value).match(/Z|[+-]\d{2}:\d{2}$/) ? value : `${value}Z`);
+  const date = new Date(hasTZ(value) ? value : `${value}Z`);
   return Number.isNaN(date.getTime()) ? String(value) : date.toLocaleString();
 }
 
