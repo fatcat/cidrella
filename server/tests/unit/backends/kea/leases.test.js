@@ -67,6 +67,40 @@ describe('backendLeaseFromKea', () => {
     });
   });
 
+  it('takes the name without the dot Kea qualifies it with', () => {
+    const v4 = (hostname) =>
+      backendLeaseFromKea(
+        {
+          'ip-address': '10.0.0.17',
+          'hw-address': 'aa:bb:cc:dd:ee:ff',
+          'valid-lft': 900,
+          cltt: 1,
+          hostname,
+        },
+        4,
+      ).hostname;
+    const v6 = (hostname) =>
+      backendLeaseFromKea(
+        {
+          'ip-address': '2001:db8::17',
+          duid: '00:01',
+          iaid: 1,
+          type: 'IA_NA',
+          'valid-lft': 900,
+          cltt: 1,
+          hostname,
+        },
+        6,
+      ).hostname;
+    for (const name of [v4, v6]) {
+      expect(name('hp-laptop.')).toBe('hp-laptop');
+      expect(name('hp-laptop.example.com.')).toBe('hp-laptop.example.com');
+      expect(name('hp-laptop')).toBe('hp-laptop');
+      expect(name('')).toBeNull();
+      expect(name('.')).toBeNull();
+    }
+  });
+
   it('drops leases not in use and delegated prefixes', () => {
     for (const state of [1, 2, 3]) {
       expect(backendLeaseFromKea({ 'ip-address': '10.5.0.9', state }, 4)).toBeNull();
