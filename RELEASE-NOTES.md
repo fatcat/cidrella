@@ -6,6 +6,105 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.6.2 — 2026-10-26
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: true
+```
+
+Bug fix release, with one security fix. The rogue DHCP probe sees Kea servers, the DNS proxy
+comes back from bypass on its own, a client whose lease ran out no longer shows as a rogue, and
+the DHCP lease time and defaults are set in one place. Four DHCP options that could never be
+saved now can be.
+
+### Security
+
+- **A request path ending in many slashes no longer stalls DNS.** Before sign-in, every request
+  path had its trailing slashes trimmed by a pattern that slows down sharply on a long run of
+  them: one path of 16,000 slashes, well inside Node's header limit, held the event loop for
+  146 ms, and the DNS proxy shares that loop. Anyone who could reach the web port could do it
+  without an account. The trim is linear now. Found by the first SonarQube Cloud scan, which
+  also led to new lint checks for slow regexes, dropped promises and plain-HTTP redirects.
+
+### Fixed
+
+- **The rogue DHCP probe finds Kea servers.** The IPv4 probe sent its DISCOVER to the subnet's
+  broadcast address (10.0.3.255, say). Kea takes a DHCPv4 packet only when it is sent to
+  255.255.255.255 or to Kea's own address, so a rogue Kea server went unseen: one served a LAN
+  for four days while the probe reported nothing. dnsmasq answers either form. The probe now
+  sends to 255.255.255.255 from each interface, as a client does, and finds both.
+- **DNS proxy bypass ends on its own.** When the health monitor moved the DNS backend onto the
+  LAN port because the proxy had failed, nothing moved it back: filtering, GeoIP blocking and
+  the query log stayed off until the setting was deleted by hand, and a restart kept the
+  bypass. The monitor now retries the proxy while bypassed (after 5 minutes, doubling to an
+  hour) and ends the bypass when the proxy binds, with an audit row. A restart tries the proxy
+  first.
+- **A client whose lease ran out is no longer shown as a rogue.** When a lease expired, the
+  address lost its owner but could keep its online flag for up to two scan intervals, and an
+  online address with no owner is a rogue. The address now goes offline when its lease ends,
+  unless the host was heard from after that. A host that keeps using the address answers the
+  next scan and is flagged then. An expired lease that dnsmasq or Kea still lists no longer
+  counts as activity or as a new lease in the address history.
+- **Under Kea, lease names no longer end in a dot.** Kea stores a client's name as a fully
+  qualified one, `laptop.` when no suffix is configured, and CIDRella read that trailing dot as
+  "at the root of DNS": the address showed `laptop.`, and a dynamic lease's DNS record would
+  have been made outside its zone. The dot is dropped when the lease is read.
+- **The lease time can be changed from Bulk Change, and new scopes use its default.** Ticking
+  Lease Time (51) in Bulk Change changed only the defaults table, never a scope, and a new scope
+  ignored the Lease Time default and took a hidden setting instead. Both now use the Lease Time
+  default, and the scope dialog has a Lease time field.
+- **Classless Static Route (121), Static Route (33), Policy Filter (21) and Path MTU Plateau
+  Table (25) can be saved.** Each value is a comma-separated list, and these options refused a
+  comma, so none of them could be set or served by either DHCP server.
+- **dnsmasq sends the DHCP options it does not know at the right size.** For an option outside
+  its own table, dnsmasq guesses the type from the value, so Path MTU Aging Timeout (24) went
+  out as two bytes instead of four, and a text option whose value looked like a number or an
+  address went out as one (a value such as `1.2` was a configuration error). CIDRella now tells
+  dnsmasq the width of each number and keeps text as text. Options entered in dnsmasq's own
+  syntax (hex bytes, route pairs) are unchanged.
+- **A scan that fails while starting is marked failed.** It used to stay pending, which blocked
+  every later scan of that network, including after a restart.
+- **Toasts appear once.** Six pages showed every message twice.
+- **The address history shows a cleared value as cleared.** A hostname that was removed read as
+  if the old name had been set.
+- **Docker installs rotate their DNS logs.** In the container, `dnsmasq.log` and `pdns.log`
+  grew until they were cleared by hand. They now rotate at 50 MB and keep seven copies, as on a
+  native install.
+- **PowerDNS Recursor no longer logs about 31 warnings at every start and zone change.** It
+  stopped adding its built-in private reverse zones, which CIDRella already serves.
+- **The Resolution Map's location can be set from the keyboard.** While setting the location,
+  the arrow keys move a marker (Shift for larger steps) and Enter sets it; on the globe the
+  arrow keys turn it. The anomaly triage rows are announced as buttons again.
+
+### Changed
+
+- **DHCP defaults are copied when a scope is created and not followed after.** Use default is
+  gone, and so is the Used by column. An existing scope changes through its dialog or Bulk
+  Change. On upgrade every option that followed a default becomes the scope's own copy of the
+  value it was serving, so nothing served changes. Through the API, a scope option sent with
+  `use_default` writes nothing.
+- **The lease time is the first row of every option list.** For DHCPv4 it is option 51, shipped
+  as 3600 seconds and always added to new scopes. DHCPv6 has no lease-time option, so it gets an
+  Address lifetime row: the lifetimes of a stateful lease, or the prefix lifetimes advertised
+  for SLAAC and stateless networks. A new DHCPv6 scope starts from that default rather than a
+  fixed 86400 seconds.
+- **The Dashboard draws DHCPv4 and DHCPv6 traffic on separate charts.** Kea's counts for the two
+  are no longer added together. History from before the upgrade appears on the DHCPv4 chart.
+- **Add DHCP scope opens on the network you are viewing,** with its pool suggested, instead of
+  on a network picker.
+- **Under PowerDNS, the reverse zone for unique local IPv6 addresses (`d.f.ip6.arpa`) follows
+  CIDRella's site-local rule.** Recursor used to answer it locally every time. It is now answered
+  locally only while every upstream DNS server is a public address, and forwarded to a private
+  resolver otherwise, as under dnsmasq.
+
+### Upgrading
+
+Upgrades directly from 0.4.17 or later. Two database migrations run on upgrade: 090 adds the
+per-family DHCP traffic columns and 091 turns options that followed a default into the scope's
+own values.
+
 ## v0.6.1 — 2026-10-23
 
 ```yaml
