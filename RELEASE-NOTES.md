@@ -50,6 +50,13 @@ three showed up with Kea DHCP.
   remote code execution (CVE-2026-111497) and two TLS certificate hostname check bypasses
   (CVE-2026-105483, CVE-2026-106069). The bundled runtime (native installs) and the Docker
   image's base are both 24.22.1 now; the Docker image was on 24.21.0.
+
+  **Versions before 0.6.1 are exposed to the Brotli flaw without signing in.** The API
+  decodes a request body sent with `Content-Encoding: br` before it checks who is asking, so
+  anyone who can reach the web port can hand the vulnerable decoder a crafted stream. Upgrade
+  from 0.6.0 or earlier to 0.6.1. On a native install, also update the system Brotli library
+  (`apt update && apt upgrade`; on Debian 13 the fixed `libbrotli1` is `1.1.0-2+deb13u1`):
+  CIDRella does not use it, but PowerDNS and curl link it.
 - A GitHub release page now opens with that version's section of these notes.
 
 ## v0.6.0 — 2026-10-18
