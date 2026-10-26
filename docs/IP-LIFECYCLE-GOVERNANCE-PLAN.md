@@ -70,7 +70,11 @@ terms. Internal schema and API identifiers retain their existing names.
 
 `rogue` is an observed classification, not an allocation mechanism. A rogue is
 an online, unassigned host address. It can still be presented as the address
-type `rogue`, but it must not coexist with a legitimate allocation claim.
+type `rogue`, but it must not coexist with a legitimate allocation claim. An
+address whose DHCP lease runs out is online afterward only if it was heard
+(probe reply, renewal, passive traffic) after the lease ended; the expiry
+takes a silent holder offline, so the online flag a forgiven scan miss leaves
+set never turns a departed client into a rogue.
 
 `system` and `gateway` are protected allocation states. An IPv4 network or
 broadcast address is `system`. IPv6 has a subnet-router anycast address but no

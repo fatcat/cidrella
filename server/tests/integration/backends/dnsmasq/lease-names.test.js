@@ -18,6 +18,7 @@ let syncLeasesNow;
 let invalidateSubnetCache;
 let retireStaleDynamicAddresses;
 let leaseFile;
+let computeIpView;
 
 const FAR = 4102444800;
 const DECO_A = '54:af:97:51:2b:e7';
@@ -31,6 +32,7 @@ beforeAll(async () => {
   ({ parseLeaseFile } = await import('../../../../src/backends/dnsmasq/dhcp.js'));
   ({ ingestLeases, syncLeasesNow } = await import('../../../../src/services/dhcp-lease-sync.js'));
   ({ invalidateSubnetCache } = await import('../../../../src/utils/ip-sync.js'));
+  ({ computeIpView } = await import('../../../../src/models/ip-view.js'));
   ({ retireStaleDynamicAddresses } =
     await import('../../../../src/services/ip-lifecycle-service.js'));
   leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
@@ -276,6 +278,11 @@ describe('a client coming back on a new address (ADR 005)', () => {
     db
       .prepare('UPDATE ip_addresses SET is_online = ?, offline_since_at = ? WHERE ip_address = ?')
       .run(online ? 1 : 0, offlineSince, ip);
+  // The host was last heard this many seconds from now (negative: ago).
+  const heardAt = (ip, seconds) =>
+    db
+      .prepare("UPDATE ip_addresses SET last_seen_at = datetime('now', ?) WHERE ip_address = ?")
+      .run(`${seconds >= 0 ? '+' : ''}${seconds} seconds`, ip);
 
   // IPv4 by the lease's MAC, IPv6 by the MAC its DUID-LL embeds. The IPv6
   // subnet is the one the DHCPv6 naming test above made.
@@ -394,7 +401,10 @@ describe('a client coming back on a new address (ADR 005)', () => {
       renew([f.lease(f.mac, f.first, base), keep]);
       expect(nameRecords(base).filter((r) => r.type === f.type)).toHaveLength(1);
 
+      // Online means heard after the lease ended, not just the flag: the lease
+      // ends when it leaves the file, so the host is heard a minute later.
       setLiveness(f.first, true);
+      heardAt(f.first, 60);
       if (f.family === 'IPv6') {
         // A DHCPv6 lease holds its address for its valid lifetime.
         db.prepare("UPDATE ip_addresses SET valid_until = '2000-01-01' WHERE ip_address = ?").run(
@@ -404,6 +414,76 @@ describe('a client coming back on a new address (ADR 005)', () => {
       renew([keep]);
       expect(nameRecords(base)).toEqual([]);
       expect(canonicalName(f.first)).toBeNull();
+    });
+
+    // A lease running out, as the next sync sees it. `listed`: the backend
+    // still lists it with its past expiry (dnsmasq until it prunes the file,
+    // Kea until it reclaims the lease); otherwise it has dropped it and the
+    // sync keeps the expired row. Either way the expiry is unchanged since the
+    // previous sync, where it was still ahead.
+    function lapse(ip, line, expiredSecondsAgo, { listed }) {
+      const past = Math.floor(Date.now() / 1000) - expiredSecondsAgo;
+      db.prepare('UPDATE dhcp_leases SET expires_at = ? WHERE ip_address = ?').run(
+        new Date(past * 1000).toISOString(),
+        ip,
+      );
+      if (f.family === 'IPv6') {
+        db.prepare("UPDATE ip_addresses SET valid_until = '2000-01-01' WHERE ip_address = ?").run(
+          ip,
+        );
+      }
+      fs.writeFileSync(leaseFile, listed ? `${past} ${line}\n` : '');
+      syncLeases(db, { leaseFile });
+    }
+    const liveness = (ip) => db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get(ip);
+
+    for (const listed of [true, false]) {
+      const how = listed ? 'still listed' : 'dropped';
+      it(`takes a silent holder offline when its lease runs out, not as a rogue (${f.family}, ${how})`, () => {
+        const ip = listed ? f.second : f.first;
+        const base = `quiet${listed ? 'l' : 'd'}${f.family.toLowerCase()}`;
+        const line = f.lease(f.mac, ip, base);
+        renew([line]);
+        expect(liveness(ip)).toMatchObject({ is_online: 1, allocation_state: 'dynamic_dhcp' });
+        // Last heard ten minutes ago, the lease ran out one minute ago: the
+        // online flag is still set, as a forgiven scan miss leaves it.
+        heardAt(ip, -600);
+        const obtained = () =>
+          db
+            .prepare(
+              "SELECT COUNT(*) AS n FROM ip_events WHERE ip_address = ? AND event_type = 'lease_obtained'",
+            )
+            .get(ip).n;
+        const obtainedBefore = obtained();
+        lapse(ip, line, 60, { listed });
+
+        const row = liveness(ip);
+        expect(row).toMatchObject({ is_online: 0, allocation_state: 'unassigned', is_rogue: 0 });
+        expect(row.offline_since_at).not.toBeNull();
+        expect(computeIpView(row).address_type).toBeNull();
+        const offline = db
+          .prepare(
+            "SELECT source FROM ip_events WHERE ip_address = ? AND event_type = 'offline' ORDER BY id DESC",
+          )
+          .get(ip);
+        expect(offline).toEqual({ source: 'dhcp_lease' });
+        // The expired lease is not a new one.
+        expect(obtained()).toBe(obtainedBefore);
+        // Offline, its lease name stays for the retention window.
+        expect(canonicalName(ip)).toBe(base);
+      });
+    }
+
+    it(`keeps a holder heard after its lease ran out online, as a rogue (${f.family})`, () => {
+      const base = `stays${f.family.toLowerCase()}`;
+      const line = f.lease(f.mac, f.third, base);
+      renew([line]);
+      heardAt(f.third, 0);
+      lapse(f.third, line, 60, { listed: false });
+
+      const row = liveness(f.third);
+      expect(row).toMatchObject({ is_online: 1, allocation_state: 'unassigned' });
+      expect(computeIpView(row).address_type).toBe('rogue');
     });
 
     it(`retires a lapsed lease's record that an earlier release left behind (${f.family})`, async () => {

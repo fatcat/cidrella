@@ -63,8 +63,10 @@ Terminology:
   static DNS, DHCP Reservation, dynamic DHCP, IP Reservation, or SLAAC. System
   is reserved for topology-defined non-host addresses: the IPv4 network and
   broadcast addresses and the IPv6 subnet-router anycast address. Rogue is a
-  derived classification for an online unassigned address. Available addresses
-  should not have a type.
+  derived classification for an online unassigned address. When a DHCP lease
+  runs out, its holder stays online only if something heard it after the lease
+  ended; otherwise the expiry takes it offline, so a client that simply left is
+  never shown as a rogue. Available addresses should not have a type.
 - `network_range_type`: an optional custom organizational tag projected from
   a non-system range. It does not affect allocation, DNS, DHCP, scanning, or
   topology. Custom Network Range Type ranges cannot overlap each other.
@@ -185,8 +187,8 @@ learned naming metadata during its retirement window; ties resolve as static
 DNS, DHCP Reservation, then DHCP Lease. That window is the offline one: a lease
 name outlives its lease only while the host is absent. An address that is
 online with no owner (a rogue) drops its lease name at once, whether the lease
-lapsed while the host was up or the host reappeared still carrying a retained
-name; what the device calls itself stays available as DHCP fingerprint
+lapsed while the host was still heard or the host reappeared still carrying a
+retained name; what the device calls itself stays available as DHCP fingerprint
 evidence, keyed by MAC. This selection changes naming only and never changes
 `allocation_state`.
 

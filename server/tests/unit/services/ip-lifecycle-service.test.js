@@ -197,7 +197,7 @@ describe('IP lifecycle service allocation boundary', () => {
     });
   });
 
-  it('drops the lease name at once when the lease lapses while the host is online', () => {
+  it('drops the lease name at once when the host is heard after its lease lapses', () => {
     createDynamicScope();
     const lease = {
       ip: '10.99.0.24',
@@ -214,13 +214,17 @@ describe('IP lifecycle service allocation boundary', () => {
     observeDhcpLeases(db, [lease]);
     expect(address(lease.ip)).toMatchObject({ hostname: 'still-here', is_online: 1 });
 
-    db.prepare('DELETE FROM dhcp_leases WHERE subnet_id = ? AND ip_address = ?').run(
-      subnetId,
-      lease.ip,
-    );
+    // The lease ran out a minute ago and the host answered a probe since.
+    db.prepare(
+      "UPDATE dhcp_leases SET expires_at = datetime('now', '-60 seconds') WHERE subnet_id = ? AND ip_address = ?",
+    ).run(subnetId, lease.ip);
+    db.prepare(
+      "UPDATE ip_addresses SET last_seen_at = datetime('now') WHERE subnet_id = ? AND ip_address = ?",
+    ).run(subnetId, lease.ip);
     observeDhcpLeases(db, []);
     expect(address(lease.ip)).toMatchObject({
       allocation_state: 'unassigned',
+      is_online: 1,
       hostname: null,
       detection_source: null,
       mac_address: lease.mac,
