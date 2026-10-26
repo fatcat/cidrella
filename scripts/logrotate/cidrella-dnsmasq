@@ -1,6 +1,7 @@
 # CIDRella dnsmasq log rotation
 #
-# Installed to /etc/logrotate.d/cidrella-dnsmasq by scripts/install.sh.
+# Installed to /etc/logrotate.d/cidrella-dnsmasq by scripts/install.sh. The Docker
+# image carries a copy with /data paths (Dockerfile).
 #
 # dnsmasq is configured with `log-queries` and `log-dhcp`, which  produces 
 # a high-volume append-only log at /var/lib/cidrella/dnsmasq/dnsmasq.log.

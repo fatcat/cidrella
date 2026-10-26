@@ -28,36 +28,35 @@
         filter === 'all' ? 'Nothing flagged in the last 7 days.' : 'No devices match this filter.'
       }}
     </div>
-    <div class="queue" v-else role="list">
-      <button
-        v-for="row in rows"
-        :key="row.id"
-        type="button"
-        class="queue-row"
-        role="listitem"
-        :class="{ open: row.id === openId, hover: row.id === hoverId }"
-        :aria-current="row.id === openId ? 'true' : undefined"
-        data-track="triage-row"
-        data-triage-target
-        @click="emit('select', row.id)"
-        @mouseenter="emit('hover', row.id)"
-        @mouseleave="emit('hover', null)"
-        @focus="emit('hover', row.id)"
-        @blur="emit('hover', null)"
-      >
-        <span class="row-main">
-          <b class="row-name" :title="row.name">{{ row.name }}</b>
-          <code class="row-ip">{{ row.ip }}</code>
-          <span class="row-tag">{{ row.patternLabel }}</span>
-        </span>
-        <span class="row-right">
-          <span class="row-score" :style="{ color: row.color }" :title="row.scoreTitle">{{
-            row.scoreLabel
-          }}</span>
-          <AnomalySparkline v-if="row.spark.length > 1" :scores="row.spark" :color="row.color" />
-        </span>
-      </button>
-    </div>
+    <ul class="queue" v-else>
+      <li v-for="row in rows" :key="row.id">
+        <button
+          type="button"
+          class="queue-row"
+          :class="{ open: row.id === openId, hover: row.id === hoverId }"
+          :aria-current="row.id === openId ? 'true' : undefined"
+          data-track="triage-row"
+          data-triage-target
+          @click="emit('select', row.id)"
+          @mouseenter="emit('hover', row.id)"
+          @mouseleave="emit('hover', null)"
+          @focus="emit('hover', row.id)"
+          @blur="emit('hover', null)"
+        >
+          <span class="row-main">
+            <b class="row-name" :title="row.name">{{ row.name }}</b>
+            <code class="row-ip">{{ row.ip }}</code>
+            <span class="row-tag">{{ row.patternLabel }}</span>
+          </span>
+          <span class="row-right">
+            <span class="row-score" :style="{ color: row.color }" :title="row.scoreTitle">{{
+              row.scoreLabel
+            }}</span>
+            <AnomalySparkline v-if="row.spark.length > 1" :scores="row.spark" :color="row.color" />
+          </span>
+        </button>
+      </li>
+    </ul>
   </section>
 </template>
 
@@ -113,6 +112,9 @@ const emit = defineEmits(['select', 'hover', 'update:filter']);
   overflow: auto;
   flex: 1;
   min-height: 0;
+  margin: 0;
+  padding: 0;
+  list-style: none;
 }
 .queue-row {
   display: grid;

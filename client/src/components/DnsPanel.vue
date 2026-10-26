@@ -596,8 +596,6 @@
       :zone-name="selectedZone?.name"
       :soa-minimum-ttl="selectedZone?.soa_minimum_ttl"
     />
-
-    <Toast />
   </div>
 </template>
 
@@ -621,7 +619,6 @@ import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
 
 import ContextMenu from '../ui/ContextMenu.js';
-import Toast from '../ui/Toast.js';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';

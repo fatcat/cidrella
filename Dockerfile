@@ -35,6 +35,7 @@ RUN apk add --no-cache \
     bind-tools \
     sudo \
     tzdata \
+    logrotate \
     libcap && \
     command -v dhcp_release && \
     setcap cap_net_raw+ep /usr/sbin/arping
@@ -115,6 +116,14 @@ COPY --from=client-build /build/client/dist ./client/dist/
 
 # Copy s6-overlay service definitions
 COPY rootfs/ /
+
+# The log rotation native installs get, with the container's paths; the
+# logrotate service (rootfs/etc/s6-overlay/s6-rc.d/logrotate) runs it.
+COPY scripts/logrotate/ /tmp/logrotate/
+RUN for conf in /tmp/logrotate/*; do \
+      sed 's|/var/lib/cidrella/|/data/|g' "$conf" > "/etc/logrotate.d/$(basename "$conf")"; \
+    done && \
+    rm -r /tmp/logrotate
 
 # Make scripts executable
 RUN chmod +x /etc/s6-overlay/scripts/*.sh && \

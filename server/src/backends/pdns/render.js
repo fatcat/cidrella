@@ -274,6 +274,12 @@ function yaml(value, indent = '') {
  * - everything else goes to CIDRella's forwarder with recursion asked for,
  *   unless recursion is off, and Recursor itself never queries anyone else
  *   (dont_query covers every address; forwarders are exempt from it);
+ * - Recursor adds none of its built-in RFC 1918 and RFC 6303 zones (turning
+ *   off serve_rfc1918 turns off both): the reserved zones CIDRella forwards
+ *   to Authoritative cover them, and each built-in one it skipped logged a
+ *   warning at every start and zone reload. d.f.ip6.arpa, which Recursor
+ *   would always answer, is local only while every upstream is public
+ *   (backends/shared/reserved-zones.js);
  * - Recursor waits `networkTimeoutMs` for a forwarder, never throttles the
  *   loopback ones, and validates DNSSEC per `validation`.
  */
@@ -300,6 +306,7 @@ export function renderRecursorConfig({
     recursor: {
       socket_dir: runDir,
       security_poll_suffix: '',
+      serve_rfc1918: false,
       forward_zones_recurse: recursion
         ? [{ zone: '.', forwarders: [`127.0.0.1:${forwarderPort}`] }]
         : [],

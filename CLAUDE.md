@@ -44,8 +44,9 @@ Components carry `data-row-id`, `data-zone-id`, `data-scope-id`, `data-network-i
 `data-folder-id` for it; keep them when refactoring, like `data-track`.
 
 A migration test builds its database with `databaseThrough(n)` in `tests/helpers/migrations.js`
-(every migration up to n, then `migrate(n + 1)`); older tests still carry their own copy
-(REVIEW.md TEST-MIGRATION-HELPER-01).
+(every migration up to n, then `migrate(n + 1)`, or `migrateThrough()` for the rest; pass
+`{ tmpDirs }` to have its directory cleaned up with the test's own). The backup round-trip test
+builds its schema-54 database at the live data path and keeps its own.
 
 Backups have a round-trip test (`server/tests/integration/backup-round-trip.test.js`): export,
 change everything, restore, restart, and every table and carried file must match, but for what a

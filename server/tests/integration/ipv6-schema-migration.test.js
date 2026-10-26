@@ -7,49 +7,22 @@
  * was lost. It also demonstrates the hazard the runner guards against.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb, getDb } from '../../src/db/init.js';
+import { databaseThrough } from '../helpers/migrations.js';
 
 const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
 
-function migrationFiles() {
-  return fs
-    .readdirSync(migrationsDir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort();
-}
-
-function versionOf(file) {
-  return Number.parseInt(file.split('_')[0], 10);
-}
-
-function databaseThrough(targetVersion) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-test-ipv6-schema-'));
-  tmpDirs.push(tmpDir);
+// initDb expects these under the data directory.
+function databaseWithDirs(target) {
+  const made = databaseThrough(target, { tmpDirs });
   for (const dir of ['dnsmasq/hosts.d', 'dnsmasq/dhcp-hosts.d', 'dnsmasq/conf.d', 'certs']) {
-    fs.mkdirSync(path.join(tmpDir, dir), { recursive: true });
+    fs.mkdirSync(path.join(made.tmpDir, dir), { recursive: true });
   }
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.pragma('foreign_keys = ON');
-  db.exec(`CREATE TABLE schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  const apply = db.transaction((sql, version) => {
-    db.exec(sql);
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-  });
-  for (const file of migrationFiles()) {
-    const version = versionOf(file);
-    if (version > targetVersion) continue;
-    apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
-  }
-  return { db, tmpDir };
+  return made;
 }
 
 function seedTopology(db) {
@@ -163,7 +136,7 @@ afterEach(() => {
 
 describe('IPv6 schema migrations 070-073', () => {
   it('upgrades a seeded 069 database through initDb without losing any child rows', async () => {
-    const { db, tmpDir } = databaseThrough(69);
+    const { db, tmpDir } = databaseWithDirs(69);
     seedTopology(db);
     const before = counts(db);
     db.close();
@@ -305,7 +278,7 @@ describe('IPv6 schema migrations 070-073', () => {
   });
 
   it('would have emptied every child table under the old foreign-keys-on procedure', () => {
-    const { db } = databaseThrough(69);
+    const { db } = databaseWithDirs(69);
     seedTopology(db);
     const before = counts(db);
     const sql = fs.readFileSync(path.join(migrationsDir, '070_subnets_ipv6.sql'), 'utf8');

@@ -285,3 +285,24 @@ describe('the lease time a new scope starts with', () => {
     expect(leaseTime(scopeId)).toBe(getSetting('default_lease_time'));
   });
 });
+
+describe('DHCPv4 list options', () => {
+  it('takes a comma in the options whose value is a list, and nowhere else in text', async () => {
+    const { scopeId } = await network('10.72.1.0/24', { gateway_address: '10.72.1.1' });
+    const put = (code, value) =>
+      request(app)
+        .put(`/api/dhcp/scopes/${scopeId}`)
+        .send({ options: [{ code, value }] });
+    for (const [code, value] of [
+      [121, '10.9.0.0/16,10.72.1.1'],
+      [33, '10.8.0.0,10.72.1.1'],
+      [21, '10.0.0.0,255.0.0.0'],
+      [25, '68,296,576'],
+    ]) {
+      const res = await put(code, value);
+      expect(res.status, `${code}: ${JSON.stringify(res.body)}`).toBe(200);
+      expect((await served(scopeId))[code].value).toBe(value);
+    }
+    expect((await put(15, 'a.test,b.test')).status).toBe(400);
+  });
+});

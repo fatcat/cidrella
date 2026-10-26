@@ -21,6 +21,7 @@ import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
 import { syncLeasesNow } from '../services/dhcp-lease-sync.js';
 import {
+  optionAllowsComma,
   DHCP_OPTION_GROUPS,
   optionCatalogFor,
   builtInCodeReason,
@@ -135,8 +136,7 @@ function validateScopeOption(opt, family = 4) {
   const type = optDef?.type || 'text';
   if (family === 4 && code === 51 && !isValidLeaseTime(value))
     return 'lease time must look like 3600, 1h, 30m, or 1d';
-  const allowComma = type === 'ip-list' || type === 'text-list';
-  return validateConfigSafeValue(value, { allowComma });
+  return validateConfigSafeValue(value, { allowComma: optionAllowsComma(optDef, type) });
 }
 
 function validateDefaultOption(opt, family = 4) {

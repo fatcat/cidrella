@@ -4,35 +4,11 @@
  * allowlisted_at. Rows survive the rename with their values intact.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { databaseThrough } from '../helpers/migrations.js';
 
-const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
-const files = fs
-  .readdirSync(migrationsDir)
-  .filter((n) => n.endsWith('.sql'))
-  .sort();
-const versionOf = (f) => Number.parseInt(f.split('_')[0], 10);
 
-function databaseThrough(target) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-test-allowlist-'));
-  tmpDirs.push(tmpDir);
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.pragma('foreign_keys = ON');
-  db.exec(
-    "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))",
-  );
-  for (const f of files) {
-    if (versionOf(f) > target) continue;
-    db.exec(fs.readFileSync(path.join(migrationsDir, f), 'utf8'));
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(versionOf(f));
-  }
-  return db;
-}
 afterEach(() => {
   while (tmpDirs.length) fs.rmSync(tmpDirs.pop(), { recursive: true, force: true });
 });
@@ -48,7 +24,7 @@ const tables = (db) =>
 
 describe('migration 078', () => {
   it('renames both lists and keeps their rows', () => {
-    const db = databaseThrough(77);
+    const { db, migrate } = databaseThrough(77, { tmpDirs });
     db.prepare(
       "INSERT INTO blocklist_whitelist (domain, reason) VALUES ('ok.example', 'lab')",
     ).run();
@@ -59,15 +35,7 @@ describe('migration 078', () => {
     // geoip_ip_allowlist was named that way from the start (migration 050).
     expect(tables(db)).toEqual(['anomaly_whitelist', 'blocklist_whitelist', 'geoip_ip_allowlist']);
 
-    db.exec(
-      fs.readFileSync(
-        path.join(
-          migrationsDir,
-          files.find((f) => versionOf(f) === 78),
-        ),
-        'utf8',
-      ),
-    );
+    migrate(78);
 
     expect(tables(db)).toEqual(['anomaly_allowlist', 'blocklist_allowlist', 'geoip_ip_allowlist']);
     expect(db.prepare('SELECT domain, reason FROM blocklist_allowlist').all()).toEqual([

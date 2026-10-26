@@ -1,36 +1,8 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
+import { databaseThrough } from '../helpers/migrations.js';
 
-const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
-
-function databaseThrough(targetVersion) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-system-address-'));
-  tmpDirs.push(tmpDir);
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.pragma('foreign_keys = ON');
-  db.exec(`CREATE TABLE schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  const apply = db.transaction((sql, version) => {
-    db.exec(sql);
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-  });
-  for (const file of fs
-    .readdirSync(migrationsDir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
-    const version = Number.parseInt(file.split('_')[0], 10);
-    if (version > targetVersion) continue;
-    apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
-  }
-  return { db, apply };
-}
 
 afterEach(() => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
@@ -38,7 +10,7 @@ afterEach(() => {
 
 describe('system address scope migration', () => {
   it('keeps topology addresses system and gives a CIDRella address ordinary DNS ownership', () => {
-    const { db, apply } = databaseThrough(62);
+    const { db, migrate } = databaseThrough(62, { tmpDirs });
     const subnet = db
       .prepare(
         `
@@ -122,11 +94,7 @@ describe('system address scope migration', () => {
       '4:0a580003',
     );
 
-    const migration = fs.readFileSync(
-      path.join(migrationsDir, '063_system_address_scope.sql'),
-      'utf8',
-    );
-    apply(migration, 63);
+    migrate(63);
 
     const rows = db
       .prepare(

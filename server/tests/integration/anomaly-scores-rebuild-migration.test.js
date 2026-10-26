@@ -5,35 +5,11 @@
  * install is rebuilt, whoever created the table.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { initDb } from '../../src/db/init.js';
+import { databaseThrough } from '../helpers/migrations.js';
 
-const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
-
-function databaseThrough(maxVersion) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-anomaly-scores-'));
-  tmpDirs.push(tmpDir);
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.exec(`CREATE TABLE schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  for (const file of fs
-    .readdirSync(migrationsDir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
-    const version = Number.parseInt(file.split('_')[0], 10);
-    if (version > maxVersion) continue;
-    db.exec(fs.readFileSync(path.join(migrationsDir, file), 'utf8'));
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-  }
-  return { db, tmpDir };
-}
 
 async function upgrade(db, tmpDir) {
   db.close();
@@ -118,7 +94,7 @@ describe('migration 081', () => {
     ['a table migration 042 created', () => {}],
   ]) {
     it(`keeps every row and lets one client score under two keys in a window: ${name}`, async () => {
-      const { db, tmpDir } = databaseThrough(80);
+      const { db, tmpDir } = databaseThrough(80, { tmpDirs });
       prepare(db);
       // IPv4 and IPv6 clients, an open anomaly and a resolved one.
       score(db, { id: 7, ip: '10.0.0.191', identity: 'c8:e0:eb:16:e1:0d', anomaly: 1 });

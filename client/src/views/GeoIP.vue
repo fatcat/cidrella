@@ -197,8 +197,6 @@
         from GeoIP rules?
       </p>
     </ConfirmDialog>
-
-    <Toast />
   </div>
 </template>
 
@@ -217,7 +215,6 @@ import Select from '../ui/Select.js';
 import DataTable from '../ui/DataTable.js';
 import Column from '../ui/Column.js';
 import Dialog from '../ui/Dialog.js';
-import Toast from '../ui/Toast.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import { useGeoipStore } from '../stores/geoip.js';
 import { useDnsStore } from '../stores/dns.js';

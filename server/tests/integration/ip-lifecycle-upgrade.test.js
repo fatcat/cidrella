@@ -1,9 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
-import { fileURLToPath } from 'url';
 import { initDb } from '../../src/db/init.js';
 import {
   inventoryLegacyIpLifecycle,
@@ -11,34 +9,9 @@ import {
   writeLifecycleMigrationReport,
 } from '../../src/db/ip-lifecycle-upgrade.js';
 import { seedLegacyLifecycleContradictions } from '../fixtures/ip-lifecycle-0_4_17.js';
+import { databaseThrough } from '../helpers/migrations.js';
 
-const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
-
-function legacyDatabase() {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-lifecycle-upgrade-'));
-  tmpDirs.push(tmpDir);
-  const dbPath = path.join(tmpDir, 'cidrella.db');
-  const db = new Database(dbPath);
-  db.pragma('foreign_keys = ON');
-  db.exec(`CREATE TABLE schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  const apply = db.transaction((sql, version) => {
-    db.exec(sql);
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-  });
-  for (const file of fs
-    .readdirSync(migrationsDir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
-    const version = Number.parseInt(file.split('_')[0], 10);
-    if (version > 54) continue;
-    apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
-  }
-  return { db, dbPath, tmpDir };
-}
 
 afterEach(() => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
@@ -46,7 +19,7 @@ afterEach(() => {
 
 describe('0.4.17 IP lifecycle upgrade', () => {
   it('keeps gateway DNS names non-owning while CIDRella DNS remains protocol ownership', () => {
-    const { db } = legacyDatabase();
+    const { db } = databaseThrough(54, { tmpDirs });
     const { subnetId, zoneId } = seedLegacyLifecycleContradictions(db);
     db.prepare(
       `
@@ -76,7 +49,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
   });
 
   it('inventories ambiguous claims and blocks before schema mutation', async () => {
-    const { db, dbPath, tmpDir } = legacyDatabase();
+    const { db, dbPath, tmpDir } = databaseThrough(54, { tmpDirs });
     const { zoneId } = seedLegacyLifecycleContradictions(db);
     db.prepare(
       `
@@ -136,7 +109,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
   });
 
   it('reconciles safe legacy state and removes compatibility storage at the latest schema', async () => {
-    const { db, tmpDir } = legacyDatabase();
+    const { db, tmpDir } = databaseThrough(54, { tmpDirs });
     const { subnetId, zoneId } = seedLegacyLifecycleContradictions(db);
 
     // Resolve the deliberately ambiguous fixture claims without deleting the
@@ -259,7 +232,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
   });
 
   it('retries reconciliation after migrations completed on an interrupted startup', async () => {
-    const { db, tmpDir } = legacyDatabase();
+    const { db, tmpDir, migrateThrough } = databaseThrough(54, { tmpDirs });
     const { subnetId, zoneId } = seedLegacyLifecycleContradictions(db);
     db.prepare("DELETE FROM dhcp_leases WHERE ip_address = '10.77.0.40'").run();
     db.prepare("UPDATE dns_records SET enabled = 0 WHERE zone_id = ? AND name = 'dns-host'").run(
@@ -283,18 +256,7 @@ describe('0.4.17 IP lifecycle upgrade', () => {
       outcome: 'ready',
     });
 
-    const apply = db.transaction((sql, version) => {
-      db.exec(sql);
-      db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-    });
-    for (const file of fs
-      .readdirSync(migrationsDir)
-      .filter((name) => name.endsWith('.sql'))
-      .sort()) {
-      const version = Number.parseInt(file.split('_')[0], 10);
-      if (version <= 54) continue;
-      apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
-    }
+    migrateThrough();
     db.close();
 
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});

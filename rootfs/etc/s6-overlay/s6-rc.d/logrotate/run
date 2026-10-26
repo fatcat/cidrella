@@ -1,0 +1,10 @@
+#!/bin/sh
+# Rotates dnsmasq.log and pdns.log once one passes 50 MB, with the policy a
+# native install gets from /etc/logrotate.d (scripts/logrotate/, its paths
+# moved to /data in the Dockerfile). The image has no cron, so this checks
+# every ten minutes. Kea rotates its own logs.
+while :; do
+  logrotate -s /data/runtime/logrotate.status \
+    /etc/logrotate.d/cidrella-dnsmasq /etc/logrotate.d/cidrella-pdns
+  sleep 600
+done

@@ -73,8 +73,6 @@
     </div>
 
     <div class="error-msg" v-if="error">{{ error }}</div>
-
-    <Toast />
   </div>
 </template>
 
@@ -87,7 +85,6 @@ import InputNumber from '../ui/InputNumber.js';
 import DataTable from '../ui/DataTable.js';
 import Column from '../ui/Column.js';
 import ContextMenu from '../ui/ContextMenu.js';
-import Toast from '../ui/Toast.js';
 import { useSubnetStore } from '../stores/subnets.js';
 import { apiError } from '../utils/format.js';
 import { loadJson, saveJson } from '../utils/storage.js';

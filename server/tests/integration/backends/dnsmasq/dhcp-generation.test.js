@@ -125,6 +125,50 @@ describe('canonical DHCP generated sink', () => {
     expect(content).not.toMatch(new RegExp(`dhcp-option=tag:scope${scopeId},3,`));
   });
 
+  it('types the options dnsmasq would otherwise size or read by their shape', () => {
+    const { scopeId } = createScope({
+      cidr: '10.233.0.0/24',
+      gateway: '10.233.0.1',
+      pools: [['10.233.0.20', '10.233.0.200']],
+    });
+    const insertCustom = db.prepare(
+      'INSERT INTO dhcp_custom_options (code, name, label, type, address_family) VALUES (?, ?, ?, ?, 4)',
+    );
+    insertCustom.run(200, 'site-text', 'Site text', 'text');
+    insertCustom.run(201, 'site-number', 'Site number', 'number');
+    const setOption = db.prepare(
+      'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, 4)',
+    );
+    for (const [code, value] of [
+      [24, '600'],
+      [26, '1500'],
+      [252, 'http://wpad/wpad.dat'],
+      [14, '600'],
+      [200, '600'],
+      [201, '600'],
+      [121, '10.9.0.0/16,10.233.0.1'],
+      [33, '10.8.0.0,10.233.0.1'],
+      [21, '10.0.0.0,255.0.0.0'],
+      [25, '68,296'],
+    ]) {
+      setOption.run(scopeId, code, value);
+    }
+    regenerateScopeConfigs(db, { confDir });
+    const content = fs.readFileSync(path.join(confDir, `dhcp-scope-${scopeId}.conf`), 'utf8');
+    const line = (code, value) => `dhcp-option=tag:scope${scopeId},${code},${value}\n`;
+    expect(content).toContain(line(24, '600i'));
+    expect(content).toContain(line(26, '1500'));
+    expect(content).toContain(line(252, 'http://wpad/wpad.dat'));
+    expect(content).toContain(line(14, '36:30:30'));
+    expect(content).toContain(line(200, '36:30:30'));
+    expect(content).toContain(line(201, '600'));
+    // The list options keep their commas.
+    expect(content).toContain(line(121, '10.9.0.0/16,10.233.0.1'));
+    expect(content).toContain(line(33, '10.8.0.0,10.233.0.1'));
+    expect(content).toContain(line(21, '10.0.0.0,255.0.0.0'));
+    expect(content).toContain(line(25, '00:44:01:28'));
+  });
+
   it('removes stale scope files after a scope is disabled', () => {
     const { scopeId } = createScope({
       cidr: '10.232.0.0/24',

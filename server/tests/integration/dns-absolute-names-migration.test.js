@@ -6,41 +6,11 @@
  * generated PTR values.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { fqdnForRecordName } from '../../src/models/dns-record.js';
+import { databaseThrough } from '../helpers/migrations.js';
 
-const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
-const files = fs
-  .readdirSync(migrationsDir)
-  .filter((n) => n.endsWith('.sql'))
-  .sort();
-const versionOf = (f) => Number.parseInt(f.split('_')[0], 10);
-
-function migrate(db, from, to) {
-  for (const f of files) {
-    const v = versionOf(f);
-    if (v <= from || v > to) continue;
-    db.exec(fs.readFileSync(path.join(migrationsDir, f), 'utf8'));
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(v);
-  }
-}
-
-function databaseThrough(target) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-test-dnsabs-'));
-  tmpDirs.push(tmpDir);
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.pragma('foreign_keys = ON');
-  db.exec(
-    "CREATE TABLE schema_version (version INTEGER PRIMARY KEY, applied_at TEXT NOT NULL DEFAULT (datetime('now')))",
-  );
-  migrate(db, 0, target);
-  return db;
-}
 
 afterEach(() => {
   while (tmpDirs.length) fs.rmSync(tmpDirs.pop(), { recursive: true, force: true });
@@ -89,7 +59,7 @@ function seed(db) {
 
 describe('migration 082', () => {
   it('keeps every record serving the name it served before', () => {
-    const db = databaseThrough(81);
+    const { db, migrate } = databaseThrough(81, { tmpDirs });
     seed(db);
     // What each forward record served under the old rule (a dotted name was
     // absolute; SRV is the exception 0.5.1 already made).
@@ -107,7 +77,7 @@ describe('migration 082', () => {
         .all();
     const before = new Map(forward().map((r) => [r.id, oldFqdn(r.name, r.zone, r.type)]));
 
-    migrate(db, 81, 82);
+    migrate(82);
 
     for (const r of forward()) {
       expect(fqdnForRecordName(r.name, r.zone), `${r.type} ${r.name}`).toBe(before.get(r.id));
@@ -115,9 +85,9 @@ describe('migration 082', () => {
   });
 
   it('marks dotted out-of-zone names absolute and leaves the rest alone', () => {
-    const db = databaseThrough(81);
+    const { db, migrate } = databaseThrough(81, { tmpDirs });
     const ids = seed(db);
-    migrate(db, 81, 82);
+    migrate(82);
     const name = (id) => db.prepare('SELECT name FROM dns_records WHERE id = ?').get(id).name;
     expect(name(ids.v4Outside)).toBe('nas.home.lan.');
     expect(name(ids.v6Outside)).toBe('nas.home.lan.');
@@ -128,9 +98,9 @@ describe('migration 082', () => {
   });
 
   it('trims the dot from derived hostnames and generated PTR values, not operator PTRs', () => {
-    const db = databaseThrough(81);
+    const { db, migrate } = databaseThrough(81, { tmpDirs });
     const ids = seed(db);
-    migrate(db, 81, 82);
+    migrate(82);
     const host = (ip) =>
       db.prepare('SELECT hostname FROM ip_addresses WHERE ip_address = ?').get(ip).hostname;
     expect(host('10.0.0.6')).toBe('ext.org');

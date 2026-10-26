@@ -580,8 +580,6 @@
       :view="IP_TABLE_VIEW.NETWORKS"
       table-name="Networks"
     />
-
-    <Toast />
   </div>
   <div v-else-if="loading" class="loading">Loading network...</div>
   <div v-else class="empty-state">Select a network to view details.</div>
@@ -601,7 +599,6 @@ import IconField from '../ui/IconField.js';
 import InputIcon from '../ui/InputIcon.js';
 import Select from '../ui/Select.js';
 import ContextMenu from '../ui/ContextMenu.js';
-import Toast from '../ui/Toast.js';
 import Tabs from '../ui/Tabs.js';
 import TabList from '../ui/TabList.js';
 import Tab from '../ui/Tab.js';

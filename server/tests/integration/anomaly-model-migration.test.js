@@ -1,37 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { initDb } from '../../src/db/init.js';
+import { databaseThrough } from '../helpers/migrations.js';
 
-const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
-
-function createDatabaseThrough(maxVersion) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-anomaly-migration-'));
-  tmpDirs.push(tmpDir);
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.pragma('foreign_keys = ON');
-  db.exec(`CREATE TABLE schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  const apply = db.transaction((sql, version) => {
-    db.exec(sql);
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-  });
-  for (const file of fs
-    .readdirSync(migrationsDir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
-    const version = Number.parseInt(file.split('_')[0], 10);
-    if (version > maxVersion) continue;
-    apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
-  }
-  return { db, tmpDir };
-}
 
 async function finishUpgrade(db, tmpDir) {
   db.close();
@@ -49,7 +21,7 @@ afterEach(() => {
 
 describe('anomaly model identity migration compatibility', () => {
   it('upgrades the historical sidecar schema and preserves model versions', async () => {
-    const { db: legacyDb, tmpDir } = createDatabaseThrough(59);
+    const { db: legacyDb, tmpDir } = databaseThrough(59, { tmpDirs });
     legacyDb.exec(`
       DROP TABLE anomaly_models;
       CREATE TABLE anomaly_models (
@@ -114,7 +86,7 @@ describe('anomaly model identity migration compatibility', () => {
   });
 
   it('repairs databases where the published migration 060 already completed', async () => {
-    const { db: pre4Db, tmpDir } = createDatabaseThrough(61);
+    const { db: pre4Db, tmpDir } = databaseThrough(61, { tmpDirs });
     pre4Db
       .prepare(
         `

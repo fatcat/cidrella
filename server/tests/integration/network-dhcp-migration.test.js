@@ -1,37 +1,9 @@
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initDb } from '../../src/db/init.js';
+import { databaseThrough } from '../helpers/migrations.js';
 
-const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
-
-function createDatabaseThrough(maxVersion) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-network-dhcp-migration-'));
-  tmpDirs.push(tmpDir);
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.pragma('foreign_keys = ON');
-  db.exec(`CREATE TABLE schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  const apply = db.transaction((sql, version) => {
-    db.exec(sql);
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-  });
-  for (const file of fs
-    .readdirSync(migrationsDir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
-    const version = Number.parseInt(file, 10);
-    if (version > maxVersion) continue;
-    apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
-  }
-  return { db, tmpDir };
-}
 
 afterEach(() => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
@@ -39,7 +11,7 @@ afterEach(() => {
 
 describe('canonical Network/DHCP migration', () => {
   it('normalizes legacy option 51 into scope lease policy without losing pools', async () => {
-    const { db, tmpDir } = createDatabaseThrough(66);
+    const { db, tmpDir } = databaseThrough(66, { tmpDirs });
     const subnetId = db
       .prepare(
         `

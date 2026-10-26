@@ -9,9 +9,14 @@
     ref="canvas"
     class="resolution-canvas"
     :class="{ picking, turning: mode === 'globe' }"
-    role="img"
+    :role="interactive ? 'application' : 'img'"
+    :aria-roledescription="interactive ? mode : undefined"
+    :tabindex="interactive ? 0 : undefined"
     :aria-label="label"
     @pointerdown="onPointerDown"
+    @keydown="onKeyDown"
+    @focus="focused = true"
+    @blur="focused = false"
   ></canvas>
 </template>
 
@@ -63,11 +68,19 @@ const POLL_SPAN_MS = 2000;
 const TRAIL_STEPS = 32;
 
 const canvas = ref(null);
-const label = computed(() =>
-  props.mode === 'globe'
-    ? 'Globe of where DNS answers resolve, live'
-    : 'Map of where DNS answers resolve, live',
-);
+// The globe turns and a pick takes a point, by pointer or by keyboard. Shown
+// only, the drawing is an image.
+const interactive = computed(() => props.picking || props.mode === 'globe');
+const focused = ref(false);
+const label = computed(() => {
+  const what =
+    props.mode === 'globe'
+      ? 'Globe of where DNS answers resolve, live'
+      : 'Map of where DNS answers resolve, live';
+  if (props.picking) return `${what}. Arrow keys move the marker, Enter sets the location.`;
+  if (props.mode === 'globe') return `${what}. Arrow keys turn the globe.`;
+  return what;
+});
 
 const land = feature(world, world.objects.countries);
 const outlines = new Map(land.features.map((f) => [f.id, f]));
@@ -408,8 +421,62 @@ function frame(now) {
   }
   drawBase();
   drawHome(now);
+  drawAim();
   drawShots(dt);
   drawBursts(dt);
+}
+
+// Where a keyboard pick lands: starts at home, moved by the arrow keys.
+let aim = null;
+const clampLat = (lat) => Math.max(-80, Math.min(80, lat));
+const wrapLon = (lon) => ((((lon + 180) % 360) + 360) % 360) - 180;
+const ARROWS = { ArrowLeft: [-1, 0], ArrowRight: [1, 0], ArrowUp: [0, 1], ArrowDown: [0, -1] };
+
+function onKeyDown(e) {
+  const step = e.shiftKey ? 10 : 2;
+  const arrow = ARROWS[e.key];
+  if (props.picking) {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      emit('pick', aim || [...props.home]);
+      return;
+    }
+    if (!arrow) return;
+    e.preventDefault();
+    const [lon, lat] = aim || props.home;
+    aim = [wrapLon(lon + arrow[0] * step), clampLat(lat + arrow[1] * step)];
+    if (props.mode === 'globe') {
+      rotate = [-aim[0], -Math.max(-60, Math.min(60, aim[1]))];
+      projection?.rotate(rotate);
+    }
+    return;
+  }
+  if (props.mode !== 'globe' || !arrow) return;
+  e.preventDefault();
+  rotate = [rotate[0] - arrow[0] * step, Math.max(-60, Math.min(60, rotate[1] - arrow[1] * step))];
+  projection?.rotate(rotate);
+}
+
+function drawAim() {
+  if (!props.picking || !focused.value) return;
+  const point = aim || props.home;
+  if (!visible(point)) return;
+  const p = projection(point);
+  if (!p) return;
+  ctx.strokeStyle = COLORS.home;
+  ctx.lineWidth = 1.2;
+  ctx.beginPath();
+  ctx.arc(p[0], p[1], 9, 0, 2 * Math.PI);
+  for (const [dx, dy] of [
+    [-1, 0],
+    [1, 0],
+    [0, -1],
+    [0, 1],
+  ]) {
+    ctx.moveTo(p[0] + dx * 5, p[1] + dy * 5);
+    ctx.lineTo(p[0] + dx * 14, p[1] + dy * 14);
+  }
+  ctx.stroke();
 }
 
 function onPointerDown(e) {
@@ -438,6 +505,12 @@ function onVisibility() {
   if (document.hidden) queue.length = 0;
 }
 
+watch(
+  () => props.picking,
+  () => {
+    aim = null;
+  },
+);
 watch(
   () => props.mode,
   () => {
@@ -484,5 +557,9 @@ onUnmounted(() => {
 }
 .resolution-canvas.picking {
   cursor: crosshair;
+}
+.resolution-canvas:focus-visible {
+  outline: 2px solid var(--cid-primary-color);
+  outline-offset: -2px;
 }
 </style>
