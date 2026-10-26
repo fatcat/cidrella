@@ -1,4 +1,4 @@
-FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53 AS client-build
+FROM node:25.9.0-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4 AS client-build
 
 ARG DEV_TRACKING=0
 
@@ -11,7 +11,7 @@ COPY client/ ./
 COPY server/src/ /build/server/src/
 RUN VITE_TRACKING=$DEV_TRACKING npx vite build
 
-FROM node:24.22.1-alpine@sha256:06d7adf3e0ef61a13f1d28682726366f97a15aa1888c934d3ecec86c33918b53
+FROM node:25.9.0-alpine@sha256:bdf2cca6fe3dabd014ea60163eca3f0f7015fbd5c7ee1b0e9ccb4ced6eb02ef4
 
 # s6-overlay version
 ARG S6_OVERLAY_VERSION=3.2.3.2
