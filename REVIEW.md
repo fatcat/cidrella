@@ -12,6 +12,28 @@ was suggested.
 
 ---
 
+## Found soaking 0.6.2-pre.2 on prod (2026-10-27)
+
+#### BACKUP-STALL-01: DNS stops answering while a backup runs
+
+**medium**, confirmed on prod (0.6.2-pre.2). Deferred to 0.6.3. `server/src/utils/backup.js:93`
+(`createBackup`: `writeBackupDatabase` at :167, `spawnSync('tar', ...)` at :177), called by
+`POST /api/operations/backup` (`server/src/routes/operations.js:179`) and the scheduled backup
+(`backup.js:1214`).
+
+- **What happens:** A manual backup at 11:48:48 took 13.3 s, and `pdns.log` shows no query from
+  11:48:48 to 11:49:01, then a burst of 10 when the request returned. For those 13 s the DNS
+  proxy answered nothing. A scheduled backup does the same.
+- **Why:** Every step of a backup is synchronous on the main thread, which the DNS proxy shares:
+  `VACUUM INTO` and the `VACUUM` of the copy (better-sqlite3), then `spawnSync` for tar. Before
+  0.6.2 the tar step alone blocked for the whole archive of a 337 MB database; how the 13 s
+  splits between the vacuums and tar was not measured.
+- **Fix:** Build the database copy in a worker thread with its own connection (WAL lets it read
+  while the main connection writes), run tar with async `spawn`, and make `createBackup` async,
+  awaited by the route and the scheduler. Test: hold a backup in progress and check the event
+  loop keeps turning (a timer fires on time). The pre-restore snapshot's `spawnSync` tar
+  (`backup.js:568`, `:582`) blocks the same way, but a restore ends in a restart anyway.
+
 ## Found reading prod's logs (2026-10-06)
 
 #### DNSMASQ-02: A reservation change reaches dnsmasq twice and logs a duplicate per line
