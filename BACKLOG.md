@@ -22,13 +22,23 @@ Consolidated 2026-08-19 from four places that had drifted apart: `REVIEW.md` Act
 
 ## IPv6, what is left
 
+**Comprehensive IPv6 handling (target 0.6.3):** design in
+[docs/IPV6-HANDLING.md](docs/IPV6-HANDLING.md), accepted 2026-10-27. An IPv6 network is an
+inventory, never an address space: Show available hidden for IPv6, suggest an address, fullness
+in prefixes, next free prefix and free blocks, hosts grouping a device's addresses, IPv6-aware
+search, SQL paging. Three phases; its open decisions are listed at the end of the doc.
+
 IPv6 shipped across 0.5.x behind the `ipv6_enabled` switch (backend, rogue detection, UI,
 DHCPv6 option catalog; RELEASE-NOTES has the detail). Still deferred:
-- A grid presentation for an IPv6 network (would need gap markers and a redesigned ruler); an
-  IPv6 network is a table only (`effectivePresentation` in `NetworksWorkspace.vue`).
-- Full IPv6 support in the classic views (out of scope; they go with the classic-view removal).
+- ~~A grid presentation for an IPv6 network~~ [WILL NOT IMPLEMENT, 2026-10-27]: impractical at
+  IPv6 network sizes. An IPv6 network is a table only (`effectivePresentation` in
+  `NetworksWorkspace.vue`).
+- ~~Full IPv6 support in the classic views~~ [WILL NOT IMPLEMENT, 2026-10-27]: they go with the
+  classic-view removal.
 - No DUID or IAID column in the workspace column catalog.
-- No IPv6 NTP default is baked (the bundled pool is IPv4 literals).
+- ~~No IPv6 NTP default is baked~~ [FIXED]: option 56 defaults to `DHCP6_DEFAULT_NTP_SERVERS`
+  (`config/defaults.js`, from 2.pool.ntp.org), refreshed at release build by
+  `scripts/refresh-ntp-defaults.js`.
 
 Known limits that still hold, on dnsmasq:
 - A DHCPv6 lease line without a client DUID (dnsmasq writes `*`) is skipped: no identity.
