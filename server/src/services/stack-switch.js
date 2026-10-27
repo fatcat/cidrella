@@ -444,8 +444,6 @@ async function carryKeaLeasesToDnsmasq() {
   console.warn(`Kea served DHCP here; dnsmasq does now, with Kea's ${leases.length} leases`);
 }
 
-// Every daemon outside the stack stopped. dnsmasq is told every time, so
-// its flag keeps it down across a restart; the rest only while they run.
 // Delete the daemon logs of every backend outside stack `name`. Nothing reads
 // or writes them once it stops serving, and logrotate, which rotates on size,
 // never touches them again.
@@ -464,6 +462,8 @@ function clearRetiredLogs(name) {
   }
 }
 
+// Every daemon outside the stack stopped. dnsmasq is told every time, so
+// its flag keeps it down across a restart; the rest only while they run.
 async function stopOutside(name) {
   const keep = new Set(stackServices(name));
   for (const backend of allBackends()) {
