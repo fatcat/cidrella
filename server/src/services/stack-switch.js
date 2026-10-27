@@ -385,6 +385,7 @@ export async function switchStack(db, target) {
     const moved = target === 'pdns-kea' ? await toPdnsKea(db, st) : await toDnsmasq(db, st);
     st.phase = 'commit';
     commit(db, target);
+    clearRetiredLogs(target);
     return {
       from: st.from,
       to: target,
@@ -445,6 +446,24 @@ async function carryKeaLeasesToDnsmasq() {
 
 // Every daemon outside the stack stopped. dnsmasq is told every time, so
 // its flag keeps it down across a restart; the rest only while they run.
+// Delete the daemon logs of every backend outside stack `name`. Nothing reads
+// or writes them once it stops serving, and logrotate, which rotates on size,
+// never touches them again.
+function clearRetiredLogs(name) {
+  const keep = new Set(stackServices(name));
+  for (const backend of allBackends()) {
+    if (keep.has(backend) || !backend.clearLogs) continue;
+    try {
+      const removed = backend.clearLogs();
+      if (removed > 0) {
+        console.log(`Removed ${removed} log file(s) of ${backend.label || backend.name}`);
+      }
+    } catch (err) {
+      console.warn(`Could not remove the logs of ${backend.label || backend.name}:`, err.message);
+    }
+  }
+}
+
 async function stopOutside(name) {
   const keep = new Set(stackServices(name));
   for (const backend of allBackends()) {
@@ -514,6 +533,7 @@ export async function selectStackAtBoot(db) {
   deleteSetting(db, LEGACY_SETTING_KEY);
   writeStackFile(name);
   await stopOutside(name);
+  clearRetiredLogs(name);
 
   const last = marker || legacyMarker;
   if (!last) return { stack: name, recovered: null };

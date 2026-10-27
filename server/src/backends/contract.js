@@ -138,6 +138,9 @@ export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
  *   another backend can bind its ports; rejects naming one that has not
  * - pruneLogs?(days) -> number: delete audit logs of its own (Kea's legal
  *   log) older than the audit retention; how many files went
+ * - clearLogs?() -> number: delete its daemon logs and their rotated copies,
+ *   once it no longer serves (removeLogFiles in shared/log-files.js); never
+ *   an audit log, which pruneLogs keeps for the retention; how many files went
  */
 export const SERVICE_OPS = Object.freeze([
   'status',

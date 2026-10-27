@@ -12,6 +12,7 @@ import {
 } from '../models/setting.js';
 import * as User from '../models/user.js';
 import * as BackupCode from '../models/backup-code.js';
+import { dropFeedDomains } from '../models/blocklist-store.js';
 import { endAllLiveSessions } from '../models/session.js';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { BACKEND_RESTART_MARKER, DATA_DIR } from '../config/defaults.js';
@@ -55,6 +56,33 @@ const KEA_EXCLUDES = [
 // Paths inside a carried directory that a restore keeps from this host
 // rather than taking from the archive (which never has them).
 const KEPT_ON_RESTORE = ['kea/secret'];
+
+// Where createBackup stages its database copy; a crash leaves it for
+// sweepStaleRestoreArtifacts.
+const BACKUP_DB_STAGE_PREFIX = '.backup-db-';
+
+/**
+ * Write the database a backup carries into `dir` as cidrella.db.
+ *
+ * VACUUM INTO makes a compact, consistent copy: the live file keeps every page
+ * it ever grew to on its freelist (a blocklist refresh stages a whole feed
+ * before sweeping it), and copying the file carried those pages into every
+ * backup. The blocklist feeds are left out too (dropFeedDomains). They are a
+ * cache of downloads, and the largest table by far; the restart after a
+ * restore refreshes every enabled feed.
+ */
+function writeBackupDatabase(db, dir) {
+  const copyPath = path.join(dir, 'cidrella.db');
+  db.prepare('VACUUM INTO ?').run(copyPath);
+  const copy = new Database(copyPath);
+  try {
+    dropFeedDomains(copy);
+    copy.exec('VACUUM');
+  } finally {
+    copy.close();
+  }
+  return copyPath;
+}
 function isRuntimeArtifact(name) {
   return /\.log(\.|-|$)/i.test(name) || /\.pid$/i.test(name);
 }
@@ -99,9 +127,8 @@ export function createBackup(db) {
   // models that take ~48 hours of DNS traffic each to retrain. Both were
   // already being captured by the pre-restore snapshot code below, the
   // normal backup was just forgotten.
+  // The database is not one of these: writeBackupDatabase stages a copy.
   const includes = [];
-  if (fs.existsSync(path.join(DATA_DIR, 'cidrella.db'))) includes.push('cidrella.db');
-  else if (fs.existsSync(path.join(DATA_DIR, 'ipam.db'))) includes.push('ipam.db');
   if (fs.existsSync(path.join(DATA_DIR, 'certs'))) includes.push('certs');
   if (fs.existsSync(path.join(DATA_DIR, 'dnsmasq'))) includes.push('dnsmasq');
 
@@ -129,16 +156,15 @@ export function createBackup(db) {
   // cidrella.db (backends/pdns). A restore leaves the host's copy; while
   // PowerDNS serves DNS, the restart after a restore resyncs its zones.
 
-  if (includes.length === 0) {
-    throw new Error('No data files found to backup');
-  }
-  manifest.includes = includes.slice();
+  manifest.includes = ['cidrella.db', ...includes];
 
   // Stage manifest in DATA_DIR so tar picks it up as a sibling of cidrella.db.
   // Using a predictable name lets restore detect it without scanning.
   const manifestPath = path.join(DATA_DIR, MANIFEST_NAME);
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
+  const dbStage = fs.mkdtempSync(path.join(DATA_DIR, BACKUP_DB_STAGE_PREFIX));
   try {
+    writeBackupDatabase(db, dbStage);
     // Use spawnSync (not execFileSync) so we can inspect the exit code
     // directly. dnsmasq.leases can mutate mid-archive when a DHCP client
     // lease rolls over during the second or two tar is running; tar
@@ -167,6 +193,9 @@ export function createBackup(db) {
         archivePath,
         MANIFEST_NAME,
         ...includes,
+        '-C',
+        dbStage,
+        'cidrella.db',
       ],
       {
         cwd: DATA_DIR,
@@ -194,6 +223,7 @@ export function createBackup(db) {
     } catch {
       /* ignore */
     }
+    fs.rmSync(dbStage, { recursive: true, force: true });
   }
 
   const stat = fs.statSync(archivePath);
@@ -1122,6 +1152,7 @@ export function sweepStaleRestoreArtifacts() {
   const targets = [
     { dir: path.join(DATA_DIR, 'snapshots'), match: /^\.restore-upload-/ },
     { dir: DATA_DIR, match: /^\.restore-staging-/ },
+    { dir: DATA_DIR, match: /^\.backup-db-/ },
   ];
   let swept = 0;
   for (const { dir, match } of targets) {

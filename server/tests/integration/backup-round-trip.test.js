@@ -14,6 +14,7 @@ import { DATA_DIR } from '../helpers/isolated-data-dir.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -190,6 +191,21 @@ function seed(db) {
     `INSERT INTO sessions (id, user_id, username, expires_at) VALUES ('live-at-backup', ?, 'round-admin', '2999-01-01 00:00:00')`,
   ).run(adminId);
 
+  // A blocklist feed: its settings are the operator's, its domains a download.
+  db.prepare(
+    `INSERT INTO blocklist_categories
+       (slug, enabled, source_url, domain_count, last_fetched_at, etag, last_modified)
+     VALUES ('round-ads', 1, 'https://feeds.round.test/ads.txt', 2,
+             '2026-10-01 00:00:00', 'W/"v1"', 'Thu, 01 Oct 2026')
+     ON CONFLICT(slug) DO UPDATE SET enabled = 1, source_url = excluded.source_url,
+       domain_count = 2, last_fetched_at = excluded.last_fetched_at,
+       etag = excluded.etag, last_modified = excluded.last_modified`,
+  ).run();
+  db.prepare(
+    `INSERT INTO blocklist_domains (domain, category_slug)
+     VALUES ('ads.round.test', 'round-ads'), ('track.round.test', 'round-ads')`,
+  ).run();
+
   writeFile('certs/server.crt', 'CERT v1');
   writeFile('certs/server.key', 'KEY v1');
   writeFile('dnsmasq/conf.d/cidrella.conf', 'domain=round.test\n');
@@ -256,6 +272,15 @@ describe('backup round trip', () => {
     before = dumpTables(db);
     beforeFiles = hashFiles(dataDir);
 
+    // A refresh stages a whole feed and sweeps it: the pages stay on the
+    // live file's freelist.
+    const stage = db.prepare('INSERT INTO blocklist_stage (domain) VALUES (?)');
+    db.transaction(() => {
+      for (let i = 0; i < 5000; i++) stage.run(`staged-${i}.round.test`);
+    })();
+    db.prepare('DELETE FROM blocklist_stage').run();
+    expect(db.pragma('freelist_count', { simple: true })).toBeGreaterThan(0);
+
     backup = createBackup(db);
 
     change(db, adminId);
@@ -283,6 +308,8 @@ describe('backup round trip', () => {
       'user_backup_codes',
       'backups',
       'sessions',
+      'blocklist_categories',
+      'blocklist_domains',
     ]);
     for (const name of Object.keys(before)) {
       if (promised.has(name)) continue;
@@ -305,6 +332,42 @@ describe('backup round trip', () => {
       ended: true,
       end_reason: 'restore',
     });
+  });
+
+  it('keeps the blocklist settings and leaves the feeds to be downloaded again', () => {
+    const rows = (dump) => dump.blocklist_categories.map((row) => JSON.parse(row));
+    const fetchState = ['domain_count', 'last_fetched_at', 'etag', 'last_modified'];
+    const settingsOf = (row) =>
+      Object.fromEntries(Object.entries(row).filter(([key]) => !fetchState.includes(key)));
+    expect(rows(after).map(settingsOf)).toEqual(rows(before).map(settingsOf));
+    const fed = rows(after).find((row) => row.source_url === 'https://feeds.round.test/ads.txt');
+    expect(fed).toMatchObject({
+      enabled: 1,
+      domain_count: 0,
+      last_fetched_at: null,
+      etag: null,
+      last_modified: null,
+    });
+    expect(before.blocklist_domains).toHaveLength(2);
+    expect(after.blocklist_domains).toEqual([]);
+  });
+
+  it('carries a compact database without its free pages', () => {
+    const archive = getBackupPath(backup.filename);
+    const listed = execFileSync('tar', ['-tvzf', archive], { encoding: 'utf8' });
+    const db = listed.split('\n').find((line) => / cidrella\.db$/.test(line));
+    expect(db).toBeTruthy();
+    const extracted = fs.mkdtempSync(path.join(dataDir, 'extract-'));
+    try {
+      execFileSync('tar', ['-xzf', archive, '-C', extracted, 'cidrella.db']);
+      const copy = new Database(path.join(extracted, 'cidrella.db'), { readonly: true });
+      expect(copy.pragma('freelist_count', { simple: true })).toBe(0);
+      expect(copy.pragma('integrity_check', { simple: true })).toBe('ok');
+      copy.close();
+    } finally {
+      fs.rmSync(extracted, { recursive: true, force: true });
+    }
+    expect(fs.readdirSync(dataDir).filter((name) => name.startsWith('.backup-db-'))).toEqual([]);
   });
 
   it('changes the settings only by the DHCP choice', () => {

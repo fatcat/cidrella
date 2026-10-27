@@ -20,3 +20,16 @@ export function addAllowlistEntry(db, domain, reason) {
 export function deleteAllowlistEntry(db, entryId) {
   return db.prepare('DELETE FROM blocklist_allowlist WHERE id = ?').run(entryId);
 }
+
+// Empty the feeds and forget how they were fetched, keeping each category's
+// settings: a backup's copy of the database (utils/backup.js). The etag and
+// Last-Modified go too, so the next refresh downloads each feed in full
+// instead of taking a 304 for a list this database no longer holds.
+export function dropFeedDomains(db) {
+  db.exec(`
+    DELETE FROM blocklist_domains;
+    DELETE FROM blocklist_stage;
+    UPDATE blocklist_categories
+      SET domain_count = 0, last_fetched_at = NULL, etag = NULL, last_modified = NULL;
+  `);
+}

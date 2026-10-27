@@ -384,7 +384,7 @@ CIDRella has a **separate** backup mechanism that complements the rollback syste
 | **Retention** | Always exactly one (overwritten by next update) | Configurable count (default 7) |
 | **Trigger** | Automatic (every update) | Scheduled (daily) + manual |
 | **Use when** | Bad update needs reverting | Disaster recovery, restoring to a new host |
-| **Restores DuckDB analytics** | Yes | No |
+| **Restores DuckDB analytics** | Yes | Yes |
 | **Location** | `/var/lib/cidrella/snapshots/pre-update/` | `/var/lib/cidrella/backups/` |
 
 ### What's in a backup
@@ -392,13 +392,16 @@ CIDRella has a **separate** backup mechanism that complements the rollback syste
 A backup archive is a gzipped tar of:
 
 - `cidrella-backup-manifest.json`: metadata, CIDRella version, schema version, creation time, included files
-- `cidrella.db`: main SQLite database (settings, subnets, DNS/DHCP records, users, audit log)
-- `dnsmasq/`: dnsmasq config, hosts files, dhcp-hosts files, lease file
+- `cidrella.db`: main SQLite database (settings, subnets, DNS/DHCP records, users, audit log), as a compact copy (`VACUUM INTO`), so the free pages the live file keeps are not carried. The blocklist feeds' domains are left out: they are downloaded again. Each category's settings (enabled, source URL) are kept, and the first refresh after a restore fetches every enabled feed in full.
+- `dnsmasq/`: dnsmasq config, hosts files, dhcp-hosts files, lease file (not its logs)
+- `kea/`: Kea's leases and server DUID, when Kea has served here (not its logs, configuration or control secret)
 - `certs/`: TLS certificates (the self-signed or imported cert that the web UI serves)
+- `analytics.duckdb`: the DNS query analytics database, with its WAL
+- `anomaly/`: the trained anomaly detection models
 
 It does **not** include:
 
-- `analytics.duckdb`: the DNS query analytics database. Analytics is explicitly non-critical, losing it does not affect DNS/DHCP operation. If you need analytics history across a restore, snapshot it manually (see below).
+- `pdns/`: PowerDNS's database and configuration, derived from `cidrella.db`. The restart after a restore resyncs its zones.
 - `geoip/`: GeoIP database. Regenerated on next scheduled update.
 - `backups/`: obviously. Avoids recursive backup-of-backups.
 - `snapshots/pre-update/`: the rollback snapshots, tied to a specific slot.

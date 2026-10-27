@@ -35,6 +35,7 @@ import { LOG_FILE, dhcpMessage, isDhcpLine, querySourceIp } from './log-format.j
 import { createDhcpLogParser } from './dhcp-log-parser.js';
 import { declareSupport } from '../features.js';
 import { atomicWrite } from '../shared/validated-files.js';
+import { removeLogFiles } from '../shared/log-files.js';
 
 const ROLES = ['dns', 'dhcp', 'ra'];
 
@@ -230,6 +231,7 @@ export function createDnsmasqBackend() {
         fs.mkdirSync(dir, { recursive: true });
       }
     },
+    clearLogs: () => removeLogFiles(LOG_FILE),
     // dnsmasq logs queries (log-queries) and DHCP detail (log-dhcp) to one file.
     logSource: () => ({
       path: LOG_FILE,

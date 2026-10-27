@@ -19,6 +19,7 @@ import { normalizeDuid } from '../../utils/duid.js';
 import { declareSupport } from '../features.js';
 import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
 import { createUnitControl } from '../shared/unit-control.js';
+import { removeLogFiles } from '../shared/log-files.js';
 import { findExecutable } from '../../utils/executable.js';
 import { loadDhcpReservations, loadDhcpScopes } from '../shared/dhcp-scope-model.js';
 import {
@@ -37,6 +38,7 @@ import {
   unitName,
   enableFlagPath,
   memfilePaths,
+  logFilePath,
 } from './paths.js';
 import { ensureKeaSecret, readKeaSecret } from './secret.js';
 import { createKeaClient } from './client.js';
@@ -353,6 +355,8 @@ export function createKeaBackend(deps = {}) {
     },
     // The legal log keeps as long as the audit log does.
     pruneLogs: (days) => pruneLegalLogs(days),
+    // The daemons' logs; the legal log stays, under pruneLogs.
+    clearLogs: () => FAMILIES.reduce((sum, family) => sum + removeLogFiles(logFilePath(family)), 0),
     // The DHCPv4 legal log, which the fingerprint watcher reads. Kea starts
     // a new file each day; the path is the newest. Kea answers no DNS, and
     // its DHCP message counts come from dhcpCounters.

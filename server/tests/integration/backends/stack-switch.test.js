@@ -79,6 +79,10 @@ function switchable(createFakeBackend, name, roles, deps, capabilities = {}) {
   b.awaitRunning = async () => failIf('awaitRunning');
   b.status = () => ({ name, label: name, running: b.running, restartPending: false });
   b.installed = () => b.installedResult;
+  b.clearLogs = () => {
+    b.logsCleared++;
+    return 0;
+  };
   return b;
 }
 
@@ -158,6 +162,7 @@ beforeEach(() => {
       duid: null,
       running: false,
       installedResult: { ok: true },
+      logsCleared: 0,
     });
   }
   b.dnsmasq.store = [V4, V6];
@@ -209,6 +214,9 @@ describe('switchStack to PowerDNS + Kea', () => {
     // Clients keep talking to the same DHCPv6 server identity.
     expect(b.kea.duid).toBe(SERVER_DUID);
     expect(b.dnsmasq.running).toBe(false);
+    // dnsmasq's logs go with it; the new stack keeps its own.
+    expect(b.dnsmasq.logsCleared).toBe(1);
+    for (const name of ['pdns', 'kea', 'radvd']) expect(b[name].logsCleared).toBe(0);
   });
 
   it('stages before dnsmasq stops, and starts nothing contested until it has', async () => {
@@ -266,6 +274,8 @@ describe('switchStack to PowerDNS + Kea', () => {
       expect(log.includes('dnsmasq start')).toBe(dnsmasqStopped);
       expect(readSetting(db, 'backend_stack')).toBeNull();
       expect(fs.existsSync(MARKER_FILE)).toBe(false);
+      // A switch that did not finish leaves every log for the diagnosis.
+      for (const backend of Object.values(b)) expect(backend.logsCleared).toBe(0);
     });
   }
 
@@ -346,6 +356,9 @@ describe('selectStackAtBoot', () => {
     expect(registry.stackName()).toBe('pdns-kea');
     expect(b.dnsmasq.running).toBe(false);
     expect(fs.readFileSync(STACK_FILE, 'utf8')).toBe('pdns-kea\n');
+    // An earlier switch's leftovers go at boot too.
+    expect(b.dnsmasq.logsCleared).toBe(1);
+    expect(b.pdns.logsCleared).toBe(0);
   });
 
   it('defaults to dnsmasq and stops a stray Kea', async () => {

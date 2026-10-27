@@ -32,6 +32,7 @@ import { getNtpStatus } from '../../utils/ntp-status.js';
 import { declareSupport } from '../features.js';
 import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
 import { createUnitControl } from '../shared/unit-control.js';
+import { removeLogFiles } from '../shared/log-files.js';
 import { ensureSecret, readSecret } from '../shared/secret.js';
 import { loadDnsZones } from '../shared/dns-zone-model.js';
 import {
@@ -517,6 +518,7 @@ export function createPdnsBackend(deps = {}) {
         }
       }
     },
+    clearLogs: () => removeLogFiles(LOG_FILE),
     // pdns.log: both daemons' output, plus a query line per query, from the
     // DNS proxy while it is in front (proxyQueries) or from Recursor in bypass
     // mode. PowerDNS answers no DHCP.

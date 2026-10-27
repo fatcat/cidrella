@@ -235,7 +235,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   DHCP adapter serves, options merged and resolved; `loadDnsZones` in `dns-zone-model.js` for
   the zones and records every DNS adapter serves, with `LOCAL_RECORD_TTL` for a record without
   its own TTL, and `servedHostsByAddress` (the one name each address answers a reverse lookup
-  with); `reserved-zones.js` for the reserved and site-local names a resolver keeps local; `ensureSecret` and `readSecret` in `secret.js` for a 0600 key file; `poolSegments` for a pool minus its
+  with); `reserved-zones.js` for the reserved and site-local names a resolver keeps local; `ensureSecret` and `readSecret` in `secret.js` for a 0600 key file; `removeLogFiles` in `log-files.js` for a retired backend's logs (an adapter's `clearLogs`, run for every backend outside the stack after a switch and at boot); `poolSegments` for a pool minus its
   reserved addresses; `atomicWrite` and `createValidatedFiles` for a rendered config written as
   one checked transaction; `createUnitControl` for starting, stopping, reloading and checking
   a daemon (`installed`, `awaitStopped`), with `enableFile` for one s6 keeps down until wanted

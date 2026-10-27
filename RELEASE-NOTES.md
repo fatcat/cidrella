@@ -52,6 +52,17 @@ saved now can be.
   address of the appliance with nothing allocated to it was shown as a rogue device.
   Scans, Neighbor Discovery and DNS queries now never make one of its interface addresses a
   rogue, in either family, and the next scan clears a flag already set.
+- **Backups no longer carry the database's free space or the blocklist feeds.** A backup copied
+  the database file as it was, with every free page in it: SQLite keeps the space a blocklist
+  refresh once used, so 140 MB of data was a 322 MB file, and each of seven backups carried it. A backup now
+  writes a compact copy and leaves out the blocklist feeds' domains, the largest table, which
+  are downloads. Each category's settings are kept, and after a restore the first refresh
+  fetches every enabled feed again.
+- **Switching server stacks removes the old stack's logs.** After a switch, the stack that
+  stopped serving left its logs behind, and since logrotate rotates on size, a log nothing wrote
+  any more was never rotated or compressed again: 127 MB of dnsmasq logs on one install. The
+  switch now deletes them, and boot removes any an earlier switch left. Kea's legal log is kept
+  for the audit retention either way.
 - **The DNS proxy answers a query it cannot read.** A malformed query was dropped, so the
   client waited out its timeout and tried again, and the log line did not say who sent it. The
   proxy now answers FORMERR and logs the client's address and the start of the message.
