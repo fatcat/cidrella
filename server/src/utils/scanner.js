@@ -16,6 +16,7 @@ import {
 import { getSetting } from '../db/init.js';
 import { ipv6Enabled, IPV6_DISABLED_ERROR } from './ipv6-support.js';
 import { observeScanResult, reconcileScanRogues } from '../services/ip-lifecycle-service.js';
+import { isLocalAddress } from './local-addresses.js';
 import * as ScanRun from '../models/scan-run.js';
 import { macIsAuthoritative } from '../models/ip-lifecycle.js';
 
@@ -441,7 +442,9 @@ async function runScan(db, scanId, subnetId, options) {
         let conflictReason = null;
         const assignment = assignmentMap.get(result.ip);
 
-        if (result.responded) {
+        // The appliance's own interface addresses always answer, and they
+        // are not an unknown host, so they are never a conflict.
+        if (result.responded && !isLocalAddress(result.ip)) {
           // An unassigned address answering is a rogue on IPv4 and on a
           // stateful DHCPv6 network. Where hosts assign themselves (SLAAC
           // modes) or nothing hands out addresses, it is simply a host.

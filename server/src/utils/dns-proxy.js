@@ -688,10 +688,47 @@ async function askForwarder(query, { tcp = false, timeoutMs }) {
   return answer;
 }
 
+// A FORMERR reply built from a query's own header, for a message dns-packet
+// cannot decode, so the client gets an answer instead of retrying into
+// silence. Null for anything shorter than a header or already a response (a
+// reply to a reply could loop between two resolvers). Keeps the ID, opcode
+// and RD; every count is zero, which RFC 1035 allows for FORMERR.
+const HEADER_BYTES = 12;
+const QR_BIT = 0x80;
+export function formErrReply(msg) {
+  if (!msg || msg.length < HEADER_BYTES || msg[2] & QR_BIT) return null;
+  const reply = Buffer.alloc(HEADER_BYTES);
+  reply[0] = msg[0];
+  reply[1] = msg[1];
+  reply[2] = QR_BIT | (msg[2] & 0x79); // opcode (0x78) and RD (0x01)
+  reply[3] = 0x80 | RCODE.FORMERR; // RA, as every proxy answer sets it
+  return reply;
+}
+
+// Name the client and show the start of the message: the error alone ("Cannot
+// decode name") says nothing about who sent it or what it was.
+function logMalformed(clientIp, msg, err, transport) {
+  proxyLog('warn', 'Malformed query', {
+    clientIp,
+    transport,
+    bytes: msg.length,
+    head: msg.subarray(0, 48).toString('hex'),
+    error: err.message,
+  });
+}
+
 function handleQuery(msg, rinfo, sock) {
   try {
     const startNs = process.hrtime.bigint();
-    const query = dnsPacket.decode(msg);
+    let query;
+    try {
+      query = dnsPacket.decode(msg);
+    } catch (err) {
+      logMalformed(canonicalizeIp(rinfo.address) || rinfo.address, msg, err, 'udp');
+      const reply = formErrReply(msg);
+      if (reply) sock.send(reply, rinfo.port, rinfo.address);
+      return;
+    }
     // One spelling per client, whichever socket family delivered the query,
     // so analytics and liveness never see the same host twice.
     const clientIp = canonicalizeIp(rinfo.address) || rinfo.address;
@@ -988,12 +1025,16 @@ export function relayQueryOverTcp(reqMsg, host, port, timeoutMs) {
 async function handleTcpQuery(msg, clientSock) {
   const startNs = process.hrtime.bigint();
   let query;
+  const clientIp = canonicalizeIp(clientSock.remoteAddress || '') || clientSock.remoteAddress || '';
   try {
     query = dnsPacket.decode(msg);
-  } catch {
-    return; // malformed, ignore this message, keep the connection open
+  } catch (err) {
+    // Answer and keep the connection open for the client's next message.
+    logMalformed(clientIp, msg, err, 'tcp');
+    const reply = formErrReply(msg);
+    if (reply) writeTcpMessage(clientSock, reply);
+    return;
   }
-  const clientIp = canonicalizeIp(clientSock.remoteAddress || '') || clientSock.remoteAddress || '';
   const queryName = query.questions?.[0]?.name;
   const queryType = query.questions?.[0]?.type || 'A';
 

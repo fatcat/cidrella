@@ -63,7 +63,8 @@ Terminology:
   static DNS, DHCP Reservation, dynamic DHCP, IP Reservation, or SLAAC. System
   is reserved for topology-defined non-host addresses: the IPv4 network and
   broadcast addresses and the IPv6 subnet-router anycast address. Rogue is a
-  derived classification for an online unassigned address. When a DHCP lease
+  derived classification for an online unassigned address that is not one of
+  the appliance's own interface addresses. When a DHCP lease
   runs out, its holder stays online only if something heard it after the lease
   ended; otherwise the expiry takes it offline, so a client that simply left is
   never shown as a rogue. Available addresses should not have a type.

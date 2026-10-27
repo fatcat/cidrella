@@ -47,6 +47,14 @@ saved now can be.
   unless the host was heard from after that. A host that keeps using the address answers the
   next scan and is flagged then. An expired lease that dnsmasq or Kea still lists no longer
   counts as activity or as a new lease in the address history.
+- **CIDRella no longer flags its own addresses as rogue.** The scanner probes every address
+  on the networks CIDRella is attached to, including its own, and its own always answer. An
+  address of the appliance with nothing allocated to it was shown as a rogue device.
+  Scans, Neighbor Discovery and DNS queries now never make one of its interface addresses a
+  rogue, in either family, and the next scan clears a flag already set.
+- **The DNS proxy answers a query it cannot read.** A malformed query was dropped, so the
+  client waited out its timeout and tried again, and the log line did not say who sent it. The
+  proxy now answers FORMERR and logs the client's address and the start of the message.
 - **Under Kea, lease names no longer end in a dot.** Kea stores a client's name as a fully
   qualified one, `laptop.` when no suffix is configured, and CIDRella read that trailing dot as
   "at the root of DNS": the address showed `laptop.`, and a dynamic lease's DNS record would

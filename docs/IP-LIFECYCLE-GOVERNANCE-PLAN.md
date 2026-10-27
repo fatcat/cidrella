@@ -71,6 +71,9 @@ terms. Internal schema and API identifiers retain their existing names.
 `rogue` is an observed classification, not an allocation mechanism. A rogue is
 an online, unassigned host address. It can still be presented as the address
 type `rogue`, but it must not coexist with a legitimate allocation claim. An
+address the appliance holds on one of its own interfaces (`isLocalAddress` in
+`utils/local-addresses.js`, either family) is never rogue: it always answers
+CIDRella's own probes, and it is not an unknown host. An
 address whose DHCP lease runs out is online afterward only if it was heard
 (probe reply, renewal, passive traffic) after the lease ended; the expiry
 takes a silent holder offline, so the online flag a forgiven scan miss leaves
@@ -434,7 +437,8 @@ offline -> online
 - Active ARP/ICMP for IPv4, Neighbor Discovery/ICMPv6 for IPv6, and passive
   DNS/DHCP observations share one operation.
 - Refresh online state, `last_seen_at`, observation source, and observed MAC.
-- An online unassigned host becomes rogue.
+- An online unassigned host becomes rogue, unless the appliance holds the
+  address itself.
 - A legitimate allocation can report a MAC conflict without changing its
   allocation state.
 

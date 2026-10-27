@@ -33,6 +33,7 @@ import {
 import { activeLeaseSql, leaseExpiryMs } from '../utils/lease-sql.js';
 import { leaseDurationMs } from '../utils/lease-time.js';
 import { parseIp } from '../utils/address.js';
+import { isLocalAddress } from '../utils/local-addresses.js';
 import { recordAudit, sample } from './audit.js';
 import { queueRegen } from '../utils/after-commit.js';
 
@@ -766,8 +767,11 @@ export function reconcileExpiredDhcpAllocations(db) {
   return expired.length;
 }
 
-export function observePassiveActivity(db, subnetId, ip, options) {
-  return IpAddress.recordPassiveActivity(db, subnetId, ip, options);
+// The appliance's own addresses are not unknown hosts: traffic from one never
+// creates a rogue.
+export function observePassiveActivity(db, subnetId, ip, options = {}) {
+  const createRogue = Boolean(options.createRogue) && !isLocalAddress(ip);
+  return IpAddress.recordPassiveActivity(db, subnetId, ip, { ...options, createRogue });
 }
 
 export function observeScanResult(db, subnetId, ip, result) {
@@ -1214,7 +1218,11 @@ export function observeIpv6Presence(
       observeSlaac(db, subnetId, ip, { validUntil, preferredUntil: null });
     }
   }
-  return observeNeighbor(db, subnetId, ip, { mac, rogueAllowed: mode === 'stateful', source });
+  return observeNeighbor(db, subnetId, ip, {
+    mac,
+    rogueAllowed: mode === 'stateful' && !isLocalAddress(ip),
+    source,
+  });
 }
 
 export function observeRouterAdvertisement(
