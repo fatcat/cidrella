@@ -21,7 +21,9 @@ import {
   isValidIpv4,
   isValidAddress,
   networkContains,
+  networksOverlap,
   addressInRange,
+  parseAddressQuery,
 } from '../utils/ip.js';
 import { parseIp } from '../utils/address.js';
 
@@ -109,9 +111,45 @@ function canonicalIpRows(db) {
     .all();
 }
 
-function networkMatches(db, subnet, query, ipRows) {
-  if (!query) return true;
-  if (
+// The expanded spelling of an IPv6 row's address ('2001:0db8:0000:...'),
+// built from its sort key ('6' then 32 hex digits): the SQL form of
+// expandIpv6 in utils/address.js.
+const EXPANDED_IPV6_SQL = Array.from(
+  { length: 8 },
+  (_, group) => `substr(address_sort_key, ${2 + group * 4}, 4)`,
+).join(" || ':' || ");
+
+// The networks holding an address that matches a search, found in SQL so
+// the estate's rows never load: the address in its stored and expanded
+// spellings, the hostname and either MAC. A query that is one address
+// matches that address in any spelling, as anyFieldMatches does.
+function networksWithMatchingAddress(db, query) {
+  const needle = text(query);
+  const exact = canonicalizeIp(String(query));
+  const rows = db
+    .prepare(
+      `
+      SELECT DISTINCT subnet_id FROM ip_addresses
+       WHERE instr(lower(ip_address), ?) > 0
+          OR instr(lower(hostname), ?) > 0
+          OR instr(lower(mac_address), ?) > 0
+          OR instr(lower(last_seen_mac), ?) > 0
+          OR (address_family = 6 AND instr(${EXPANDED_IPV6_SQL}, ?) > 0)
+          OR ip_address = ?
+    `,
+    )
+    .all(needle, needle, needle, needle, needle, exact);
+  return new Set(rows.map((row) => row.subnet_id));
+}
+
+// A search for a network in CIDR form matches every network inside it or
+// containing it; one address matches the network it is in.
+function networkMatcher(db, query) {
+  if (!query) return () => true;
+  const parsedQuery = parseAddressQuery(query);
+  const addressMatches =
+    parsedQuery.kind === 'cidr' ? new Set() : networksWithMatchingAddress(db, query);
+  return (subnet) =>
     anyFieldMatches(
       subnet,
       [
@@ -124,25 +162,17 @@ function networkMatches(db, subnet, query, ipRows) {
         'vlan_name',
       ],
       query,
-    )
-  ) {
-    return true;
-  }
-  const exactIp = canonicalizeIp(query);
-  if (exactIp && networkContains(subnet.cidr, exactIp)) return true;
-  return ipRows.some(
-    (row) =>
-      row.subnet_id === subnet.id &&
-      anyFieldMatches(row, ['ip_address', 'hostname', 'mac_address', 'last_seen_mac'], query),
-  );
+    ) ||
+    (parsedQuery.kind === 'cidr' && networksOverlap(subnet.cidr, parsedQuery.cidr)) ||
+    (parsedQuery.kind === 'address' && networkContains(subnet.cidr, parsedQuery.ip)) ||
+    addressMatches.has(subnet.id);
 }
 
 export function getWorkspaceNetworks(db, { folderId, q, tableQ } = {}) {
-  const ipRows = canonicalIpRows(db);
   let items = allocatedLeaves(db);
   if (folderId !== undefined) items = items.filter((row) => row.folder_id === folderId);
-  if (q) items = items.filter((row) => networkMatches(db, row, q, ipRows));
-  if (tableQ) items = items.filter((row) => networkMatches(db, row, tableQ, ipRows));
+  if (q) items = items.filter(networkMatcher(db, q));
+  if (tableQ) items = items.filter(networkMatcher(db, tableQ));
   return { items, total: items.length };
 }
 

@@ -197,6 +197,11 @@ SQL instead of loading every row:
   not a scan of every IP row.
 - The synthetic rows (network address, gateway, searched address) are merged into the page
   they sort into.
+- Decided 2026-10-28: only the plain view (no search, no filters, address order) pages in
+  SQL. Text search, column filters, facets and the other sorts read fields that only
+  `models/ip-view.js` computes; putting them in SQL would restate its rules there, the second
+  precedence tree AGENTS.md forbids. Those keep the in-memory path over the network's rows,
+  and a CIDR search narrows the rows loaded to its sort-key range first.
 
 ### 8. What stays as it is
 
@@ -221,7 +226,8 @@ The canonical IP model gate (AGENTS.md) applies to rules 2, 5 and 7:
 
 1. **Read side**: rules 1, 6 and 7. Hide Show available for IPv6, IPv6-aware search, SQL
    paging and counts with the new index (a migration). Small, no contract change beyond the
-   read model.
+   read model. Done 2026-10-28: migration 092, contract text in `docs/API_MODEL.md`
+   (Network Read Model).
 2. **Planning**: rules 2, 3 and 4. Suggest an address (both families), prefix coverage and
    pool use, next free prefix, free blocks, the calculator change. Contract text for rule 2
    lands first.

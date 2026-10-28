@@ -6,6 +6,7 @@ import {
   addressFamily,
   isValidIp,
   isValidIpv6,
+  expandIpv6,
   IPV4_BITS,
   IPV6_BITS,
 } from '../../../src/utils/address.js';
@@ -250,5 +251,19 @@ describe('the v4-only helpers in ip.js stay v4-only', () => {
     for (const s of ['0.0.0.0', '10.0.0.1', '192.168.1.1', '255.255.255.255']) {
       expect(BigInt(ipToLong(s)), s).toBe(parseIp(s).value);
     }
+  });
+});
+
+describe('expandIpv6', () => {
+  it('spells an IPv6 address in all eight groups', () => {
+    expect(expandIpv6('2001:db8:5::1')).toBe('2001:0db8:0005:0000:0000:0000:0000:0001');
+    expect(expandIpv6('::')).toBe('0000:0000:0000:0000:0000:0000:0000:0000');
+    expect(expandIpv6('FE80::1%eth0')).toBe('fe80:0000:0000:0000:0000:0000:0000:0001');
+  });
+
+  it('is null for IPv4, a mapped IPv4 address and garbage', () => {
+    expect(expandIpv6('10.0.0.1')).toBeNull();
+    expect(expandIpv6('::ffff:10.0.0.1')).toBeNull();
+    expect(expandIpv6('not-an-address')).toBeNull();
   });
 });

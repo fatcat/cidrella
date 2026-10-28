@@ -1,7 +1,7 @@
 import fs from 'fs';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initDb } from '../../src/db/init.js';
-import { databaseThrough } from '../helpers/migrations.js';
+import { LATEST_MIGRATION, databaseThrough } from '../helpers/migrations.js';
 
 const tmpDirs = [];
 
@@ -88,7 +88,7 @@ describe('canonical Network/DHCP migration', () => {
     expect(upgraded.prepare('SELECT COUNT(*) AS count FROM dhcp_scope_pools').get().count).toBe(2);
     expect(
       upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
-    ).toBe(91);
+    ).toBe(LATEST_MIGRATION);
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     upgraded.close();

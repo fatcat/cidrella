@@ -7,7 +7,7 @@ import {
   formatNumber,
   isOnlineFlag,
 } from '../utils/format.js';
-import { addressToBig, sortKey } from '../utils/ip.js';
+import { addressToBig, networksOverlap, parseAddressQuery, sortKey } from '../utils/ip.js';
 import { leaseSeconds } from '@shared/lease-time.js';
 import { allocationSourceLabel, recordSourceLabel } from '../utils/ipTableDisplay.js';
 import { zoneFileName, zoneFileValue } from '../utils/dnsZoneFile.js';
@@ -364,8 +364,24 @@ export function dnsRecordSummary(rows) {
   return { total, disabled, note };
 }
 
+// What the explorer and the unallocated table match a search against (the
+// query lowercased). The server's network search covers allocated networks
+// only. A CIDR query matches every network inside it or containing it, as
+// the server's does.
+export function networkSearchMatches(network, query) {
+  const parsedQuery = parseAddressQuery(query);
+  if (
+    parsedQuery.kind === 'cidr' &&
+    network.cidr &&
+    networksOverlap(network.cidr, parsedQuery.cidr)
+  )
+    return true;
+  return `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query);
+}
+
 export function addressCountLabel({ shown, matching, total, sparse = false, paged = true }) {
-  const tail = sparse ? `${total} assigned addresses` : `${total} addresses in network`;
+  // An IPv6 network is an inventory: its count is what is known, never "of M".
+  const tail = sparse ? `${total} known addresses` : `${total} addresses in network`;
   // The grid shows the whole network, so "on this page" would be noise.
   return `Showing ${shown}${paged ? ' on this page' : ''} · ${matching} matching · ${tail}`;
 }

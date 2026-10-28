@@ -58,6 +58,7 @@ export {
   dhcpV6ModesFor,
   dhcpV6ModeError,
   addressInRange,
+  parseAddressQuery,
 } from '@shared/cidr.js';
 export { sortKey, addressFamily, isValidIp, isValidIpv6, canonicalizeIp } from '@shared/address.js';
 export { isValidDomain } from '@shared/ip.js';

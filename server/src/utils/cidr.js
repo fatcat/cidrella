@@ -29,6 +29,8 @@ import {
   IPV6_BITS,
   V4_MAPPED_PREFIX,
   V4_MAPPED_LAST,
+  canonicalizeIp,
+  sortKey,
 } from './address.js';
 import { RESERVED_RANGES } from './special-ranges.js';
 
@@ -199,6 +201,30 @@ export function networksOverlap(cidrA, cidrB) {
   const b = parseNetwork(cidrB);
   if (a.family !== b.family) return false;
   return a.networkBig <= b.lastBig && b.networkBig <= a.lastBig;
+}
+
+/**
+ * The lowest and highest `address_sort_key` (address.js `sortKey`) inside a
+ * network, so SQL can select its addresses as a range on that column.
+ */
+export function sortKeyRange(cidr) {
+  const parsed = parseNetwork(cidr);
+  return [sortKey(parsed.first), sortKey(parsed.last)];
+}
+
+/**
+ * What a search box holds: one address (any spelling), a network in CIDR
+ * form, or plain text. Both families.
+ */
+export function parseAddressQuery(text) {
+  const query = String(text ?? '').trim();
+  if (query.includes('/')) {
+    return isValidNetwork(query)
+      ? { kind: 'cidr', cidr: normalizeNetwork(query) }
+      : { kind: 'text' };
+  }
+  const ip = isValidAddress(query) ? canonicalizeIp(query) : null;
+  return ip ? { kind: 'address', ip } : { kind: 'text' };
 }
 
 /** True when the child sits inside the parent with a longer prefix. */

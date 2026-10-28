@@ -57,6 +57,8 @@ export {
   addressAtOffset,
   addressRangesOverlap,
   addressInRange,
+  sortKeyRange,
+  parseAddressQuery,
 } from './cidr.js';
 
 export function isIpInRange(ip, startIp, endIp) {

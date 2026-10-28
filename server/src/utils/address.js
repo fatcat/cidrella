@@ -231,6 +231,17 @@ export function canonicalizeIp(str) {
 }
 
 /**
+ * The full eight-group spelling of an IPv6 address ('2001:0db8:0000:...'),
+ * so a search typed in that form finds the compressed one. Null for IPv4 or
+ * anything unparseable.
+ */
+export function expandIpv6(str) {
+  const parsed = parseIp(str);
+  if (!parsed || parsed.bits !== IPV6_BITS) return null;
+  return parsed.value.toString(16).padStart(32, '0').match(/.{4}/g).join(':');
+}
+
+/**
  * A fixed-width sort key, so ORDER BY on a TEXT column sorts addresses
  * numerically and keeps the two families apart.
  *

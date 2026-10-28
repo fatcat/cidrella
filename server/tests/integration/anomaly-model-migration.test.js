@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import fs from 'fs';
 import { initDb } from '../../src/db/init.js';
-import { databaseThrough } from '../helpers/migrations.js';
+import { LATEST_MIGRATION, databaseThrough } from '../helpers/migrations.js';
 
 const tmpDirs = [];
 
@@ -42,7 +42,7 @@ describe('anomaly model identity migration compatibility', () => {
 
     expect(
       upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
-    ).toBe(91);
+    ).toBe(LATEST_MIGRATION);
     expect(
       upgraded
         .prepare(
@@ -101,7 +101,7 @@ describe('anomaly model identity migration compatibility', () => {
 
     expect(
       upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
-    ).toBe(91);
+    ).toBe(LATEST_MIGRATION);
     expect(
       upgraded
         .prepare(

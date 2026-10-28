@@ -28,6 +28,7 @@ import {
   subnetTree,
   unallocatedLeaves,
   filteringOn,
+  networkById,
 } from './fake-estate.js';
 
 export const STORAGE_KEY = 'cidrella_workspace_v1_admin';
@@ -412,6 +413,11 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
     out.push(`tabs [${state.tabs}] in ${context.kind}, expected [${tabs}]`);
   if (tabs?.length && !tabs.includes(state.view))
     out.push(`open tab "${state.view}" not one of [${tabs}]`);
+
+  // 2b. An IPv6 network is an inventory: it offers no Show available.
+  if (context.kind === 'network' && networkById(context.networkId)?.address_family === 6) {
+    if (state.showAvailable !== null) out.push('Show available offered on an IPv6 network');
+  }
 
   // 3. The DNS view always has one zone or one network's reverse zones chosen.
   const view = context.kind === 'unallocated' ? 'networks' : state.view;

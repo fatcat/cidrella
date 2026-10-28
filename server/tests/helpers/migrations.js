@@ -6,6 +6,14 @@ import { fileURLToPath } from 'url';
 
 const MIGRATIONS = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 
+/** The newest migration number: the schema version a fully upgraded database reports. */
+export const LATEST_MIGRATION = Math.max(
+  ...fs
+    .readdirSync(MIGRATIONS)
+    .filter((name) => name.endsWith('.sql'))
+    .map((name) => Number.parseInt(name, 10)),
+);
+
 /**
  * A database with the migrations up to and including `target` applied, the
  * way initDb applies them, for a test of the next one. Returns { db, dbPath,

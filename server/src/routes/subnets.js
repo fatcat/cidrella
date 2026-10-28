@@ -39,14 +39,17 @@ import {
   DHCP_V6_MODES,
   dhcpV6ModesFor,
   dhcpV6ModeError,
+  parseAddressQuery,
+  sortKeyRange,
 } from '../utils/ip.js';
-import { canonicalizeIp, sortKey } from '../utils/address.js';
+import { canonicalizeIp, expandIpv6, sortKey } from '../utils/address.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import {
   lifecycleRepository as IpAddress,
   setManualReservation,
 } from '../services/ip-lifecycle-service.js';
 import {
+  countPersistedSubnetIps,
   getCanonicalSubnetIpRow,
   getSubnetIpReadContext,
   projectPersistedSubnetIpRows,
@@ -2221,14 +2224,54 @@ router.get(
         .sort((a, b) => a.startLong - b.startLong);
     }
 
+    // One page of an IPv6 network in address order, read from SQL: the
+    // persisted rows, with the topology addresses nothing stores placed where
+    // they sort. A placed row's position is the persisted rows below it plus
+    // the placed rows before it.
+    function sqlPagedIpv6Rows(protectedAddresses, pageSize) {
+      const placed = protectedAddresses
+        .filter((ip) => countPersistedSubnetIps(db, subnet, { ipAddress: ip }) === 0)
+        .map((ip) => ({ ip, key: sortKey(ip) }))
+        .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+        .map((entry, index) => ({
+          ...entry,
+          position: countPersistedSubnetIps(db, subnet, { belowKey: entry.key }) + index,
+        }));
+      const filteredTotal = countPersistedSubnetIps(db, subnet) + placed.length;
+      const totalPages = Math.ceil(filteredTotal / pageSize) || 1;
+      const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), totalPages);
+      const start = (page - 1) * pageSize;
+      const end = Math.min(start + pageSize, filteredTotal);
+      const placedBefore = placed.filter((entry) => entry.position < start).length;
+      const placedOnPage = new Map(
+        placed
+          .filter((entry) => entry.position >= start && entry.position < end)
+          .map((entry) => [entry.position, entry.ip]),
+      );
+      const persisted = loadPersistedRows({
+        limit: end - start - placedOnPage.size,
+        offset: start - placedBefore,
+      });
+      const ips = [];
+      for (let position = start, next = 0; position < end; position += 1) {
+        ips.push(
+          placedOnPage.has(position)
+            ? makeVirtualIpRow(placedOnPage.get(position))
+            : persisted[next++],
+        );
+      }
+      return { ips, filteredTotal, page, totalPages };
+    }
+
     function isAvailableIpRow(row) {
       return (row.ip_display_status || 'available') === 'available';
     }
 
     // Any column any IP table has: the DNS record and DHCP reservation or
     // lease behind each address, and the network it is in.
-    function loadPersistedRows() {
-      const rows = projectPersistedSubnetIpRows(db, subnet, { context: readContext });
+    // `options` narrows or pages the read (projectPersistedSubnetIpRows).
+    function loadPersistedRows(options = {}) {
+      const rows = projectPersistedSubnetIpRows(db, subnet, { context: readContext, ...options });
       for (const row of rows) row.subnet_name = subnet.name || subnet.cidr;
       attachDnsFacts(db, rows);
       attachDhcpFacts(db, rows);
@@ -2293,43 +2336,56 @@ router.get(
     }
 
     // A query that is one address matches that address in any spelling
-    // ('fd00:1:0:0::1' is the row 'fd00:1::1'); any other text is a
-    // substring search over the row's fields.
-    function matchesSearch(row, query) {
-      if (!query) return true;
-      const exact = canonicalizeIp(query);
-      if (exact && row.ip_address === exact) return true;
-      return [
-        row.ip_address,
-        row.hostname,
-        row.mac_address,
-        row.last_seen_mac,
-        row.vendor,
-        row.ip_display_status,
-        row.address_type,
-        row.allocation_state,
-        row.allocation_source_type,
-        row.network_range_type,
-        row.os_family,
-        row.device_type,
-        row.device_confidence,
-        row.dhcp_fingerprint,
-        row.dhcp_vendor_class,
-        row.dhcp_fingerprint_hostname,
-        row.device_fingerprint_source,
-        row.scanning_enabled,
-      ].some((value) =>
-        String(value ?? '')
-          .toLowerCase()
-          .includes(query),
-      );
+    // ('fd00:1:0:0::1' is the row 'fd00:1::1'), a CIDR matches the addresses
+    // inside it, and any other text is a substring search over the row's
+    // fields and an IPv6 address's expanded form ('2001:0db8').
+    function searchMatcher(query) {
+      if (!query) return () => true;
+      const parsedQuery = parseAddressQuery(query);
+      if (parsedQuery.kind === 'cidr') {
+        return (row) => networkContains(parsedQuery.cidr, row.ip_address);
+      }
+      return (row) => {
+        if (parsedQuery.kind === 'address' && row.ip_address === parsedQuery.ip) return true;
+        if (expandIpv6(row.ip_address)?.includes(query)) return true;
+        return [
+          row.ip_address,
+          row.hostname,
+          row.mac_address,
+          row.last_seen_mac,
+          row.vendor,
+          row.ip_display_status,
+          row.address_type,
+          row.allocation_state,
+          row.allocation_source_type,
+          row.network_range_type,
+          row.os_family,
+          row.device_type,
+          row.device_confidence,
+          row.dhcp_fingerprint,
+          row.dhcp_vendor_class,
+          row.dhcp_fingerprint_hostname,
+          row.device_fingerprint_source,
+          row.scanning_enabled,
+        ].some((value) =>
+          String(value ?? '')
+            .toLowerCase()
+            .includes(query),
+        );
+      };
     }
+    const matchesExplorerSearch = searchMatcher(search);
+    const matchesTableSearch = searchMatcher(tableSearch);
+    // An IPv6 network is an inventory, not an address space: Show available
+    // has nothing to list there, so it is ignored rather than hiding the few
+    // available rows (the network address, an address searched for).
+    const hideAvailable = !showAvailable && parsed.family === 4;
 
     const displayStatusFilter = String(req.query.display_status || '').toLowerCase();
     const addressTypeFilter = String(req.query.address_type || '').toLowerCase();
     const rowMatches = (row) => {
-      if (!showAvailable && isAvailableIpRow(row)) return false;
-      if (!matchesSearch(row, search) || !matchesSearch(row, tableSearch)) return false;
+      if (hideAvailable && isAvailableIpRow(row)) return false;
+      if (!matchesExplorerSearch(row) || !matchesTableSearch(row)) return false;
       if (
         displayStatusFilter &&
         String(row.ip_display_status || '').toLowerCase() !== displayStatusFilter
@@ -2357,15 +2413,43 @@ router.get(
     };
 
     // IPv6 networks never materialize rows and are never walked. The listing
-    // is the persisted rows plus the protected topology addresses, filtered,
-    // sorted and paged in memory.
+    // is the persisted rows plus the protected topology addresses. The plain
+    // view (no search, no filters, address order) pages in SQL; anything else
+    // filters, sorts and pages in memory, since those read fields only
+    // ip-view computes.
     if (parsed.family === 6) {
       const pageSize = clampPageSize(req.query.pageSize);
-      const rowsByAddress = new Map(loadPersistedRows().map((row) => [row.ip_address, row]));
       const protectedAddresses = [parsed.network];
       if (subnet.gateway_address && parsedNetworkContains(parsed, subnet.gateway_address)) {
         protectedAddresses.push(subnet.gateway_address);
       }
+      const plainView =
+        !search &&
+        !tableSearch &&
+        !hasExplicitFilters &&
+        (!reqSortField || (reqSortField === 'ip_address' && reqSortOrder === 1));
+      if (plainView) {
+        return res.json({
+          subnet,
+          ...sqlPagedIpv6Rows(protectedAddresses, pageSize),
+          ranges,
+          totalIps,
+          pageSize,
+          search,
+          table_search: tableSearch,
+          sorted: Boolean(reqSortField),
+          sparse: true,
+        });
+      }
+      // A CIDR search can only match addresses inside it, so only those load.
+      const cidrTerm = [search, tableSearch]
+        .map((term) => parseAddressQuery(term))
+        .find((term) => term.kind === 'cidr');
+      const rowsByAddress = new Map(
+        loadPersistedRows(cidrTerm ? { sortKeyRange: sortKeyRange(cidrTerm.cidr) } : {}).map(
+          (row) => [row.ip_address, row],
+        ),
+      );
       // An exact address searched for is listed even when nothing is stored
       // for it, as the IPv4 listing does: an available address is a row.
       for (const term of [search, tableSearch]) {

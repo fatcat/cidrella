@@ -771,6 +771,9 @@ describe('canonical subnet IP detail and summary reads', () => {
     expect(summary.body).toEqual({
       subnet_id: created.body.id,
       total_addresses: 8,
+      // The three stored rows plus the network address and the broadcast:
+      // every row the address list can show.
+      known_count: 5,
       assigned_count: 3,
       unassigned_count: 5,
       online_count: 2,

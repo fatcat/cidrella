@@ -9,6 +9,7 @@ import {
   mapDnsZoneRows,
   mapNetworkRows,
   addressCountLabel,
+  networkSearchMatches,
   dnsRecordSummary,
   formatDuration,
   formatAddressCount,
@@ -269,13 +270,34 @@ describe('addressCountLabel', () => {
     );
   });
 
-  it('names assigned addresses for a sparse IPv6 network, which has no total', () => {
+  it('names known addresses for a sparse IPv6 network, which has no total', () => {
     expect(addressCountLabel({ shown: 256, matching: 256, total: 256, paged: false })).toBe(
       'Showing 256 · 256 matching · 256 addresses in network',
     );
     expect(addressCountLabel({ shown: 3, matching: 3, total: 3, sparse: true })).toBe(
-      'Showing 3 on this page · 3 matching · 3 assigned addresses',
+      'Showing 3 on this page · 3 matching · 3 known addresses',
     );
+  });
+});
+
+describe('networkSearchMatches', () => {
+  const v6 = { name: 'Lab v6', cidr: 'fd00:5::/64', vlan: null };
+  const v4 = { name: 'Trust', cidr: '10.0.0.0/23', vlan: 'trust' };
+
+  it('matches the name, CIDR and VLAN as text', () => {
+    expect(networkSearchMatches(v4, 'trust')).toBe(true);
+    expect(networkSearchMatches(v6, 'fd00:5')).toBe(true);
+    expect(networkSearchMatches(v6, 'lab v4')).toBe(false);
+  });
+
+  it('matches a network inside a CIDR query or containing it, in its own family only', () => {
+    expect(networkSearchMatches(v6, 'fd00::/16')).toBe(true);
+    expect(networkSearchMatches(v6, 'fd00:5::/120')).toBe(true);
+    expect(networkSearchMatches(v6, 'fd00:6::/64')).toBe(false);
+    expect(networkSearchMatches(v4, '10.0.0.0/8')).toBe(true);
+    expect(networkSearchMatches(v4, '10.0.1.128/25')).toBe(true);
+    expect(networkSearchMatches(v4, '10.0.2.0/24')).toBe(false);
+    expect(networkSearchMatches(v4, '::/0')).toBe(false);
   });
 });
 

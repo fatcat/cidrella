@@ -6,6 +6,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb } from '../../src/db/init.js';
 import * as IpAddress from '../../src/models/ip-address.js';
+import { LATEST_MIGRATION } from '../helpers/migrations.js';
 
 const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 let tmpDir;
@@ -108,7 +109,9 @@ describe('migrations 057-059 canonical IP identity', () => {
       source: 'manual',
     });
     expect(db.pragma('foreign_key_check')).toEqual([]);
-    expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(91);
+    expect(db.prepare('SELECT MAX(version) AS version FROM schema_version').get().version).toBe(
+      LATEST_MIGRATION,
+    );
     expect(
       db
         .prepare('PRAGMA table_info(ip_addresses)')

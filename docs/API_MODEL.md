@@ -244,13 +244,40 @@ an unallocated-space browser; its allocated leaves are the operating networks.
 
 Network rows carry `address_family` (`4` or `6`) and `last_address`.
 `broadcast_address` is null for IPv6 and `total_addresses` is null when the
-prefix holds more addresses than a JavaScript number represents exactly. The
-per-network IP listing for an IPv6 network returns persisted rows only, sorted
-by the canonical sort key, with no synthesized available rows; its summary
-reports `assigned_count` and leaves `unassigned_count` null when
-`total_addresses` is null. Split and calculate previews report child counts as
-decimal strings when they exceed that limit. Divide and merge use the same
-rules for both families with the prefix bound at the family's width.
+prefix holds more addresses than a JavaScript number represents exactly. Split
+and calculate previews report child counts as decimal strings when they exceed
+that limit. Divide and merge use the same rules for both families with the
+prefix bound at the family's width.
+
+An IPv6 network is an inventory, never an address space
+(`docs/IPV6-HANDLING.md`). `GET /api/subnets/:id/ips` for one returns its
+persisted rows plus the network address and the gateway when nothing is stored
+for them, and an exact address searched for (an `available` row when nothing
+is stored), sorted by address, with `sparse: true`. `showAvailable` is ignored
+for IPv6: there is no free space to list, and the few available rows stay. With
+no search, no filters and the address sort, the page and `filteredTotal` are
+read in SQL on `(subnet_id, address_sort_key, interface_id)`; any other search,
+filter or sort runs over the network's rows in memory, since it reads fields
+only `ip-view.js` computes.
+
+Search, in the address list (`search`, `table_search`) and in
+`GET /api/workspace/networks` (`q`, `table_q`), in both families:
+
+- One address in any spelling matches that address; in the network search, the
+  network that contains it.
+- A CIDR (`2001:db8:5::/48`, `10.0.0.0/25`) matches the stored addresses inside
+  it, and in the network search every network inside it or containing it. A
+  different family matches nothing.
+- Other text matches as a substring, including an IPv6 address's expanded
+  spelling, so `2001:0db8` finds `2001:db8::1`.
+
+`GET /api/subnets/:id/summary` counts in SQL. `known_count` is the rows the
+address list can show: the stored addresses (each address once, whatever its
+interfaces) plus the topology addresses nothing stores. `assigned_count`,
+`online_count` and `rogue_count` count the same rows; `rogue_count` runs the
+unassigned ones through `ip-view.js`. `unassigned_count` is null when
+`total_addresses` is null. An IPv6 network's count is `known_count`, never a
+share of its size.
 
 ## Cross-Table Facts
 

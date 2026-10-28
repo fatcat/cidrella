@@ -106,6 +106,7 @@
             v-model:show-domain-names="showDomainNames"
             v-model:presentation="addressPresentation"
             :allow-grid="!isV6Network"
+            :allow-available="!isV6Network"
             :active-view="activeView"
             :context-kind="contextKind"
             :view-meta="viewMeta"
@@ -476,6 +477,7 @@ import {
   formatAddressCount,
   compareCellValues,
   flattenAllocatable,
+  networkSearchMatches,
 } from '../networks-workspace-data.js';
 import { DHCP_V6_MODE_LABELS } from '../../utils/ip.js';
 import { ZONE_WIDE_NETWORK } from '@shared/ip-columns.js';
@@ -560,6 +562,9 @@ const addressSparse = ref(false);
 // Show available is a preference, kept per browser like the zone side below.
 const SHOW_AVAILABLE_KEY = 'cidrella_workspace_show_available';
 const showAvailable = ref(loadJson(SHOW_AVAILABLE_KEY, true) !== false);
+// An IPv6 network has no switch and hides nothing: its available rows are the
+// network address and an address searched for (docs/IPV6-HANDLING.md, rule 1).
+const effectiveShowAvailable = computed(() => isV6Network.value || showAvailable.value);
 // Off, the DNS table writes names as a zone file does: @, relative names, and
 // absolute ones with a trailing dot.
 const SHOW_DOMAIN_NAMES_KEY = 'cidrella_workspace_show_domain_names';
@@ -714,10 +719,6 @@ const columnTableName = computed(() => {
 const canAnyCreate = computed(() => createMenuItems.value.length > 0);
 const canCreateCurrent = computed(() => viewAddAction.value?.available === true);
 
-// What the explorer and the unallocated table match a search against. The
-// server's network search covers allocated networks only.
-const networkTextMatches = (network, query) =>
-  `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query);
 const filteredFolders = computed(() => {
   const query = resourceQuery.value.trim().toLowerCase();
   const source = contextKind.value === 'unallocated' ? unallocatedFolders.value : folders.value;
@@ -727,7 +728,7 @@ const filteredFolders = computed(() => {
       const children = filterNodes(network.children || []);
       const matches =
         searchMatches.value?.networks?.has(Number(network.id)) ||
-        networkTextMatches(network, query);
+        networkSearchMatches(network, query);
       return matches || children.length ? [{ ...network, children }] : [];
     });
   return source
@@ -1155,7 +1156,10 @@ const viewMeta = computed(() => {
       };
   }
   if (activeView.value === 'addresses')
-    return { ...base, title: `${formatNumber(addressTotal.value)} managed addresses` };
+    return {
+      ...base,
+      title: `${formatNumber(addressTotal.value)} ${addressSparse.value ? 'known' : 'managed'} addresses`,
+    };
   if (activeView.value === 'dns')
     return {
       ...base,
@@ -1619,7 +1623,10 @@ const filteredRows = computed(() => {
       ? [globalQuery, tableQuery.value.trim().toLowerCase()].filter(Boolean)
       : [];
   return currentRows.value.filter((row) => {
-    if (!showAvailable.value && (row.status === 'available' || row.leaseStatus === 'available'))
+    if (
+      !effectiveShowAvailable.value &&
+      (row.status === 'available' || row.leaseStatus === 'available')
+    )
       return false;
     // The IP tables arrive filtered by the server; the whole lists filter here.
     if (
@@ -1633,7 +1640,7 @@ const filteredRows = computed(() => {
         contextKind.value === 'unallocated'
           ? [globalQuery, tableText]
               .filter(Boolean)
-              .every((query) => networkTextMatches(row.raw, query))
+              .every((query) => networkSearchMatches(row.raw, query))
           : matchedNetworkIds.value?.has(Number(row.raw.id));
       if (!matches) return false;
     }
@@ -2647,7 +2654,7 @@ async function loadNetworkContext({ silent = false } = {}) {
     const params = {
       page: activeView.value === 'addresses' ? currentPage.value : 1,
       pageSize: addressPageSize.value,
-      showAvailable: showAvailable.value ? 'true' : 'false',
+      showAvailable: effectiveShowAvailable.value ? 'true' : 'false',
       ...onScreen('addresses'),
     };
     const protocolParams = {
@@ -2670,10 +2677,10 @@ async function loadNetworkContext({ silent = false } = {}) {
     if (detail) rangeRows.value = mapRangeRows(detail.ranges, networkScopes.value);
     addressFilteredTotal.value = detail?.filteredTotal || 0;
     addressSparse.value = detail?.sparse === true;
-    // A sparse network has no total; its count is the addresses it holds
-    // an allocation for, which the summary already knows.
+    // A sparse (IPv6) network has no total; its count is the addresses it
+    // knows of, stored or topology, which the summary already counts.
     addressTotal.value = addressSparse.value
-      ? Number(workspaceResources.resources.summary.data?.assigned_count ?? detail?.total ?? 0)
+      ? Number(workspaceResources.resources.summary.data?.known_count ?? detail?.total ?? 0)
       : Number(workspaceResources.resources.summary.data?.total_addresses ?? detail?.total ?? 0);
     if (activeView.value === 'addresses') {
       totalPages.value = detail?.totalPages || 1;

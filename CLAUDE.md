@@ -179,7 +179,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
   for the range dialogs' form grammar, `assets/analytics-layout.css` for
   the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
-  `utils/ip.js` and `utils/cidr.js`, `utils/special-ranges.js` (the one table of special-purpose
+  `utils/ip.js` and `utils/cidr.js` (`parseAddressQuery`: what a search box holds, one
+  address, a CIDR or text; `sortKeyRange`: a network's span of `address_sort_key` for SQL;
+  with `expandIpv6` in `utils/address.js`, the one IPv6-aware search rule, client through
+  `@shared`), `utils/special-ranges.js` (the one table of special-purpose
   blocks, both families: which ones scans treat as private, which an outbound fetch refuses, and
   the named reserved ranges a supernet must stay inside), `trimTrailingSlashes` in
   `utils/validation.js` (never `replace(/\/+$/, '')`, which is quadratic on a run of slashes), `utils/dns-names.js` (`fqdnForRecordName`,
@@ -297,7 +300,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family),
   `divideGatewayDefault`, `GATEWAY_POSITION_OPTIONS` and `inferGatewayPosition` (with
   `components/GatewayField.vue`, the one gateway picker: network dialogs and the scope dialog), and in `views/networks-workspace-data.js` `addressCount`,
-  `formatAddressCount` (BigInt-safe sizes) and `compareCellValues` (address-aware table sort), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
+  `formatAddressCount` (BigInt-safe sizes), `compareCellValues` (address-aware table sort) and
+  `networkSearchMatches` (what the explorer matches a network against, CIDR overlap included), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
   record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
   this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6

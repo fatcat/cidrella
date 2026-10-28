@@ -11,7 +11,7 @@ import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb, getDb } from '../../src/db/init.js';
-import { databaseThrough } from '../helpers/migrations.js';
+import { LATEST_MIGRATION, databaseThrough } from '../helpers/migrations.js';
 
 const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
@@ -175,7 +175,9 @@ describe('IPv6 schema migrations 070-073', () => {
     ).toEqual([23, 24, 56]);
     expect(upgraded.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
-    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(91);
+    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(
+      LATEST_MIGRATION,
+    );
 
     const child = upgraded.prepare("SELECT * FROM subnets WHERE cidr = '10.70.0.0/24'").get();
     expect(child.address_family).toBe(4);

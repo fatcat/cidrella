@@ -18,7 +18,7 @@
       @open="emit('filter-open')"
     />
     <label
-      v-if="activeView === 'addresses' || activeView === 'dhcp'"
+      v-if="allowAvailable && (activeView === 'addresses' || activeView === 'dhcp')"
       class="toolbar-switch available-switch"
     >
       <input v-model="showAvailable" type="checkbox" />
@@ -111,6 +111,8 @@ defineProps({
   columnCatalog: { type: Array, required: true },
   columns: { type: Array, required: true },
   canCreate: { type: Boolean, default: false },
+  // An IPv6 network is an inventory: there is no free space to list.
+  allowAvailable: { type: Boolean, default: true },
   filterChips: { type: Array, default: () => [] },
 });
 const emit = defineEmits([

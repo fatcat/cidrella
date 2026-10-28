@@ -17,7 +17,22 @@
 import { mountWorkspace, settle } from './harness.js';
 import { NETWORKS, ZONES } from './fake-estate.js';
 
-export const SEARCH_TERMS = ['', 'trust', 'lab', '10.0.1', 'laptop', '172.16', 'zzz'];
+// The IPv6 terms: a compressed fragment, an expanded one, a CIDR inside the
+// /64, and an address nothing stores, listed as available (docs/
+// IPV6-HANDLING.md, rules 1 and 6).
+export const SEARCH_TERMS = [
+  '',
+  'trust',
+  'lab',
+  '10.0.1',
+  'laptop',
+  '172.16',
+  'zzz',
+  'fd00:5',
+  '0005:0000:0000',
+  'fd00:5::/120',
+  'fd00:5::abcd',
+];
 // Filter values are picked by their place in the menu's list; a pick past the
 // end opens and closes the menu, as a person finding nothing there would.
 const FILTER_PICKS = [0, 1];
