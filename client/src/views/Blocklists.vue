@@ -7,7 +7,9 @@
         <span class="stat-label">Enabled Categories</span>
       </div>
       <div class="stat">
-        <span class="stat-value">{{ formatNumber(stats.total_domains) }}</span>
+        <span class="stat-value">{{
+          stats.total_domains == null ? 'Counting…' : formatNumber(stats.total_domains)
+        }}</span>
         <span class="stat-label">Blocked Domains</span>
       </div>
       <div class="stat">

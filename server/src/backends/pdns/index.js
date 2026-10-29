@@ -28,7 +28,8 @@ import { getDb, getSetting } from '../../db/init.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
 import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
 import { findExecutable } from '../../utils/executable.js';
-import { getNtpStatus } from '../../utils/ntp-status.js';
+import { getNtpStatusSync } from '../../utils/ntp-status.js';
+import { runCommand } from '../../utils/run-command.js';
 import { declareSupport } from '../features.js';
 import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
 import { createUnitControl } from '../shared/unit-control.js';
@@ -106,15 +107,17 @@ function digestsIn(content) {
 
 /**
  * `deps` are for tests: `exec` replaces execFileSync (Recursor's config
- * check and rec_control), `fetchImpl` the HTTP client, `sysIfaces` the
+ * check, inside the synchronous validated write), `run` replaces runCommand
+ * (rec_control), `fetchImpl` the HTTP client, `sysIfaces` the
  * host's interfaces, `access` the check that a binary can run, `ntpStatus`
  * the clock, `getDb` the database a restart resyncs from, and `wait` the
  * pause between readiness checks.
  */
 export function createPdnsBackend(deps = {}) {
   const exec = deps.exec || execFileSync;
+  const run = deps.run || runCommand;
   const sysIfaces = deps.sysIfaces || (() => os.networkInterfaces());
-  const ntpStatus = deps.ntpStatus || getNtpStatus;
+  const ntpStatus = deps.ntpStatus || getNtpStatusSync;
   const currentDb = deps.getDb || getDb;
   const wait = deps.wait || pause;
   const access =
@@ -150,10 +153,7 @@ export function createPdnsBackend(deps = {}) {
   let zoneQueue = Promise.resolve();
 
   function recControl(...args) {
-    return exec(recControlBinary(), [`--socket-dir=${RUN_DIR}`, ...args], {
-      stdio: 'pipe',
-      encoding: 'utf8',
-    });
+    return run(recControlBinary(), [`--socket-dir=${RUN_DIR}`, ...args]);
   }
 
   function validateRecursor() {
@@ -283,16 +283,17 @@ export function createPdnsBackend(deps = {}) {
   // restart: the anchors first, or a new zone answers Bogus until they come.
   // Then the cache under each changed zone goes. Recursor not running has
   // no cache to wipe.
-  function reloadRecursor() {
+  async function reloadRecursor() {
+    const wipes = [...pendingWipes];
+    pendingWipes.clear();
     try {
-      recControl('reload-lua-config');
-      recControl('reload-zones');
-      for (const zone of pendingWipes) recControl('wipe-cache', `${zone.replace(/\.$/, '')}$`);
+      await recControl('reload-lua-config');
+      await recControl('reload-zones');
+      for (const zone of wipes) await recControl('wipe-cache', `${zone.replace(/\.$/, '')}$`);
     } catch (err) {
       const detail = err?.stderr?.toString?.().trim() || err.message;
       console.warn(`rec_control failed (Recursor may not be running): ${detail}`);
     }
-    pendingWipes.clear();
   }
 
   // Authoritative's API answers.
@@ -320,7 +321,7 @@ export function createPdnsBackend(deps = {}) {
   async function startDaemons(which = DAEMONS) {
     pendingWipes.clear();
     if (which.includes('auth')) {
-      units.auth.restart();
+      await units.auth.restart();
       try {
         await awaitAuthoritative();
         // Through the zone queue, behind any write already under way.
@@ -329,7 +330,7 @@ export function createPdnsBackend(deps = {}) {
         console.warn('PowerDNS zone sync after start failed:', err.message);
       }
     }
-    if (which.includes('recursor')) units.recursor.restart();
+    if (which.includes('recursor')) await units.recursor.restart();
     pendingWipes.clear();
   }
 
@@ -339,13 +340,18 @@ export function createPdnsBackend(deps = {}) {
 
   // A restart restarts Recursor only: Authoritative takes zones through its
   // API, and its own configuration changes only in prepare().
-  function applyActivation(activation) {
+  async function applyActivation(activation) {
     if (activation === 'restart') {
-      units.recursor.restart();
       pendingWipes.clear();
+      await units.recursor.restart();
     } else if (activation === 'reload') {
-      reloadRecursor();
+      await reloadRecursor();
     }
+  }
+
+  async function runningDaemons() {
+    const running = await Promise.all(DAEMONS.map((daemon) => units[daemon].isRunning()));
+    return DAEMONS.filter((_, i) => running[i]);
   }
 
   async function awaitRunning({ timeoutMs = 30000, intervalMs = 1000 } = {}) {
@@ -354,7 +360,7 @@ export function createPdnsBackend(deps = {}) {
       let last;
       try {
         await api.server();
-        recControl('ping');
+        await recControl('ping');
         return;
       } catch (err) {
         last = err?.stderr?.toString?.().trim() || err.message;
@@ -367,8 +373,8 @@ export function createPdnsBackend(deps = {}) {
   // The recursor.yml write and its activation, for applyResolver and applyListen.
   function applyRecursor(db, { activate = true } = {}) {
     const { changed, activation } = writeRecursor(db);
-    if (activate) applyActivation(activation);
-    return { changed, activation, activated: activate && changed };
+    const result = { changed, activation, activated: activate && changed };
+    return activate ? applyActivation(activation).then(() => result) : result;
   }
 
   const dns = {
@@ -391,7 +397,7 @@ export function createPdnsBackend(deps = {}) {
         const zonesChanged = plan.changedZones.length > 0;
         const activation = larger(recursor.activation, zonesChanged ? 'reload' : 'none');
         const changed = activation !== 'none';
-        if (activate) applyActivation(activation);
+        if (activate) await applyActivation(activation);
         return { changed, activation, activated: activate && changed };
       };
       const result = zoneQueue.then(run, run);
@@ -400,9 +406,9 @@ export function createPdnsBackend(deps = {}) {
     },
     applyResolver: applyRecursor,
     applyListen: applyRecursor,
-    onClockSynchronized() {
+    async onClockSynchronized() {
       clockSynchronized = true;
-      applyRecursor(currentDb());
+      await applyRecursor(currentDb());
     },
     servedTtl: (record) => servedTtl(record),
     // Authoritative answers NXDOMAIN for a name it has no record for; the
@@ -416,10 +422,10 @@ export function createPdnsBackend(deps = {}) {
     roles: ROLES,
     dns,
 
-    status: () => ({
+    status: async () => ({
       name: 'pdns',
       label: 'PowerDNS',
-      running: DAEMONS.every((daemon) => units[daemon].isRunning()),
+      running: (await runningDaemons()).length === DAEMONS.length,
       restartPending: units.auth.restartPending(),
     }),
     capabilities: () => declareSupport(ROLES, SUPPORTED),
@@ -428,12 +434,13 @@ export function createPdnsBackend(deps = {}) {
     applyActivation,
     // A forced or pending restart restarts both; otherwise only a daemon
     // that is down starts.
-    activate({ force = false } = {}) {
-      const down = DAEMONS.filter((daemon) => !units[daemon].isRunning());
+    async activate({ force = false } = {}) {
       if (force || units.auth.restartPending()) {
         void restartAll();
         return 'restarted';
       }
+      const running = await runningDaemons();
+      const down = DAEMONS.filter((daemon) => !running.includes(daemon));
       if (down.length) {
         startDaemons(down).catch((err) => console.warn('PowerDNS start failed:', err.message));
         return 'restarted';
@@ -441,8 +448,8 @@ export function createPdnsBackend(deps = {}) {
       return 'unchanged';
     },
     restart: () => restartAll(),
-    stop() {
-      for (const daemon of DAEMONS) units[daemon].stop();
+    async stop() {
+      for (const daemon of DAEMONS) await units[daemon].stop();
     },
     async awaitStopped(opts) {
       for (const daemon of DAEMONS) await units[daemon].awaitStopped(opts);
@@ -471,7 +478,7 @@ export function createPdnsBackend(deps = {}) {
         dns.applyListen(db, { activate: false });
         dns.applyResolver(db, { activate: false });
       });
-      units.auth.restart();
+      await units.auth.restart();
       await awaitAuthoritative();
       // Unlike a start, a zone the API refuses fails the stage.
       await dns.applyZones(db, { activate: false });

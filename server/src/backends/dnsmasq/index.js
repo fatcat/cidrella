@@ -66,24 +66,25 @@ const NOTES = {
   'forensic-log': 'dnsmasq keeps no DHCP audit log of its own.',
 };
 
-function applyActivation(activation) {
-  if (activation === 'restart') restartDnsmasq();
-  else if (activation === 'reload') signalDnsmasq();
+async function applyActivation(activation) {
+  if (activation === 'restart') await restartDnsmasq();
+  else if (activation === 'reload') await signalDnsmasq();
 }
 
 // One validated write, then the activation it calls for. `write` returns
-// the activation; anything but 'none' counts as a change.
+// the activation; anything but 'none' counts as a change. With the
+// activation, a Promise of the result (see ApplyOptions in contract.js).
 function apply(write, { activate = true } = {}) {
   const { activation } = withValidatedDnsmasqUpdate(() => {
     const activation = write();
     return { activation, changed: activation !== 'none' };
   });
-  if (activate) applyActivation(activation);
-  return {
+  const result = {
     changed: activation !== 'none',
     activation,
     activated: activate && activation !== 'none',
   };
+  return activate ? applyActivation(activation).then(() => result) : result;
 }
 
 export function createDnsmasqBackend() {
@@ -165,10 +166,10 @@ export function createDnsmasqBackend() {
       applyRouterAdvertisements: applyScopes,
     },
 
-    status: () => ({
+    status: async () => ({
       name: 'dnsmasq',
       label: 'dnsmasq',
-      running: isCidrellaDnsmasqRunning(),
+      running: await isCidrellaDnsmasqRunning(),
       restartPending: dnsmasqRestartPending(),
     }),
     capabilities: () =>
@@ -184,9 +185,9 @@ export function createDnsmasqBackend() {
     applyActivation,
     // Restart when asked to, when a previous restart failed (the running
     // process may hold an older config), or when OUR unit is down.
-    activate({ force = false } = {}) {
-      if (force || dnsmasqRestartPending() || !isCidrellaDnsmasqRunning()) {
-        restartDnsmasq();
+    async activate({ force = false } = {}) {
+      if (force || dnsmasqRestartPending() || !(await isCidrellaDnsmasqRunning())) {
+        await restartDnsmasq();
         return 'restarted';
       }
       return 'unchanged';
@@ -197,8 +198,8 @@ export function createDnsmasqBackend() {
     stop: () => stopDnsmasq(),
     // A host whose install left dnsmasq to the system (install.sh's include
     // or skip mode) has none of CIDRella's to stop or start.
-    installed: () =>
-      dnsmasqUnitInstalled()
+    installed: async () =>
+      (await dnsmasqUnitInstalled())
         ? { ok: true }
         : {
             ok: false,
@@ -209,7 +210,7 @@ export function createDnsmasqBackend() {
     // supervisor starts it a moment later.
     async awaitRunning({ timeoutMs = 10000, intervalMs = 250 } = {}) {
       const deadline = Date.now() + timeoutMs;
-      while (!isCidrellaDnsmasqRunning()) {
+      while (!(await isCidrellaDnsmasqRunning())) {
         if (Date.now() >= deadline) throw new Error('dnsmasq is not running');
         await new Promise((resolve) => setTimeout(resolve, intervalMs));
       }

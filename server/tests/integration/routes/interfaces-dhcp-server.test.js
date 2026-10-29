@@ -29,6 +29,7 @@ vi.mock('../../../src/backends/index.js', async () => {
 
 const { default: request } = await import('supertest');
 const { queueRegen } = await import('../../../src/utils/after-commit.js');
+const { rebindProxy } = await import('../../../src/utils/dns-proxy.js');
 const backends = await import('../../../src/backends/index.js');
 
 let tmpDir;
@@ -67,5 +68,33 @@ describe('PUT /api/interfaces/config and the DHCP server', () => {
       .send({ http_redirect_enabled: true });
     expect(res.status).toBe(200);
     expect(queueRegen).not.toHaveBeenCalledWith('regenerate_dhcp');
+  });
+});
+
+describe('PUT /api/interfaces/config and the DNS restart', () => {
+  it('waits for the restart before it rebinds the proxy and answers', async () => {
+    backends.split.value = false;
+    const order = [];
+    const activate = vi.spyOn(backends.backend, 'activate').mockImplementation(
+      () =>
+        new Promise((resolve) =>
+          setTimeout(() => {
+            order.push('restarted');
+            resolve('restarted');
+          }, 50),
+        ),
+    );
+    rebindProxy.mockImplementation(() => order.push('rebind'));
+    try {
+      const res = await request(app)
+        .put('/api/interfaces/config')
+        .send({ interfaces: { eth0: { dns: true, dhcp: true } } });
+      expect(res.status).toBe(200);
+      expect(res.body.dnsmasq).toBe('restarted');
+      expect(order).toEqual(['restarted', 'rebind']);
+    } finally {
+      activate.mockRestore();
+      rebindProxy.mockReset();
+    }
   });
 });

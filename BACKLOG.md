@@ -59,24 +59,39 @@ Found 2026-10-25, while fixing AUTH-PATH-REDOS-01: a slow request handler stalle
 the DNS proxy runs in the same Node process as the web API and login. A survey of the main
 process turned up three pieces of work, in this order.
 
-1. **Stop blocking the event loop with synchronous child processes.** Every one of these freezes
-   the whole process, the DNS proxy included, until it returns:
-   - `utils/backup.js`: archive build and restore run `tar` (and `cp`) through `spawnSync` and
-     `execFileSync`. A scheduled backup stops DNS answers for as long as tar runs. Measured on
-     prod as BACKUP-STALL-01 in REVIEW.md: 13 s with no DNS answer. Since 0.6.2 the build also
-     runs `VACUUM INTO` and a `VACUUM` on the main thread, which async `spawn` does not fix: they
-     need a worker thread.
-   - `backends/shared/unit-control.js`: start, stop, restart and reload use synchronous
-     `systemctl` (or `pkill`), and `systemctl restart` waits for the unit to come up. A PowerDNS
-     or Kea restart can take seconds.
-   - Smaller: the Kea config check (`kea-dhcp4 -t`, `backends/kea/index.js`), `df` and `ping` in
-     `routes/health.js`, `ip -6 neigh` in `utils/nd-cache.js`, `ip -6 route` in
-     `utils/ra-monitor.js`, `utils/ntp-status.js`, and the rest of the `execFileSync` callers
-     (`grep -rln "execSync\|execFileSync\|spawnSync" server/src`).
+1. **Stop blocking the event loop with synchronous child processes.** Done on `dev/0.6.3`
+   (2026-10-29, plan `~/.claude/plans/tender-moseying-pascal.md`). Commands run through
+   `runCommand` (`utils/run-command.js`, async with a timeout), and slow SQL runs in a worker
+   thread (`runDbTask`, `utils/db-worker/`). What moved:
+   - Backup and restore: the database copy (`VACUUM INTO`, the feed-domain drop, `VACUUM`) runs
+     in the worker; tar, the snapshot and the `cp -a` fallback are async; a backup and a restore
+     never overlap (409). This was BACKUP-STALL-01.
+   - The blocklist stats read a stored count, recounted in the worker when the blocklist
+     changes. This was BLOCKLIST-STATS-STALL-01.
+   - Daemon control (`backends/shared/unit-control.js`): every `systemctl`, `pkill` and `pidof`
+     is async, and the changes to one unit run one at a time. The adapters' `applyActivation`,
+     `activate`, `restart`, `stop` and `status` return Promises, and their callers await them:
+     the after-commit hooks, boot, bypass, the interfaces save and the stack switch.
+   - `df` and `ping` in health, `timedatectl`, `ip -6 neigh`, `ip -6 route`, `rec_control`,
+     `dhcp_release` and `dhcp_release6`.
 
-   Fix: async `execFile`/`spawn` with a timeout. Callers that rely on the call finishing before
-   the next line (bypass's `setBypassListen`, the after-commit hooks) have to await it, so check
-   each one's ordering rather than converting blindly. No new process needed.
+   `npm run lint` refuses a new `execSync`, `execFileSync` or `spawnSync` in `server/src`
+   (`eslint.config.mjs`, baselined). What stays synchronous, and why:
+   - The config validators inside a validated write: `dnsmasq --test`, `kea-dhcp4 -t` and
+     `kea-dhcp6 -t`, `pdns_recursor --config=check`, `radvd --configtest`. Making them async
+     makes every adapter's render path async. Each runs well under a second, and once the proxy
+     has its own process (item 2) they delay only the web UI. Deferred by decision on
+     2026-10-29.
+   - `getent` in the DHCP scope render (`backends/shared/dhcp-scope-model.js`), for the same
+     reason.
+   - `dnsmasq --version`, run once and cached.
+   - `getNtpStatusSync` in the PowerDNS render (DNSSEC waits on a synchronized clock).
+   - Boot only: `utils/cert.js` (`ensureCerts`) and `utils/service-health.js`.
+   - The operator-run certificate routes in `routes/operations.js` (`openssl`): checks run
+     well under a second, but a 4096-bit RSA key or CSR can take a second or two. A candidate
+     for `runCommand` if that shows up on prod.
+   - `systemctl --no-block start cidrella-update@` in `routes/version.js`, which returns at
+     once.
 
 2. **Move the DNS proxy into its own service.** A `cidrella-dns-proxy` systemd unit, and an s6
    longrun in Docker. What the shared process costs today:
@@ -111,8 +126,8 @@ process turned up three pieces of work, in this order.
 
 Looked at and fine in-process: the scanner's tool runs (async `execFile`), DuckDB (its own
 threads), the blocklist refresh (streamed), lease sync, the vendor and update checks, and the
-metrics aggregator. Not the blocklist stats read, which scans the whole domain table on the main
-thread: BLOCKLIST-STATS-STALL-01 in REVIEW.md, measured at up to 3 s with no DNS answer.
+metrics aggregator. The blocklist stats read was not (a scan of the whole domain table, up to 3 s
+with no DNS answer on prod); it reads a stored count since item 1.
 
 ### PowerDNS + Kea stack (shipped in 0.6.0), what is left
 

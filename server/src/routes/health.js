@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import os from 'os';
 import fs from 'fs';
-import { execFileSync } from 'child_process';
 import bcrypt from 'bcryptjs';
 import { getDb, getSetting } from '../db/init.js';
 import { queryRaw } from '../db/duckdb.js';
@@ -15,11 +14,12 @@ import { requirePerm } from '../auth/require-perm.js';
 import { getCapabilityWarning, readProcessCapabilities } from '../utils/capabilities.js';
 import { getBootServiceHealth } from '../utils/service-health.js';
 import { getIpLifecycleDiagnostics } from '../utils/ip-lifecycle-diagnostics.js';
+import { runCommand } from '../utils/run-command.js';
 
 const router = Router();
 
-function parseDf(target) {
-  const dfOutput = execFileSync('df', ['-B1', target], { encoding: 'utf-8' });
+async function parseDf(target) {
+  const { stdout: dfOutput } = await runCommand('df', ['-B1', target], { timeout: 5000 });
   const lines = dfOutput.trim().split('\n');
   if (lines.length >= 2) {
     const parts = lines[1].split(/\s+/);
@@ -126,7 +126,7 @@ router.get('/deep', requireLocalhost, async (req, res) => {
 
   // ICMP fallback, scanner uses system ping via execFile, not a shell.
   try {
-    execFileSync('ping', ['-c', '1', '-W', '1', '127.0.0.1'], { stdio: 'pipe', timeout: 2000 });
+    await runCommand('ping', ['-c', '1', '-W', '1', '127.0.0.1'], { timeout: 2000 });
     checks.ping = { ok: true };
   } catch (err) {
     const detail = `${err.message || ''}\n${err.stderr?.toString?.() || ''}`;
@@ -167,7 +167,7 @@ router.get('/deep', requireLocalhost, async (req, res) => {
 });
 
 // GET /api/health/system: detailed system metrics (authenticated)
-router.get('/system', requirePerm('subnets:read'), (req, res) => {
+router.get('/system', requirePerm('subnets:read'), async (req, res) => {
   const db = getDb();
 
   // CPU
@@ -181,22 +181,21 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   const dataDir = process.env.DATA_DIR || '/data';
   let disk = { total: 0, used: 0, available: 0, percent: 0 };
   try {
-    disk = parseDf(dataDir);
+    disk = await parseDf(dataDir);
   } catch {
     try {
-      disk = parseDf('/');
+      disk = await parseDf('/');
     } catch {
       /* ignore */
     }
   }
 
   // Services. One status per backend daemon, keyed by role.
-  const backends = backendStatuses();
+  const [backends, ntp] = await Promise.all([backendStatuses(), getNtpStatus()]);
 
   // DNSSEC + clock sync. "validating" means dnsmasq is actually enforcing
   // signature validation with trustworthy timestamps (enabled + supported +
   // clock synced). Before NTP sync, dnsmasq runs lenient (dnssec-no-timecheck).
-  const ntp = getNtpStatus();
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
   const dnssecSupported = backends.dns.features['rec-dnssec-validate'];
 

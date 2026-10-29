@@ -108,7 +108,7 @@ export async function confirmByNeighborDiscovery(
 ) {
   let pending = results.filter((r) => !r.responded);
   for (let poll = 0; pending.length > 0; poll++) {
-    const table = read({ force: true });
+    const table = await read({ force: true });
     const settling = [];
     for (const result of pending) {
       const entry = findNeighbor(table, result.ip, result.iface);
@@ -158,7 +158,7 @@ export async function discoverIpv6Hosts(parsed, { neighbors = readNdCache } = {}
     await pingIp(`ff02::1%${name}`, { count: 2 });
   }
   const found = [];
-  for (const [key, entry] of neighbors({ force: true })) {
+  for (const [key, entry] of await neighbors({ force: true })) {
     const ip = entry.ip ?? key;
     const onLink = /^fe[89ab]/i.test(ip) && interfaces.includes(entry.interface);
     if (!onLink && !parsedNetworkContains(parsed, ip)) continue;
@@ -425,7 +425,7 @@ async function runScan(db, scanId, subnetId, options) {
       let arpCache = null;
       let ndCache = null;
       if (results.some((r) => r.responded && !r.mac)) {
-        if (parsed.family === 6) ndCache = readNdCache({ force: true });
+        if (parsed.family === 6) ndCache = await readNdCache({ force: true });
         else arpCache = readArpCache({ force: true });
       }
 

@@ -1471,7 +1471,7 @@ async function restartOrBypass() {
   }
 
   // All restart attempts failed, activate bypass
-  activateBypass();
+  await activateBypass();
 }
 
 // Can the proxy bind any of its listen addresses at all: each tried on a
@@ -1509,10 +1509,10 @@ async function tryRecovery() {
   try {
     const db = getDb();
     Setting.deleteSetting(db, 'dns_proxy_bypass');
-    applyListenNow(db);
+    await applyListenNow(db);
   } catch (err) {
     proxyLog('error', 'Could not move the backend off the LAN port', { error: err.message });
-    setBypassListen();
+    await setBypassListen();
     wait();
     return;
   }
@@ -1530,7 +1530,7 @@ async function tryRecovery() {
   }
   // Binds still waiting on an address would only fail on the LAN port again.
   cancelBindRetries();
-  setBypassListen();
+  await setBypassListen();
   proxyLog('warn', 'The proxy still cannot bind, bypass stays on', {
     nextTryMinutes: Math.round(wait() / 60000),
   });
@@ -1545,18 +1545,18 @@ function stopHealthMonitor() {
 
 // Bypass: dnsmasq takes over port 53 on LAN IPs directly (requires full restart for port change)
 //
-// These two writers deliberately call applyListenNow
+// These two writers deliberately await applyListenNow
 // inline, OUTSIDE the after-commit single-flight that serializes the
 // request-driven regen hooks. Bypass needs the conf written and dnsmasq
-// restarted synchronously (queueRegen defers into a microtask that would
-// fire after the restart). The cost is a small last-writer-wins window: a
+// restarted before the proxy moves (queueRegen defers into a microtask that
+// would fire after the restart). The cost is a small last-writer-wins window: a
 // concurrent request-triggered regen that read dns_proxy_bypass before the
 // flip can clobber the bypass directives. Accepted (2026-07-23 review):
 // bypass only runs when the proxy is already dead, atomicWrite prevents torn
 // files, and the health monitor re-runs activateBypass on the next tick if
 // DNS still isn't answering, the window self-heals. Don't route these
 // through queueRegen without solving the synchrony requirement first.
-function activateBypass() {
+async function activateBypass() {
   if (bypassMode) return;
   // A server stack switch is moving the DNS backend; the next health check
   // tries again once it is done.
@@ -1581,16 +1581,16 @@ function activateBypass() {
     proxyLog('error', 'Could not record the bypass in the audit log', { error: err.message });
   }
   scheduleRecovery(PROXY_RECOVERY_FIRST_MS);
-  setBypassListen();
+  await setBypassListen();
 }
 
-// The backend on the LAN port. Must be synchronous before the restart:
-// queueRegen would defer the conf write into a microtask that fires AFTER
-// the restart.
-function setBypassListen() {
+// The backend on the LAN port, the conf written before the restart it waits
+// for: queueRegen would defer the conf write into a microtask that fires
+// AFTER the restart.
+async function setBypassListen() {
   try {
     setSetting('dns_proxy_bypass', 'true');
-    applyListenNow(getDb());
+    await applyListenNow(getDb());
     proxyLog('info', 'DNS backend reconfigured for bypass mode (LAN port)');
   } catch (err) {
     proxyLog('error', 'Failed to reconfigure the DNS backend for bypass', { error: err.message });

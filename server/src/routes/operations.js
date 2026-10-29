@@ -34,6 +34,7 @@ import { DATA_DIR } from '../config/defaults.js';
 // body. Matching against this set is the sanitization gate.
 const APP_ERROR_CODES = new Set([
   'BACKUP_INCOMPATIBLE',
+  'BACKUP_IN_PROGRESS',
   'BACKUP_TOO_LARGE',
   'BACKUP_TOO_MANY_ENTRIES',
   'INVALID_DATABASE_FILE',
@@ -173,10 +174,10 @@ function clearPendingCsrFiles(dir) {
 }
 
 // POST /api/operations/backup: create a new backup
-router.post('/backup', (req, res) => {
+router.post('/backup', async (req, res) => {
   try {
     const db = getDb();
-    const backup = createBackup(db);
+    const backup = await createBackup(db);
     recordAudit({
       action: 'backup_created',
       entityType: 'backup',
@@ -185,6 +186,7 @@ router.post('/backup', (req, res) => {
     });
     res.status(201).json(backup);
   } catch (err) {
+    if (err.code === 'BACKUP_IN_PROGRESS') return res.status(409).json({ error: err.message });
     res.status(500).json({ error: err.message });
   }
 });
@@ -281,17 +283,17 @@ router.post('/restore', (req, res) => {
   const writeStream = fs.createWriteStream(tmpPath);
   req.pipe(writeStream);
 
-  writeStream.on('finish', () => {
+  writeStream.on('finish', async () => {
     try {
       if (inspectOnly) {
-        const info = inspectBackup(tmpPath);
+        const info = await inspectBackup(tmpPath);
         fs.unlinkSync(tmpPath);
         return res.json(info);
       }
 
       // Check compatibility FIRST, if we bail here we don't want an
       // audit entry for a restore that never happened.
-      const inspection = inspectBackup(tmpPath);
+      const inspection = await inspectBackup(tmpPath);
       if (!inspection.compatible && !allowIncompatible) {
         fs.unlinkSync(tmpPath);
         const err = new Error(inspection.reason || 'Backup is not compatible with this instance');
@@ -318,7 +320,7 @@ router.post('/restore', (req, res) => {
       // sees a successful acknowledgement. The restore path spins a 500ms
       // timer before exit specifically so Express can flush the response.
       // Pass the inspection through so restoreBackup doesn't re-parse the tarball.
-      const result = restoreBackup(tmpPath, {
+      const result = await restoreBackup(tmpPath, {
         allowIncompatible,
         inspection,
         dhcpAfterRestore: dhcp.choice,
@@ -338,7 +340,7 @@ router.post('/restore', (req, res) => {
         fs.unlinkSync(tmpPath);
       } catch {}
       let status = 400;
-      if (err.code === 'BACKUP_INCOMPATIBLE') status = 409;
+      if (err.code === 'BACKUP_INCOMPATIBLE' || err.code === 'BACKUP_IN_PROGRESS') status = 409;
       else if (err.code === 'BACKUP_TOO_LARGE') status = 507;
       else if (err.code === 'BACKUP_TOO_MANY_ENTRIES') status = 413;
       else if (err.code === 'INVALID_DATABASE_FILE') status = 400;

@@ -16,6 +16,11 @@ vi.mock('child_process', () => ({
   execFile: vi.fn(),
 }));
 
+// systemctl, pkill and rec_control succeed without running anything.
+vi.mock('../../../../src/utils/run-command.js', async () =>
+  (await import('../../../helpers/fake-run-command.js')).fakeRunCommandModule(() => ''),
+);
+
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../../../helpers/test-db.js');
 const { createDnsmasqBackend } = await import('../../../../src/backends/dnsmasq/index.js');
 const { runBackendContract } = await import('../../../contract/backend-contract.js');

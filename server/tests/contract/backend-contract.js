@@ -53,9 +53,12 @@ export function runBackendContract(label, makeHarness) {
       return result;
     };
 
-    it('has every operation and reports status and capabilities', () => {
+    it('has every operation and reports status and capabilities', async () => {
       expect(() => assertBackendShape(h.backend)).not.toThrow();
-      const status = h.backend.status();
+      // Asynchronous, as all daemon control is: never a process on the loop.
+      const pending = h.backend.status();
+      expect(pending).toBeInstanceOf(Promise);
+      const status = await pending;
       expect(status.name).toBe(h.backend.name);
       expect(typeof status.running).toBe('boolean');
       expect(typeof status.restartPending).toBe('boolean');

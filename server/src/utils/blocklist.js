@@ -6,6 +6,8 @@ import { BLOCKLIST_CATEGORIES, getDefaultCategoryUrl } from './blocklist-categor
 import { BLOCKLIST_DOWNLOAD_TIMEOUT_MS, BLOCKLIST_INSERT_BATCH } from '../config/defaults.js';
 import { openPinnedOutboundStream, TOO_LARGE_CODE } from './url-guard.js';
 import { recordAudit } from '../services/audit.js';
+import { readSetting, upsertSettingWithConflict } from '../models/setting.js';
+import { runDbTask } from './db-worker/index.js';
 
 // Domain validation
 const DOMAIN_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/;
@@ -342,12 +344,57 @@ export function generateBlocklistConfig(_db) {
   loadBlocklist();
   loadAllowlist();
   loadFilteringOverrides();
+  void recountBlocklistDomains(_db || getDb());
 
   // Clean up the legacy blocklist.conf; the proxy handles blocking now.
   try {
     getDnsBackend().retireLegacyArtifacts?.();
   } catch {
     /* ignore cleanup errors */
+  }
+}
+
+// How many distinct domains the enabled categories block, counted in the
+// database worker whenever the blocklist changes and stored, so the stats
+// read never scans the domain table on the main thread. One count runs at a
+// time; a change during it counts again once it finishes.
+export const DOMAIN_COUNT_KEY = 'blocklist_enabled_domain_count';
+let counting = null;
+let countAgain = false;
+
+export function recountBlocklistDomains(db = getDb()) {
+  if (counting) {
+    countAgain = true;
+    return counting;
+  }
+  counting = (async () => {
+    try {
+      do {
+        countAgain = false;
+        const count = await runDbTask('blocklistDomainCount', { dbPath: db.name });
+        if (!db.open) return;
+        upsertSettingWithConflict(
+          db,
+          DOMAIN_COUNT_KEY,
+          JSON.stringify({ count, counted_at: new Date().toISOString() }),
+        );
+      } while (countAgain);
+    } catch (err) {
+      console.warn('Could not count the blocklist domains:', err.message);
+    } finally {
+      counting = null;
+    }
+  })();
+  return counting;
+}
+
+// The stored count, { count, counted_at }, or null when none is stored yet.
+export function storedBlocklistDomainCount(db = getDb()) {
+  try {
+    const parsed = JSON.parse(readSetting(db, DOMAIN_COUNT_KEY) || 'null');
+    return Number.isFinite(parsed?.count) ? parsed : null;
+  } catch {
+    return null;
   }
 }
 

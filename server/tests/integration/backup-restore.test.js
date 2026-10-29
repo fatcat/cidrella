@@ -47,22 +47,22 @@ describe('analyzeArchive', () => {
     fs.rmSync(work, { recursive: true, force: true });
   });
 
-  it('sums the total uncompressed bytes across entries', () => {
-    const r = analyzeArchive(archive);
+  it('sums the total uncompressed bytes across entries', async () => {
+    const r = await analyzeArchive(archive);
     // cidrella.db (4096) + dnsmasq.log (8192) + dnsmasq.log-20260421 (1024)
     // + dnsmasq.log.1.gz (512) + dnsmasq.pid (32) + dnsmasq.leases (256).
     // The dnsmasq/ directory entry is size 0; only regular files count.
     expect(r.totalBytes).toBe(4096 + 8192 + 1024 + 512 + 32 + 256);
   });
 
-  it('identifies log, rotated-log, and pid bytes as skippable', () => {
-    const r = analyzeArchive(archive);
+  it('identifies log, rotated-log, and pid bytes as skippable', async () => {
+    const r = await analyzeArchive(archive);
     expect(r.skippedBytes).toBe(8192 + 1024 + 512 + 32);
     expect(r.effectiveBytes).toBe(r.totalBytes - r.skippedBytes);
   });
 
-  it('lists every file entry', () => {
-    const r = analyzeArchive(archive);
+  it('lists every file entry', async () => {
+    const r = await analyzeArchive(archive);
     const names = r.entries.map((e) => e.name);
     expect(names).toContain('cidrella.db');
     expect(names).toContain('dnsmasq/dnsmasq.log');

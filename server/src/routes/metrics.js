@@ -121,7 +121,7 @@ router.get('/configuration-generation', requirePerm('analytics:read'), (req, res
 
 // GET /api/metrics/services
 router.get('/services', requirePerm('analytics:read'), async (req, res) => {
-  const backends = backendStatuses();
+  const backends = await backendStatuses();
 
   // GeoIP proxy status
   const geoipStatus = getProxyStatus();

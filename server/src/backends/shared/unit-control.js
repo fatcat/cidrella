@@ -11,10 +11,16 @@
  */
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { runCommand } from '../../utils/run-command.js';
 import { emitUnitEvent } from './unit-events.js';
 
 const stderrOf = (err) => err?.stderr?.toString?.().trim();
+
+// systemctl restart waits for the unit to come up; everything else answers
+// at once. A command that hangs past these is a failure, never a wait.
+const RESTART_TIMEOUT_MS = 90_000;
+const COMMAND_TIMEOUT_MS = 15_000;
+const run = (cmd, args, timeout = COMMAND_TIMEOUT_MS) => runCommand(cmd, args, { timeout });
 
 /**
  * `unit` is the systemd unit, `processName` the executable s6 runs, and
@@ -72,12 +78,10 @@ export function createUnitControl({
   // (install.sh's include or skip mode) has no cidrella-dnsmasq.service, and
   // CIDRella cannot stop a daemon it does not run. Without systemctl, s6
   // runs every daemon in the container.
-  function installed() {
+  async function installed() {
     try {
-      const state = execFileSync('systemctl', ['show', '-p', 'LoadState', '--value', unit], {
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      return state.toString().trim() === 'loaded';
+      const { stdout } = await run('systemctl', ['show', '-p', 'LoadState', '--value', unit]);
+      return stdout.trim() === 'loaded';
     } catch (err) {
       return err?.code === 'ENOENT';
     }
@@ -86,15 +90,15 @@ export function createUnitControl({
   // Under systemd, ask about the exact unit: another process of the same
   // name on the host (libvirt's dnsmasq, a distribution Kea) must not count.
   // Without systemctl the only one in the container is ours.
-  function isRunning() {
+  async function isRunning() {
     try {
-      execFileSync('systemctl', ['is-active', '--quiet', unit], { stdio: 'ignore' });
+      await run('systemctl', ['is-active', '--quiet', unit]);
       return true;
     } catch (err) {
       if (err?.code !== 'ENOENT') return false;
     }
     try {
-      execFileSync('pidof', [processName], { stdio: 'ignore' });
+      await run('pidof', [processName]);
       return true;
     } catch {
       return false;
@@ -103,9 +107,9 @@ export function createUnitControl({
 
   const restartPending = () => fs.existsSync(restartPendingFile);
 
-  function reload() {
+  async function reload() {
     try {
-      execFileSync('systemctl', ['reload', unit], { stdio: 'pipe' });
+      await run('systemctl', ['reload', unit]);
       return;
     } catch (err) {
       const stderr = stderrOf(err);
@@ -116,14 +120,14 @@ export function createUnitControl({
         const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
         if (pid) process.kill(pid, 'SIGHUP');
       } else {
-        execFileSync('pkill', ['-HUP', '-x', processName], { stdio: 'pipe' });
+        await run('pkill', ['-HUP', '-x', processName]);
       }
     } catch {
       console.warn(`Could not send SIGHUP to ${processName} (may not be running)`);
     }
   }
 
-  function restart() {
+  async function restart() {
     try {
       // Before systemctl: the unit's start condition reads it.
       if (disableFile) fs.rmSync(disableFile, { force: true });
@@ -134,7 +138,7 @@ export function createUnitControl({
       return;
     }
     try {
-      execFileSync('systemctl', ['restart', unit], { stdio: 'pipe' });
+      await run('systemctl', ['restart', unit], RESTART_TIMEOUT_MS);
       console.log(`${processName} restarted via systemctl`);
       setRestartPending(false);
       tell('restarted');
@@ -153,7 +157,7 @@ export function createUnitControl({
       return;
     }
     try {
-      execFileSync('pkill', ['-TERM', '-x', processName], { stdio: 'pipe' });
+      await run('pkill', ['-TERM', '-x', processName]);
       console.log(`${processName} terminated (supervisor will restart)`);
       setRestartPending(false);
       tell('restarted');
@@ -172,16 +176,16 @@ export function createUnitControl({
 
   // Stop the daemon: a backend that no longer fills any role. Without
   // systemctl a TERM stops it until the supervisor starts it again, which
-  // s6 does unless the service waits on its flag. Returns once asked, not
+  // s6 does unless the service waits on its flag. Resolves once asked, not
   // once stopped: awaitStopped() waits for that.
-  function stop() {
+  async function stop() {
     try {
       setEnabled(false);
     } catch {
       /* gone already */
     }
     try {
-      execFileSync('systemctl', ['stop', unit], { stdio: 'pipe' });
+      await run('systemctl', ['stop', unit], RESTART_TIMEOUT_MS);
       tell('stopped');
       return;
     } catch (err) {
@@ -194,7 +198,7 @@ export function createUnitControl({
       }
     }
     try {
-      execFileSync('pkill', ['-TERM', '-x', processName], { stdio: 'pipe' });
+      await run('pkill', ['-TERM', '-x', processName]);
       tell('stopped');
     } catch {
       /* not running */
@@ -204,7 +208,7 @@ export function createUnitControl({
   // Wait until the daemon has exited, so another one can take its ports.
   async function awaitStopped({ timeoutMs = 10000, intervalMs = 200 } = {}) {
     const deadline = Date.now() + timeoutMs;
-    while (isRunning()) {
+    while (await isRunning()) {
       if (Date.now() >= deadline) {
         throw new Error(
           `${processName} is still running ${timeoutMs / 1000} s after it was stopped`,
@@ -214,5 +218,25 @@ export function createUnitControl({
     }
   }
 
-  return { isRunning, installed, restartPending, reload, restart, stop, awaitStopped };
+  // One change to the daemon at a time, in the order asked: a reload sent
+  // while a restart is under way would reach systemd as a second job on the
+  // same unit. Two apply hooks can each ask for one back to back.
+  let queue = Promise.resolve();
+  const inTurn =
+    (fn) =>
+    (...args) => {
+      const turn = queue.then(() => fn(...args));
+      queue = turn.catch(() => {});
+      return turn;
+    };
+
+  return {
+    isRunning,
+    installed,
+    restartPending,
+    reload: inTurn(reload),
+    restart: inTurn(restart),
+    stop: inTurn(stop),
+    awaitStopped,
+  };
 }

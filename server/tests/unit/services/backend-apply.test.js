@@ -47,12 +47,12 @@ beforeEach(() => {
 });
 
 describe('applyDhcp', () => {
-  it('writes the scopes, syncs the DHCP names, then activates', () => {
-    applyDhcp(db);
+  it('writes the scopes, syncs the DHCP names, then activates', async () => {
+    await applyDhcp(db);
     expect(calls).toEqual(['applyScopes activate=false', 'sync', 'activate restart']);
   });
 
-  it('has the RA backend render the DHCPv6 scopes when another backend serves DHCP', () => {
+  it('has the RA backend render the DHCPv6 scopes when another backend serves DHCP', async () => {
     const kea = createFakeBackend({ name: 'kea' });
     kea.dhcp.applyScopes = () => {
       calls.push('kea applyScopes');
@@ -64,7 +64,7 @@ describe('applyDhcp', () => {
       return { changed: true, activation: 'restart', activated: false };
     };
     fake.dhcpRole = kea;
-    applyDhcp(db);
+    await applyDhcp(db);
     expect(calls).toEqual([
       'kea applyScopes',
       'ra activate=false',
@@ -74,11 +74,11 @@ describe('applyDhcp', () => {
     ]);
   });
 
-  it('leaves the names and the running backend alone when the write fails', () => {
+  it('leaves the names and the running backend alone when the write fails', async () => {
     fake.current.dhcp.applyScopes = () => {
       throw new Error('dnsmasq configuration validation failed: bad line');
     };
-    expect(() => applyDhcp(db)).toThrow('validation failed');
+    await expect(applyDhcp(db)).rejects.toThrow('validation failed');
     expect(calls).toEqual([]);
   });
 });
@@ -89,29 +89,29 @@ describe('applyAtBoot', () => {
     return service;
   };
 
-  it('forces the DNS service when its config changed, and only checks the others', () => {
+  it('forces the DNS service when its config changed, and only checks the others', async () => {
     recordActivate(fake.current);
     fake.dhcpService = recordActivate(createFakeBackend({ name: 'kea' }));
-    expect(applyAtBoot(db, { preflight: false })).toEqual({ fake: 'restarted', kea: 'unchanged' });
+    expect(await applyAtBoot(db, { preflight: false })).toEqual({ fake: 'restarted', kea: 'unchanged' });
     expect(fake.current.activate).toHaveBeenCalledWith({ force: true });
     expect(fake.dhcpService.activate).toHaveBeenCalledWith({ force: false });
     // Nothing changed the second time.
-    expect(applyAtBoot(db, { preflight: false })).toEqual({ fake: 'unchanged', kea: 'unchanged' });
+    expect(await applyAtBoot(db, { preflight: false })).toEqual({ fake: 'unchanged', kea: 'unchanged' });
   });
 
-  it('renders but starts or restarts nothing in an update preflight', () => {
+  it('renders but starts or restarts nothing in an update preflight', async () => {
     recordActivate(fake.current);
     fake.dhcpService = recordActivate(createFakeBackend({ name: 'kea' }));
-    expect(applyAtBoot(db, { preflight: true })).toEqual({ fake: 'skipped', kea: 'skipped' });
+    expect(await applyAtBoot(db, { preflight: true })).toEqual({ fake: 'skipped', kea: 'skipped' });
     expect(fake.current.activate).not.toHaveBeenCalled();
     expect(fake.dhcpService.activate).not.toHaveBeenCalled();
   });
 
-  it('reads the preflight flag from CIDRELLA_PREFLIGHT', () => {
+  it('reads the preflight flag from CIDRELLA_PREFLIGHT', async () => {
     recordActivate(fake.current);
     vi.stubEnv('CIDRELLA_PREFLIGHT', '1');
     try {
-      expect(applyAtBoot(db)).toEqual({ fake: 'skipped' });
+      expect(await applyAtBoot(db)).toEqual({ fake: 'skipped' });
     } finally {
       vi.unstubAllEnvs();
     }
@@ -119,7 +119,7 @@ describe('applyAtBoot', () => {
 });
 
 describe('HOOK_HANDLERS', () => {
-  it('keeps the stored hook names', () => {
+  it('keeps the stored hook names', async () => {
     expect(Object.keys(HOOK_HANDLERS)).toEqual([
       'regenerate_dns',
       'regenerate_dhcp',

@@ -239,6 +239,49 @@ export default [
     rules: { 'cidrella/no-floating-async': 'error' },
   },
 
+  // A synchronous child process stops the event loop the DNS proxy answers
+  // on (docs/ARCHITECTURE.md, Event loop): shipped server code runs commands
+  // through utils/run-command.js. BASELINE, the files left synchronous on
+  // purpose (BACKLOG.md, Process isolation): the config validators inside
+  // the synchronous validated write (dnsmasq --test, kea -t, pdns_recursor
+  // --config=check, radvd --configtest, getent in scope rendering, dnsmasq
+  // --version, cached), Recursor's DNSSEC mode in ntp-status.js, boot-only
+  // code (cert.js, service-health.js), the operator's certificate routes, and
+  // the update start (--no-block, returns at once). Remove a file once it is
+  // asynchronous; never add one.
+  {
+    files: ['server/src/**/*.js'],
+    ignores: [
+      'server/src/backends/dnsmasq/dnsmasq.js',
+      'server/src/backends/kea/index.js',
+      'server/src/backends/pdns/index.js',
+      'server/src/backends/radvd/index.js',
+      'server/src/backends/shared/dhcp-scope-model.js',
+      'server/src/routes/operations.js',
+      'server/src/routes/version.js',
+      'server/src/utils/cert.js',
+      'server/src/utils/ntp-status.js',
+      'server/src/utils/service-health.js',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "ImportDeclaration[source.value=/^(node:)?child_process$/] > ImportSpecifier[imported.name=/^(execSync|execFileSync|spawnSync)$/]",
+          message:
+            'A synchronous child process blocks the event loop DNS answers on. Use runCommand (utils/run-command.js).',
+        },
+        {
+          selector:
+            "MemberExpression[property.name=/^(execSync|execFileSync|spawnSync)$/][object.name=/^(child_?[pP]rocess|cp)$/]",
+          message:
+            'A synchronous child process blocks the event loop DNS answers on. Use runCommand (utils/run-command.js).',
+        },
+      ],
+    },
+  },
+
   // Rule calibration: recommended is the floor; relax the rules that fight
   // legitimate existing patterns rather than indicating bugs.
   {

@@ -73,9 +73,9 @@ export class SwitchError extends Error {
 export { switchInProgress };
 
 /** Can every daemon of `name` run here? `{ ok, reason? }`. */
-export function stackInstalled(name) {
+export async function stackInstalled(name) {
   for (const service of stackServices(name)) {
-    const result = service.installed?.() ?? { ok: true };
+    const result = (await service.installed?.()) ?? { ok: true };
     if (!result.ok) return result;
   }
   return { ok: true };
@@ -87,14 +87,16 @@ const featuresOf = (name) => featureReportFor((role) => getBackend(STACKS[name][
  * What switching to `target` would do, and whether it can. Read-only.
  * `blocked` is the reason it cannot, or null.
  */
-export function switchPreflight(target) {
+export async function switchPreflight(target) {
   const current = stackName();
-  const stacks = Object.keys(STACKS).map((name) => ({
-    name,
-    label: stackLabel(name),
-    daemons: stackServices(name).map((service) => service.label || service.name),
-    installed: stackInstalled(name),
-  }));
+  const stacks = await Promise.all(
+    Object.keys(STACKS).map(async (name) => ({
+      name,
+      label: stackLabel(name),
+      daemons: stackServices(name).map((service) => service.label || service.name),
+      installed: await stackInstalled(name),
+    })),
+  );
   if (!STACKS[target]) {
     return { current, target, stacks, blocked: `Unknown server stack: ${target}` };
   }
@@ -207,7 +209,7 @@ const backends = () => ({
 
 // Stop each and wait until it has exited; the first that will not is the error.
 async function stopAll(services) {
-  for (const service of services) service.stop();
+  for (const service of services) await service.stop();
   for (const service of services) await service.awaitStopped();
 }
 
@@ -237,8 +239,8 @@ async function toPdnsKea(db, st) {
   selectStack('pdns-kea');
   st.selected = true;
   // Kea now listens, under the server DUID; radvd's file is written and it starts.
-  applyDhcp(db);
-  pdns.activate();
+  await applyDhcp(db);
+  await pdns.activate();
   await kea.awaitRunning();
   await pdns.awaitRunning();
   await radvd.awaitRunning();
@@ -258,7 +260,7 @@ async function toDnsmasq(db, st) {
   // Kea listening nowhere hands out nothing more, so its leases are final.
   st.phase = 'quiesce';
   setDhcpServing('kea', false);
-  kea.dhcp.applyScopes(db);
+  await kea.dhcp.applyScopes(db);
   await kea.awaitRunning();
 
   st.phase = 'read';
@@ -280,7 +282,7 @@ async function toDnsmasq(db, st) {
   selectStack('dnsmasq');
   st.selected = true;
   setDhcpServing('kea', true);
-  dnsmasq.restart();
+  await dnsmasq.restart();
   await dnsmasq.awaitRunning();
 
   st.phase = 'verify';
@@ -327,7 +329,7 @@ async function rollBackToDnsmasq(db, st) {
   }
   if (st.sourceStopped) {
     if (leases) await dnsmasq.dhcp.importLeases(leases, { serverDuid: st.serverDuid });
-    dnsmasq.restart();
+    await dnsmasq.restart();
     await dnsmasq.awaitRunning();
   }
   if (problems.length) throw new Error(problems.join('; '));
@@ -340,9 +342,9 @@ async function rollBackToPdnsKea(db, st) {
   await stopAll([dnsmasq]);
   selectStack('pdns-kea');
   setDhcpServing('kea', true);
-  pdns.activate();
-  kea.activate();
-  applyDhcp(db);
+  await pdns.activate();
+  await kea.activate();
+  await applyDhcp(db);
   await kea.awaitRunning();
   if (leases) await kea.dhcp.importLeases(leases, { serverDuid: st.serverDuid });
 }
@@ -361,8 +363,19 @@ function commit(db, name) {
  * report afterwards. Rejects with a SwitchError, after putting the source
  * back when the switch got that far.
  */
+// Set while a switch runs its preflight, before switchInProgress() is: the
+// preflight waits on the daemons, and a second switch must not pass it then.
+let preflighting = false;
+
 export async function switchStack(db, target) {
-  const check = switchPreflight(target);
+  if (preflighting) throw new SwitchError('preflight', 'A server switch is already running');
+  preflighting = true;
+  let check;
+  try {
+    check = await switchPreflight(target);
+  } finally {
+    preflighting = false;
+  }
   if (check.blocked) throw new SwitchError('preflight', check.blocked);
   setSwitchInProgress(true);
   const st = {
@@ -424,7 +437,7 @@ async function carryKeaLeasesToDnsmasq() {
   const { dnsmasq, kea } = backends();
   let leases = null;
   try {
-    if (kea.status().running) leases = (await kea.dhcp.readLeases()).leases;
+    if ((await kea.status()).running) leases = (await kea.dhcp.readLeases()).leases;
   } catch (err) {
     console.warn('Could not read leases through the Kea API:', err.message);
   }
@@ -432,7 +445,7 @@ async function carryKeaLeasesToDnsmasq() {
   const serverDuid = kea.dhcp.serverIdentity().duid;
   for (const service of [kea, dnsmasq]) {
     try {
-      service.stop();
+      await service.stop();
       await service.awaitStopped();
     } catch (err) {
       console.warn(`Could not stop ${service.label}:`, err.message);
@@ -469,8 +482,8 @@ async function stopOutside(name) {
   for (const backend of allBackends()) {
     if (keep.has(backend)) continue;
     try {
-      if (backend.name !== 'dnsmasq' && !backend.status().running) continue;
-      backend.stop();
+      if (backend.name !== 'dnsmasq' && !(await backend.status()).running) continue;
+      await backend.stop();
       await backend.awaitStopped();
     } catch (err) {
       console.warn(`Could not stop ${backend.label || backend.name}:`, err.message);
@@ -501,7 +514,7 @@ export async function selectStackAtBoot(db) {
     fallbackReason = `unknown server '${name}'`;
     name = DEFAULT_STACK;
   }
-  const installed = stackInstalled(name);
+  const installed = await stackInstalled(name);
   if (!installed.ok) {
     console.error(`${installed.reason}; ${DEFAULT_STACK} serves DNS and DHCP instead`);
     fallbackReason = installed.reason;

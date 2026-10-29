@@ -33,3 +33,17 @@ export function dropFeedDomains(db) {
       SET domain_count = 0, last_fetched_at = NULL, etag = NULL, last_modified = NULL;
   `);
 }
+
+// The distinct domains the enabled categories hold. A scan of the whole
+// domain table: run it in the database worker (utils/db-worker), never on
+// the main thread, where it took seconds on a large estate.
+export function countEnabledBlocklistDomains(db) {
+  return db
+    .prepare(
+      `SELECT COUNT(DISTINCT bd.domain) AS c
+         FROM blocklist_domains bd
+         JOIN blocklist_categories bc ON bd.category_slug = bc.slug
+        WHERE bc.enabled = 1`,
+    )
+    .get().c;
+}

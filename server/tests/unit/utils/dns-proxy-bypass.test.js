@@ -18,10 +18,29 @@ vi.mock('../../../src/backends/index.js', async () =>
 );
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
-const calls = vi.hoisted(() => ({ applyListen: 0, audits: [] }));
+// `delayMs` makes applyListenNow take that long, as a real restart does;
+// `lanBinds` records, for each bind to the LAN port, whether it was still
+// running.
+const calls = vi.hoisted(() => ({
+  applyListen: 0,
+  audits: [],
+  delayMs: 0,
+  restarting: false,
+  lanBinds: [],
+}));
 vi.mock('../../../src/services/backend-apply.js', async (importOriginal) => ({
   ...(await importOriginal()),
-  applyListenNow: () => calls.applyListen++,
+  applyListenNow: () => {
+    calls.applyListen++;
+    if (!calls.delayMs) return Promise.resolve();
+    calls.restarting = true;
+    return new Promise((resolve) =>
+      setTimeout(() => {
+        calls.restarting = false;
+        resolve();
+      }, calls.delayMs),
+    );
+  },
 }));
 vi.mock('../../../src/services/audit.js', () => ({
   recordAudit: (row) => calls.audits.push(row),
@@ -33,6 +52,7 @@ vi.mock('dgram', async () => {
   const createSocket = () => {
     const sock = new Emitter();
     sock.bind = (p, _addr, cb) => {
+      if (p === 53) calls.lanBinds.push(calls.restarting);
       process.nextTick(() => {
         if (p === 53 && port.blocked) {
           sock.emit('error', Object.assign(new Error('address in use'), { code: 'EADDRINUSE' }));
@@ -135,6 +155,30 @@ describe('proxy bypass', () => {
     port.blocked = false;
     await vi.advanceTimersByTimeAsync(21 * MIN);
     expect(proxy.isProxyBypassed()).toBe(false);
+  });
+
+  it('binds the LAN port only once the backend has left it', async () => {
+    await intoBypass();
+    port.blocked = false;
+    calls.delayMs = 3000;
+    calls.lanBinds.length = 0;
+    try {
+      // Up to the try: the backend is leaving the LAN port.
+      for (let s = 0; s < 6 * 60 && !calls.restarting; s++) {
+        await vi.advanceTimersByTimeAsync(1000);
+      }
+      expect(calls.restarting).toBe(true);
+      // Still restarting: the proxy has not tried the port.
+      await vi.advanceTimersByTimeAsync(1000);
+      expect(calls.restarting).toBe(true);
+      expect(calls.lanBinds).toEqual([]);
+      await vi.advanceTimersByTimeAsync(5000);
+      expect(proxy.isProxyBypassed()).toBe(false);
+      expect(calls.lanBinds.length).toBeGreaterThan(0);
+      expect(calls.lanBinds).not.toContain(true);
+    } finally {
+      calls.delayMs = 0;
+    }
   });
 
   it('leaves the proxy alone on an interface rebind while bypassed', async () => {

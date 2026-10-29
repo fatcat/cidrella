@@ -4,8 +4,13 @@
  * passes); the golden test and the live check cover what radvd accepts.
  */
 import { DATA_DIR } from '../../../helpers/isolated-data-dir.js';
-import { afterAll } from 'vitest';
+import { afterAll, vi } from 'vitest';
 import fs from 'fs';
+
+// systemctl, pkill and rec_control succeed without running anything.
+vi.mock('../../../../src/utils/run-command.js', async () =>
+  (await import('../../../helpers/fake-run-command.js')).fakeRunCommandModule(() => ''),
+);
 
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../../../helpers/test-db.js');
 const { runBackendContract } = await import('../../../contract/backend-contract.js');

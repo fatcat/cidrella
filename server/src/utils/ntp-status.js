@@ -4,22 +4,41 @@
  * without importing the backend registry back.
  */
 import { execFileSync } from 'child_process';
+import { runCommand } from './run-command.js';
 
-/** { available, ntpEnabled, synchronized }; available is false without timedatectl. */
-export function getNtpStatus() {
+const ARGS = ['show', '-p', 'NTP', '-p', 'NTPSynchronized', '--value'];
+const UNAVAILABLE = { available: false, ntpEnabled: false, synchronized: false };
+
+function parse(out) {
+  const [ntp = '', sync = ''] = out.split('\n');
+  return { available: true, ntpEnabled: ntp.trim() === 'yes', synchronized: sync.trim() === 'yes' };
+}
+
+/**
+ * { available, ntpEnabled, synchronized }; available is false without
+ * timedatectl. Resolves; never rejects.
+ */
+export async function getNtpStatus() {
   try {
-    const out = execFileSync(
-      'timedatectl',
-      ['show', '-p', 'NTP', '-p', 'NTPSynchronized', '--value'],
-      { encoding: 'utf-8', stdio: ['ignore', 'pipe', 'ignore'] },
-    );
-    const [ntp = '', sync = ''] = out.split('\n');
-    return {
-      available: true,
-      ntpEnabled: ntp.trim() === 'yes',
-      synchronized: sync.trim() === 'yes',
-    };
+    return parse((await runCommand('timedatectl', ARGS, { timeout: 5000 })).stdout);
   } catch {
-    return { available: false, ntpEnabled: false, synchronized: false };
+    return UNAVAILABLE;
+  }
+}
+
+// The same, synchronously, for the one caller that needs it inside a
+// synchronous render: PowerDNS Recursor's DNSSEC mode, until the clock is
+// known synchronized (BACKLOG.md, the deferred render-path commands).
+export function getNtpStatusSync() {
+  try {
+    return parse(
+      execFileSync('timedatectl', ARGS, {
+        encoding: 'utf-8',
+        stdio: ['ignore', 'pipe', 'ignore'],
+        timeout: 5000,
+      }),
+    );
+  } catch {
+    return UNAVAILABLE;
   }
 }

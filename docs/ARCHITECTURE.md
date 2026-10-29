@@ -23,6 +23,26 @@ Persistent state is rooted at `DATA_DIR` (`/var/lib/cidrella` native,
 `/data` Docker). Application code is rooted at `/opt/cidrella` on native
 installs.
 
+### Event loop
+
+The web API, the DNS proxy, the health monitor and daemon control share one Node event loop, so
+anything synchronous after boot delays every DNS answer until it returns. The rules:
+
+- A command runs through `runCommand` (`server/src/utils/run-command.js`): async, always with a
+  timeout, rejecting with the exit code and stderr. `npm run lint` refuses a new `execSync`,
+  `execFileSync` or `spawnSync` in `server/src`; the files still allowed one are listed in
+  `eslint.config.mjs`, and BACKLOG.md (Process isolation, item 1) says why each stays.
+- SQL that scans a large table, or copies the database, runs in the database worker
+  (`runDbTask`, `server/src/utils/db-worker/`): a worker thread with its own read-only
+  connection, one per task. Backups copy the database there, and the blocklist domain count is
+  recounted there when the blocklist changes and read back from a setting.
+- A backend's `applyActivation`, `activate`, `restart`, `stop` and `status` return Promises.
+  A caller that needs the daemon changed before its next step (boot, proxy bypass, the
+  interfaces save, the stack switch) awaits it. `createUnitControl` runs the changes to one unit
+  in the order asked, one at a time, so a reload never reaches systemd while a restart of the
+  same unit is under way.
+- A backup and a restore never overlap: the second is refused with `BACKUP_IN_PROGRESS` (409).
+
 ## Layer Responsibilities
 
 | Layer | Responsibility |

@@ -376,45 +376,48 @@ export function runProbe6(
 
       // The replies were unicast to us, so the kernel now has each server's
       // MAC. Read the table once after the window rather than per reply.
-      const neighbors = seen.size > 0 ? readNdCache({ force: true }) : new Map();
-      const rogues = [];
-      for (const adv of seen.values()) {
-        // A server answers from its link-local address, unique only per link.
-        const mac = findNeighbor(neighbors, adv.sourceIp, adv.iface)?.mac || null;
-        const verdict = classifyAdvertise(adv, { selfIps, selfDuid, authorized, mac });
-        if (!verdict.rogue) continue;
-        rogues.push({
-          kind: 'dhcpv6',
-          address_family: 6,
-          server_ip: adv.sourceIp,
-          server_mac: mac || '',
-          server_duid: adv.serverDuid,
-          server_identifier: adv.serverDuid,
-          offered_ip: adv.addresses.map((a) => a.address).join(',') || null,
-          offered_gateway: null,
-          offered_dns: adv.dns.join(',') || null,
-          offered_subnet_mask: null,
-          advertised_prefixes: null,
-          relay_ip: null,
-          iface: adv.iface,
+      // readNdCache never rejects; a failed read is an empty table.
+      const read = seen.size > 0 ? readNdCache({ force: true }) : Promise.resolve(new Map());
+      void read.then((neighbors) => {
+        const rogues = [];
+        for (const adv of seen.values()) {
+          // A server answers from its link-local address, unique only per link.
+          const mac = findNeighbor(neighbors, adv.sourceIp, adv.iface)?.mac || null;
+          const verdict = classifyAdvertise(adv, { selfIps, selfDuid, authorized, mac });
+          if (!verdict.rogue) continue;
+          rogues.push({
+            kind: 'dhcpv6',
+            address_family: 6,
+            server_ip: adv.sourceIp,
+            server_mac: mac || '',
+            server_duid: adv.serverDuid,
+            server_identifier: adv.serverDuid,
+            offered_ip: adv.addresses.map((a) => a.address).join(',') || null,
+            offered_gateway: null,
+            offered_dns: adv.dns.join(',') || null,
+            offered_subnet_mask: null,
+            advertised_prefixes: null,
+            relay_ip: null,
+            iface: adv.iface,
+          });
+        }
+        try {
+          for (const ev of rogues) upsertRogueEvent(db, ev);
+        } catch (err) {
+          probeLog('error', 'Failed to persist rogue events', { error: err.message });
+        }
+        if (rogues.length > 0) {
+          probeLog('warn', 'Rogue DHCPv6 server(s) detected', {
+            count: rogues.length,
+            servers: rogues.map((r) => `${r.server_ip} (${r.server_duid})`),
+          });
+        }
+        resolve({
+          supported,
+          interfaces: ifaces.length,
+          advertisements: advertisementCount,
+          rogues,
         });
-      }
-      try {
-        for (const ev of rogues) upsertRogueEvent(db, ev);
-      } catch (err) {
-        probeLog('error', 'Failed to persist rogue events', { error: err.message });
-      }
-      if (rogues.length > 0) {
-        probeLog('warn', 'Rogue DHCPv6 server(s) detected', {
-          count: rogues.length,
-          servers: rogues.map((r) => `${r.server_ip} (${r.server_duid})`),
-        });
-      }
-      resolve({
-        supported,
-        interfaces: ifaces.length,
-        advertisements: advertisementCount,
-        rogues,
       });
     };
 

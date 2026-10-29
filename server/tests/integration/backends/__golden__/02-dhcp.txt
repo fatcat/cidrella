@@ -127,7 +127,7 @@ fd00:63::50 nas.golden.test
 ##### commands
 dnsmasq --test --conf-file=<DATA_DIR>/dnsmasq/dnsmasq.conf
 dnsmasq --test --conf-file=<DATA_DIR>/dnsmasq/dnsmasq.conf
+dnsmasq --test --conf-file=<DATA_DIR>/dnsmasq/dnsmasq.conf
+dnsmasq --test --conf-file=<DATA_DIR>/dnsmasq/dnsmasq.conf
 systemctl restart cidrella-dnsmasq
-dnsmasq --test --conf-file=<DATA_DIR>/dnsmasq/dnsmasq.conf
-dnsmasq --test --conf-file=<DATA_DIR>/dnsmasq/dnsmasq.conf
 systemctl reload cidrella-dnsmasq

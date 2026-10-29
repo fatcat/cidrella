@@ -12,7 +12,7 @@
  * They never throw into the startup path.
  */
 
-import { execFileSync } from 'child_process';
+import { runCommand } from './run-command.js';
 import { getSetting } from '../db/init.js';
 import { getDnsBackend } from '../backends/index.js';
 import { getNtpStatus } from './ntp-status.js';
@@ -25,8 +25,8 @@ let timecheckTimer = null;
 // Turn on NTP if it isn't already. At runtime the `timedatectl set-ntp true`
 // call is polkit-gated for the cidrella service account (49-cidrella.rules);
 // install.sh enables it earlier as root. Tolerates failure / missing timedatectl.
-export function ensureNtpEnabled() {
-  const status = getNtpStatus();
+export async function ensureNtpEnabled() {
+  const status = await getNtpStatus();
   if (!status.available) {
     console.warn(
       '[timesync] timedatectl unavailable, skipping NTP enable (Docker / non-systemd host?)',
@@ -35,7 +35,7 @@ export function ensureNtpEnabled() {
   }
   if (status.ntpEnabled) return true;
   try {
-    execFileSync('timedatectl', ['set-ntp', 'true'], { stdio: 'pipe' });
+    await runCommand('timedatectl', ['set-ntp', 'true']);
     console.log('[timesync] NTP time synchronization enabled');
     return true;
   } catch (err) {
@@ -80,11 +80,21 @@ export function armDnssecTimecheckWhenSynced(opts = {}) {
     disarm();
   };
 
-  const check = () => {
-    if (resolved) return;
+  let checking = false;
+  const check = async () => {
+    if (resolved || checking) return;
+    checking = true;
+    try {
+      await checkOnce();
+    } finally {
+      checking = false;
+    }
+  };
+  const checkOnce = async () => {
     attempts++;
     if (getSetting('dnssec_enabled') !== 'true') return finish();
-    const { available, synchronized } = getNtpStatus();
+    const { available, synchronized } = await getNtpStatus();
+    if (resolved) return;
     if (!available) return finish();
     if (synchronized) {
       // A clock in sync at the first look changes nothing anyone waited for;
@@ -98,7 +108,7 @@ export function armDnssecTimecheckWhenSynced(opts = {}) {
         });
       }
       try {
-        getDnsBackend().onClockSynchronized();
+        await getDnsBackend().onClockSynchronized();
         console.log(
           '[timesync] Clock synchronized, signaled dnsmasq to enforce DNSSEC signature timestamps',
         );
@@ -126,7 +136,7 @@ export function armDnssecTimecheckWhenSynced(opts = {}) {
 
   timecheckTimer = setInterval(check, intervalMs);
   if (timecheckTimer.unref) timecheckTimer.unref();
-  check(); // immediate first attempt
+  void check(); // immediate first attempt
 }
 
 // Test/shutdown hook.

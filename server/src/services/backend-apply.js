@@ -12,14 +12,14 @@ import fs from 'fs';
 import { syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { BACKEND_RESTART_MARKER } from '../config/defaults.js';
 
-// A Promise when the backend writes zones over HTTP (PowerDNS); the
-// after-commit runner waits for it.
+// Each apply resolves once the backend has taken the change (the restart or
+// reload done); the after-commit runner waits for it.
 export function applyDns(db) {
   return getDnsBackend().applyZones(db);
 }
 
-export function applyResolver(db) {
-  getDnsBackend().applyResolver(db);
+export async function applyResolver(db) {
+  await getDnsBackend().applyResolver(db);
 }
 
 // The DHCP config and, from another backend, the RAs: written and checked,
@@ -38,7 +38,7 @@ function renderDhcp(db) {
 // their effective names (ADR 005), the vendor fallback included. When another
 // backend sends the Router Advertisements (radvd beside Kea), the DHCPv6
 // scopes go to it too.
-export function applyDhcp(db) {
+export async function applyDhcp(db) {
   const { dhcp, result, ra, raResult } = renderDhcp(db);
   const leases = db
     .prepare(
@@ -46,8 +46,8 @@ export function applyDhcp(db) {
     )
     .all();
   syncDhcpDnsRecords(db, leases);
-  dhcp.applyActivation(result.activation);
-  if (raResult) ra.applyActivation(raResult.activation);
+  await dhcp.applyActivation(result.activation);
+  if (raResult) await ra.applyActivation(raResult.activation);
   for (const listener of dhcpAppliedListeners) listener();
 }
 
@@ -73,7 +73,7 @@ export function onDhcpApplied(listener) {
  * 'skipped' in an update preflight). After a restore every service restarts
  * (BACKEND_RESTART_MARKER), so each loads the restored leases.
  */
-export function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT === '1' } = {}) {
+export async function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT === '1' } = {}) {
   const dns = getService('dns');
   let dnsChanged = false;
   try {
@@ -109,7 +109,7 @@ export function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT ===
       // Restart when the config changed, when OUR unit is down (the specific
       // unit, not any daemon of that name on the host), or when a previous
       // restart failed and the running process may hold a stale config.
-      const outcome = service.activate({ force: afterRestore || changed.has(service) });
+      const outcome = await service.activate({ force: afterRestore || changed.has(service) });
       if (outcome === 'unchanged') {
         console.log(`${service.name} config unchanged and service running, skipping boot restart`);
       }
@@ -128,9 +128,9 @@ export function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT ===
  * the after-commit hooks: proxy bypass must have the backend on port 53
  * before it returns.
  */
-export function applyListenNow(db) {
+export async function applyListenNow(db) {
   getDnsBackend().applyListen(db, { activate: false });
-  getService('dns').restart();
+  await getService('dns').restart();
 }
 
 // Hook names are stored in configuration_generations (a CHECK in migration

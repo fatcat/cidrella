@@ -11,6 +11,9 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
 vi.mock('child_process', () => ({ execFileSync: vi.fn(), execSync: vi.fn(), execFile: vi.fn() }));
+vi.mock('../../../src/utils/run-command.js', async () =>
+  (await import('../../helpers/fake-run-command.js')).fakeRunCommandModule(() => ''),
+);
 // The interfaces route rebinds the resolver and the blocklist route reloads
 // it; neither needs a live proxy here.
 vi.mock('../../../src/utils/dns-proxy.js', () => ({

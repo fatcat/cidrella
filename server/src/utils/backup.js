@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { execFileSync, spawnSync } from 'child_process';
+import { spawn } from 'child_process';
 import Database from 'better-sqlite3';
 import { insertAuditRow } from '../models/audit-log.js';
 import { recordAudit } from '../services/audit.js';
@@ -12,12 +12,13 @@ import {
 } from '../models/setting.js';
 import * as User from '../models/user.js';
 import * as BackupCode from '../models/backup-code.js';
-import { dropFeedDomains } from '../models/blocklist-store.js';
 import { endAllLiveSessions } from '../models/session.js';
 import { getDb, getSetting, setSetting } from '../db/init.js';
 import { BACKEND_RESTART_MARKER, DATA_DIR } from '../config/defaults.js';
 import { APP_VERSION } from './version.js';
 import { compareSemver } from './semver.js';
+import { runCommand } from './run-command.js';
+import { runDbTask } from './db-worker/index.js';
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const PRE_RESTORE_DIR = path.join(DATA_DIR, 'snapshots', 'pre-restore');
 const MANIFEST_NAME = 'cidrella-backup-manifest.json';
@@ -61,40 +62,44 @@ const KEPT_ON_RESTORE = ['kea/secret'];
 // sweepStaleRestoreArtifacts.
 const BACKUP_DB_STAGE_PREFIX = '.backup-db-';
 
-/**
- * Write the database a backup carries into `dir` as cidrella.db.
- *
- * VACUUM INTO makes a compact, consistent copy: the live file keeps every page
- * it ever grew to on its freelist (a blocklist refresh stages a whole feed
- * before sweeping it), and copying the file carried those pages into every
- * backup. The blocklist feeds are left out too (dropFeedDomains). They are a
- * cache of downloads, and the largest table by far; the restart after a
- * restore refreshes every enabled feed.
- */
-function writeBackupDatabase(db, dir) {
-  const copyPath = path.join(dir, 'cidrella.db');
-  db.prepare('VACUUM INTO ?').run(copyPath);
-  const copy = new Database(copyPath);
-  try {
-    dropFeedDomains(copy);
-    copy.exec('VACUUM');
-  } finally {
-    copy.close();
+// Backups and restores never overlap one another: a restore swaps the files
+// a backup is reading, and two backups would race for one archive name.
+// The second is refused with BACKUP_IN_PROGRESS (409 from the route).
+let operationRunning = null;
+async function exclusive(kind, fn) {
+  if (operationRunning) {
+    const err = new Error(`A ${operationRunning} is already running; try again when it finishes`);
+    err.code = 'BACKUP_IN_PROGRESS';
+    throw err;
   }
-  return copyPath;
+  operationRunning = kind;
+  try {
+    return await fn();
+  } finally {
+    operationRunning = null;
+  }
 }
+
+// Whether a backup or restore is running now (the scheduler skips its turn).
+export function backupOperationRunning() {
+  return operationRunning;
+}
+
 function isRuntimeArtifact(name) {
   return /\.log(\.|-|$)/i.test(name) || /\.pid$/i.test(name);
 }
 
 /**
- * Create a backup archive of the CIDRella data
+ * Create a backup archive of the CIDRella data. Nothing slow runs on the
+ * main thread: the database copy is made in the database worker and tar
+ * runs as a child process the loop does not wait on.
  */
 export function createBackup(db) {
-  fs.mkdirSync(BACKUP_DIR, { recursive: true });
+  return exclusive('backup', () => writeBackup(db));
+}
 
-  // Checkpoint WAL to ensure all data is in the main DB file
-  db.pragma('wal_checkpoint(TRUNCATE)');
+async function writeBackup(db) {
+  fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
   const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
   // Two backups in one second (a scheduled one and a click, a double click)
@@ -164,55 +169,47 @@ export function createBackup(db) {
   fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2));
   const dbStage = fs.mkdtempSync(path.join(DATA_DIR, BACKUP_DB_STAGE_PREFIX));
   try {
-    writeBackupDatabase(db, dbStage);
-    // Use spawnSync (not execFileSync) so we can inspect the exit code
-    // directly. dnsmasq.leases can mutate mid-archive when a DHCP client
-    // lease rolls over during the second or two tar is running; tar
-    // completes the archive but exits with status 1 ("some files
-    // differ"). --warning=no-file-changed ONLY suppresses stderr,     // despite the old comment's claim, it does NOT change the exit code,
-    // so execFileSync would throw on that benign race and fail the
-    // backup. The archive bytes captured are still self-consistent (tar
-    // archives what it read), so exit 1 is treated as a soft warning.
-    // Exit 2+ is still fatal (real tar failure).
-    const result = spawnSync(
-      'tar',
-      [
-        // Strip runtime artifacts, see RUNTIME_ARTIFACT_EXCLUDES at the top
-        // of this file.
-        ...RUNTIME_ARTIFACT_EXCLUDES,
-        ...DEFENSIVE_EXCLUDES,
-        ...KEA_EXCLUDES,
-        '--warning=no-file-changed',
-        // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
-        // POSIX keyletter form doesn't coexist with long --exclude options
-        // in GNU tar 1.35, it errors with "You must specify one of the
-        // '-Acdtrux'..." and produces no archive. This silently crippled
-        // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
-        // anyway because tar never got the action flag).
-        '-czf',
-        archivePath,
-        MANIFEST_NAME,
-        ...includes,
-        '-C',
-        dbStage,
-        'cidrella.db',
-      ],
-      {
-        cwd: DATA_DIR,
-        timeout: 60000,
-      },
-    );
-    if (result.error) throw result.error;
-    if (result.status === null) {
-      throw new Error('tar timed out while creating backup');
-    }
-    if (result.status > 1) {
-      const stderr = result.stderr?.toString()?.trim() || `tar exit ${result.status}`;
-      throw new Error(`tar failed (exit ${result.status}): ${stderr}`);
-    }
-    // status 0 = clean. status 1 = at least one file changed mid-read
-    // (typically dnsmasq.leases); archive is still valid, log + continue.
-    if (result.status === 1) {
+    // VACUUM INTO, in the worker, reads the WAL too: no checkpoint first.
+    // See TASKS.backupCopy in db-worker/tasks.js for what the copy leaves out.
+    await runDbTask('backupCopy', { dbPath: db.name, copyPath: path.join(dbStage, 'cidrella.db') });
+    // dnsmasq.leases can change mid-archive when a DHCP lease rolls over
+    // during the second or two tar runs; tar completes the archive but exits
+    // with status 1 ("some files differ"). --warning=no-file-changed ONLY
+    // suppresses stderr, it does not change the exit code. The archive bytes
+    // are still self-consistent (tar archives what it read), so exit 1 is a
+    // soft warning. Exit 2+ is fatal (a real tar failure).
+    try {
+      await runCommand(
+        'tar',
+        [
+          // Strip runtime artifacts, see RUNTIME_ARTIFACT_EXCLUDES at the top
+          // of this file.
+          ...RUNTIME_ARTIFACT_EXCLUDES,
+          ...DEFENSIVE_EXCLUDES,
+          ...KEA_EXCLUDES,
+          '--warning=no-file-changed',
+          // IMPORTANT: must use '-czf' with a leading dash. The bare 'czf'
+          // POSIX keyletter form doesn't coexist with long --exclude options
+          // in GNU tar 1.35, it errors with "You must specify one of the
+          // '-Acdtrux'..." and produces no archive. This silently crippled
+          // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
+          // anyway because tar never got the action flag).
+          '-czf',
+          archivePath,
+          MANIFEST_NAME,
+          ...includes,
+          '-C',
+          dbStage,
+          'cidrella.db',
+        ],
+        { cwd: DATA_DIR, timeout: 60000 },
+      );
+    } catch (err) {
+      if (err.code === 'ETIMEDOUT') throw new Error('tar timed out while creating backup');
+      if (err.code !== 1) {
+        const stderr = err.stderr?.trim() || err.message;
+        throw new Error(`tar failed (exit ${err.code}): ${stderr}`);
+      }
       console.warn(
         '[backup] tar exited 1 (file changed during archive, expected for dnsmasq.leases); archive is valid',
       );
@@ -249,18 +246,17 @@ export function createBackup(db) {
  * Returns null if the archive has no manifest (legacy backups from before
  * manifests existed, we still allow restoring them but lose the safety checks).
  */
-function readBackupManifest(archivePath) {
+async function readBackupManifest(archivePath) {
   try {
     // Use '-xzf' with leading dash, matches the convention everywhere else
     // in this file. Bare 'xzf' works here today only because no --exclude
     // precedes it, but if one is ever added the quirk from createBackup
     // applies.
-    const out = execFileSync('tar', ['-xzf', archivePath, '-O', MANIFEST_NAME], {
-      stdio: ['ignore', 'pipe', 'ignore'],
+    const { stdout } = await runCommand('tar', ['-xzf', archivePath, '-O', MANIFEST_NAME], {
       timeout: 30000,
       maxBuffer: 64 * 1024,
     });
-    const parsed = JSON.parse(out.toString('utf-8'));
+    const parsed = JSON.parse(stdout);
     if (parsed?.type !== MANIFEST_TYPE) return null;
     return parsed;
   } catch {
@@ -301,14 +297,13 @@ function parseTarVerboseLine(line) {
   return { type, name, size: Number.isFinite(size) ? size : 0 };
 }
 
-function listTarEntries(archivePath, archiveBytes) {
+async function listTarEntries(archivePath, archiveBytes) {
   let verbose;
   try {
-    verbose = execFileSync('tar', ['-tzvf', archivePath], {
-      encoding: 'utf-8',
+    ({ stdout: verbose } = await runCommand('tar', ['-tzvf', archivePath], {
       timeout: tarListingTimeoutMs(archiveBytes),
       maxBuffer: MAX_LISTING_BUFFER_BYTES,
-    });
+    }));
   } catch (err) {
     // ENOBUFS = too many entries (zip bomb by count). ETIMEDOUT = too big
     // to list in our scaled timeout. Both collapse to the same semantic
@@ -376,7 +371,7 @@ function validateStagedTree(root) {
  * Returns { totalBytes, effectiveBytes, skippedBytes, entries }.
  * effectiveBytes is what actually lands on disk after --exclude filters.
  */
-export function analyzeArchive(archivePath) {
+export async function analyzeArchive(archivePath) {
   const archiveBytes = fs.statSync(archivePath).size;
   if (archiveBytes > MAX_ARCHIVE_GZIP_BYTES) {
     const err = new Error(
@@ -387,7 +382,7 @@ export function analyzeArchive(archivePath) {
     err.code = 'BACKUP_TOO_LARGE';
     throw err;
   }
-  const tarEntries = listTarEntries(archivePath, archiveBytes);
+  const tarEntries = await listTarEntries(archivePath, archiveBytes);
   return analyzeTarEntries(tarEntries);
 }
 
@@ -418,7 +413,7 @@ function analyzeTarEntries(tarEntries) {
  * Inspect a backup archive without modifying anything.
  * Returns { manifest, compatible, reason? }.
  */
-export function inspectBackup(archivePath) {
+export async function inspectBackup(archivePath) {
   if (!fs.existsSync(archivePath)) {
     throw new Error('Backup file not found');
   }
@@ -440,7 +435,7 @@ export function inspectBackup(archivePath) {
     throw err;
   }
 
-  const entries = listTarEntries(archivePath, archiveBytes);
+  const entries = await listTarEntries(archivePath, archiveBytes);
   assertSafeTarEntries(entries);
   const analysis = analyzeTarEntries(entries);
   const hasDatabase = entries.some(
@@ -454,7 +449,7 @@ export function inspectBackup(archivePath) {
     throw new Error('Invalid backup: missing database file');
   }
 
-  const manifest = readBackupManifest(archivePath);
+  const manifest = await readBackupManifest(archivePath);
 
   // Compatibility rules:
   //   - No manifest → legacy backup, allow with a warning (caller decides)
@@ -495,12 +490,45 @@ export function inspectBackup(archivePath) {
   return { manifest, compatible: true, analysis };
 }
 
+// One tar reading into another, without a shell. Rejects naming the side
+// that failed, or on a timeout, which kills both.
+function tarPipe(label, readArgs, writeArgs, timeout = 10 * 60 * 1000) {
+  return new Promise((resolve, reject) => {
+    const reader = spawn('tar', readArgs, { stdio: ['ignore', 'pipe', 'pipe'] });
+    const writer = spawn('tar', writeArgs, { stdio: ['pipe', 'ignore', 'pipe'] });
+    const stderr = { reading: '', writing: '' };
+    reader.stderr.on('data', (chunk) => (stderr.reading += chunk));
+    writer.stderr.on('data', (chunk) => (stderr.writing += chunk));
+    writer.stdin.on('error', () => {});
+    reader.stdout.pipe(writer.stdin);
+    let failed = null;
+    let open = 2;
+    const timer = setTimeout(() => {
+      failed ??= `timed out after ${timeout} ms`;
+      reader.kill('SIGKILL');
+      writer.kill('SIGKILL');
+    }, timeout);
+    const done = (side, child) => {
+      child.once('error', (err) => (failed ??= `${side} ${label}: ${err.message}`));
+      child.once('close', (code) => {
+        if (code !== 0) failed ??= `${side} ${label}: ${stderr[side].trim() || `tar exit ${code}`}`;
+        if (--open > 0) return;
+        clearTimeout(timer);
+        if (failed) reject(new Error(`Pre-restore snapshot failed ${failed}`));
+        else resolve();
+      });
+    };
+    done('reading', reader);
+    done('writing', writer);
+  });
+}
+
 /**
  * Take a pre-restore snapshot to /var/lib/cidrella/snapshots/pre-restore/.
  * Unlike the pre-update snapshot, this is NOT managed by cidrella-rollback
  *, it's purely a safety net the admin can restore manually.
  */
-function takePreRestoreSnapshot(db) {
+async function takePreRestoreSnapshot(db) {
   // mkdirSync fails with EACCES if the parent snapshots/ directory was
   // created earlier by update.sh running as root and never chown'd to
   // cidrella. Translate the opaque errno into a diagnostic-sufficient
@@ -536,17 +564,19 @@ function takePreRestoreSnapshot(db) {
   }
 
   const dbFile = path.join(DATA_DIR, 'cidrella.db');
-  if (fs.existsSync(dbFile)) fs.copyFileSync(dbFile, path.join(PRE_RESTORE_DIR, 'cidrella.db'));
+  if (fs.existsSync(dbFile)) {
+    await fs.promises.copyFile(dbFile, path.join(PRE_RESTORE_DIR, 'cidrella.db'));
+  }
   for (const side of ['cidrella.db-wal', 'cidrella.db-shm']) {
     const src = path.join(DATA_DIR, side);
-    if (fs.existsSync(src)) fs.copyFileSync(src, path.join(PRE_RESTORE_DIR, side));
+    if (fs.existsSync(src)) await fs.promises.copyFile(src, path.join(PRE_RESTORE_DIR, side));
   }
   // DuckDB keeps a .wal sidecar for uncommitted writes. Copy the main file
   // and any sidecars so the snapshot isn't silently truncated to the last
   // checkpoint. Glob-style match on analytics.duckdb* catches .wal, .tmp, etc.
   for (const name of fs.readdirSync(DATA_DIR)) {
     if (name === 'analytics.duckdb' || name.startsWith('analytics.duckdb.')) {
-      fs.copyFileSync(path.join(DATA_DIR, name), path.join(PRE_RESTORE_DIR, name));
+      await fs.promises.copyFile(path.join(DATA_DIR, name), path.join(PRE_RESTORE_DIR, name));
     }
   }
 
@@ -562,31 +592,14 @@ function takePreRestoreSnapshot(db) {
   for (const sub of ['certs', 'dnsmasq', 'kea']) {
     const src = path.join(DATA_DIR, sub);
     if (!fs.existsSync(src)) continue;
-    // Use tar pipe so excludes apply during the read pass; cp -a can't
-    // skip files based on glob patterns. spawnSync wires stdout->stdin
-    // between the two tars, no shell, no shell-injection surface.
-    const reader = spawnSync('tar', [
-      ...RUNTIME_ARTIFACT_EXCLUDES,
-      ...KEA_EXCLUDES,
-      '-cf',
-      '-',
-      '-C',
-      DATA_DIR,
+    // A tar pipe so the excludes apply during the read pass; cp -a can't
+    // skip files by glob. The two tars are wired stdout to stdin, no shell,
+    // no shell-injection surface.
+    await tarPipe(
       sub,
-    ]);
-    if (reader.status !== 0) {
-      throw new Error(
-        `Pre-restore snapshot failed reading ${sub}: ${reader.stderr?.toString() || 'tar exit ' + reader.status}`,
-      );
-    }
-    const writer = spawnSync('tar', ['-xf', '-', '-C', PRE_RESTORE_DIR], {
-      input: reader.stdout,
-    });
-    if (writer.status !== 0) {
-      throw new Error(
-        `Pre-restore snapshot failed writing ${sub}: ${writer.stderr?.toString() || 'tar exit ' + writer.status}`,
-      );
-    }
+      [...RUNTIME_ARTIFACT_EXCLUDES, ...KEA_EXCLUDES, '-cf', '-', '-C', DATA_DIR, sub],
+      ['-xf', '-', '-C', PRE_RESTORE_DIR],
+    );
   }
 
   const marker = {
@@ -708,7 +721,11 @@ export function stampRestoredSettings(
   }
 }
 
-export function restoreBackup(
+export function restoreBackup(archivePath, options = {}) {
+  return exclusive('restore', () => applyRestore(archivePath, options));
+}
+
+async function applyRestore(
   archivePath,
   {
     allowIncompatible = false,
@@ -721,7 +738,7 @@ export function restoreBackup(
   // 1. Compatibility check. Reuse the caller's inspection if they already
   //    ran one (e.g., the API route inspects to audit before the restore);
   //    otherwise inspect here. Avoids a second tar parse for large backups.
-  const inspection = preInspection || inspectBackup(archivePath);
+  const inspection = preInspection || (await inspectBackup(archivePath));
   if (!inspection.compatible && !allowIncompatible) {
     const err = new Error(inspection.reason || 'Backup is not compatible with this instance');
     err.code = 'BACKUP_INCOMPATIBLE';
@@ -745,7 +762,7 @@ export function restoreBackup(
   //     cp -a, cutting I/O in half on the happy path. Also skip *.log
   //     and *.pid at extract time so legacy backups can't re-trigger
   //     the dnsmasq.log bloat.
-  const analysis = inspection.analysis || analyzeArchive(archivePath);
+  const analysis = inspection.analysis || (await analyzeArchive(archivePath));
   const stagingRoot = DATA_DIR;
   let stagingFree = Infinity;
   try {
@@ -770,7 +787,7 @@ export function restoreBackup(
   const db = getDb();
 
   // 2. Pre-restore snapshot (safety net, not managed by cidrella-rollback)
-  takePreRestoreSnapshot(db);
+  await takePreRestoreSnapshot(db);
 
   // 3. Stage extraction to /tmp, if anything goes wrong here, DATA_DIR is untouched.
   //    --exclude=*.log --exclude=*.pid catches log/pid files that slipped
@@ -793,7 +810,7 @@ export function restoreBackup(
   // still healthy. Clean up the staging dir and surface a 500 via the
   // normal error path; do NOT process.exit() for this class of failure.
   try {
-    execFileSync(
+    await runCommand(
       'tar',
       [
         ...RUNTIME_ARTIFACT_EXCLUDES,
@@ -807,10 +824,7 @@ export function restoreBackup(
         '-C',
         stagingDir,
       ],
-      {
-        stdio: 'pipe',
-        timeout: tarTimeout,
-      },
+      { timeout: tarTimeout },
     );
   } catch (extractErr) {
     try {
@@ -915,9 +929,10 @@ export function restoreBackup(
   // 4. Swap staged files into DATA_DIR.
   //    The DB handle is kept open during this loop. better-sqlite3 still
   //    points at the original inode; Linux preserves it while the fd is
-  //    held even though we unlink the path. Any in-flight SQLite writes
-  //    during the loop are single-threaded with the handler, so they
-  //    cannot race the file swap. The handle is closed below, immediately
+  //    held even though we unlink the path. The loop is synchronous but for
+  //    the cp -a fallback, so no handler runs during it; a write made later,
+  //    before the exit, lands in the old inode and is gone after the
+  //    restart, as it always was. The handle is closed below, immediately
   //    before we schedule the process exit.
   //
   //    If any copy step fails MID-LOOP (ENOSPC, permission, etc.), DATA_DIR
@@ -970,7 +985,7 @@ export function restoreBackup(
         fs.renameSync(src, dst);
       } catch (renameErr) {
         if (renameErr.code !== 'EXDEV') throw renameErr;
-        execFileSync('cp', ['-a', src, dst]);
+        await runCommand('cp', ['-a', src, dst], { timeout: tarTimeout });
       }
     }
   } catch (copyErr) {
@@ -1196,7 +1211,8 @@ export function startBackupScheduler() {
 
   // Check every 15 minutes if a backup is due
   return setInterval(
-    () => {
+    async () => {
+      if (operationRunning) return;
       try {
         const db = getDb();
         const scheduleValue = getSetting('backup_schedule');
@@ -1211,7 +1227,7 @@ export function startBackupScheduler() {
 
         if (now - lastRunTime >= interval) {
           console.log(`Scheduled backup (${scheduleValue})...`);
-          const backup = createBackup(db);
+          const backup = await createBackup(db);
           recordAudit({
             action: 'backup_created',
             entityType: 'backup',

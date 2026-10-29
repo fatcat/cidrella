@@ -44,7 +44,7 @@ function switchable(createFakeBackend, name, roles, deps, capabilities = {}) {
     note('render ra');
     return { changed: true, activation: 'reload', activated: false };
   };
-  b.applyActivation = (activation) => {
+  b.applyActivation = async (activation) => {
     if (activation !== 'none') note(`activate ${activation}`);
   };
   b.dhcp.readLeases = async () => ({ leases: b.store.map((lease) => ({ ...lease })) });
@@ -61,24 +61,24 @@ function switchable(createFakeBackend, name, roles, deps, capabilities = {}) {
     failIf('stage');
     note('stage');
   };
-  b.activate = () => {
+  b.activate = async () => {
     failIf('activate');
     b.running = true;
     note('start');
     return 'restarted';
   };
-  b.restart = () => {
+  b.restart = async () => {
     b.running = true;
     note('start');
   };
-  b.stop = () => {
+  b.stop = async () => {
     b.running = false;
     note('stop');
   };
   b.awaitStopped = async () => failIf('awaitStopped');
   b.awaitRunning = async () => failIf('awaitRunning');
-  b.status = () => ({ name, label: name, running: b.running, restartPending: false });
-  b.installed = () => b.installedResult;
+  b.status = async () => ({ name, label: name, running: b.running, restartPending: false });
+  b.installed = async () => b.installedResult;
   b.clearLogs = () => {
     b.logsCleared++;
     return 0;
@@ -179,24 +179,24 @@ const at = (entry) => {
 };
 
 describe('switchPreflight', () => {
-  it('lists what PowerDNS + Kea adds over dnsmasq', () => {
-    const check = switchPreflight('pdns-kea');
+  it('lists what PowerDNS + Kea adds over dnsmasq', async () => {
+    const check = await switchPreflight('pdns-kea');
     expect(check.blocked).toBeNull();
     expect(check.gained.map((f) => f.id).sort()).toEqual(['dns-record-ttl', 'forensic-log']);
     expect(check.lost).toEqual([]);
     expect(check.stacks.map((s) => s.daemons)).toEqual([['dnsmasq'], ['pdns', 'kea', 'radvd']]);
   });
 
-  it('refuses a stack that cannot run here, the one serving, or an unknown one', () => {
+  it('refuses a stack that cannot run here, the one serving, or an unknown one', async () => {
     b.radvd.installedResult = { ok: false, reason: 'radvd is not installed' };
-    expect(switchPreflight('pdns-kea').blocked).toBe('radvd is not installed');
-    expect(switchPreflight('dnsmasq').blocked).toBe('dnsmasq already serves DNS and DHCP');
-    expect(switchPreflight('bind').blocked).toBe('Unknown server stack: bind');
+    expect((await switchPreflight('pdns-kea')).blocked).toBe('radvd is not installed');
+    expect((await switchPreflight('dnsmasq')).blocked).toBe('dnsmasq already serves DNS and DHCP');
+    expect((await switchPreflight('bind')).blocked).toBe('Unknown server stack: bind');
   });
 
-  it('refuses to leave a dnsmasq CIDRella does not run', () => {
+  it('refuses to leave a dnsmasq CIDRella does not run', async () => {
     b.dnsmasq.installedResult = { ok: false, reason: 'dnsmasq is not run by CIDRella here' };
-    expect(switchPreflight('pdns-kea').blocked).toBe('dnsmasq is not run by CIDRella here');
+    expect((await switchPreflight('pdns-kea')).blocked).toBe('dnsmasq is not run by CIDRella here');
   });
 });
 

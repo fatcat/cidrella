@@ -13,7 +13,7 @@ const BLOCKLIST_CONF = path.join(CONF_DIR, 'blocklist.conf');
 /**
  * Blank the legacy blocklist.conf (address= lines from before blocking moved
  * into the DNS proxy) and restart dnsmasq so it drops them. Returns whether
- * there was anything to blank.
+ * there was anything to blank; the restart runs after, its failure logged.
  */
 export function retireLegacyBlocklistConf() {
   const existing = fs.existsSync(BLOCKLIST_CONF) ? fs.readFileSync(BLOCKLIST_CONF, 'utf-8') : '';
@@ -22,7 +22,7 @@ export function retireLegacyBlocklistConf() {
     atomicWrite(BLOCKLIST_CONF, '');
     return true;
   });
-  restartDnsmasq();
+  restartDnsmasq().catch((err) => console.warn('dnsmasq restart failed:', err.message));
   return true;
 }
 

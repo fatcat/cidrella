@@ -176,8 +176,8 @@ default via fe80::5 dev eth9 proto ra metric 1024 expires 1700sec hoplimit 64 pr
       ...extra,
     });
 
-  it('flags every learned router nobody vouches for, on watched interfaces only', () => {
-    const result = check();
+  it('flags every learned router nobody vouches for, on watched interfaces only', async () => {
+    const result = await check();
     expect(result.supported).toBe(true);
     expect(result.routers).toBe(2); // eth9 is not a probe interface
     expect(result.rogues.map((r) => r.server_ip).sort()).toEqual(['fe80::1', 'fe80::bad']);
@@ -195,7 +195,7 @@ default via fe80::5 dev eth9 proto ra metric 1024 expires 1700sec hoplimit 64 pr
     expect(getRaState()).toMatchObject({ lastOutcome: 'ok', supported: true });
   });
 
-  it('trusts the router whose MAC belongs to a configured gateway', () => {
+  it('trusts the router whose MAC belongs to a configured gateway', async () => {
     const subnet = db
       .prepare(
         `INSERT INTO subnets (cidr, name, network_address, last_address, prefix_length,
@@ -209,7 +209,7 @@ default via fe80::5 dev eth9 proto ra metric 1024 expires 1700sec hoplimit 64 pr
         address_sort_key, mac_address) VALUES (?, 'fd00:1234::1', 'gateway', 6, ?, 'CC:CC:CC:CC:CC:CC')`,
     ).run(subnet, '6' + 'fd001234'.padEnd(32, '0'));
     try {
-      const result = check();
+      const result = await check();
       expect(result.rogues.map((r) => r.server_ip)).toEqual(['fe80::bad']);
     } finally {
       db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(subnet);
@@ -235,7 +235,7 @@ default via fe80::5 dev eth9 proto ra metric 1024 expires 1700sec hoplimit 64 pr
       // The trusted router is fe80::1 on eth1; a rogue uses fe80::1 on eth0.
       // The eth1 line is read last, so a table keyed by address alone handed
       // its MAC to the eth0 rogue too.
-      const result = check({
+      const result = await check({
         routes: parseRaRoutes(
           [
             'default via fe80::1 dev eth0 proto ra metric 1024 pref medium',
@@ -259,15 +259,15 @@ default via fe80::5 dev eth9 proto ra metric 1024 expires 1700sec hoplimit 64 pr
     }
   });
 
-  it('trusts an allowlisted router by link-local or MAC', () => {
+  it('trusts an allowlisted router by link-local or MAC', async () => {
     RogueDhcp.addAuthorized(db, { server_ip: 'fe80::1' });
     RogueDhcp.addAuthorized(db, { server_mac: 'de:ad:be:ef:00:02' });
-    expect(check().rogues).toEqual([]);
+    expect((await check()).rogues).toEqual([]);
     expect(RogueDhcp.listEvents(db)).toEqual([]);
   });
 
-  it('says so when no interface accepts Router Advertisements', () => {
-    const result = check({ supported: () => false });
+  it('says so when no interface accepts Router Advertisements', async () => {
+    const result = await check({ supported: () => false });
     expect(result).toEqual({ supported: false, interfaces: 1, routers: 0, rogues: [] });
     expect(getRaState()).toMatchObject({
       lastOutcome: 'unsupported',
@@ -277,8 +277,8 @@ default via fe80::5 dev eth9 proto ra metric 1024 expires 1700sec hoplimit 64 pr
     expect(getRaState().lastError).toContain('accept_ra');
   });
 
-  it('reads only interfaces where RAs are accepted', () => {
-    const result = check({
+  it('reads only interfaces where RAs are accepted', async () => {
+    const result = await check({
       interfaces: ['eth0', 'eth9'],
       supported: (name) => name === 'eth9',
     });

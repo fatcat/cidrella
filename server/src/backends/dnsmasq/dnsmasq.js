@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
+import { runCommand } from '../../utils/run-command.js';
 import { sortKey } from '../../utils/address.js';
 import { ipForPtrRecord } from '../../models/dns-record.js';
 import {
@@ -36,20 +37,36 @@ import {
   RESTART_PENDING,
 } from './paths.js';
 
+const TEST_ARGS = () => ['--test', `--conf-file=${DNSMASQ_CONF}`];
+
+function testFailure(err) {
+  if (err?.code === 'ENOENT' && process.env.NODE_ENV !== 'production') {
+    return { ok: true, skipped: 'dnsmasq-not-installed' };
+  }
+  const detail = err?.stderr?.toString?.().trim() || err?.message || 'unknown validation error';
+  throw new Error(`dnsmasq configuration validation failed: ${detail}`);
+}
+
+// Synchronous: it runs inside the validated write (createValidatedFiles),
+// which the render path calls synchronously. Deferred in BACKLOG.md.
 export function validateDnsmasqConfig() {
   if (!fs.existsSync(DNSMASQ_CONF)) return { ok: true, skipped: 'no-config' };
   try {
-    execFileSync('dnsmasq', ['--test', `--conf-file=${DNSMASQ_CONF}`], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    execFileSync('dnsmasq', TEST_ARGS(), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return { ok: true, skipped: null };
   } catch (err) {
-    if (err?.code === 'ENOENT' && process.env.NODE_ENV !== 'production') {
-      return { ok: true, skipped: 'dnsmasq-not-installed' };
-    }
-    const detail = err?.stderr?.toString?.().trim() || err?.message || 'unknown validation error';
-    throw new Error(`dnsmasq configuration validation failed: ${detail}`);
+    return testFailure(err);
+  }
+}
+
+// The same check before a signal or restart, off the event loop.
+async function checkDnsmasqConfig() {
+  if (!fs.existsSync(DNSMASQ_CONF)) return { ok: true, skipped: 'no-config' };
+  try {
+    await runCommand('dnsmasq', TEST_ARGS());
+    return { ok: true, skipped: null };
+  } catch (err) {
+    return testFailure(err);
   }
 }
 
@@ -411,14 +428,14 @@ export const dnsmasqUnitInstalled = () => dnsmasqUnit.installed();
 export const dnsmasqRestartPending = () => dnsmasqUnit.restartPending();
 
 // cidrella-dnsmasq.service has ExecReload=/bin/kill -HUP $MAINPID (v0.4.11).
-export function signalDnsmasq() {
-  validateDnsmasqConfig();
-  dnsmasqUnit.reload();
+export async function signalDnsmasq() {
+  await checkDnsmasqConfig();
+  await dnsmasqUnit.reload();
 }
 
-export function restartDnsmasq() {
-  validateDnsmasqConfig();
-  dnsmasqUnit.restart();
+export async function restartDnsmasq() {
+  await checkDnsmasqConfig();
+  await dnsmasqUnit.restart();
 }
 
 export function applyInterfaceConfig(_db) {

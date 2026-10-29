@@ -128,20 +128,20 @@ export function createRadvdBackend(deps = {}) {
       atomicWrite(RADVD_CONF, content);
       return { changed: true, activation: 'reload' };
     });
-    if (activate) applyActivation(result.activation);
-    return { ...result, activated: activate && result.changed };
+    const applied = { ...result, activated: activate && result.changed };
+    return activate ? applyActivation(result.activation).then(() => applied) : applied;
   }
 
   // radvd re-reads its file on SIGHUP; one with nothing to advertise is
   // stopped instead, and a stopped one is started.
-  function applyActivation(activation) {
+  async function applyActivation(activation) {
     if (activation === 'none') return;
     if (!wanted()) {
-      unit.stop();
+      await unit.stop();
       return;
     }
-    if (activation === 'reload' && unit.isRunning()) unit.reload();
-    else unit.restart();
+    if (activation === 'reload' && (await unit.isRunning())) await unit.reload();
+    else await unit.restart();
   }
 
   return {
@@ -149,10 +149,10 @@ export function createRadvdBackend(deps = {}) {
     label: 'radvd',
     roles: ROLES,
     ra: { applyRouterAdvertisements },
-    status: () => ({
+    status: async () => ({
       name: 'radvd',
       label: 'radvd',
-      running: unit.isRunning(),
+      running: await unit.isRunning(),
       restartPending: unit.restartPending(),
       // Stopped on purpose while there is nothing to advertise.
       idle: !wanted(),
@@ -161,13 +161,13 @@ export function createRadvdBackend(deps = {}) {
     capabilityNotes: () => NOTES,
     transaction: (fn) => transaction(fn),
     applyActivation,
-    activate({ force = false } = {}) {
+    async activate({ force = false } = {}) {
       if (!wanted()) {
-        if (unit.isRunning()) unit.stop();
+        if (await unit.isRunning()) await unit.stop();
         return 'unchanged';
       }
-      if (force || unit.restartPending() || !unit.isRunning()) {
-        unit.restart();
+      if (force || unit.restartPending() || !(await unit.isRunning())) {
+        await unit.restart();
         return 'restarted';
       }
       return 'unchanged';
@@ -178,7 +178,7 @@ export function createRadvdBackend(deps = {}) {
     async awaitRunning({ timeoutMs = 10000, intervalMs = 250 } = {}) {
       if (!wanted()) return;
       const deadline = Date.now() + timeoutMs;
-      while (!unit.isRunning()) {
+      while (!(await unit.isRunning())) {
         if (Date.now() >= deadline) throw new Error('radvd is not running');
         await new Promise((resolve) => setTimeout(resolve, intervalMs));
       }

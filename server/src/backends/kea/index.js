@@ -195,13 +195,19 @@ export function createKeaBackend(deps = {}) {
     return changed;
   }
 
-  const runningFamilies = () => families().filter((family) => units[family].isRunning());
+  async function runningFamilies() {
+    const served = families();
+    const running = await Promise.all(served.map((family) => units[family].isRunning()));
+    return served.filter((_, i) => running[i]);
+  }
 
   // A stopped daemon reads its file when it starts, so it needs no reload.
-  function applyActivation(activation) {
+  async function applyActivation(activation) {
     for (const family of families()) {
-      if (activation === 'restart') units[family].restart();
-      else if (activation === 'reload' && units[family].isRunning()) units[family].reload();
+      if (activation === 'restart') await units[family].restart();
+      else if (activation === 'reload' && (await units[family].isRunning())) {
+        await units[family].reload();
+      }
     }
   }
 
@@ -216,8 +222,8 @@ export function createKeaBackend(deps = {}) {
       applyScopes(db, { activate = true } = {}) {
         const changed = withValidatedKeaUpdate(() => renderAll(db));
         const activation = changed ? 'reload' : 'none';
-        if (activate) applyActivation(activation);
-        return { changed, activation, activated: activate && changed };
+        const result = { changed, activation, activated: activate && changed };
+        return activate ? applyActivation(activation).then(() => result) : result;
       },
       readLeases: () => readKeaLeases(commands, families()),
       // Polled: Kea has no lease notification without a hook of our own.
@@ -272,26 +278,30 @@ export function createKeaBackend(deps = {}) {
       dhcpCounters: () => keaPacketCounters(commands, families()),
     },
 
-    status: () => ({
+    status: async () => ({
       name: 'kea',
       label: 'Kea',
-      running: runningFamilies().length === families().length,
+      running: (await runningFamilies()).length === families().length,
       restartPending: units[4].restartPending(),
     }),
     capabilities: () => declareSupport(ROLES, SUPPORTED),
     capabilityNotes: () => NOTES,
     transaction: (fn) => withValidatedKeaUpdate(fn),
     applyActivation,
-    activate({ force = false } = {}) {
-      if (force || units[4].restartPending() || runningFamilies().length < families().length) {
-        applyActivation('restart');
+    async activate({ force = false } = {}) {
+      if (
+        force ||
+        units[4].restartPending() ||
+        (await runningFamilies()).length < families().length
+      ) {
+        await applyActivation('restart');
         return 'restarted';
       }
       return 'unchanged';
     },
     restart: () => applyActivation('restart'),
-    stop() {
-      for (const family of FAMILIES) units[family].stop();
+    async stop() {
+      for (const family of FAMILIES) await units[family].stop();
     },
     async awaitStopped(opts) {
       for (const family of FAMILIES) await units[family].awaitStopped(opts);
@@ -342,7 +352,7 @@ export function createKeaBackend(deps = {}) {
     // ready to take the leases.
     async stage(db) {
       withValidatedKeaUpdate(() => renderAll(db));
-      applyActivation('restart');
+      await applyActivation('restart');
       await this.awaitRunning();
     },
     // Kea refuses a control-socket directory looser than 0750.

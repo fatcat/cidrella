@@ -18,7 +18,7 @@
 // last rule the first check on every deployment would flag the real router.
 
 import fs from 'fs';
-import { execFileSync } from 'child_process';
+import { runCommand } from './run-command.js';
 import { selectProbeInterfaceNames } from './dhcp-probe.js';
 import { localAddressSet } from './local-addresses.js';
 import { findNeighbor, readNdCache } from './nd-cache.js';
@@ -122,25 +122,22 @@ export function classifyRouter(router, { mac = null, selfIps, authorized, gatewa
   return { rogue: true, reason: 'unauthorized' };
 }
 
-function readRaRoutes() {
-  return parseRaRoutes(
-    execFileSync('ip', ['-6', 'route', 'show', 'proto', 'ra'], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-      timeout: 3000,
-    }),
-  );
+async function readRaRoutes() {
+  const { stdout } = await runCommand('ip', ['-6', 'route', 'show', 'proto', 'ra'], {
+    timeout: 3000,
+  });
+  return parseRaRoutes(stdout);
 }
 
 // ─── Check orchestration ─────────────────────────────────
 
 /**
  * Read the kernel's learned routers on every probe interface and persist the
- * ones nobody vouches for. Synchronous: it is two process reads.
+ * ones nobody vouches for: two process reads, neither on the event loop.
  *
  * `routes`, `interfaces`, `neighbors`, `selfIps` and `supported` are test seams.
  */
-export function checkRouterAdvertisements(
+export async function checkRouterAdvertisements(
   db,
   {
     routes = null,
@@ -171,10 +168,11 @@ export function checkRouterAdvertisements(
       return { supported: false, interfaces: names.length, routers: 0, rogues: [] };
     }
 
-    const learned = routes || readRaRoutes();
+    const learned = routes || (await readRaRoutes());
     const watched = new Set(supportedInterfaces);
     const routers = learned.routers.filter((r) => watched.has(r.iface));
-    const table = neighbors || (routers.length > 0 ? readNdCache({ force: true }) : new Map());
+    const table =
+      neighbors || (routers.length > 0 ? await readNdCache({ force: true }) : new Map());
     const trusted = {
       selfIps: selfIps || localAddressSet(),
       authorized: authorizedSets(db),

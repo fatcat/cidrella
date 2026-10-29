@@ -258,13 +258,13 @@ async function main() {
   // A proxy bypass from before the restart would put the DNS backend on the
   // LAN port and keep the proxy out; the proxy is always tried first.
   clearBypassAtBoot(getDb());
-  applyAtBoot(getDb());
+  await applyAtBoot(getDb());
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,
   // so it switches to enforcing. No-op unless dnssec_enabled.
   if (getSetting('dnssec_enabled') === 'true') {
-    ensureNtpEnabled();
+    await ensureNtpEnabled();
     armDnssecTimecheckWhenSynced();
   }
 

@@ -1137,18 +1137,18 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
 });
 
 // GET /api/dns/dnssec: current state + dnsmasq support + clock-sync status
-router.get('/dnssec', requirePerm('dns:read'), (req, res) => {
+router.get('/dnssec', requirePerm('dns:read'), async (req, res) => {
   res.json({
     enabled: getSetting('dnssec_enabled') === 'true',
     supported: supports('rec-dnssec-validate'),
-    ntp: getNtpStatus(),
+    ntp: await getNtpStatus(),
   });
 });
 
 // PUT /api/dns/dnssec: toggle DNSSEC validation. Mirrors /forwarders: the
 // authoritative write path that regenerates dnsmasq.conf and restarts dnsmasq
 // via the regenerate_dnsmasq_conf afterCommit hook.
-router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
+router.put('/dnssec', requirePerm('dns:write'), async (req, res) => {
   const { enabled } = req.body;
   if (typeof enabled !== 'boolean') {
     return res.status(400).json({ error: 'enabled must be a boolean' });
@@ -1165,7 +1165,7 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
   if (enabled) {
     // Make sure the clock will sync, and arm the one-shot SIGHUP that switches
     // dnsmasq from lenient (dnssec-no-timecheck) to enforcing once it has.
-    ensureNtpEnabled();
+    await ensureNtpEnabled();
     armDnssecTimecheckWhenSynced();
   }
 
@@ -1178,7 +1178,7 @@ router.put('/dnssec', requirePerm('dns:write'), (req, res) => {
     after: settingsSnapshot(['dnssec_enabled']),
   });
 
-  res.json({ enabled, ntp: getNtpStatus() });
+  res.json({ enabled, ntp: await getNtpStatus() });
 });
 
 // ─── Encrypted forwarding (DoT/DoH) ──────────────────────

@@ -196,7 +196,13 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `services/ip-lifecycle-service.js` for every lifecycle
   write, `models/ip-events.js` for address history (`ip_events` and `ip_range_events`; history
   is keyed by address, never by row, so it outlives the row), `utils/executable.js` (`findExecutable`: where a
-  command would run from, searched on PATH as a shell does), `utils/request-actor.js`
+  command would run from, searched on PATH as a shell does), `runCommand` in
+  `utils/run-command.js` (every command the server runs after boot: async, with a timeout; tests
+  mock it with `fakeRunCommandModule` in `tests/helpers/fake-run-command.js`), `runDbTask` in
+  `utils/db-worker/index.js` (slow SQL in a worker thread with its own connection; a task is a
+  function in `db-worker/tasks.js`), `recountBlocklistDomains` and `storedBlocklistDomainCount`
+  in `utils/blocklist.js` (the enabled-domain count, recounted in the worker and stored; the
+  query is `countEnabledBlocklistDomains` in `models/blocklist-store.js`), `utils/request-actor.js`
   (`currentActor`, the signed-in user a write deep in a model should name;
   `currentRequestContext` for the whole request: user, origin, client address),
   `recordAudit` in `services/audit.js` (every audit row: `before`/`after` keep only changed

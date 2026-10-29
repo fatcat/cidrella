@@ -302,15 +302,15 @@ router.put('/config', requirePerm('system:write'), async (req, res) => {
   }
 
   // Regenerate dnsmasq config and restart (interface changes require full
-  // restart, not just SIGHUP). Must be synchronous: the activation on the
-  // next line needs to pick up the freshly-written conf. Don't route this
+  // restart, not just SIGHUP). Awaited here, after the write above: the
+  // activation must pick up the freshly-written conf. Don't route this
   // through queueRegen, the hook fires in a microtask AFTER the restart,
   // which would leave dnsmasq running the old conf until the next regen.
   // A no-op save (nothing effectively changed, our unit healthy) skips the
   // restart so clicking Save can't blip DNS/DHCP for the whole LAN.
   let dnsmasqStatus;
   try {
-    dnsmasqStatus = getService('dns').activate({ force: ifaceChanged });
+    dnsmasqStatus = await getService('dns').activate({ force: ifaceChanged });
   } catch {
     dnsmasqStatus = 'restart_failed';
   }

@@ -103,19 +103,14 @@ function writeFile(relative, content) {
 }
 
 // restoreBackup schedules the process exit that has systemd restart it.
-// Run that timer here, against the stubbed exit, and check it asked for a
+// Wait out that timer, against the stubbed exit, and check it asked for a
 // clean restart.
-function restoreAndExit(archive, options) {
-  vi.useFakeTimers({ toFake: ['setTimeout'] });
-  try {
-    const result = restoreBackup(archive, options);
-    process.exit.mockClear();
-    vi.runOnlyPendingTimers();
-    expect(process.exit).toHaveBeenCalledWith(0);
-    return result;
-  } finally {
-    vi.useRealTimers();
-  }
+async function restoreAndExit(archive, options) {
+  process.exit.mockClear();
+  const result = await restoreBackup(archive, options);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  expect(process.exit).toHaveBeenCalledWith(0);
+  return result;
 }
 
 // The restore swaps files and closes the database; the process then exits
@@ -281,17 +276,17 @@ describe('backup round trip', () => {
     db.prepare('DELETE FROM blocklist_stage').run();
     expect(db.pragma('freelist_count', { simple: true })).toBeGreaterThan(0);
 
-    backup = createBackup(db);
+    backup = await createBackup(db);
 
     change(db, adminId);
     // A second backup, taken after the changes: it must still be listed, and
     // counted for retention, once the older one is restored.
-    const later = createBackup(db);
+    const later = await createBackup(db);
     backup.later = later.filename;
 
     // As POST /api/operations/restore calls it.
     const carryover = collectRestoreCarryover(db, adminId);
-    restoreAndExit(getBackupPath(backup.filename), {
+    await restoreAndExit(getBackupPath(backup.filename), {
       dhcpAfterRestore: false,
       restoredBy: { username: 'round-admin' },
       carryover,
@@ -495,13 +490,13 @@ describe('restoring a backup from schema 54', () => {
       )
       .run();
 
-    archive = createBackup(legacy);
+    archive = await createBackup(legacy);
     legacy.close();
     expect(archive.schema_version).toBe(54);
 
     for (const suffix of ['', '-wal', '-shm']) fs.rmSync(livePath + suffix, { force: true });
     await initDb(dataDir);
-    restoreAndExit(getBackupPath(archive.filename), {
+    await restoreAndExit(getBackupPath(archive.filename), {
       restoredBy: { username: 'legacy-admin' },
     });
     await restart();
@@ -561,14 +556,14 @@ describe('restoring a backup from schema 54', () => {
 // ─── Two backups in one second ────────────────────────────────────────
 
 describe('two backups in the same second', () => {
-  it('keeps both archives, listed under their own names', () => {
+  it('keeps both archives, listed under their own names', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-29T08:00:00.250Z'));
     try {
       const db = getDb();
-      const first = createBackup(db);
+      const first = await createBackup(db);
       vi.setSystemTime(new Date('2026-09-29T08:00:00.750Z'));
-      const second = createBackup(db);
+      const second = await createBackup(db);
       expect(second.filename).not.toBe(first.filename);
       for (const { filename } of [first, second]) {
         expect(fs.existsSync(getBackupPath(filename))).toBe(true);

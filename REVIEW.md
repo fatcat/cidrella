@@ -29,53 +29,6 @@ fed by `parseNetwork` in `server/src/utils/cidr.js` (`size` and `usable` through
   `formatAddressCount` from `views/networks-workspace-data.js`, which already writes a power of
   two as `2^64`. Test with a /48 into /64s and an IPv4 /24.
 
-## Found soaking 0.6.2-pre.2 on prod (2026-10-27)
-
-#### BACKUP-STALL-01: DNS stops answering while a backup runs
-
-**medium**, confirmed on prod (0.6.2-pre.2). Deferred to 0.6.3. `server/src/utils/backup.js:93`
-(`createBackup`: `writeBackupDatabase` at :167, `spawnSync('tar', ...)` at :177), called by
-`POST /api/operations/backup` (`server/src/routes/operations.js:179`) and the scheduled backup
-(`backup.js:1214`).
-
-- **What happens:** A manual backup at 11:48:48 took 13.3 s, and `pdns.log` shows no query from
-  11:48:48 to 11:49:01, then a burst of 10 when the request returned. For those 13 s the DNS
-  proxy answered nothing. A scheduled backup does the same.
-- **Why:** Every step of a backup is synchronous on the main thread, which the DNS proxy shares:
-  `VACUUM INTO` and the `VACUUM` of the copy (better-sqlite3), then `spawnSync` for tar. Before
-  0.6.2 the tar step alone blocked for the whole archive of a 337 MB database; how the 13 s
-  splits between the vacuums and tar was not measured.
-- **Fix:** Build the database copy in a worker thread with its own connection (WAL lets it read
-  while the main connection writes), run tar with async `spawn`, and make `createBackup` async,
-  awaited by the route and the scheduler. Test: hold a backup in progress and check the event
-  loop keeps turning (a timer fires on time). The pre-restore snapshot's `spawnSync` tar
-  (`backup.js:568`, `:582`) blocks the same way, but a restore ends in a restart anyway.
-- **Related:** BACKLOG.md, Process isolation and event-loop blocking, item 1 lists the backup's
-  tar among the synchronous child processes; this entry is that bullet, measured. Async `spawn`
-  alone does not fix it, since the vacuums are database work, not a child process. Moving the
-  DNS proxy into its own service (item 2) would keep DNS answering through it either way.
-
-#### BLOCKLIST-STATS-STALL-01: Opening the blocklist stats stops DNS for up to 3 s
-
-**medium**, confirmed on prod (0.6.1 and 0.6.2-pre.1). Deferred to 0.6.3.
-`server/src/routes/blocklists.js:200` (`GET /api/blocklists/stats`).
-
-- **What happens:** The request took 1.1 s on 10-25 16:36:59, 3.0 s on 10-26 10:03:40 and 3.1 s
-  on 10-27 10:31:09 UTC. `pdns.log` holds no query in any of those windows (about 40, 4 and 5
-  would be usual), and the analytics and metrics requests sent with it finished within a second
-  of it, queued behind it.
-- **Why:** The route runs `COUNT(DISTINCT bd.domain)` over `blocklist_domains` joined to the
-  enabled categories, synchronously on the main thread the DNS proxy shares. On prod that is a
-  scan of 3.6 million rows every time the stats load.
-- **Fix:** Count the distinct enabled domains once per change, in `refreshAllEnabled` and the
-  scheduler after a refresh and when a category is switched on or off, store the number (a
-  setting, or a column read with the categories), and have the route read it. The search query
-  in the same file (`:505`, unanchored `LIKE`) scans the same table; its comment measures it at
-  about 0.1 s, so it is not part of this.
-- **Related:** BACKLOG.md, Process isolation and event-loop blocking: its "looked at and fine"
-  note covers the blocklist refresh, not these reads. Moving the DNS proxy into its own service
-  (item 2) would keep DNS answering through it.
-
 ## Found reading prod's logs (2026-10-06)
 
 #### DNSMASQ-02: A reservation change reaches dnsmasq twice and logs a duplicate per line

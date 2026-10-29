@@ -48,7 +48,7 @@ export async function runRogueDetection(db, opts = {}) {
   }
   let routerAdvertisements;
   try {
-    routerAdvertisements = checkRouterAdvertisements(db, opts.ra || {});
+    routerAdvertisements = await checkRouterAdvertisements(db, opts.ra || {});
   } catch (err) {
     routerAdvertisements = {
       supported: false,

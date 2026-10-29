@@ -23,6 +23,12 @@ vi.mock('child_process', () => ({
     return '';
   }),
 }));
+// rec_control and systemctl run through runCommand: recorded by the same mock.
+vi.mock('../../../src/utils/run-command.js', async () =>
+  (await import('../../helpers/fake-run-command.js')).fakeRunCommandModule(
+    (await import('child_process')).execFileSync,
+  ),
+);
 
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../../helpers/test-db.js');
 const { setSetting } = await import('../../../src/db/init.js');
@@ -130,13 +136,13 @@ describe('PowerDNS backend golden output', () => {
   it('03 applies the resolver: encrypted forwarding and DNSSEC before the clock is set', async () => {
     setSetting('forwarder_encryption', 'tls');
     setSetting('dnssec_enabled', 'true');
-    expect(backend.dns.applyResolver(db).activation).toBe('restart');
+    expect((await backend.dns.applyResolver(db)).activation).toBe('restart');
     await expect(snapshot()).toMatchFileSnapshot(golden('03-resolver'));
   });
 
   it('04 validates once the clock is synchronized', async () => {
     ntp = { available: true, synchronized: true };
-    backend.dns.onClockSynchronized();
+    await backend.dns.onClockSynchronized();
     await expect(snapshot()).toMatchFileSnapshot(golden('04-clock'));
   });
 
@@ -146,16 +152,16 @@ describe('PowerDNS backend golden output', () => {
       JSON.stringify({ eth0: { dns: true, dhcp: true }, eth1: { dns: false, dhcp: true } }),
     );
     setSetting('dns_proxy_bypass', 'true');
-    backend.dns.applyListen(db);
+    await backend.dns.applyListen(db);
     const on = snapshot();
     db.prepare("DELETE FROM settings WHERE key = 'dns_proxy_bypass'").run();
-    backend.dns.applyListen(db);
+    await backend.dns.applyListen(db);
     await expect(`${on}\n${snapshot()}`).toMatchFileSnapshot(golden('05-bypass'));
   });
 
   it('06 stops recursion', async () => {
     setSetting('dns_no_recursion', 'true');
-    backend.dns.applyResolver(db);
+    await backend.dns.applyResolver(db);
     await expect(snapshot()).toMatchFileSnapshot(golden('06-no-recursion'));
   });
 
@@ -172,8 +178,8 @@ describe('PowerDNS backend golden output', () => {
 
   it('08 sends nothing when nothing changed', async () => {
     expect((await backend.dns.applyZones(db)).changed).toBe(false);
-    expect(backend.dns.applyResolver(db).changed).toBe(false);
-    expect(backend.dns.applyListen(db).changed).toBe(false);
+    expect((await backend.dns.applyResolver(db)).changed).toBe(false);
+    expect((await backend.dns.applyListen(db)).changed).toBe(false);
     await expect(snapshot()).toMatchFileSnapshot(golden('08-idempotent'));
   });
 
