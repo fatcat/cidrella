@@ -112,7 +112,7 @@ restart_services_on_failure() {
   local status=$?
   if [ "$status" -ne 0 ] && [ "$SERVICES_STOPPED" = true ]; then
     warn "Deploy failed with the services stopped; starting them again on ${LXC_HOST}."
-    ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella cidrella-anomaly 2>/dev/null || true" ||
+    ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella-dns-proxy cidrella cidrella-anomaly 2>/dev/null || true" ||
       warn "Could not reach ${LXC_HOST} to start them: ssh ${SSH_TARGET} systemctl start cidrella-dnsmasq cidrella"
   fi
 }
@@ -283,7 +283,7 @@ ssh "$SSH_TARGET" "
 UNITS_UPDATED=false
 
 # Compare and update systemd units
-for UNIT in cidrella.service cidrella-dnsmasq.service cidrella-anomaly.service \
+for UNIT in cidrella.service cidrella-dnsmasq.service cidrella-anomaly.service cidrella-dns-proxy.service \
   cidrella-pdns-auth.service cidrella-pdns-recursor.service; do
   SRC="${INSTALL_DIR}/scripts/systemd/${UNIT}"
   DST="/etc/systemd/system/${UNIT}"
@@ -344,6 +344,16 @@ ssh "$SSH_TARGET" "
 # ═══════════════════════════════════════════════════════════
 
 info "Starting services..."
+# The DNS proxy is left running through a deploy, so DNS keeps answering; the
+# web app restarts it if its code changed. Enabled and started here for a
+# host that does not have it yet.
+ssh "$SSH_TARGET" "
+  if [ -f /etc/systemd/system/cidrella-dns-proxy.service ]; then
+    systemctl enable cidrella-dns-proxy 2>/dev/null || true
+    systemctl reset-failed cidrella-dns-proxy 2>/dev/null || true
+    systemctl start cidrella-dns-proxy 2>/dev/null || true
+  fi
+"
 ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella"
 SERVICES_STOPPED=false
 
@@ -366,6 +376,7 @@ DNSMASQ_STATUS=$(ssh "$SSH_TARGET" "
 DNSMASQ_OK=false
 case "$DNSMASQ_STATUS" in active | off*) DNSMASQ_OK=true ;; esac
 ANOMALY_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-anomaly 2>/dev/null || echo failed")
+PROXY_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-dns-proxy 2>/dev/null || echo failed")
 
 if [ "$CIDRELLA_STATUS" = "active" ] && $DNSMASQ_OK; then
   ok "Core services running."
@@ -374,6 +385,7 @@ else
   $DNSMASQ_OK || warn "cidrella-dnsmasq: ${DNSMASQ_STATUS}"
   warn "Check logs: ssh ${SSH_TARGET} journalctl -u cidrella -n 30"
 fi
+[ "$PROXY_STATUS" = "active" ] || warn "cidrella-dns-proxy: ${PROXY_STATUS}"
 
 if [ "$ANOMALY_STATUS" = "active" ]; then
   ok "Anomaly detection service running."
@@ -394,4 +406,5 @@ echo -e "${BOLD}═════════════════════�
 echo -e "  cidrella:         ${CIDRELLA_STATUS}"
 echo -e "  cidrella-dnsmasq: ${DNSMASQ_STATUS}"
 echo -e "  cidrella-anomaly: ${ANOMALY_STATUS}"
+echo -e "  cidrella-dns-proxy: ${PROXY_STATUS}"
 echo ""

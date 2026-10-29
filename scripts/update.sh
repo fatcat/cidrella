@@ -1468,6 +1468,17 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" ] && [ -f /etc/s
     emit_event switchover pass unit=cidrella-anomaly.service
   fi
 fi
+# The DNS proxy's own unit (0.6.3). Installed and enabled whether or not an
+# earlier release had it: the update that brings it is the one that adds it.
+# Started after the swap below, since its start condition looks for the
+# proxy's entry point through /opt/cidrella.
+if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-dns-proxy.service" ]; then
+  if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-dns-proxy.service" /etc/systemd/system/cidrella-dns-proxy.service)" = "changed" ]; then
+    emit_event switchover pass unit=cidrella-dns-proxy.service
+  fi
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable cidrella-dns-proxy 2>/dev/null || warn "Could not enable cidrella-dns-proxy (non-fatal)"
+fi
 # cidrella-dnsmasq.service is refreshed (v0.5.3 added its start condition,
 # which keeps it down while the PowerDNS + Kea stack serves) but never
 # restarted: dnsmasq keeps running. Only where it is ours (install.sh's
@@ -1561,6 +1572,15 @@ emit_event switchover pass "active_slot=$TARGET_SLOT"
 # through the symlink, but daemon-reload is cheap insurance).
 systemctl daemon-reload
 
+# The DNS proxy, before the web app. It binds nothing until a web app gives
+# it a config, so on the first update that brings it the old web app still
+# holds port 53 here without a conflict. One already running keeps running:
+# the new web app restarts it only when its code changed.
+if systemctl is-enabled --quiet cidrella-dns-proxy 2>/dev/null; then
+  systemctl reset-failed cidrella-dns-proxy 2>/dev/null || true
+  systemctl start cidrella-dns-proxy || warn "Failed to start cidrella-dns-proxy (non-fatal, the web app retries)"
+fi
+
 track_progress "switching" 90 "Restarting CIDRella..."
 info "Restarting cidrella service (DNS and DHCP daemons stay running)..."
 # Deliberately NOT fatal. This script runs under `set -euo pipefail` with
@@ -1587,7 +1607,7 @@ fi
 # anomaly detection was silently dead. Explicitly check each auxiliary unit
 # that ships with CIDRella: if the unit is enabled but not active, start it.
 # Missing units (e.g. dnsmasq mode=include) are silently skipped.
-for _aux in cidrella-anomaly; do
+for _aux in cidrella-anomaly cidrella-dns-proxy; do
   if systemctl list-unit-files "${_aux}.service" >/dev/null 2>&1 \
      && systemctl is-enabled --quiet "$_aux" 2>/dev/null \
      && ! systemctl is-active --quiet "$_aux" 2>/dev/null; then
@@ -1790,6 +1810,19 @@ write_progress "rolling_back" 95 "New version failed, auto-rolling back..." "$RO
 
 # Swap symlink back
 ln -sfn "$ACTIVE_SLOT" "$INSTALL_LINK"
+
+# The DNS proxy reads the database the snapshot is about to be copied over.
+# A release without its own proxy process runs the proxy in the web app:
+# stop this one so the two do not fight over port 53. Otherwise have it
+# close the database (SIGUSR2) until the restored web app says hello.
+if systemctl is-active --quiet cidrella-dns-proxy 2>/dev/null; then
+  if [ -f "$ACTIVE_SLOT/server/src/dns-proxy/main.js" ]; then
+    systemctl kill -s SIGUSR2 cidrella-dns-proxy 2>/dev/null || true
+    sleep 1
+  else
+    systemctl stop cidrella-dns-proxy 2>/dev/null || true
+  fi
+fi
 
 # Restore DB snapshots
 if [ -f "$SNAPSHOT_DIR/cidrella.db" ]; then

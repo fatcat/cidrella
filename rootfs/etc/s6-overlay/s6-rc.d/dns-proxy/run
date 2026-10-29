@@ -1,0 +1,7 @@
+#!/command/execlineb -P
+# The DNS proxy and encrypted forwarder, apart from node-app so DNS keeps
+# answering while the web app restarts. s6 starts it again when it exits:
+# the web app asks it to when its code changed, and kills it when it stops
+# answering.
+s6-setuidgid cidrella
+node /app/server/src/dns-proxy/main.js

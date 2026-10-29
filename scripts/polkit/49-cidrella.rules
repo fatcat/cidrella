@@ -58,6 +58,14 @@ polkit.addRule(function(action, subject) {
         }
     }
 
+    // The DNS proxy: started (again) by the watchdog when it stopped
+    // answering, and restarted when an update changed its code.
+    if (unit === "cidrella-dns-proxy.service") {
+        if (verb === "start" || verb === "stop" || verb === "restart") {
+            return polkit.Result.YES;
+        }
+    }
+
     // radvd, while the PowerDNS + Kea stack sends the Router Advertisements.
     if (unit === "cidrella-radvd.service") {
         if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reload") {

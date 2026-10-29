@@ -232,6 +232,14 @@ emit_event rollback start "from=$ACTIVE_VERSION" "to=$INACTIVE_VERSION" "has_sna
 info "Stopping CIDRella..."
 systemctl stop cidrella || warn "cidrella service was not running"
 
+# The DNS proxy keeps answering through the rollback, but it reads the
+# database the snapshot is copied over: have it close it (SIGUSR2) until the
+# restored web app says hello.
+if [ "$HAS_SNAPSHOT" = true ] && systemctl is-active --quiet cidrella-dns-proxy 2>/dev/null; then
+  systemctl kill -s SIGUSR2 cidrella-dns-proxy 2>/dev/null || true
+  sleep 1
+fi
+
 # Restore DB snapshot first (while service is down)
 if [ "$HAS_SNAPSHOT" = true ]; then
   info "Restoring database snapshot..."
@@ -251,6 +259,18 @@ emit_event rollback pass phase=symlink-swap "active_slot=$INACTIVE_SLOT"
 
 info "Reloading systemd..."
 systemctl daemon-reload
+
+# A release from before the DNS proxy had its own process runs it in the web
+# app: stop this one so the two do not fight over port 53. One that has it
+# keeps it running; the restored web app restarts it if its code differs.
+if systemctl list-unit-files cidrella-dns-proxy.service >/dev/null 2>&1; then
+  if [ -f "$INACTIVE_SLOT/server/src/dns-proxy/main.js" ]; then
+    systemctl reset-failed cidrella-dns-proxy 2>/dev/null || true
+    systemctl start cidrella-dns-proxy 2>/dev/null || warn "cidrella-dns-proxy did not start; see journalctl -u cidrella-dns-proxy"
+  else
+    systemctl stop cidrella-dns-proxy 2>/dev/null || true
+  fi
+fi
 
 if [ "$STACK_HANDBACK" = true ]; then
   info "Handing DNS and DHCP back to dnsmasq..."

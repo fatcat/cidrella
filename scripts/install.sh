@@ -740,6 +740,12 @@ _install_unit "$INSTALL_DIR/scripts/systemd/cidrella-anomaly.service" /etc/syste
 ok "Installed cidrella-anomaly.service"
 emit_event systemd pass unit=cidrella-anomaly.service
 
+# The DNS proxy and encrypted forwarder, a process of their own so DNS keeps
+# answering while the web app restarts.
+_install_unit "$INSTALL_DIR/scripts/systemd/cidrella-dns-proxy.service" /etc/systemd/system/cidrella-dns-proxy.service
+ok "Installed cidrella-dns-proxy.service"
+emit_event systemd pass unit=cidrella-dns-proxy.service
+
 # v0.4.11+: templated update worker unit. The cidrella server starts an
 # instance of this unit via polkit-gated systemctl when an in-app update is
 # triggered. See scripts/polkit/49-cidrella.rules and the comment block at
@@ -871,6 +877,11 @@ if [ "$DNSMASQ_MODE" = "own" ]; then
 elif [ "$DNSMASQ_MODE" = "include" ]; then
   systemctl restart dnsmasq 2>/dev/null || warn "Could not restart system dnsmasq."
 fi
+
+# Before the web app: it binds nothing until the web app gives it a config.
+systemctl enable cidrella-dns-proxy 2>/dev/null
+systemctl start cidrella-dns-proxy
+ok "cidrella-dns-proxy started."
 
 systemctl enable cidrella 2>/dev/null
 systemctl start cidrella

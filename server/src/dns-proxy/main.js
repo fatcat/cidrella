@@ -68,6 +68,14 @@ function database() {
   }
 }
 
+// Closed until the next web app's hello: a restore or rollback is about to
+// put other files in its place.
+function releaseDb() {
+  releasedUntil = Date.now() + DB_RELEASE_MAX_MS;
+  Db.closeProxyDb();
+  proxyLog('info', 'Closed the database for a restore');
+}
+
 const settings = {
   setting: (key) => {
     database();
@@ -115,10 +123,14 @@ const listenKey = (config) =>
 
 function applyConfig(next, { rebind = false } = {}) {
   const changed = listenKey(current) !== listenKey(next);
+  // Bound to nothing though it should serve: a bind that failed at start,
+  // while something else still held the LAN port. The web app's config is
+  // the moment to try again.
+  const deaf = next.serve !== false && Server.serverStatus().sockets === 0;
   current = next;
   Db.setSettingDefaults(next.defaults || {});
   Server.setProxyConfig(next.proxy || {});
-  if (!changed && !rebind) return;
+  if (!changed && !rebind && !deaf) return;
   Server.stopServing();
   if (next.serve !== false) Server.startServing();
 }
@@ -182,9 +194,7 @@ async function handle(message) {
       return;
     }
     case 'db-release':
-      releasedUntil = Date.now() + DB_RELEASE_MAX_MS;
-      Db.closeProxyDb();
-      proxyLog('info', 'Closed the database for a restore');
+      releaseDb();
       ipc.send({ type: 'db-released', id: message.id }, { always: true });
       return;
     case 'drain':
@@ -276,6 +286,9 @@ if (parentPid) {
   }, 1000).unref();
 }
 
+// The shell's way to ask the same (rollback.sh and update.sh copy a database
+// snapshot back with the web app stopped): systemctl kill -s SIGUSR2.
+process.on('SIGUSR2', releaseDb);
 process.on('SIGTERM', () => shutdown(0));
 process.on('SIGINT', () => shutdown(0));
 

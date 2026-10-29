@@ -20,6 +20,9 @@ Environment=DATA_DIR=/var/lib/cidrella
 Environment=NODE_ENV=production
 Environment=HTTPS_PORT=8443
 Environment=HTTP_PORT=8080
+# The DNS proxy runs as cidrella-dns-proxy.service; the web app has systemd
+# restart it rather than start one of its own.
+Environment=CIDRELLA_DNS_PROXY_SUPERVISOR=systemd
 # Always restart, the service is critical infrastructure. We restart
 # on crash (on-failure semantics) AND on deliberate exit (triggered by
 # the restore endpoint after a DB file swap). StartLimit* above bounds
