@@ -536,7 +536,11 @@ export async function reloadAll() {
   if (deps.setting('geoip_enabled') === 'true') {
     loadGeoipRules();
     loadGeoipAllowlist();
-    if (!(await loadMmdbFrom())) {
+    // No database path yet: a first start, before the web app has sent a
+    // config. Its reload once it connects loads the database.
+    if (!config.geoipDbPath) {
+      proxyLog('info', 'GeoIP database waits for the web app\'s config');
+    } else if (!(await loadMmdbFrom())) {
       proxyLog('warn', 'GeoIP enabled but MMDB not available, starting without GeoIP filtering');
     }
   } else {
