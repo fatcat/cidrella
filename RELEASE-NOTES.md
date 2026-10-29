@@ -6,6 +6,75 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.6.3 — 2026-10-29
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+
+DNS no longer stops while the web app is busy or restarting. The DNS proxy and the encrypted
+forwarder run as a service of their own, so an update, a web app restart, a backup or a slow
+page keeps answering names. IPv6 networks are treated as an inventory of what is known, with
+hosts grouped into devices, next-free suggestions and prefix planning for both families.
+
+### New
+
+- **The DNS proxy runs as its own service.** `cidrella-dns-proxy` (the `dns-proxy` service in
+  Docker) carries the proxy and the encrypted forwarder, and keeps answering while the web app
+  restarts, updates or stalls. An update restarts it only when its own code changed. If it
+  stops answering or its process dies, CIDRella restarts it, and after three failed restarts
+  hands port 53 to the DNS backend (bypass) as before. With the proxy down, recursion goes to
+  the plain upstreams in plaintext mode; with DNS over TLS or HTTPS it fails rather than leave
+  unencrypted.
+- **Hosts.** A network's Addresses view has a Hosts / Addresses switch. Hosts groups addresses
+  into devices by MAC and DUID (MACs read from EUI-64 addresses and DUID-LL included), and is
+  the default on IPv6. A host opens to its addresses, temporary ones folded, and names its
+  addresses in the other family. The address details panel has a Host section linking the
+  device's other addresses, IPv4 and IPv6.
+- **Suggest an address.** Next free and Random sit beside the address field in the
+  reservation, DHCP reservation and DNS A/AAAA dialogs, and a network's actions have "Reserve
+  next free address". Both families.
+- **Allocate next free prefix.** A subdivided container says how much of it is allocated, and
+  "Allocate next free prefix…" (in the create menu and the container's own menu) finds the
+  lowest free /N and carves or configures it.
+- **DHCPv6 pool use.** An IPv6 network with a DHCPv6 pool shows how full the pool is (the
+  explorer meter, utilization, "X of Y in use"), and the IPv6 Known tile breaks its count down
+  by address type.
+
+### Changed
+
+- **IPv6 networks list only what is known.** Show available is gone there, and the count reads
+  "N known addresses". Large IPv6 networks page and count in the database instead of loading
+  every address.
+- **Search finds addresses by their expanded IPv6 spelling and by CIDR,** in both families, in
+  the address table and the network search.
+- **The subnet calculator pages large splits from the server** instead of building every child.
+
+### Fixed
+
+- **DNS keeps answering while a backup runs.** A backup stopped every DNS answer until it
+  finished (13 s measured on a production appliance).
+- **Opening the blocklist stats no longer stops DNS for up to 3 s.** The domain count is
+  counted when the blocklist changes, and the page shows "Counting…" until the first count is
+  in.
+- **Restarting, reloading or stopping a DNS or DHCP daemon no longer holds up DNS answers,**
+  and neither do the health and metrics status reads, while systemctl runs.
+- **A second backup, or a restore, started while one runs is refused** with a message instead
+  of racing it.
+- **The carve row's network and prefix inputs no longer overflow the divide dialog.**
+
+### Upgrading
+
+Upgrades directly from 0.4.17 or later. One database migration runs on upgrade: 092 replaces
+the per-network address index with one that pages a network's addresses in order.
+
+The update installs and starts `cidrella-dns-proxy.service`. The first update to 0.6.3 has the
+same short DNS gap as any update before it; later updates leave the proxy running unless its
+code changed. Rolling back to 0.6.2 with `cidrella-rollback` works: the new proxy exits about a
+second after the 0.6.2 code is in place, and 0.6.2 runs its proxy itself.
+
 ## v0.6.2 — 2026-10-26
 
 ```yaml
