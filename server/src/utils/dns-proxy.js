@@ -25,7 +25,8 @@ import { extractEde, failureCause, FAILURE_CAUSES } from './dns-ede.js';
 import { createReservoir, quantileOfSorted } from './samples.js';
 import { loadCityTable, unloadCityTable, cityPlace } from './geo-cities.js';
 import { recordResolution } from './resolution-feed.js';
-import { writeQueryLine } from './query-log.js';
+import { writeQueryLine } from './query-log-writer.js';
+import { bindQueryLog } from './query-log.js';
 import {
   DATA_DIR,
   GEOIP_CACHE_MAX,
@@ -1212,6 +1213,7 @@ function onTcpConnection(clientSock) {
 const dnsSwitchedOff = () => roleSwitchedOff('dns');
 
 export function startProxy() {
+  bindQueryLog();
   if (proxyServers.length > 0) {
     proxyLog('warn', 'Proxy already running');
     return;

@@ -14,8 +14,9 @@
  * server answered fastest lately (not strict turns, dnsmasq has none).
  */
 import { getSetting } from '../db/init.js';
+import { BACKUP_MODES, backupModeOf } from './forwarding-modes.js';
 
-export const BACKUP_MODES = Object.freeze(['failover', 'balance']);
+export { BACKUP_MODES };
 
 /** The plaintext servers in the order dnsmasq should know them. */
 export function plainUpstreams() {
@@ -26,6 +27,5 @@ export function plainUpstreams() {
 }
 
 export function backupMode() {
-  const mode = getSetting('dns_upstream_backup_mode');
-  return BACKUP_MODES.includes(mode) ? mode : 'balance';
+  return backupModeOf(getSetting('dns_upstream_backup_mode'));
 }

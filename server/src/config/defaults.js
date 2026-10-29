@@ -5,6 +5,23 @@
 
 import path from 'path';
 import { fileURLToPath } from 'url';
+import {
+  GEOIP_CACHE_MAX,
+  GEOIP_CACHE_TTL_MS,
+  PROXY_TCP_IDLE_TIMEOUT_MS,
+  PROXY_MAX_TCP_CONNECTIONS,
+  PROXY_TCP_RELAY_TIMEOUT_MS,
+  DNSMASQ_INTERNAL_PORT,
+  DNSMASQ_INTERNAL_PORT_ALT,
+  DEFAULT_DNS_LISTEN_PORT,
+  ENCRYPTED_FORWARDER_PORT,
+  PROXY_UDP_TIMEOUT_MS,
+  ENCRYPTED_FORWARDER_TIMEOUT_MS,
+  ENCRYPTED_FORWARDER_BUDGET_MS,
+  ENCRYPTED_FORWARDER_HOLD_MS,
+  resolveDnsmasqInternalPort,
+  resolveDnsListenPort,
+} from '../dns-proxy/constants.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -116,8 +133,6 @@ export const MAX_SCAN_SIZE = 4096;
 // scheduler reads only the newest; older runs were never pruned (23,708 rows
 // on one install, 175 a day).
 export const SCAN_HISTORY_KEEP = 100;
-export const GEOIP_CACHE_MAX = 10000;
-export const GEOIP_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 export const GEOIP_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const GEOIP_STARTUP_DELAY_MS = 15000; // 15 seconds
 export const GEOIP_DOWNLOAD_TIMEOUT_MS = 60000; // 60 seconds
@@ -142,10 +157,6 @@ export const PROXY_RESTART_DELAY_MS = 2000; // 2 seconds between restart attempt
 // backend moves off the LAN port and back, so tries back off.
 export const PROXY_RECOVERY_FIRST_MS = 5 * 60 * 1000;
 export const PROXY_RECOVERY_MAX_MS = 60 * 60 * 1000;
-// DNS-over-TCP relay (used by DNSSEC-aware / large responses).
-export const PROXY_TCP_IDLE_TIMEOUT_MS = 10000; // close idle client TCP conns
-export const PROXY_MAX_TCP_CONNECTIONS = 1000; // concurrent client TCP conn cap
-export const PROXY_TCP_RELAY_TIMEOUT_MS = 5000; // upstream-to-dnsmasq TCP relay timeout
 export const BLOCKLIST_DOWNLOAD_TIMEOUT_MS = 60000;
 // Rows per write transaction while importing a feed. The DNS proxy shares this
 // process and better-sqlite3 is synchronous, so an unbounded transaction is an
@@ -165,31 +176,6 @@ export const UPDATE_CHECK_INTERVAL_MS = 60 * 60 * 1000; // 1 hour
 export const UPDATE_CHECK_DELAY_MS = 0; // check immediately on startup
 export const GITHUB_REPO = 'fatcat/cidrella'; // owner/repo for update checks
 
-// Internal port dnsmasq binds on 127.0.0.1 when the proxy fronts it.
-// If the user picks this same port as their LAN-facing `dns_listen_port`,
-// callers should use `resolveDnsmasqInternalPort()` (below) which shifts
-// dnsmasq to a different internal port so the two never fight over the
-// same bind address. 5353 is the historical default.
-export const DNSMASQ_INTERNAL_PORT = 5353;
-export const DNSMASQ_INTERNAL_PORT_ALT = 5354;
-// LAN-facing DNS port when dns_listen_port is unset or unusable.
-export const DEFAULT_DNS_LISTEN_PORT = 53;
-// Loopback port the in-Node encrypted-forwarder stub binds; dnsmasq forwards
-// here (server=127.0.0.1#<port>) when DoT/DoH forwarding is enabled. 5356 avoids
-// 5353 (mDNS, dnsmasq internal) and 5355 (LLMNR).
-export const ENCRYPTED_FORWARDER_PORT = 5356;
-// How long a forwarded query may take, outermost first. The DNS proxy answers
-// a client SERVFAIL when dnsmasq has not answered in PROXY_UDP_TIMEOUT_MS
-// (about when a client's own resolver gives up and asks again); dnsmasq itself
-// waits 10 seconds (TIMEOUT in its config.h). The encrypted forwarder behind
-// dnsmasq must answer inside the proxy's wait: one send gets
-// ENCRYPTED_FORWARDER_TIMEOUT_MS, and every send, resend and failover to the
-// next provider fits in ENCRYPTED_FORWARDER_BUDGET_MS. A provider that gave no
-// answer goes to the back of the line for ENCRYPTED_FORWARDER_HOLD_MS.
-export const PROXY_UDP_TIMEOUT_MS = 5000;
-export const ENCRYPTED_FORWARDER_TIMEOUT_MS = 2500;
-export const ENCRYPTED_FORWARDER_BUDGET_MS = 4500;
-export const ENCRYPTED_FORWARDER_HOLD_MS = 30_000;
 // PowerDNS Recursor (behind the proxy, in dnsmasq's place) gives a forwarder
 // this long before trying again: just past the forwarder's whole budget, so
 // it never sends a second copy while the first is still being worked on, and
@@ -199,38 +185,6 @@ export const RECURSOR_NETWORK_TIMEOUT_MS = ENCRYPTED_FORWARDER_BUDGET_MS + 100;
 export const PDNS_AUTH_DNS_PORT = 5300;
 export const PDNS_AUTH_API_PORT = 8053;
 
-/**
- * Returns the port dnsmasq should bind internally, given the user's LAN
- * DNS listen port. Shifts away from the default if the LAN port collides.
- *
- * @param {number|null|undefined} lanListenPort user-configured dns_listen_port
- * @returns {number} internal port dnsmasq should use
- */
-export function resolveDnsmasqInternalPort(lanListenPort) {
-  if (Number(lanListenPort) === DNSMASQ_INTERNAL_PORT) return DNSMASQ_INTERNAL_PORT_ALT;
-  return DNSMASQ_INTERNAL_PORT;
-}
-
-/**
- * The LAN-facing DNS port, from a stored `dns_listen_port` value, falling back
- * to 53 for anything that is not a usable port.
- *
- * Two callers resolved this differently. `backends/dnsmasq/dnsmasq.js` range-checked and
- * fell back to 53; `utils/dns-proxy.js` used `Number(value) || 53`, which
- * accepts anything non-zero, so a stored 70000 became a bind attempt on 70000
- * while the dnsmasq config it is supposed to sit in front of stayed on 53.
- * `/api/settings` validates this key, so the bad value only arrives from a
- * restored or hand-edited DB, which is exactly when the two halves disagreeing
- * is hardest to diagnose.
- * See REVIEW.md, duplicate-logic audit #10.
- *
- * @param {unknown} rawValue stored dns_listen_port
- * @returns {number} a port in 1-65535, or 53
- */
-export function resolveDnsListenPort(rawValue) {
-  const p = Number(rawValue);
-  return Number.isInteger(p) && p >= 1 && p <= 65535 ? p : DEFAULT_DNS_LISTEN_PORT;
-}
 
 /**
  * Where the DNS backend (dnsmasq or PowerDNS Recursor) answers on loopback:
@@ -253,3 +207,21 @@ export const DHCP_DEFAULT_NTP_SERVERS = '69.164.213.136,172.234.25.10,172.233.18
 export const DHCP6_DEFAULT_NTP_SERVERS =
   '2602:fcac:0:7b::74,2603:c020:0:8369:feed:feed:feed:feed,2600:1702:4a73:e00f:c3ee:91f2:71d8:5243,2607:f710:35::29c:0:6';
 export const DHCP_DEFAULT_NTP_SERVERS_REFRESHED_AT = '2026-10-05';
+
+export {
+  GEOIP_CACHE_MAX,
+  GEOIP_CACHE_TTL_MS,
+  PROXY_TCP_IDLE_TIMEOUT_MS,
+  PROXY_MAX_TCP_CONNECTIONS,
+  PROXY_TCP_RELAY_TIMEOUT_MS,
+  DNSMASQ_INTERNAL_PORT,
+  DNSMASQ_INTERNAL_PORT_ALT,
+  DEFAULT_DNS_LISTEN_PORT,
+  ENCRYPTED_FORWARDER_PORT,
+  PROXY_UDP_TIMEOUT_MS,
+  ENCRYPTED_FORWARDER_TIMEOUT_MS,
+  ENCRYPTED_FORWARDER_BUDGET_MS,
+  ENCRYPTED_FORWARDER_HOLD_MS,
+  resolveDnsmasqInternalPort,
+  resolveDnsListenPort,
+};

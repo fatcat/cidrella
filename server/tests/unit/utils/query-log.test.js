@@ -12,7 +12,8 @@ vi.mock('../../../src/backends/index.js', () => ({
   },
 }));
 
-const { writeQueryLine, resetQueryLog } = await import('../../../src/utils/query-log.js');
+const { bindQueryLog, resetQueryLog } = await import('../../../src/utils/query-log.js');
+const { writeQueryLine } = await import('../../../src/utils/query-log-writer.js');
 
 const entry = (clientIp) => ({
   clientIp,
@@ -40,10 +41,11 @@ afterEach(() => {
   fs.rmSync(dir, { recursive: true, force: true });
 });
 
-describe('writeQueryLine', () => {
+describe('the query log for the DNS backend', () => {
   it("appends to a backend's log that asks for the proxy's lines, either family", async () => {
     registry.source = { path: file, proxyQueries: true };
     fs.writeFileSync(file, 'Oct 11 13:00:00 a daemon line\n');
+    bindQueryLog();
     writeQueryLine(entry('10.0.0.5'));
     writeQueryLine(entry('fd00::5'));
     await settle();
@@ -55,6 +57,7 @@ describe('writeQueryLine', () => {
 
   it('writes nothing for a backend that logs its own queries', async () => {
     registry.source = { path: file, querySourceIp: () => null };
+    bindQueryLog();
     writeQueryLine(entry('10.0.0.5'));
     await settle();
     expect(fs.existsSync(file)).toBe(false);
@@ -62,6 +65,7 @@ describe('writeQueryLine', () => {
 
   it('follows the DNS role to another backend', async () => {
     registry.source = { path: file, proxyQueries: true };
+    bindQueryLog();
     writeQueryLine(entry('10.0.0.5'));
     registry.source = { path: path.join(dir, 'dnsmasq.log') };
     for (const fn of registry.listeners) fn('dns');
@@ -73,6 +77,7 @@ describe('writeQueryLine', () => {
 
   it('keeps writing after the log is cleared, and reopens one that was removed', async () => {
     registry.source = { path: file, proxyQueries: true };
+    bindQueryLog();
     const t0 = Date.now();
     writeQueryLine(entry('10.0.0.5'), t0);
     await settle();
