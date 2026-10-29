@@ -4,6 +4,10 @@
  * forward those names itself (PowerDNS), and never with recursion off.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+// The proxy under test runs in this process.
+vi.mock('../../src/utils/dns-proxy-mode.js', async () =>
+  (await import('../helpers/proxy-mode.js')).inlineProxyMode(),
+);
 
 vi.mock('../../src/backends/index.js', async () =>
   (await import('../helpers/fake-backends.js')).fakeBackendsModule(),

@@ -10,6 +10,10 @@
  * and a bind to any other port succeeds, as when something else holds 53.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+// The proxy under test runs in this process.
+vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
+  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+);
 import os from 'os';
 import { EventEmitter } from 'events';
 

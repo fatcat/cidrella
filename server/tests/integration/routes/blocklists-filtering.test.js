@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+// The proxy under test runs in this process.
+vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
+  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+);
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 

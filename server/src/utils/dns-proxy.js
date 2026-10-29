@@ -1,49 +1,37 @@
 /**
  * The DNS proxy as the web app sees it. The proxy itself is
- * dns-proxy/server.js: this module tells it where to listen and forward,
- * hands it the web app's settings and database, takes what it reports (the
- * analytics rows, the clients it saw, the Resolution Map events), and runs
+ * dns-proxy/server.js, run either inside the web app or as its own process
+ * (dns-proxy/main.js), as utils/dns-proxy-mode.js says. Either way this
+ * module tells it where to listen and forward, has it read things again,
+ * takes what it counted and reported (services/dns-proxy-sinks.js), and runs
  * the watchdog over it (services/dns-proxy-watchdog.js).
  */
 import os from 'os';
 import fs from 'fs';
 import path from 'path';
-import { getDb, getSetting } from '../db/init.js';
+import { getSetting } from '../db/init.js';
 import { listenableAddresses, selectInterfaceNames } from './interface-config.js';
-import { logDnsQuery } from '../db/duckdb.js';
-import { recordDnsQueryLiveness } from './ip-liveness.js';
-import { recordResolution } from './resolution-feed.js';
 import { queryLogPath } from './query-log.js';
 import { roleSwitchedOff } from './role-switches.js';
 import { getDnsBackend, onBackendChanged } from '../backends/index.js';
-import { DATA_DIR, resolveDnsmasqInternalPort, resolveDnsListenPort } from '../config/defaults.js';
-import { proxyLog } from '../dns-proxy/log.js';
-import { inlineProxyDb, proxySettings } from './dns-proxy-inline-db.js';
 import {
-  configureProxyServer,
-  setProxyConfig,
-  startServing,
-  stopServing,
-  cancelBindRetries,
-  serverStatus,
-  loadBlocklist,
-  loadAllowlist,
-  loadFilteringOverrides,
-  loadGeoipRules,
-  loadGeoipAllowlist,
-  loadMmdbFrom,
-} from '../dns-proxy/server.js';
+  DATA_DIR,
+  DEFAULTS,
+  resolveDnsmasqInternalPort,
+  resolveDnsListenPort,
+} from '../config/defaults.js';
+import { proxyLog } from '../dns-proxy/log.js';
+import { codeId } from '../dns-proxy/code-id.js';
+import { inlineProxyDb, proxySettings } from './dns-proxy-inline-db.js';
+import { proxyIsSeparate } from './dns-proxy-mode.js';
+import * as Server from '../dns-proxy/server.js';
+import * as Client from './dns-proxy-client.js';
+import { getAndResetForwarderMetrics } from './encrypted-forwarder.js';
+import { sinkQueryRow, sinkClientSeen, sinkResolution } from '../services/dns-proxy-sinks.js';
 import { startWatchdog, stopWatchdog, isProxyBypassed } from '../services/dns-proxy-watchdog.js';
 
+// The proxy's pure helpers and policy, for the tests that exercise them.
 export {
-  loadBlocklist,
-  loadAllowlist,
-  loadFilteringOverrides,
-  loadGeoipRules,
-  loadGeoipAllowlist,
-  unloadMmdb,
-  isGeoipLoaded,
-  resetStats,
   lookupCountry,
   cachedPoint,
   domainSuffixes,
@@ -67,24 +55,50 @@ export {
   getBlockedDelta,
   getAndResetCountryHits,
   getAndResetPerformanceMetrics,
-  // What the proxy counted since the last call, for the metrics aggregator.
-  drainMetrics as drainProxyMetrics,
 } from '../dns-proxy/server.js';
 export { clearBypassAtBoot, isProxyBypassed } from '../services/dns-proxy-watchdog.js';
 
-configureProxyServer({
+const separate = proxyIsSeparate();
+
+Server.configureProxyServer({
   ...proxySettings,
   db: inlineProxyDb,
-  queryRow: (entry) => logDnsQuery(entry),
-  liveness: (clientIp) => {
-    try {
-      recordDnsQueryLiveness(getDb(), clientIp, { createRogue: true, source: 'passive' });
-    } catch (err) {
-      proxyLog('warn', 'Failed to record DNS-query liveness', { clientIp, error: err.message });
-    }
-  },
-  resolution: (event) => recordResolution(event),
+  queryRow: sinkQueryRow,
+  liveness: sinkClientSeen,
+  resolution: sinkResolution,
 });
+
+// Have the proxy read something again: in this process, or by message.
+function reload(what, inline, extra) {
+  if (separate) Client.sendReload(what, extra);
+  else return inline();
+}
+
+export const loadBlocklist = () => reload('blocklist', Server.loadBlocklist);
+export const loadAllowlist = () => reload('allowlist', Server.loadAllowlist);
+export const loadFilteringOverrides = () =>
+  reload('filtering-overrides', Server.loadFilteringOverrides);
+export const loadGeoipRules = () => reload('geoip-rules', Server.loadGeoipRules);
+export const loadGeoipAllowlist = () => reload('geoip-allowlist', Server.loadGeoipAllowlist);
+export const unloadMmdb = () => reload('unload-mmdb', Server.unloadMmdb);
+export const resetStats = () => reload('reset-stats', Server.resetStats);
+
+/** Whether answers get a country now (GeoIP on and its database loaded). */
+export function isGeoipLoaded() {
+  return separate ? Client.freshProxyStatus()?.geoipLoaded === true : Server.isGeoipLoaded();
+}
+
+/**
+ * What the proxy and the forwarder counted since the last call, for the
+ * metrics aggregator. Nothing counted when the proxy process does not answer;
+ * it keeps counting, so the next drain has it.
+ */
+export async function drainProxyMetrics() {
+  if (!separate) return { ...Server.drainMetrics(), forwarder: getAndResetForwarderMetrics() };
+  const drained = await Client.requestDrain();
+  if (!drained) return { ...Server.emptyMetrics(), forwarder: [] };
+  return { ...drained.metrics, forwarder: drained.forwarder || [] };
+}
 
 const DEFAULT_MMDB = path.join(DATA_DIR, 'geoip', 'dbip-country-lite.mmdb');
 
@@ -96,7 +110,8 @@ export function geoipDbPath() {
 
 /** Load the GeoIP database from where the settings say it is now. */
 export function loadMmdb() {
-  return loadMmdbFrom(geoipDbPath());
+  const dbPath = geoipDbPath();
+  return reload('mmdb', () => Server.loadMmdbFrom(dbPath), { path: dbPath });
 }
 
 // The LAN addresses of both families to bind proxy sockets on.
@@ -155,8 +170,15 @@ export function proxyConfigNow() {
  * them (the DNS port, DNS on or off, the interfaces) calls this when it is
  * written; the DNS backend changing does too.
  */
-export function refreshProxyConfig() {
-  setProxyConfig(proxyConfigNow());
+export function refreshProxyConfig({ rebind = false } = {}) {
+  const proxy = proxyConfigNow();
+  if (!separate) {
+    Server.setProxyConfig(proxy);
+    return;
+  }
+  // DEFAULTS: what a setting reads as when nothing is stored, which the
+  // proxy process cannot import (dns-proxy/db.js).
+  Client.sendProxyConfig({ proxy, defaults: DEFAULTS, serve: true }, { rebind });
 }
 
 let followingBackend = false;
@@ -168,25 +190,41 @@ function followBackend() {
   });
 }
 
+// The watchdog's view of the proxy running in this process.
 const handle = {
-  sockets: () => serverStatus().sockets,
-  anyBound: () => serverStatus().bound > 0,
+  sockets: () => Server.serverStatus().sockets,
+  anyBound: () => Server.serverStatus().bound > 0,
   start: () => {
     refreshProxyConfig();
-    startServing();
+    Server.startServing();
   },
-  cancelBindRetries,
+  cancelBindRetries: Server.cancelBindRetries,
   listenAddresses: () => proxyConfigNow().listenAddresses,
 };
 
 export function startProxy() {
   followBackend();
+  if (separate) {
+    // An update's preflight boots on a scratch data directory: no config
+    // written, no connection, nothing spawned.
+    if (process.env.CIDRELLA_PREFLIGHT === '1') return;
+    refreshProxyConfig();
+    Client.startProxyClient({
+      codeId: codeId(),
+      handlers: { queryRow: sinkQueryRow, clientSeen: sinkClientSeen, resolution: sinkResolution },
+    });
+    return;
+  }
   handle.start();
   startWatchdog(handle);
 }
 
 export function stopProxy() {
-  stopServing();
+  if (separate) {
+    Client.stopProxyClient();
+    return;
+  }
+  Server.stopServing();
   stopWatchdog();
 }
 
@@ -199,52 +237,34 @@ export function rebindProxy() {
     return;
   }
   proxyLog('info', 'Rebinding proxy to updated interface config');
-  stopServing();
+  if (separate) {
+    refreshProxyConfig({ rebind: true });
+    return;
+  }
+  Server.stopServing();
   handle.start();
 }
 
-// Filtering exemptions follow scans as well as edits: a MAC a scan learned
-// changes which addresses it covers, so the set is read again every minute.
-const FILTERING_OVERRIDES_REFRESH_MS = 60 * 1000;
-let filteringOverridesTimer = null;
-
-// Start proxy (always-on, called on server startup)
+// Start proxy (always-on, called on server startup). The proxy process reads
+// everything itself when the client connects.
 export async function startProxyIfEnabled() {
-  const geoipOn = getSetting('geoip_enabled') === 'true';
-  const blocklistOn = getSetting('blocklist_enabled') === 'true';
-
-  refreshProxyConfig();
-  if (geoipOn) {
-    loadGeoipRules();
-    loadGeoipAllowlist();
-    const loaded = await loadMmdb();
-    if (!loaded) {
-      proxyLog('warn', 'GeoIP enabled but MMDB not available, starting without GeoIP filtering');
-    }
+  if (!separate) {
+    refreshProxyConfig();
+    await Server.reloadAll();
+    Server.startOverridesRefresh();
   }
-
-  if (blocklistOn) {
-    loadBlocklist();
-  }
-
-  // Single global allowlist, used by the GeoIP path (the blocklist path also
-  // excludes these at load time). Loaded regardless of which features are on.
-  loadAllowlist();
-
-  loadFilteringOverrides();
-  clearInterval(filteringOverridesTimer);
-  filteringOverridesTimer = setInterval(loadFilteringOverrides, FILTERING_OVERRIDES_REFRESH_MS);
-  filteringOverridesTimer.unref?.();
-
   startProxy();
 }
 
-// Get proxy status
+// Get proxy status. The proxy process's comes from its last status message;
+// with none recent, it reads as stopped and `stale`.
 export function getProxyStatus() {
-  const status = serverStatus();
+  const reported = separate ? Client.freshProxyStatus()?.server : null;
+  const status = reported ?? Server.serverStatus();
   const dbPath = geoipDbPath();
   return {
     running: status.running,
+    ...(separate && !reported ? { stale: true } : {}),
     bypassed: isProxyBypassed(),
     // DNS switched off in CIDRella: the proxy does not listen, on purpose.
     switchedOff: roleSwitchedOff('dns'),

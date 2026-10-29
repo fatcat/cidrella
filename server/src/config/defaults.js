@@ -4,7 +4,6 @@
 // either the DB-backed getter or the constant directly, never both.
 
 import path from 'path';
-import { fileURLToPath } from 'url';
 import {
   GEOIP_CACHE_MAX,
   GEOIP_CACHE_TTL_MS,
@@ -21,12 +20,10 @@ import {
   ENCRYPTED_FORWARDER_HOLD_MS,
   resolveDnsmasqInternalPort,
   resolveDnsListenPort,
+  DATA_DIR,
 } from '../dns-proxy/constants.js';
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-// ─── Data directory (single source of truth) ─────────────
-export const DATA_DIR = process.env.DATA_DIR || path.join(__dirname, '..', '..', 'data');
 // Left by a restore: the next boot restarts every DNS/DHCP backend, so the
 // daemons load the restored leases instead of writing theirs over them.
 export const BACKEND_RESTART_MARKER = path.join(DATA_DIR, 'runtime', 'restart-backends-on-boot');
@@ -224,4 +221,5 @@ export {
   ENCRYPTED_FORWARDER_HOLD_MS,
   resolveDnsmasqInternalPort,
   resolveDnsListenPort,
+  DATA_DIR,
 };

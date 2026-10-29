@@ -107,8 +107,8 @@ let blocklistCategoryHits = new Map();
 // a timer: it ends by itself, and a restart mid-pause keeps the stored time.
 // Exempt clients are the addresses models/filtering-exemption.js says have
 // filtering off; it keys hosts by MAC, so the set is rebuilt when an exemption
-// or a lease changes, and every minute for a MAC a scan learned (the
-// facade's timer).
+// or a lease changes, and every minute for a MAC a scan learned
+// (startOverridesRefresh).
 let filteringPausedUntil = 0;
 let exemptClients = new Set();
 
@@ -514,6 +514,39 @@ export function loadFilteringOverrides() {
   } catch (err) {
     proxyLog('error', 'Failed to load filtering overrides', { error: err.message });
   }
+}
+
+// Filtering exemptions follow scans as well as edits: a MAC a scan learned
+// changes which addresses it covers, so the set is read again every minute.
+const FILTERING_OVERRIDES_REFRESH_MS = 60 * 1000;
+let filteringOverridesTimer = null;
+
+export function startOverridesRefresh() {
+  clearInterval(filteringOverridesTimer);
+  filteringOverridesTimer = setInterval(loadFilteringOverrides, FILTERING_OVERRIDES_REFRESH_MS);
+  filteringOverridesTimer.unref?.();
+}
+
+/**
+ * Read again everything the settings and tables feed: GeoIP (rules, allowlist
+ * and database, when it is on), the blocklist, the global allowlist and the
+ * filtering overrides. At start, and whenever the web app has been away.
+ */
+export async function reloadAll() {
+  if (deps.setting('geoip_enabled') === 'true') {
+    loadGeoipRules();
+    loadGeoipAllowlist();
+    if (!(await loadMmdbFrom())) {
+      proxyLog('warn', 'GeoIP enabled but MMDB not available, starting without GeoIP filtering');
+    }
+  } else {
+    unloadMmdb();
+  }
+  loadBlocklist();
+  // Single global allowlist, used by the GeoIP path too (the blocklist path
+  // also excludes these at load time). Loaded whichever features are on.
+  loadAllowlist();
+  loadFilteringOverrides();
 }
 
 /** Why filtering is off for this client: 'paused', 'host', or null. */
@@ -1457,6 +1490,29 @@ export function getAndResetPerformanceMetrics() {
 }
 
 /** Everything the metrics aggregator takes each minute, counted since the last call. */
+/** A drain with nothing counted: what the web app uses when the proxy did not answer. */
+export function emptyMetrics() {
+  return {
+    blocklistHits: { delta: 0, categoryHits: new Map() },
+    blockedDelta: 0,
+    countryHits: new Map(),
+    performance: {
+      queryCount: 0,
+      latencyMin: null,
+      latencyAvg: null,
+      latencyMax: null,
+      latencyP95: null,
+      cacheHits: 0,
+      cacheMisses: 0,
+      timeouts: 0,
+      pendingQueries: 0,
+      startupMs: null,
+      failures: noFailures(),
+      nxdomain: 0,
+    },
+  };
+}
+
 export function drainMetrics() {
   return {
     blocklistHits: getAndResetBlocklistHits(),

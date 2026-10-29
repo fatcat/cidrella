@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+// The proxy under test runs in this process.
+vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
+  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+);
 
 // Fake backend registry before importing dns-proxy (no dnsmasq writes or restarts)
 vi.mock('../../../src/backends/index.js', async () =>

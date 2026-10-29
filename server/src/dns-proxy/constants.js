@@ -5,6 +5,36 @@
  * every release. config/defaults.js re-exports all of these.
  */
 
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+// The data directory: $DATA_DIR (/data in Docker, /var/lib/cidrella native),
+// server/data in development. The one rule; config/defaults.js re-exports it.
+export const DATA_DIR =
+  process.env.DATA_DIR || fileURLToPath(new URL('../../data', import.meta.url));
+
+// Where the web app and the proxy process meet: the socket the proxy listens
+// on, and the config the web app last gave it (read at the proxy's start, so
+// it serves before the web app is up).
+// A Unix socket path holds at most 107 bytes, and a longer one is cut short
+// without an error; both ends refuse one instead.
+export const MAX_SOCKET_PATH_BYTES = 107;
+export function socketPathTooLong(socketPath) {
+  const bytes = Buffer.byteLength(socketPath);
+  return bytes > MAX_SOCKET_PATH_BYTES
+    ? `the DNS proxy socket path is ${bytes} bytes, more than a Unix socket path holds (${MAX_SOCKET_PATH_BYTES}): ${socketPath}`
+    : null;
+}
+
+export function proxyRuntimePaths(dataDir = DATA_DIR) {
+  const dir = path.join(dataDir, 'runtime');
+  return {
+    dir,
+    socket: path.join(dir, 'dns-proxy.sock'),
+    config: path.join(dir, 'dns-proxy-config.json'),
+  };
+}
+
 export const GEOIP_CACHE_MAX = 10000;
 export const GEOIP_CACHE_TTL_MS = 60 * 60 * 1000; // 1 hour
 

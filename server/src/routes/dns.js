@@ -1123,7 +1123,7 @@ router.put('/forwarders', requirePerm('dns:write'), (req, res) => {
 
   // Re-evaluate the encrypted-forwarder stub: enabling no-recursion must stop it
   // (forwarding is off); disabling it restarts the stub if encryption is on.
-  applyEncryptedForwarder();
+  void applyEncryptedForwarder();
   req.afterCommit('regenerate_dnsmasq_conf');
 
   recordAudit({
@@ -1225,7 +1225,7 @@ router.get('/encryption', requirePerm('dns:read'), (req, res) => {
 
 // PUT /api/dns/encryption: set Off/TLS/HTTPS + upstreams. Authoritative path:
 // (re)configures the in-Node stub and regenerates dnsmasq.conf (server= → stub).
-router.put('/encryption', requirePerm('dns:write'), (req, res) => {
+router.put('/encryption', requirePerm('dns:write'), async (req, res) => {
   const { mode, upstreams } = req.body || {};
   if (!['off', 'tls', 'https'].includes(mode)) {
     return res.status(400).json({ error: 'mode must be off, tls, or https' });
@@ -1248,7 +1248,9 @@ router.put('/encryption', requirePerm('dns:write'), (req, res) => {
   setSetting('forwarder_encryption', mode);
   setSetting('forwarder_encrypted_upstreams', JSON.stringify(list));
 
-  applyEncryptedForwarder(); // start/stop/reconfigure the stub now
+  // Start, stop or reconfigure the stub now; awaited so the status below is
+  // the forwarder's after the change.
+  await applyEncryptedForwarder();
   req.afterCommit('regenerate_dnsmasq_conf'); // server= → stub (or back to IPs)
 
   recordAudit({

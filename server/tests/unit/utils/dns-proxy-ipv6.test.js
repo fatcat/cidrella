@@ -3,6 +3,10 @@
  * sinkhole for blocked names.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+// The proxy under test runs in this process.
+vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
+  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+);
 import os from 'os';
 import dnsPacket from 'dns-packet';
 

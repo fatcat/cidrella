@@ -9,6 +9,10 @@
  * the binds a test asks them to.
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
+// The proxy under test runs in this process.
+vi.mock('../../src/utils/dns-proxy-mode.js', async () =>
+  (await import('../helpers/proxy-mode.js')).inlineProxyMode(),
+);
 
 const failures = { udp: new Map(), tcp: new Map() };
 const bindCalls = [];

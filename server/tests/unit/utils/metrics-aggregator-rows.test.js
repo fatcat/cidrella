@@ -2,7 +2,48 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 
 vi.mock('../../../src/utils/dns-proxy.js', () => ({
-  drainProxyMetrics: () => ({
+  drainProxyMetrics: async () => ({
+    forwarder: [
+      {
+        provider: 'dns10.quad9.net',
+        address: '9.9.9.10',
+        protocol: 'dot',
+        queries: 10,
+        answers: 7,
+        timeouts: 3,
+        drops: 1,
+        connect_failures: 0,
+        failovers: 0,
+        latency_p50_us: 12000,
+        latency_p95_us: 40000,
+      },
+      {
+        provider: 'dns10.quad9.net',
+        address: '2620:fe::10',
+        protocol: 'dot',
+        queries: 2,
+        answers: 2,
+        timeouts: 0,
+        drops: 0,
+        connect_failures: 0,
+        failovers: 0,
+        latency_p50_us: 13000,
+        latency_p95_us: 13000,
+      },
+      {
+        provider: 'dns10.quad9.net',
+        address: '',
+        protocol: 'dot',
+        queries: 0,
+        answers: 0,
+        timeouts: 0,
+        drops: 0,
+        connect_failures: 0,
+        failovers: 3,
+        latency_p50_us: null,
+        latency_p95_us: null,
+      },
+    ],
     blockedDelta: 0,
     countryHits: new Map(),
     blocklistHits: { delta: 0, categoryHits: new Map() },
@@ -24,49 +65,7 @@ vi.mock('../../../src/utils/dns-proxy.js', () => ({
 }));
 
 
-vi.mock('../../../src/utils/encrypted-forwarder.js', () => ({
-  getAndResetForwarderMetrics: () => [
-    {
-      provider: 'dns10.quad9.net',
-      address: '9.9.9.10',
-      protocol: 'dot',
-      queries: 10,
-      answers: 7,
-      timeouts: 3,
-      drops: 1,
-      connect_failures: 0,
-      failovers: 0,
-      latency_p50_us: 12000,
-      latency_p95_us: 40000,
-    },
-    {
-      provider: 'dns10.quad9.net',
-      address: '2620:fe::10',
-      protocol: 'dot',
-      queries: 2,
-      answers: 2,
-      timeouts: 0,
-      drops: 0,
-      connect_failures: 0,
-      failovers: 0,
-      latency_p50_us: 13000,
-      latency_p95_us: 13000,
-    },
-    {
-      provider: 'dns10.quad9.net',
-      address: '',
-      protocol: 'dot',
-      queries: 0,
-      answers: 0,
-      timeouts: 0,
-      drops: 0,
-      connect_failures: 0,
-      failovers: 3,
-      latency_p50_us: null,
-      latency_p95_us: null,
-    },
-  ],
-}));
+
 
 const { startMetricsAggregator, stopMetricsAggregator } =
   await import('../../../src/utils/metrics-aggregator.js');

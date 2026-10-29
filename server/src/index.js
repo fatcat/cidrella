@@ -271,7 +271,7 @@ async function main() {
 
   // Encrypted DNS forwarders: start the in-Node DoT/DoH stub if enabled
   // (dnsmasq's server= already points at it via applyAtBoot above).
-  applyEncryptedForwarder();
+  void applyEncryptedForwarder();
 
   // 2. Initialize DuckDB analytics
   await initAnalyticsDb(DATA_DIR);
