@@ -31,6 +31,15 @@ describe('the proxy protocol', () => {
     expect(errors).toEqual([]);
   });
 
+  it('keeps a character whole when a read splits it', () => {
+    const { feed, messages } = decoder();
+    const wire = Buffer.from(encode({ type: 'rows', rows: [{ domain: 'bücher.example' }] }));
+    const split = wire.indexOf(Buffer.from('ü')) + 1;
+    feed(wire.subarray(0, split));
+    feed(wire.subarray(split));
+    expect(messages[0].rows[0].domain).toBe('bücher.example');
+  });
+
   it('gives up on a line that is not a message, and reads nothing after it', () => {
     const { feed, messages, errors } = decoder();
     feed('not json\n' + encode({ type: 'hello' }));

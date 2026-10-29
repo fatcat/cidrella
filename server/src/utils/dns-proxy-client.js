@@ -196,7 +196,7 @@ export function sendProxyConfig(next, { rebind = false } = {}) {
   write({ type: 'config', config: next, rebind });
 }
 
-/** Have the proxy read something again (protocol.js RELOADS). */
+/** Have the proxy read something again (RELOADERS in dns-proxy/main.js). */
 export function sendReload(what, extra = {}) {
   write({ type: 'reload', what, ...extra });
 }

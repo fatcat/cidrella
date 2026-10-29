@@ -7,7 +7,7 @@
  * web app to proxy:
  *   hello {v, codeId}       first, on every connect
  *   config {config}         where to listen and forward (see utils/dns-proxy.js)
- *   reload {what, path?}    read something again (RELOADS)
+ *   reload {what, path?}    read something again (RELOADERS in main.js)
  *   drain {id}              the counters since the last drain, as drain-result
  *   apply-forwarder {id}    restart the encrypted forwarder, answered by status
  *   shutdown                exit; the supervisor starts the proxy again
@@ -16,28 +16,17 @@
  *   hello {v, codeId, pid}
  *   status {...}            every STATUS_INTERVAL_MS, and the heartbeat
  *   drain-result {id, metrics, forwarder}
- *   applied {id}
+ *   applied {id, ...status} the forwarder restarted, and the status after it
  *   rows {rows}             analytics rows, for DuckDB
  *   liveness {clients}      client addresses seen
  *   resolutions {events}    Resolution Map events
  */
 
+import { StringDecoder } from 'string_decoder';
+
 export const PROTOCOL_VERSION = 1;
 export const MAX_LINE_BYTES = 1024 * 1024;
 export const STATUS_INTERVAL_MS = 1000;
-
-/** What `reload` can name. */
-export const RELOADS = new Set([
-  'all',
-  'blocklist',
-  'allowlist',
-  'filtering-overrides',
-  'geoip-rules',
-  'geoip-allowlist',
-  'mmdb',
-  'unload-mmdb',
-  'reset-stats',
-]);
 
 export function encode(message) {
   return `${JSON.stringify(message)}\n`;
@@ -51,9 +40,11 @@ export function encode(message) {
 export function createDecoder(onMessage, onError) {
   let pending = '';
   let failed = false;
+  // A character split across two reads stays whole.
+  const utf8 = new StringDecoder('utf8');
   return function feed(chunk) {
     if (failed) return;
-    pending += chunk.toString('utf8');
+    pending += typeof chunk === 'string' ? chunk : utf8.write(chunk);
     let newline;
     while ((newline = pending.indexOf('\n')) !== -1) {
       const line = pending.slice(0, newline);
