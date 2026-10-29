@@ -15,6 +15,9 @@ const src = (rel) => fileURLToPath(new URL(`../../../src/${rel}`, import.meta.ur
 const PROXY_MODULES = [
   'dns-proxy/constants.js',
   'dns-proxy/code-id.js',
+  'dns-proxy/log.js',
+  'dns-proxy/server.js',
+  'dns-proxy/forwarder.js',
   'utils/query-log-writer.js',
   'utils/query-log-line.js',
   'models/filtering-exemption-read.js',

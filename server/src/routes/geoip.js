@@ -9,9 +9,9 @@ import {
   isGeoipLoaded,
   loadGeoipRules,
   loadGeoipAllowlist,
-  downloadMmdb,
   resetStats,
 } from '../utils/dns-proxy.js';
+import { downloadMmdb } from '../services/geoip-update.js';
 import * as GeoipRule from '../models/geoip-rule.js';
 import * as GeoipAllowlist from '../models/geoip-ip-allowlist.js';
 import { canonicalizeIpOrCidr } from '../utils/cidr-match.js';

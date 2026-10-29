@@ -12,6 +12,7 @@ import {
   parseMapHome,
 } from '../utils/validation.js';
 import { IDLE_TIMEOUT_CHOICES } from '../models/session.js';
+import { refreshProxyConfig } from '../utils/dns-proxy.js';
 
 const router = Router();
 
@@ -271,6 +272,7 @@ router.put('/bulk', requireRole('admin'), (req, res) => {
   if (settings.ip_history_retention_days !== undefined) {
     pruneLifecycleEvents(db);
   }
+  if (keys.some((key) => PROXY_CONFIG_KEYS.has(key))) refreshProxyConfig();
   recordAudit({
     action: 'settings_bulk_updated',
     entityType: 'setting',
@@ -279,6 +281,11 @@ router.put('/bulk', requireRole('admin'), (req, res) => {
   });
   res.json({ ok: true });
 });
+
+// The settings the DNS proxy's listen and forward config is built from: a
+// write hands the proxy its config again (the proxy no longer reads them per
+// query).
+const PROXY_CONFIG_KEYS = new Set(['interface_config', 'dns_enabled', 'dns_listen_port']);
 
 // PUT /api/settings/:key: update a single setting
 router.put('/:key', requirePerm('system:write'), (req, res) => {
@@ -299,6 +306,7 @@ router.put('/:key', requirePerm('system:write'), (req, res) => {
   if (key === 'ip_history_retention_days') {
     pruneLifecycleEvents(getDb());
   }
+  if (PROXY_CONFIG_KEYS.has(key)) refreshProxyConfig();
   recordAudit({
     action: 'setting_updated',
     entityType: 'setting',

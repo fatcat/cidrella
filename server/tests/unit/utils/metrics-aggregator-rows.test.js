@@ -2,24 +2,27 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 
 vi.mock('../../../src/utils/dns-proxy.js', () => ({
-  getBlockedDelta: () => 0,
-  getAndResetCountryHits: () => new Map(),
-  getAndResetBlocklistHits: () => ({ delta: 0, categoryHits: new Map() }),
-  getAndResetPerformanceMetrics: () => ({
-    queryCount: 12,
-    latencyMin: 100,
-    latencyAvg: 200,
-    latencyMax: 900,
-    latencyP95: 800,
-    cacheHits: 4,
-    cacheMisses: 8,
-    timeouts: 1,
-    pendingQueries: 0,
-    startupMs: null,
-    failures: { dnssec: 3, upstream: 2, timeout: 1, refused: 0, other: 4 },
-    nxdomain: 5,
+  drainProxyMetrics: () => ({
+    blockedDelta: 0,
+    countryHits: new Map(),
+    blocklistHits: { delta: 0, categoryHits: new Map() },
+    performance: {
+      queryCount: 12,
+      latencyMin: 100,
+      latencyAvg: 200,
+      latencyMax: 900,
+      latencyP95: 800,
+      cacheHits: 4,
+      cacheMisses: 8,
+      timeouts: 1,
+      pendingQueries: 0,
+      startupMs: null,
+      failures: { dnssec: 3, upstream: 2, timeout: 1, refused: 0, other: 4 },
+      nxdomain: 5,
+    },
   }),
 }));
+
 
 vi.mock('../../../src/utils/encrypted-forwarder.js', () => ({
   getAndResetForwarderMetrics: () => [

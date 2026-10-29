@@ -76,7 +76,8 @@ import {
   sweepStaleRestoreArtifacts,
   applyRestoreCarryover,
 } from './utils/backup.js';
-import { clearBypassAtBoot, startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
+import { clearBypassAtBoot, startProxyIfEnabled } from './utils/dns-proxy.js';
+import { startGeoipScheduler } from './services/geoip-update.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { allBackends, uniqueServices } from './backends/index.js';

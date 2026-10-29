@@ -69,3 +69,18 @@ describe('PUT /api/settings/:key, apply-coupled keys are not editable', () => {
     expect(rejected.body.error).toContain('must be "first" or "last"');
   });
 });
+
+describe('settings the DNS proxy listens by', () => {
+  it('hands the proxy its new port when one is written, singly or in bulk', async () => {
+    const { proxyConfig } = await import('../../../src/dns-proxy/server.js');
+    const single = await request(app).put('/api/settings/dns_listen_port').send({ value: 5454 });
+    expect(single.status).toBe(200);
+    expect(proxyConfig().listenPort).toBe(5454);
+
+    const bulk = await request(app)
+      .put('/api/settings/bulk')
+      .send({ settings: { dns_listen_port: 5455 } });
+    expect(bulk.status).toBe(200);
+    expect(proxyConfig().listenPort).toBe(5455);
+  });
+});

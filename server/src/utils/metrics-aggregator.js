@@ -10,12 +10,7 @@
  */
 
 import { createLogFollower } from './log-reader.js';
-import {
-  getBlockedDelta,
-  getAndResetCountryHits,
-  getAndResetPerformanceMetrics,
-  getAndResetBlocklistHits,
-} from './dns-proxy.js';
+import { drainProxyMetrics } from './dns-proxy.js';
 import { getDhcpBackend, getService, onBackendChanged } from '../backends/index.js';
 import { getAndResetForwarderMetrics } from './encrypted-forwarder.js';
 
@@ -153,17 +148,14 @@ async function aggregate() {
     const dhcpClientMsgs = dhcp[4].client + dhcp[6].client;
     const dhcpServerMsgs = dhcp[4].server + dhcp[6].server;
 
-    // Blocklist blocks from in-memory proxy counters
-    const blocklistData = getAndResetBlocklistHits();
-    const blocklistBlocks = blocklistData.delta;
-    const categoryCounts = blocklistData.categoryHits;
-
-    // GeoIP blocks from in-memory counters
-    const geoipBlocks = getBlockedDelta();
-    const geoipCountryHits = getAndResetCountryHits();
-
-    // Proxy performance metrics
-    const perf = getAndResetPerformanceMetrics();
+    // What the proxy counted this minute: blocklist and GeoIP blocks, and
+    // its performance.
+    const proxy = drainProxyMetrics();
+    const blocklistBlocks = proxy.blocklistHits.delta;
+    const categoryCounts = proxy.blocklistHits.categoryHits;
+    const geoipBlocks = proxy.blockedDelta;
+    const geoipCountryHits = proxy.countryHits;
+    const perf = proxy.performance;
     const forwarderRows = getAndResetForwarderMetrics();
 
     // Process-level CPU (delta since last cycle)
