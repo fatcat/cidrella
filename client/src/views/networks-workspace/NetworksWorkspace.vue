@@ -277,6 +277,7 @@
       v-model:visible="reservationEditorVisible"
       :subnet-id="selectedNetwork.id"
       :address="reservationTarget.address"
+      :initial-address="reservationTarget.initialAddress"
       :mode="reservationEditorMode"
       @saved="handleReservationSaved"
     />
@@ -298,6 +299,12 @@
       :current-override="scanTarget.raw?.scan_enabled"
       :mode="scanDialogMode"
       @changed="refreshAfterMutation('address', $event)"
+    />
+    <NextPrefixDialog
+      v-model:visible="nextPrefixVisible"
+      :folders="unallocatedFolders"
+      :parent-id="nextPrefixParentId"
+      @continue="workspaceActions.continueNextPrefix"
     />
     <FolderManagerDialog
       v-model:visible="folderManagerVisible"
@@ -340,6 +347,7 @@
         v-for="item in createMenuItems"
         :key="item.id"
         role="menuitem"
+        :data-track="item.track"
         @click="runMenuAction(item)"
       >
         <i :class="item.icon" /><span
@@ -360,6 +368,7 @@
         v-for="item in actionMenuItems"
         :key="item.id"
         role="menuitem"
+        :data-track="item.track"
         :class="{ danger: item.danger, unavailable: !item.available }"
         :aria-disabled="item.available ? undefined : 'true'"
         @click="item.available && runMenuAction(item)"
@@ -394,6 +403,7 @@
         <button
           v-else
           role="menuitem"
+          :data-track="item.track"
           :class="{ danger: item.danger, unavailable: !item.available }"
           :aria-disabled="item.available ? undefined : 'true'"
           :title="item.available ? undefined : item.reason"
@@ -426,6 +436,7 @@ import DnsPanel from '../../components/DnsPanel.vue';
 import DhcpPanel from '../../components/DhcpPanel.vue';
 import Paginator from '../../ui/Paginator.js';
 import { apiError, countOf, formatNumber } from '../../utils/format.js';
+import { byStateLine } from '../../utils/ipLifecycleDisplay.js';
 import { loadJson, saveJson } from '../../utils/storage.js';
 import { reverseZoneSortKey } from '../../utils/reverseZone.js';
 import AddressGrid from './AddressGrid.vue';
@@ -442,6 +453,7 @@ import IpReservationEditor from './dialogs/IpReservationEditor.vue';
 import RangeEditor from './dialogs/RangeEditor.vue';
 import AddressScanDialog from './dialogs/AddressScanDialog.vue';
 import FolderManagerDialog from './dialogs/FolderManagerDialog.vue';
+import NextPrefixDialog from './dialogs/NextPrefixDialog.vue';
 import { UNGROUPED_FOLDER, useWorkspaceContext } from './composables/useWorkspaceContext.js';
 import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
 import { contiguousAddressRuns, identityAddress } from './composables/useWorkspaceSelection.js';
@@ -478,6 +490,7 @@ import {
   compareCellValues,
   flattenAllocatable,
   networkSearchMatches,
+  prefixCoverage,
 } from '../networks-workspace-data.js';
 import { DHCP_V6_MODE_LABELS } from '../../utils/ip.js';
 import { ZONE_WIDE_NETWORK } from '@shared/ip-columns.js';
@@ -604,6 +617,8 @@ const dnsDialogs = ref(null);
 const dhcpDialogs = ref(null);
 const applyStatus = ref(null);
 const folderManagerVisible = ref(false);
+const nextPrefixVisible = ref(false);
+const nextPrefixParentId = ref(null);
 const selectedZoneFilter = ref(null);
 // Every reverse zone of one network at once, the heading of that network in
 // the reverse zone picker. Excludes selectedZoneFilter: one or the other.
@@ -1314,7 +1329,7 @@ const rowMenuTitle = computed(() => {
   }
   return kind === 'folder'
     ? 'FOLDER ACTIONS'
-    : kind === 'network'
+    : kind === 'network' || kind === 'network-container'
       ? 'NETWORK ACTIONS'
       : `${activeView.value.toUpperCase()} ACTIONS`;
 });
@@ -1336,6 +1351,9 @@ function buildUnallocatedFolders(sourceFolders) {
       used: 0,
       state: allocatable ? 'unallocated' : 'container',
       allocatable,
+      // Read from the whole subtree: the allocated networks are not listed
+      // here, but they are what the container holds.
+      coverage: allocatable ? null : prefixCoverage(network),
       children,
     };
   };
@@ -1361,17 +1379,27 @@ function preserveEmptyFolders(allocated, sourceFolders) {
   );
 }
 
+// The DHCP tile's note: pool use where the network has a pool, which is how
+// full an IPv6 network is, else the scope count.
+const poolUseNote = computed(() => {
+  const summary = workspaceResources.resources.summary.data;
+  if (isV6Network.value && summary?.pool_size != null) {
+    return `${formatNumber(summary.pool_in_use || 0)} of ${formatAddressCount(summary.pool_size)} in use`;
+  }
+  return `${networkScopes.value.filter((scope) => scope.enabled).length} active scopes`;
+});
 const contextStats = computed(() =>
   contextKind.value === 'network'
     ? [
         // A percent needs a total, which the server sends whenever the prefix
         // fits a JavaScript number: every IPv4 network and an IPv6 one
-        // longer than about /75. A /64 gets the count instead.
+        // longer than about /75. A /64 is an inventory: what is known, by
+        // kind (docs/IPV6-HANDLING.md, rule 3).
         !Number.isFinite(workspaceResources.resources.summary.data?.total_addresses ?? NaN)
           ? {
-              label: 'ASSIGNED',
-              value: formatNumber(workspaceResources.resources.summary.data?.assigned_count || 0),
-              note: 'addresses with an allocation',
+              label: 'KNOWN',
+              value: formatNumber(workspaceResources.resources.summary.data?.known_count || 0),
+              note: byStateLine(workspaceResources.resources.summary.data?.by_state),
               tone: 'neutral',
             }
           : {
@@ -1399,7 +1427,7 @@ const contextStats = computed(() =>
           value: isV6Network.value
             ? dhcpV6ModeLabel(networkScopes.value)
             : formatAddressCount(sumScopeAddresses(networkScopes.value)),
-          note: `${networkScopes.value.filter((scope) => scope.enabled).length} active scopes`,
+          note: poolUseNote.value,
           tone: 'good',
           dot: true,
           view: 'dhcp',
@@ -2282,6 +2310,15 @@ function openFolderMenu(folder, invoker = null, event = null) {
 // Right-clicking one of several checked networks targets them all, as in
 // the table.
 function openNetworkMenu(network, invoker = null, event = null) {
+  // A container is not a place to open, only space to plan in.
+  if (network.state === 'container') {
+    openTargetMenu(
+      { kind: 'network-container', id: network.id, status: network.status, raw: network },
+      invoker,
+      event,
+    );
+    return;
+  }
   const onSelection =
     selectedRows.value.length > 1 && selectedRows.value.includes(`network:${network.id}`);
   openTargetMenu(
@@ -2483,6 +2520,8 @@ const workspaceActions = useWorkspaceActions({
     dhcpDialogs,
     protocolDialogsMounted,
     folderManagerVisible,
+    nextPrefixVisible,
+    nextPrefixParentId,
     reservationTarget,
     reservationEditorMode,
     reservationEditorVisible,

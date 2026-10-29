@@ -2058,6 +2058,7 @@ describe('Networks workspace', () => {
       .trigger('click');
     expect(wrapper.findAll('.actions-menu button strong').map((label) => label.text())).toEqual([
       'Edit network',
+      'Reserve next free address',
       'Divide network',
       'Move to folder',
       'Apply defaults',

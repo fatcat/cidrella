@@ -279,6 +279,34 @@ unassigned ones through `ip-view.js`. `unassigned_count` is null when
 `total_addresses` is null. An IPv6 network's count is `known_count`, never a
 share of its size.
 
+The summary also carries `by_state`: how many addresses hold each claimed
+`allocation_state`, plus `seen` for addresses with no claim that are online or
+rogue. An address counts once per state; one held in two states on two
+interfaces counts under both, since picking one would be a second precedence
+rule.
+`pool_size` (a decimal string, since an IPv6 pool can exceed a JavaScript
+number) and `pool_in_use` (active leases inside the pools) describe the
+network's address-pool scope (`isAddressPoolScope`: every DHCPv4 scope, a
+stateful DHCPv6 one); both are null without one. `GET /api/subnets` carries the
+same two fields on each allocated network, so an IPv6 network's fullness is its
+pool use, never a share of its address space. A parent's fullness is prefix
+coverage, computed by the client from that tree: the sizes of its allocated
+leaves over its own size.
+
+`GET /api/subnets/:id/suggest-address` answers with one free address, never a
+list: `{ ip_address, strategy }`, or 404 when there is none in bounds. Query:
+`strategy` is `sequential` (default: the lowest free address at or above
+`from`, else `::10` on IPv6 or the first usable address on IPv4) or `random` (a
+random address in bounds, falling back to sequential from there after 64
+misses); `within` narrows the bounds to a CIDR inside the network or the id of
+one of its ranges; `from` must be inside the network. What counts as free is in
+ARCHITECTURE.md (Canonical IP Model). The answer reserves nothing.
+
+`POST /api/subnets/calculate` takes `page` and `page_size` (default 256, at
+most 4096) beside `cidr` and `new_prefix`, and returns `count` (a decimal
+string), `first` and `last` (the first and last child) and that page of
+children. The cap of 65,536 children stays.
+
 ## Cross-Table Facts
 
 The Addresses, DNS and DHCP workspace tables are one table model: each can show

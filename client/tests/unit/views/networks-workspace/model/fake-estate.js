@@ -55,6 +55,12 @@ export const NETWORKS = [
   net(21, '192.168.0.0/25', { name: null, status: 'unallocated', folder_id: 2, parent_id: 20 }),
   net(22, '192.168.0.128/25', { name: null, status: 'unallocated', folder_id: 2, parent_id: 20 }),
   net(15, '1.1.1.0/24', { name: null, status: 'unallocated' }),
+  // An IPv6 /48 a /64 was carved from: the allocated /64 and the free space
+  // the carve left (docs/IPV6-HANDLING.md, rules 3 and 4).
+  net(30, 'fd00:30::/48', { name: null, status: 'unallocated', folder_id: 2 }),
+  net(31, 'fd00:30::/64', { name: 'Carved v6', folder_id: 2, parent_id: 30 }),
+  net(32, 'fd00:30:0:1::/64', { name: null, status: 'unallocated', folder_id: 2, parent_id: 30 }),
+  net(33, 'fd00:30:0:2::/63', { name: null, status: 'unallocated', folder_id: 2, parent_id: 30 }),
 ];
 
 const zone = (id, name, type, related, fields = {}) => ({

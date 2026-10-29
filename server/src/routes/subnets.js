@@ -16,6 +16,7 @@ import {
   normalizeNetwork,
   isValidNetwork,
   splitNetwork,
+  childNetwork,
   mergeNetworks,
   subtractNetwork,
   isNetworkWithin,
@@ -56,6 +57,8 @@ import {
   projectVirtualSubnetIpRow,
   summarizeCanonicalSubnetIps,
 } from '../models/subnet-ip-read.js';
+import { suggestAddress } from '../models/address-suggest.js';
+import { dhcpPoolUse } from '../models/dhcp-pool-use.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
 import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
@@ -351,6 +354,13 @@ router.get(
       )
       .all();
     sortSubnetsNumerically(rows);
+    // Pool use on every network with a pool: an IPv6 network's fullness.
+    const poolUse = dhcpPoolUse(db);
+    for (const row of rows) {
+      const pool = poolUse.get(row.id);
+      row.pool_size = pool?.pool_size ?? null;
+      row.pool_in_use = pool?.pool_in_use ?? null;
+    }
 
     const tree = buildTree(rows);
 
@@ -2095,12 +2105,31 @@ router.post(
       });
     }
 
-    try {
-      const results = splitNetwork(cidr, new_prefix, MAX_CALCULATE_CHILDREN);
-      res.json({ parent, subnets: results });
-    } catch (err) {
-      res.status(400).json({ error: err.message });
+    // One page of children, built by index, so a /48 into /64s never holds
+    // 65,536 networks at once (docs/IPV6-HANDLING.md).
+    const pageSize = body.page_size === undefined ? 256 : body.page_size;
+    const page = body.page === undefined ? 1 : body.page;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 4096) {
+      return res.status(400).json({ error: 'page_size must be an integer 1-4096' });
     }
+    if (!Number.isInteger(page) || page < 1) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+    const start = BigInt((page - 1) * pageSize);
+    const end = start + BigInt(pageSize) < childCount ? start + BigInt(pageSize) : childCount;
+    const subnets = [];
+    for (let index = start; index < end; index++) {
+      subnets.push(childNetwork(parent, new_prefix, index));
+    }
+    res.json({
+      parent,
+      count: childCount.toString(),
+      first: childNetwork(parent, new_prefix, 0n).cidr,
+      last: childNetwork(parent, new_prefix, childCount - 1n).cidr,
+      page,
+      page_size: pageSize,
+      subnets,
+    });
   }),
 );
 
@@ -2879,6 +2908,33 @@ router.get(
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
     res.json(summarizeCanonicalSubnetIps(db, subnet));
+  }),
+);
+
+// GET /api/subnets/:id/suggest-address: one free address, never a list
+// (models/address-suggest.js). Advisory: nothing is held.
+router.get(
+  '/:id/suggest-address',
+  requirePerm('subnets:read'),
+  asyncHandler((req, res) => {
+    const db = getDb();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
+    let result;
+    try {
+      result = suggestAddress(db, subnet, {
+        strategy: req.query.strategy || 'sequential',
+        within: req.query.within,
+        from: req.query.from,
+      });
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+    if (!result.ip_address)
+      return res.status(404).json({ error: `No free address in ${result.bounds}` });
+    res.json(result);
   }),
 );
 

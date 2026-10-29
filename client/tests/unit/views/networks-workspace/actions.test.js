@@ -233,6 +233,7 @@ describe('workspace action registry', () => {
 
     expect(labels({ menu: 'create', target: workspace(), can: all })).toEqual([
       'Create network',
+      'Allocate next free prefix…',
       'Create folder',
       'Add DNS zone',
       'Add DHCP scope',
@@ -279,6 +280,7 @@ describe('workspace action registry', () => {
     });
     expect(allocatedItems.map((item) => item.label)).toEqual([
       'Edit network',
+      'Reserve next free address',
       'Divide network',
       'Move to folder',
       'Apply defaults',
@@ -651,5 +653,16 @@ describe('workspace action registry', () => {
     expect(api.put.mock.calls.filter(([, body]) => body.start_ip === '10.0.0.1')).toHaveLength(1);
     expect(wrapper.emitted('complete')).toHaveLength(1);
     expect(wrapper.emitted('complete')[0][0]).toMatchObject({ updated: 4, skipped: 0 });
+  });
+
+  it('offers planning, and only planning, on a container row (docs/IPV6-HANDLING.md, rule 4)', () => {
+    const container = { kind: 'network-container', id: 10, status: 'unallocated', raw: {} };
+    expect(menuActions({ menu: 'row', target: container, can: () => true })).toEqual([
+      expect.objectContaining({
+        id: 'network.allocate-next-prefix',
+        track: 'workspace-allocate-next-prefix',
+      }),
+    ]);
+    expect(menuActions({ menu: 'row', target: container, can: () => false })).toEqual([]);
   });
 });

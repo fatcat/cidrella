@@ -778,6 +778,10 @@ describe('canonical subnet IP detail and summary reads', () => {
       unassigned_count: 5,
       online_count: 2,
       rogue_count: 1,
+      // .4 is online and rogue with no claim; .3 is claimed, so not seen.
+      by_state: { reserved: 1, system: 2, seen: 1 },
+      pool_size: null,
+      pool_in_use: null,
     });
   });
 });

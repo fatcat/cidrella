@@ -11,6 +11,7 @@ import { mergeNetworks } from '../../utils/ip.js';
 //   folder            an explorer folder row or the folder context
 //   network           a network row or the selected network
 //   network-selection checked network rows; the menu of a checked row
+//   network-container an explorer row of subdivided unallocated space
 //   address           an address row inside a network
 //   address-selection checked address rows; the menu of a checked row
 //   dns-zone          a zone row in an aggregate DNS inventory
@@ -61,6 +62,18 @@ const ACTION_DEFINITIONS = [
     targetKind: ['workspace', 'folder'],
     menus: ['create', 'actions', 'row'],
     views: ['networks'],
+  },
+  // docs/IPV6-HANDLING.md, rule 4: the lowest free block of a size inside a
+  // container, allocated as it stands or carved out first.
+  {
+    id: 'network.allocate-next-prefix',
+    label: 'Allocate next free prefix…',
+    note: 'Take the lowest free block of a size from a container',
+    icon: 'pi pi-th-large',
+    capability: 'subnets:write',
+    targetKind: ['workspace', 'network-container'],
+    menus: ['create', 'row'],
+    track: 'workspace-allocate-next-prefix',
   },
   {
     id: 'folder.create',
@@ -122,6 +135,21 @@ const ACTION_DEFINITIONS = [
     targetKind: 'network',
     menus: ['actions', 'row'],
     views: ['networks', 'addresses', 'ranges'],
+  },
+  // A suggested address (docs/IPV6-HANDLING.md, rule 2) in the reservation
+  // editor, where the operator sees it and can change it before reserving.
+  {
+    id: 'ip.reserve-next',
+    label: 'Reserve next free address',
+    note: 'Suggest the next free address, then reserve it',
+    icon: 'pi pi-bookmark',
+    capability: 'subnets:write',
+    targetKind: 'network',
+    menus: ['actions'],
+    views: ['addresses'],
+    track: 'workspace-reserve-next',
+    available: (target) => target.status === 'allocated',
+    disabledReason: 'This network is not allocated.',
   },
   {
     id: 'network.scan',
@@ -845,6 +873,8 @@ export const WORKSPACE_ACTIONS = Object.freeze(
         separatorBefore: false,
         toggle: null,
         showUnavailable: false,
+        // A data-track id for the menu button, for the actions that have one.
+        track: null,
         ...definition,
         targetKinds: asList(definition.targetKind),
       }),
@@ -969,6 +999,7 @@ export function menuActions({ menu, target, view = null, can = () => false }) {
       icon: action.icon,
       danger: action.danger,
       separatorBefore: action.separatorBefore,
+      track: action.track,
       available: states.get(id).available,
       reason: states.get(id).reason,
       // 'on', 'off' or 'mixed' for a switch item, null for a plain one.

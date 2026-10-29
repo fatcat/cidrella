@@ -171,7 +171,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   checks the keys against the client catalog), and the client control is
   `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
-  `dialog-actions`, `card-header`, `field-error`, `field-help`, `fill-panel`: the root of a
+  `dialog-actions`, `card-header`, `field-error`, `field-help`, `input-with-action` (a field's
+  input with a small action beside it, as Suggest), `fill-panel`: the root of a
   Settings `fill` section or full page, whose inner table or log scrolls instead of the page; a
   `scrollHeight="flex"` DataTable directly inside it takes the height left under its siblings), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
@@ -301,7 +302,17 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `divideGatewayDefault`, `GATEWAY_POSITION_OPTIONS` and `inferGatewayPosition` (with
   `components/GatewayField.vue`, the one gateway picker: network dialogs and the scope dialog), and in `views/networks-workspace-data.js` `addressCount`,
   `formatAddressCount` (BigInt-safe sizes), `compareCellValues` (address-aware table sort) and
-  `networkSearchMatches` (what the explorer matches a network against, CIDR overlap included), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
+  `networkSearchMatches` (what the explorer matches a network against, CIDR overlap included),
+  `networkUtilization` (how full a network is: used addresses on IPv4, DHCP pool use on IPv6),
+  `prefixCoverage` with `formatCoveragePercent`/`formatCoverageCounts` (how much of a container
+  its allocated networks hold) and `nextFreePrefix` (the lowest free /N in a container, as it
+  stands or to carve), client `components/SuggestAddressButton.vue` (Next free and Random for
+  any address field; the server's `suggestAddress` in `models/address-suggest.js` decides,
+  `GET /subnets/:id/suggest-address`), `byStateLine` in `utils/ipLifecycleDisplay.js` (a
+  summary's `by_state` in the address-type wording), server `dhcpPoolUse` in
+  `models/dhcp-pool-use.js` (`pool_size` and `pool_in_use` of a network's address pools, on the
+  tree and the summary), `childNetwork` in `utils/cidr.js` (one child of a split by index, for
+  paging), `isEui64InterfaceId` in `utils/address.js`, `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
   record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
   this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6

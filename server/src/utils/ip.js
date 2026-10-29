@@ -47,6 +47,7 @@ export {
   isNetworkWithin,
   subtractNetwork,
   splitNetwork,
+  childNetwork,
   mergeNetworks,
   networkNameFromTemplate,
   validateNetworkBounds,

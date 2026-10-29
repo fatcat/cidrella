@@ -8,6 +8,7 @@
 //   zone <id> · pick-zone <id> · pick-network <id> · scope <id>
 //   search "<text>" · table-search "<text>"
 //   row <n> [ctrl|shift] · check <n> · check-all · row-menu <n> · close-details
+//   container-menu <id>
 //   filtering <n>
 //   filter <column> <n> · filter-text <column> "<text>" · clear-filter <column>
 //   sort <column> · page next|prev · page-size <n>
@@ -70,10 +71,12 @@ export function candidates() {
   for (const row of all('.folder-row[data-folder-id]')) {
     out.push(`folder ${row.dataset.folderId}`, `toggle-folder ${row.dataset.folderId}`);
   }
-  for (const row of all('.network-row[data-network-id]:not([disabled])')) {
+  for (const row of all('.network-row[data-network-id]:not([aria-disabled="true"])')) {
     const id = row.dataset.networkId;
     out.push(`network ${id}`, `network ${id} ctrl`, `network ${id} shift`);
   }
+  for (const row of all('.resource-node.container > .network-row[data-network-id]'))
+    out.push(`container-menu ${row.dataset.networkId}`);
   for (const tab of all('.view-tabs button')) out.push(`tab ${tab.dataset.track.slice(14)}`);
   for (const stat of all('.health-stat.interactive'))
     out.push(`stat ${stat.dataset.track.slice('workspace-stat-'.length)}`);
@@ -231,6 +234,16 @@ export async function perform(session, label) {
       const row = rowAt(Number(arg));
       row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
       await settle();
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      break;
+    }
+    case 'container-menu': {
+      const row = one(`.resource-node.container > .network-row[data-network-id="${arg}"]`);
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      await settle();
+      const offered = all('.row-menu button strong').map((label) => label.textContent.trim());
+      if (offered.join() !== 'Allocate next free prefix…')
+        throw new Error(`container ${arg} menu offers [${offered}]`);
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       break;
     }

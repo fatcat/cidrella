@@ -7,6 +7,7 @@ import {
   isValidIp,
   isValidIpv6,
   expandIpv6,
+  isEui64InterfaceId,
   IPV4_BITS,
   IPV6_BITS,
 } from '../../../src/utils/address.js';
@@ -265,5 +266,25 @@ describe('expandIpv6', () => {
     expect(expandIpv6('10.0.0.1')).toBeNull();
     expect(expandIpv6('::ffff:10.0.0.1')).toBeNull();
     expect(expandIpv6('not-an-address')).toBeNull();
+  });
+});
+
+describe('isEui64InterfaceId', () => {
+  it('is true for an interface ID with ff:fe in its middle bytes', () => {
+    expect(isEui64InterfaceId('fd00:1::21a:2bff:fe3c:4d5e')).toBe(true);
+    expect(isEui64InterfaceId('2001:db8::ff:fe00:0')).toBe(true);
+    expect(isEui64InterfaceId('FE80::021A:2BFF:FE3C:4D5E%eth0')).toBe(true);
+  });
+
+  it('is false for other IPv6 interface IDs', () => {
+    expect(isEui64InterfaceId('fd00:1::10')).toBe(false);
+    expect(isEui64InterfaceId('fd00:1::21a:2bff:ff3c:4d5e')).toBe(false);
+    expect(isEui64InterfaceId('fd00:1::fffe:0:0')).toBe(false);
+  });
+
+  it('is false for IPv4 and anything unparseable', () => {
+    expect(isEui64InterfaceId('10.255.254.1')).toBe(false);
+    expect(isEui64InterfaceId('not an address')).toBe(false);
+    expect(isEui64InterfaceId(null)).toBe(false);
   });
 });

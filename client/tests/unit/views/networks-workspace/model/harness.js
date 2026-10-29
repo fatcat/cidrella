@@ -10,7 +10,9 @@ import NetworksWorkspace from '../../../../../src/views/networks-workspace/Netwo
 import { UiPlugin } from '../../../../../src/ui/plugin.js';
 import {
   buildExplorerFolders,
+  formatCoveragePercent,
   mapNetworkRows,
+  prefixCoverage,
 } from '../../../../../src/views/networks-workspace-data.js';
 import { zoneFileName, zoneFileValue } from '../../../../../src/utils/dnsZoneFile.js';
 import {
@@ -168,6 +170,10 @@ export function observe() {
       Number(row.dataset.networkId),
     ),
     explorerChecked: all('.network-row.checked').map((row) => Number(row.dataset.networkId)),
+    containers: all('.resource-node.container > .network-row').map((row) => ({
+      id: Number(row.dataset.networkId),
+      label: row.querySelector('.network-copy small').textContent.trim(),
+    })),
     pager: pagerOf(one('.paginator-stub')),
     chips: all('.filter-chips button[data-filter-key]').map((chip) => chip.dataset.filterKey),
     filters: savedFilters(),
@@ -366,6 +372,19 @@ function checkPage(out, label, shown, expected, pager) {
 
 // ─── Invariants ───────────────────────────────────────────────────────
 
+// One network of GET /subnets, with its whole subtree.
+function treeNode(id) {
+  const find = (nodes) => {
+    for (const node of nodes) {
+      if (node.id === id) return node;
+      const found = find(node.children || []);
+      if (found) return found;
+    }
+    return null;
+  };
+  return find(subnetTree().folders.flatMap((folder) => folder.subnets));
+}
+
 export function violations(state, { unexpected = [], errors = [] } = {}) {
   const out = [];
   const context = contextOf(state);
@@ -417,6 +436,15 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
   // 2b. An IPv6 network is an inventory: it offers no Show available.
   if (context.kind === 'network' && networkById(context.networkId)?.address_family === 6) {
     if (state.showAvailable !== null) out.push('Show available offered on an IPv6 network');
+  }
+
+  // 2c. A container reads how much of it is allocated, from the whole
+  // subtree, allocated networks the explorer does not list included.
+  for (const container of state.containers || []) {
+    const node = treeNode(container.id);
+    const want = `${formatCoveragePercent(prefixCoverage(node).percent)} allocated`;
+    if (!node || !container.label.endsWith(want))
+      out.push(`container ${container.id} reads "${container.label}", expected "… · ${want}"`);
   }
 
   // 3. The DNS view always has one zone or one network's reverse zones chosen.

@@ -227,6 +227,10 @@ describe('summary', () => {
       unassigned_count: null,
       online_count: 2,
       rogue_count: 2,
+      // ::11 is online and ::12 rogue, neither claimed: both seen.
+      by_state: { reserved: 1, gateway: 1, system: 1, seen: 2 },
+      pool_size: null,
+      pool_in_use: null,
     });
   });
 });

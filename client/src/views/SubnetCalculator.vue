@@ -37,26 +37,34 @@
       </div>
     </div>
 
-    <!-- Split results -->
-    <div class="results" v-if="subnets.length">
+    <!-- Split results: a page at a time, so a /48 into /64s never sits in the
+         browser whole. -->
+    <div class="results" v-if="totalCount">
       <h3>
-        {{ subnets.length }} Network{{ subnets.length > 1 ? 's' : '' }} (each /{{ newPrefix }})
+        {{ formatCount(totalCount) }} Network{{ totalCount > 1 ? 's' : '' }} (each /{{
+          resultPrefix
+        }}), {{ firstChild }} to {{ lastChild }}
       </h3>
       <DataTable
         :value="subnets"
+        lazy
+        :totalRecords="totalCount"
+        :first="pageFirst"
         stripedRows
         size="small"
-        :paginator="subnets.length > 256"
-        :rows="256"
+        :paginator="totalCount > pageRows"
+        :rows="pageRows"
         :rowsPerPageOptions="[64, 128, 256, 512]"
+        :loading="loading"
         scrollable
         scrollHeight="flex"
+        @page="onPage"
         @row-contextmenu="onRowContextMenu"
         :contextMenu="true"
         v-model:contextMenuSelection="contextRow"
       >
-        <Column header="#" style="width: 3rem">
-          <template #body="{ index }">{{ index + 1 }}</template>
+        <Column header="#" style="width: 5rem">
+          <template #body="{ index }">{{ (pageFirst + index + 1).toLocaleString() }}</template>
         </Column>
         <Column header="Network">
           <template #body="{ data }">{{ data.network }}/{{ data.prefix }}</template>
@@ -77,7 +85,7 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue';
+import { ref, computed, onMounted } from 'vue';
 import { useToast } from '../ui/useToast.js';
 import Button from '../ui/Button.js';
 import InputText from '../ui/InputText.js';
@@ -96,11 +104,20 @@ const toast = useToast();
 const contextMenuRef = ref(null);
 const contextRow = ref(null);
 
+// Only the inputs are remembered; the result is asked for again.
 const saved = loadJson(STORAGE_KEY, null);
 const cidr = ref(saved?.cidr || '');
 const newPrefix = ref(saved?.newPrefix ?? 24);
-const parent = ref(saved?.parent || null);
-const subnets = ref(saved?.subnets || []);
+const parent = ref(null);
+const subnets = ref([]);
+const totalCount = ref(0);
+const firstChild = ref('');
+const lastChild = ref('');
+// The split on screen, kept apart from the inputs a person may be editing.
+let resultCidr = '';
+const resultPrefix = ref(null);
+const pageFirst = ref(0);
+const pageRows = ref(256);
 const loading = ref(false);
 const error = ref('');
 
@@ -118,28 +135,54 @@ function formatCount(value) {
   return Number.isSafeInteger(n) ? n.toLocaleString() : String(value);
 }
 
+async function loadPage(page) {
+  const result = await store.calculateSubnets(resultCidr, resultPrefix.value, {
+    page,
+    pageSize: pageRows.value,
+  });
+  parent.value = result.parent;
+  subnets.value = result.subnets;
+  // At most 65,536 children: the count fits a number.
+  totalCount.value = Number(result.count);
+  firstChild.value = result.first;
+  lastChild.value = result.last;
+  pageFirst.value = (page - 1) * pageRows.value;
+}
+
 async function calculate() {
   if (!cidr.value) return;
   loading.value = true;
   error.value = '';
+  resultCidr = cidr.value;
+  resultPrefix.value = newPrefix.value;
   try {
-    const result = await store.calculateSubnets(cidr.value, newPrefix.value);
-    parent.value = result.parent;
-    subnets.value = result.subnets;
-    saveJson(STORAGE_KEY, {
-      cidr: cidr.value,
-      newPrefix: newPrefix.value,
-      parent: result.parent,
-      subnets: result.subnets,
-    });
+    await loadPage(1);
+    saveJson(STORAGE_KEY, { cidr: cidr.value, newPrefix: newPrefix.value });
   } catch (err) {
     error.value = apiError(err);
     parent.value = null;
     subnets.value = [];
+    totalCount.value = 0;
   } finally {
     loading.value = false;
   }
 }
+
+async function onPage(event) {
+  pageRows.value = event.rows;
+  loading.value = true;
+  try {
+    await loadPage(event.page + 1);
+  } catch (err) {
+    error.value = apiError(err);
+  } finally {
+    loading.value = false;
+  }
+}
+
+onMounted(() => {
+  if (cidr.value) void calculate();
+});
 
 // ── Context menu ──
 function onRowContextMenu(event) {

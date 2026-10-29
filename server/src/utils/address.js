@@ -242,6 +242,17 @@ export function expandIpv6(str) {
 }
 
 /**
+ * True for an IPv6 address whose interface ID is a modified EUI-64 (RFC 4291
+ * appendix A): ff:fe in its middle bytes, 'xxxx:xxff:fexx:xxxx', the form a
+ * SLAAC host builds from its MAC. False for IPv4 and anything unparseable.
+ */
+export function isEui64InterfaceId(str) {
+  const parsed = parseIp(str);
+  if (!parsed || parsed.bits !== IPV6_BITS) return false;
+  return ((parsed.value >> 24n) & 0xffffn) === 0xfffen;
+}
+
+/**
  * A fixed-width sort key, so ORDER BY on a TEXT column sorts addresses
  * numerically and keeps the two families apart.
  *

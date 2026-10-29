@@ -1,5 +1,6 @@
 import { nextTick } from 'vue';
 import api from '../../../api/client.js';
+import { useSubnetStore } from '../../../stores/subnets.js';
 import { apiError, countOf, formatNumber } from '../../../utils/format.js';
 import { createWorkspaceActionRegistry, scanningOn, targetForRow } from '../workspace-actions.js';
 
@@ -105,8 +106,8 @@ export function useWorkspaceActions(ctx) {
     }
   }
 
-  function openReservationEditor(target, mode) {
-    dialogs.reservationTarget.value = { id: target.id, address: target.address };
+  function openReservationEditor(target, mode, initialAddress = '') {
+    dialogs.reservationTarget.value = { id: target.id, address: target.address, initialAddress };
     dialogs.reservationEditorMode.value = mode;
     dialogs.reservationEditorVisible.value = true;
   }
@@ -192,6 +193,10 @@ export function useWorkspaceActions(ctx) {
       else if (target.kind === 'folder') await dialogsRef.openCreateNetwork(target.id ?? null);
       else await dialogsRef.openCreateNetwork(null);
     },
+    'network.allocate-next-prefix': (target) => {
+      dialogs.nextPrefixParentId.value = target.kind === 'network-container' ? target.id : null;
+      dialogs.nextPrefixVisible.value = true;
+    },
     'folder.create': async () => (await ensureNetworkDialogs()).openCreateFolder(),
     'folder.edit': async (target) => (await ensureNetworkDialogs()).openEditFolder(target.raw),
     'folder.delete': async (target) => (await ensureNetworkDialogs()).openDeleteFolder(target.raw),
@@ -236,8 +241,11 @@ export function useWorkspaceActions(ctx) {
       (await ensureProtocolDialogs()).dns.openZoneDialog(zoneFor(target)),
     'dns.zone.delete': async (target) =>
       (await ensureProtocolDialogs()).dns.confirmDeleteZone(zoneFor(target)),
+    // From a network, an A or AAAA record can take a suggested address in it.
     'dns.record.create': async (target) =>
-      (await ensureProtocolDialogs()).dns.openRecordEditor(null, {}, zoneFor(target)),
+      (await ensureProtocolDialogs()).dns.openRecordEditor(null, {}, zoneFor(target), {
+        network: state.selectedNetwork.value || null,
+      }),
     'dns.record.create-cname': async (target) => {
       const zone = zoneFor(target);
       if (!zone) return showLiveNotice('That zone is no longer in the inventory.');
@@ -362,6 +370,14 @@ export function useWorkspaceActions(ctx) {
     'ip.reserve': (target) => openReservationEditor(target, 'reserve'),
     'ip.release': (target) => openReservationEditor(target, 'release'),
     'ip.reserve-new': () => openReservationEditor({ address: '' }, 'reserve'),
+    'ip.reserve-next': async (target) => {
+      try {
+        const { ip_address: suggested } = await useSubnetStore().suggestAddress(target.id);
+        openReservationEditor({ address: '' }, 'reserve', suggested);
+      } catch (error) {
+        showLiveNotice(`Could not find a free address: ${apiError(error)}`);
+      }
+    },
     'ip.bulk-reserve': () => {
       dialogs.bulkActionMode.value = 'reserve';
       dialogs.bulkActionVisible.value = true;
@@ -453,8 +469,19 @@ export function useWorkspaceActions(ctx) {
     );
   }
 
+  // Next free prefix, chosen: a free leaf of that size is allocated as it
+  // stands; a larger one is carved first, in the carve dialog, prefilled,
+  // which then opens the allocate form on what it carved.
+  async function continueNextPrefix({ leaf, cidr, exact }) {
+    const dialogsRef = await ensureNetworkDialogs();
+    const node = { key: `subnet-${leaf.id}`, data: leaf };
+    if (exact) dialogsRef.openConfigure(node, leaf.folder_id);
+    else dialogsRef.openDivide(node, { cidr, configure: true });
+  }
+
   return {
     registry,
+    continueNextPrefix,
     invoke,
     startNetworkScan,
     currentNetworkTarget,

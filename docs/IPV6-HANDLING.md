@@ -73,18 +73,19 @@ A **Suggest** control in the address editors (IP Reservation, DHCP Reservation, 
 record's address) and a "Next free address" action on a network. It asks the server, which
 answers with one free address and never a list:
 
-`GET /subnets/:id/suggest-address?strategy=sequential|random&within=<range id or CIDR>`
+`GET /subnets/:id/suggest-address?strategy=sequential|random&within=<range id or CIDR>&from=<address>`
 
-- **sequential**: the lowest free address at or above a per-network base offset
-  (default `::10` for IPv6, the first usable address after the gateway for IPv4). For servers
-  and anything given a memorable address.
-- **random**: a random interface ID within the network or the chosen range, retried until
-  free. For addresses that should not be guessable.
-- Always skipped: allocated and leased addresses, the network address, the gateway, every
+- **sequential**: the lowest free address at or above `from`, else `::10` for IPv6 or the
+  first usable address for IPv4 (no per-network setting, decided 2026-10-28). For servers and
+  anything given a memorable address.
+- **random**: a random address within the network or the chosen range, retried up to 64
+  times, then sequential from there. For addresses that should not be guessable.
+- Always skipped: any address with a stored row (allocated, leased, or seen before), the
+  network address, the gateway, every
   DHCPv6 (or DHCPv4) pool, and, for IPv6, EUI-64 interface IDs (`xxxx:xxff:fexx:xxxx`) so a
   suggestion never collides with a SLAAC host.
-- "Free" is decided by the lifecycle read model (`models/ip-view.js` and the claim rules in
-  `models/ip-address.js`), not by a new check. The suggestion is advisory: the write still
+- "Free" is decided by the lifecycle read model: the winner is read through it and must show
+  `available` (`models/ip-view.js`), not by a new check. The suggestion is advisory: the write still
   goes through `services/ip-lifecycle-service.js`, which refuses a conflict as it does today.
 - IPv4 gets the same control; sequential is its natural default.
 - Sequential search runs over the sorted claimed set (`address_sort_key`), not the address
@@ -100,22 +101,31 @@ answers with one free address and never a list:
 - **A leaf IPv6 network** reports counts by kind (static, DHCP reservation, DHCPv6 lease,
   SLAAC, seen only) and, for a stateful DHCPv6 network, its pools' use (leases over pool size,
   meaningful because CIDRella's default pool is 4096 addresses). No address percentage.
-- The networks list's 85% warning uses prefix coverage for parents and pool use for leaves,
-  so an IPv6 network can warn.
+- The 85% warning uses pool use for an IPv6 leaf with an address pool, so an IPv6 network
+  can warn. Parents are containers, not in the networks list; their coverage shows on their
+  explorer row.
 
 ### 4. Prefix planning without listing every child
 
-- **Allocate the next free prefix**: on a parent, "Allocate next free /N" creates exactly one
-  child, the lowest free aligned /N, through the existing network create path (topology,
-  reverse zone, DHCPv6 defaults all as for a hand-made child). `N` is chosen per request.
-  Defaults: /64 under a /56 or longer, /56 under a /48.
-- **Free space as blocks**: a parent shows its unallocated space as the smallest set of
-  aligned CIDR blocks (`subtractNetwork` in `utils/cidr.js` already computes a complement).
-  The list length is bounded by the number of children times the prefix length, never by the
-  parent's size. Each block offers "Allocate" and "Allocate next /N inside".
+Decided 2026-10-28: free space is what CIDRella already stores. A carve ("Specific
+Network" in the divide dialog) creates the child and the rest of the parent as unallocated
+sibling networks (`subtractNetwork`), so a parent's free space is its unallocated leaves,
+listed under All Unallocated Networks. There is no second, computed free-blocks list.
+
+- **Allocate next free prefix**: the lowest free aligned /N under a parent is the network
+  address of its lowest unallocated leaf with a prefix of N or shorter (an aligned block
+  starts aligned for every longer prefix). The client finds it from the network tree it
+  already holds (`nextFreePrefix`), and the action opens the existing carve dialog prefilled
+  with it, or the allocate dialog when that leaf is exactly /N. Preview, conflicts and the
+  write are the carve's: no new write path. Once the carve is made, the allocate dialog opens
+  on the carved network, so the action ends where its name says. Defaults: /64 under a /56
+  or longer, /56 under a /48 or shorter; IPv4 takes the parent's prefix plus 8, at most /30.
+  It is in the Create menu and on the menu of a container row in the explorer (a container is
+  not a place to open, but it is space to plan in); the row reads how much of the container
+  is allocated (`prefixCoverage`), with the allocated networks by prefix in its tooltip.
 - Divide keeps its 256-child cap: dividing into everything at once stays a small-network
-  operation. The calculator keeps its 65,536 cap but stops storing the full list in the
-  browser for IPv6; it shows the count, the first and last child, and a page of results.
+  operation. The calculator keeps its 65,536 cap but pages: the server returns the count, the
+  first and last child and one page, computed by offset, and the browser keeps no list.
 - Merge is unchanged (BigInt, family-checked).
 
 ### 5. Hosts, not just addresses
@@ -230,7 +240,10 @@ The canonical IP model gate (AGENTS.md) applies to rules 2, 5 and 7:
    (Network Read Model).
 2. **Planning**: rules 2, 3 and 4. Suggest an address (both families), prefix coverage and
    pool use, next free prefix, free blocks, the calculator change. Contract text for rule 2
-   lands first.
+   lands first. Done 2026-10-28: `models/address-suggest.js` and `GET
+   /subnets/:id/suggest-address`, `models/dhcp-pool-use.js` on the tree and the summary,
+   `prefixCoverage` and `nextFreePrefix` in `views/networks-workspace-data.js`,
+   `NextPrefixDialog`, and paged `POST /subnets/calculate`; no migration.
 3. **Hosts**: rule 5. Contract text first, then the EUI-64 helper, the host key in the read
    model, `GET /subnets/:id/hosts`, the Hosts view and the details panel.
 
@@ -243,19 +256,23 @@ Tests that matter most:
 - Suggest never returns a claimed address, a pool address, the gateway or an EUI-64 ID, in
   both families, and the lifecycle service still refuses a conflicting write made with it.
 - Next free prefix is aligned, inside the parent, and never overlaps a child, at /48, /56 and
-  /64 parents; free blocks plus children exactly cover the parent.
+  /64 parents.
 - Host grouping: a DUID-only DHCPv6 host, a MAC-only SLAAC host, an EUI-64 address, a
   dual-stack host joining its IPv4 address, a link-local address on two interfaces, an address
   with no evidence (its own host); and that grouping never changes `allocation_state`.
 - SQL paging returns the same rows in the same order as today's in-memory paging, with the
   synthetic rows in place, on a network with 10,000 rows.
 
+## Decisions (2026-10-28)
+
+- **Suggestion strategies**: sequential and random. Sequential starts at `::10` (IPv6) or the
+  first usable address (IPv4), or at `from`; there is no per-network base setting.
+- **Next free prefix sizes**: any prefix length, chosen per request, with the defaults in
+  rule 4.
+- **Prefix planning**: reuses carve (rule 4).
+
 ## Open decisions
 
-- **Suggestion strategies.** Proposed: sequential and random as above. Alternatives to rule on:
-  a "sparse" strategy (spread addresses across the network) or per-range strategies.
-- **Next free prefix sizes.** Proposed: any prefix length, chosen per request, with the
-  defaults above. The alternative is a fixed menu (/56, /60, /64).
 - **Temporary-address classification.** The evidence rule in rule 5 is a heuristic. If it
   misjudges in practice, the fallback is to collapse nothing and only sort stable addresses
   first.

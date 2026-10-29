@@ -5,6 +5,7 @@ import { ADDRESS_TYPE, buildVirtualSubnetIpRow, enrichIpViewRows } from './ip-vi
 import { ALLOCATION_STATE } from './ip-lifecycle.js';
 import * as Range from './range.js';
 import { isAddressPoolScope } from './dhcp-scope.js';
+import { dhcpPoolUse } from './dhcp-pool-use.js';
 
 // The system ranges an address can fall in. A SLAAC or stateless DHCPv6
 // scope's range is the prefix shown for display, not a pool: an address in
@@ -182,6 +183,47 @@ export function summarizeCanonicalSubnetIps(db, subnet) {
     if (row.address_type === ADDRESS_TYPE.ROGUE) rogue.add(row.ip_address);
   }
 
+  // Each address once per state it holds; one held in two states on two
+  // interfaces counts under both rather than under a picked winner.
+  const byState = Object.fromEntries(
+    db
+      .prepare(
+        `SELECT allocation_state AS state, COUNT(DISTINCT ip_address) AS count
+           FROM ip_addresses WHERE subnet_id = ? AND allocation_state <> ?
+          GROUP BY allocation_state`,
+      )
+      .all(subnet.id, ALLOCATION_STATE.UNASSIGNED)
+      .map((row) => [row.state, row.count]),
+  );
+  for (const row of virtualRows) {
+    if (row.allocation_state !== ALLOCATION_STATE.UNASSIGNED)
+      byState[row.allocation_state] = (byState[row.allocation_state] || 0) + 1;
+  }
+  // Seen: no claim on any interface, but online or rogue.
+  const unclaimedOnline = db
+    .prepare(
+      `SELECT ip_address FROM ip_addresses WHERE subnet_id = ? GROUP BY ip_address
+        HAVING MAX(allocation_state <> ?) = 0 AND MAX(is_online = 1) = 1`,
+    )
+    .all(subnet.id, ALLOCATION_STATE.UNASSIGNED)
+    .map((row) => row.ip_address);
+  const claimed = new Set(
+    db
+      .prepare(
+        `SELECT DISTINCT ip_address FROM ip_addresses WHERE subnet_id = ? AND allocation_state <> ?`,
+      )
+      .all(subnet.id, ALLOCATION_STATE.UNASSIGNED)
+      .map((row) => row.ip_address),
+  );
+  const seen = new Set(unclaimedOnline);
+  for (const ip of rogue) if (!claimed.has(ip)) seen.add(ip);
+  for (const row of virtualRows) {
+    if (row.allocation_state === ALLOCATION_STATE.UNASSIGNED && row.is_online)
+      seen.add(row.ip_address);
+  }
+  byState.seen = seen.size;
+  const pool = dhcpPoolUse(db, subnet.id).get(subnet.id);
+
   const knownCount = counts.known + virtualRows.length;
   const assignedCount =
     counts.assigned +
@@ -194,5 +236,8 @@ export function summarizeCanonicalSubnetIps(db, subnet) {
     unassigned_count: totalAddresses == null ? null : totalAddresses - assignedCount,
     online_count: counts.online + virtualRows.filter((row) => Boolean(row.is_online)).length,
     rogue_count: rogue.size,
+    by_state: byState,
+    pool_size: pool?.pool_size ?? null,
+    pool_in_use: pool?.pool_in_use ?? null,
   };
 }

@@ -126,8 +126,8 @@ describe('workspace P1 regression contracts', () => {
 
     const rows = wrapper.findAll('[data-track="workspace-network-select"]');
     expect(rows).toHaveLength(2);
-    expect(rows[0].attributes()).toHaveProperty('disabled');
-    expect(rows[0].attributes('aria-label')).toContain('subdivided container');
+    expect(rows[0].attributes('aria-disabled')).toBe('true');
+    expect(rows[0].attributes('aria-label')).toContain('container');
     expect(rows[1].find('mark').text()).toBe('0.0/25');
     await rows[1].trigger('click');
     expect(wrapper.emitted('select-unallocated-network')?.[0]?.[0].id).toBe(11);
@@ -227,7 +227,7 @@ describe('workspace P1 regression contracts', () => {
     expect(wrapper.emitted('select-network')?.[0]?.[0].id).toBe(6);
   });
 
-  it('opens the menu of an unallocated network from the tree, not of a container', async () => {
+  it('opens the menu of an unallocated network or a container from the tree', async () => {
     const wrapper = mount(ResourceExplorer, {
       props: {
         contextKind: 'unallocated',
@@ -251,12 +251,16 @@ describe('workspace P1 regression contracts', () => {
     });
     const [container, leaf] = wrapper.findAll('[data-track="workspace-network-select"]');
     expect(leaf.classes()).toContain('checked');
+    // A container's menu plans in it (Allocate next free prefix); it does
+    // not pick it.
     await container.trigger('contextmenu');
-    expect(wrapper.emitted('network-menu')).toBeUndefined();
+    expect(wrapper.emitted('network-menu')?.[0]?.[0].id).toBe(10);
+    await container.trigger('click');
+    expect(wrapper.emitted('select-unallocated-network')).toBeUndefined();
     await leaf.trigger('contextmenu');
-    expect(wrapper.emitted('network-menu')?.[0]?.[0].id).toBe(11);
+    expect(wrapper.emitted('network-menu')?.[1]?.[0].id).toBe(11);
     await leaf.trigger('keydown', { key: 'F10', shiftKey: true });
-    expect(wrapper.emitted('network-menu')).toHaveLength(2);
+    expect(wrapper.emitted('network-menu')).toHaveLength(3);
     await leaf.trigger('click', { ctrlKey: true });
     expect(wrapper.emitted('toggle-network')).toEqual([['network:11']]);
   });

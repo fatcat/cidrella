@@ -168,6 +168,17 @@ An IPv4-mapped address (`::ffff:10.0.0.1`) is the IPv4 address it maps, so
 overlap `::ffff:0:0/96` (`validateNetworkBounds` refuses one): its addresses
 and children would read back as IPv4.
 
+A suggested address (`GET /api/subnets/:id/suggest-address`,
+`models/address-suggest.js`, both families) is advisory. It is an address with
+no stored row that claims it or saw a host there (an IPv4 network's empty
+placeholder row is neither), outside every DHCP pool, not a topology address or the gateway,
+and on IPv6 not an EUI-64 interface ID (`xxxx:xxff:fexx:xxxx`), so it never
+collides with a SLAAC host; the winner is confirmed by reading it through the
+read model, which must show it `available`. Nothing is held: the write that
+uses it goes through the lifecycle service like any other, which refuses it if
+a claim landed in between. A suggestion is not an allocation and adds no
+precedence.
+
 Known limitation: anomaly detection identifies a client by its DHCPv4 lease
 MAC, falling back to its address (`resolveIdentity` in `models/anomaly.js`,
 `resolve_device_key` in `server/anomaly/storage.py`). A DHCPv6 lease carries a

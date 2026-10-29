@@ -7,7 +7,13 @@ import {
   formatNumber,
   isOnlineFlag,
 } from '../utils/format.js';
-import { addressToBig, networksOverlap, parseAddressQuery, sortKey } from '../utils/ip.js';
+import {
+  addressToBig,
+  networksOverlap,
+  parseAddressQuery,
+  parseNetwork,
+  sortKey,
+} from '../utils/ip.js';
 import { leaseSeconds } from '@shared/lease-time.js';
 import { allocationSourceLabel, recordSourceLabel } from '../utils/ipTableDisplay.js';
 import { zoneFileName, zoneFileValue } from '../utils/dnsZoneFile.js';
@@ -54,11 +60,91 @@ export function formatTimestamp(value) {
 // Percent of a countable network in use. Null when the server sends no total,
 // which it does for a prefix larger than a JavaScript number holds (an IPv6 /64
 // and wider); a small IPv6 prefix such as a /120 has a total like any IPv4 one.
+// How full a network is, as a whole percent, or null when that means nothing.
+// An IPv4 network counts its used addresses; an IPv6 one, whose address count
+// is no measure, counts its DHCP pool in use (docs/IPV6-HANDLING.md, rule 3)
+// and has no figure without a pool.
 export function networkUtilization(network) {
   const total = network.total_addresses == null ? null : Number(network.total_addresses);
-  if (!Number.isFinite(total)) return null;
-  const used = Number(network.used_count) || 0;
-  return total ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  if (Number.isFinite(total)) {
+    const used = Number(network.used_count) || 0;
+    return total ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  }
+  if (network.pool_size == null) return null;
+  const size = BigInt(network.pool_size);
+  if (size === 0n) return null;
+  const inUse = BigInt(network.pool_in_use || 0);
+  return Math.min(100, Number((inUse * 100n + size / 2n) / size));
+}
+
+// The allocated leaves under a network, and the unallocated leaves (the free
+// space a carve leaves behind), in address order.
+function collectLeaves(node, output = { allocated: [], free: [] }) {
+  const children = node.children || [];
+  if (node.status === 'allocated') output.allocated.push(node);
+  else if (!children.length) output.free.push(node);
+  else for (const child of children) collectLeaves(child, output);
+  return output;
+}
+
+/**
+ * How much of a container its allocated networks hold (docs/IPV6-HANDLING.md,
+ * rule 3): `percent` of its addresses, and `byPrefix`, how many allocated
+ * networks of each prefix length, shortest first. Sizes are BigInt, so a /32
+ * of IPv6 sums exactly.
+ */
+export function prefixCoverage(node) {
+  const size = parseNetwork(node.cidr).sizeBig;
+  const counts = new Map();
+  let allocated = 0n;
+  for (const leaf of collectLeaves(node).allocated) {
+    const parsed = parseNetwork(leaf.cidr);
+    allocated += parsed.sizeBig;
+    counts.set(parsed.prefix, (counts.get(parsed.prefix) || 0) + 1);
+  }
+  return {
+    allocated,
+    size,
+    percent: Number((allocated * 1000000n) / size) / 10000,
+    byPrefix: [...counts].sort((a, b) => a[0] - b[0]).map(([prefix, count]) => ({ prefix, count })),
+  };
+}
+
+/** A coverage percent for a label: '0%', '<0.01%', '0.42%', '8.3%', '62%'. */
+export function formatCoveragePercent(percent) {
+  if (percent === 0) return '0%';
+  if (percent < 0.01) return '<0.01%';
+  if (percent < 1) return `${percent.toFixed(2)}%`;
+  if (percent < 10) return `${percent.toFixed(1)}%`;
+  return `${Math.floor(percent)}%`;
+}
+
+/** The allocated networks of a coverage by prefix: '2 /56, 12 /64'. */
+export function formatCoverageCounts(coverage) {
+  if (!coverage.byPrefix.length) return 'No allocated networks';
+  return coverage.byPrefix.map(({ prefix, count }) => `${count} /${prefix}`).join(', ');
+}
+
+/**
+ * The lowest free /prefix inside a network (docs/IPV6-HANDLING.md, rule 4):
+ * the lowest unallocated leaf no smaller than it, whose own address starts
+ * one, aligned. `exact` when the leaf is that size already, so it is allocated
+ * as it stands; otherwise the /prefix is carved from it. Null when nothing
+ * fits or the prefix is not inside the network.
+ */
+export function nextFreePrefix(node, prefix) {
+  const parent = parseNetwork(node.cidr);
+  if (!Number.isInteger(prefix) || prefix < parent.prefix || prefix > parent.bits) return null;
+  const leaf = collectLeaves(node)
+    .free.map((entry) => ({ entry, parsed: parseNetwork(entry.cidr) }))
+    .filter(({ parsed }) => parsed.prefix <= prefix)
+    .sort((a, b) => (a.parsed.networkBig < b.parsed.networkBig ? -1 : 1))[0];
+  if (!leaf) return null;
+  return {
+    leaf: leaf.entry,
+    cidr: `${leaf.parsed.network}/${prefix}`,
+    exact: leaf.parsed.prefix === prefix,
+  };
 }
 
 /** Addresses from startIp to endIp inclusive, as a BigInt; null when unreadable. */

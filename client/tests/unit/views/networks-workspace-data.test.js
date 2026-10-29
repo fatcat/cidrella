@@ -17,7 +17,12 @@ import {
   networkUtilization,
   compareCellValues,
   mapRangeRows,
+  prefixCoverage,
+  formatCoveragePercent,
+  formatCoverageCounts,
+  nextFreePrefix,
 } from '../../../src/views/networks-workspace-data.js';
+import { byStateLine } from '../../../src/utils/ipLifecycleDisplay.js';
 
 describe('networks workspace data adapter', () => {
   it('renders server-owned IP status and type without reconstructing allocation precedence', () => {
@@ -471,5 +476,120 @@ describe('IPv6 in the workspace aggregate tables', () => {
       '10.0.0.0/25',
     ]);
     expect(['Lab 10', 'Lab 9'].sort(compareCellValues)).toEqual(['Lab 9', 'Lab 10']);
+  });
+});
+
+// docs/IPV6-HANDLING.md, rules 3 and 4: fullness in prefixes and the next
+// free one, over the tree GET /subnets returns.
+const net = (cidr, status, children = []) => ({ cidr, status, children });
+// A /48 carved into an allocated /64, its free remainder (the /64s and
+// /63 ... /49 a carve leaves), and an allocated /56 further up.
+const V6_CONTAINER = net('fd00:aa::/48', 'unallocated', [
+  net('fd00:aa::/56', 'unallocated', [
+    net('fd00:aa::/64', 'allocated'),
+    net('fd00:aa:0:1::/64', 'unallocated'),
+    net('fd00:aa:0:2::/63', 'unallocated'),
+    net('fd00:aa:0:4::/62', 'unallocated'),
+  ]),
+  net('fd00:aa:0:100::/56', 'allocated'),
+  net('fd00:aa:0:200::/55', 'unallocated'),
+]);
+const V4_CONTAINER = net('10.80.0.0/16', 'unallocated', [
+  net('10.80.0.0/24', 'allocated'),
+  net('10.80.1.0/24', 'allocated'),
+  net('10.80.2.0/23', 'unallocated'),
+  net('10.80.4.0/22', 'unallocated'),
+]);
+
+describe('prefix coverage', () => {
+  it('sums the allocated networks of an IPv6 container exactly, by prefix', () => {
+    const coverage = prefixCoverage(V6_CONTAINER);
+    expect(coverage.allocated).toBe((1n << 64n) + (1n << 72n));
+    expect(coverage.byPrefix).toEqual([
+      { prefix: 56, count: 1 },
+      { prefix: 64, count: 1 },
+    ]);
+    expect(formatCoveragePercent(coverage.percent)).toBe('0.39%');
+    expect(formatCoverageCounts(coverage)).toBe('1 /56, 1 /64');
+  });
+
+  it('does the same for an IPv4 container', () => {
+    const coverage = prefixCoverage(V4_CONTAINER);
+    expect(coverage.percent).toBeCloseTo(0.78125, 4);
+    expect(formatCoverageCounts(coverage)).toBe('2 /24');
+    expect(formatCoverageCounts(prefixCoverage(net('10.81.0.0/16', 'unallocated')))).toBe(
+      'No allocated networks',
+    );
+  });
+
+  it('formats small and large percents', () => {
+    expect(formatCoveragePercent(0)).toBe('0%');
+    expect(formatCoveragePercent(0.0015)).toBe('<0.01%');
+    expect(formatCoveragePercent(8.34)).toBe('8.3%');
+    expect(formatCoveragePercent(62.9)).toBe('62%');
+  });
+});
+
+describe('next free prefix', () => {
+  it('IPv6: the lowest free /64, as it stands, and a /56 carved from a /55', () => {
+    expect(nextFreePrefix(V6_CONTAINER, 64)).toMatchObject({
+      cidr: 'fd00:aa:0:1::/64',
+      exact: true,
+    });
+    expect(nextFreePrefix(V6_CONTAINER, 63)).toMatchObject({
+      cidr: 'fd00:aa:0:2::/63',
+      exact: true,
+    });
+    const wide = nextFreePrefix(V6_CONTAINER, 56);
+    expect(wide).toMatchObject({ cidr: 'fd00:aa:0:200::/56', exact: false });
+    expect(wide.leaf.cidr).toBe('fd00:aa:0:200::/55');
+  });
+
+  it('IPv4: carves a /24 from the lowest free block, and finds nothing too big', () => {
+    expect(nextFreePrefix(V4_CONTAINER, 24)).toMatchObject({ cidr: '10.80.2.0/24', exact: false });
+    expect(nextFreePrefix(V4_CONTAINER, 22)).toMatchObject({ cidr: '10.80.4.0/22', exact: true });
+    expect(nextFreePrefix(V4_CONTAINER, 21)).toBeNull();
+  });
+
+  it('refuses a prefix outside the parent', () => {
+    expect(nextFreePrefix(V4_CONTAINER, 15)).toBeNull();
+    expect(nextFreePrefix(V4_CONTAINER, 33)).toBeNull();
+    expect(nextFreePrefix(V6_CONTAINER, 129)).toBeNull();
+  });
+});
+
+describe('utilization from pool use', () => {
+  it('an IPv6 leaf with a pool is as full as its pool', () => {
+    expect(
+      networkUtilization({ total_addresses: null, pool_size: '4096', pool_in_use: 1024 }),
+    ).toBe(25);
+    expect(
+      networkUtilization({
+        total_addresses: null,
+        pool_size: '18446744073709486080',
+        pool_in_use: 9,
+      }),
+    ).toBe(0);
+  });
+
+  it('an IPv6 leaf without a pool has no figure; IPv4 keeps its address count', () => {
+    expect(networkUtilization({ total_addresses: null, pool_size: null })).toBeNull();
+    expect(
+      networkUtilization({
+        total_addresses: 256,
+        used_count: 64,
+        pool_size: '100',
+        pool_in_use: 99,
+      }),
+    ).toBe(25);
+  });
+});
+
+describe('byStateLine', () => {
+  it('names what is known, by kind, in the address-type wording', () => {
+    expect(byStateLine({ slaac: 12, static_dns: 3, seen: 1, reserved: 0 })).toBe(
+      '3 static DNS · 12 SLAAC · 1 seen',
+    );
+    expect(byStateLine({})).toBe('nothing stored yet');
   });
 });

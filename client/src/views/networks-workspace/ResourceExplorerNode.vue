@@ -6,13 +6,16 @@
         active: node.allocatable && selectedNetworkId === node.id,
         checked: node.allocatable && selectedRows.includes(`network:${node.id}`),
       }"
-      :disabled="!node.allocatable"
-      :aria-label="node.allocatable ? `Select ${node.cidr}` : `${node.cidr} subdivided container`"
+      :aria-disabled="node.allocatable ? undefined : 'true'"
+      :aria-label="
+        node.allocatable ? `Select ${node.cidr}` : `${node.cidr} container, ${coverageText}`
+      "
+      :title="node.coverage ? formatCoverageCounts(node.coverage) : undefined"
       data-track="workspace-network-select"
       :data-network-id="node.id"
       @mousedown="$event.shiftKey && $event.preventDefault()"
       @click="node.allocatable && emit('pick', node, $event)"
-      @contextmenu.prevent="node.allocatable && emit('menu', node, $event.currentTarget, $event)"
+      @contextmenu.prevent="emit('menu', node, $event.currentTarget, $event)"
       @keydown="menuKey"
     >
       <StatusDot
@@ -33,7 +36,7 @@
             <mark v-if="part.match">{{ part.text }}</mark
             ><template v-else>{{ part.text }}</template>
           </template>
-          <template v-if="!node.allocatable"> · subdivided</template>
+          <template v-if="!node.allocatable"> · {{ coverageText }}</template>
         </small>
       </span>
       <i v-if="node.children?.length" class="pi pi-chevron-down" />
@@ -55,7 +58,12 @@
 
 <script setup>
 import StatusDot from '../../components/StatusDot.vue';
-import { networkStateKind } from '../networks-workspace-data.js';
+import { computed } from 'vue';
+import {
+  formatCoverageCounts,
+  formatCoveragePercent,
+  networkStateKind,
+} from '../networks-workspace-data.js';
 
 defineOptions({ name: 'ResourceExplorerNode' });
 const props = defineProps({
@@ -68,8 +76,15 @@ const props = defineProps({
 // menu: a right-click or the menu key, as on the explorer's other rows.
 const emit = defineEmits(['pick', 'menu']);
 
+// A container reads how much of it is allocated (docs/IPV6-HANDLING.md, rule 3).
+const coverageText = computed(() =>
+  props.node.coverage
+    ? `${formatCoveragePercent(props.node.coverage.percent)} allocated`
+    : 'subdivided',
+);
+
+// A container's menu offers planning in it (Allocate next free prefix).
 function menuKey(event) {
-  if (!props.node.allocatable) return;
   if (event.key === 'ContextMenu' || (event.shiftKey && event.key === 'F10')) {
     event.preventDefault();
     emit('menu', props.node, event.currentTarget);

@@ -24,14 +24,14 @@ report at a time.
 
 **Actions.** Everything a person can click or type there, in `driver.js`, as
 short labels (`network 13 ctrl`, `pick-zone 202`, `search "lab"`,
-`filter record_type 0`, `page next`, `sort value`, `reload`).
+`filter record_type 0`, `page next`, `sort value`, `container-menu 30`, `reload`).
 `candidates()` lists only what the screen currently offers.
 
 **Data.** `fake-estate.js` is a small estate built to hit the awkward cases:
 
 - two folders and Ungrouped;
 - a /23 with two reverse zones;
-- a divided unallocated /24;
+- a divided unallocated /24, and an IPv6 /48 with a /64 carved from it;
 - a leftover disabled reverse zone and an enabled standalone one;
 - a network with only a reverse zone;
 - a generated record, a disabled record and a disabled scope;
@@ -47,6 +47,8 @@ Checked after every step (`violations` in `harness.js`):
 1. The header names a place, and the explorer marks that place and nothing
    else (unless a search hides its row).
 2. Each place has its tabs, and one of them is open.
+   A container in the unallocated tree reads its allocated share of its
+   whole subtree, and its menu offers Allocate next free prefix alone.
 3. The DNS view always has exactly one choice when there are zones to choose
    from, and the chosen zone has a lit card.
 4. The zone and scope cards are the place's zones and scopes that match the

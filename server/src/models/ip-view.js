@@ -34,16 +34,18 @@ export function leaseState(expiresAt) {
   return isLeaseActive(expiresAt) ? LEASE_STATE.ACTIVE : LEASE_STATE.EXPIRED;
 }
 
+/** Whether a functional range of this type hands out addresses: a DHCP pool. */
+export function isDynamicPoolRange(rangeTypeName) {
+  return rangeTypeName === 'DHCP Scope' || rangeTypeName === 'DHCP Pool';
+}
+
 export function computeIpView(row) {
   const isOnline = truthy(row.is_online);
   const isRogue = truthy(row.is_rogue);
   const allocationState = row.allocation_state || ALLOCATION_STATE.UNASSIGNED;
 
   let addressType = null;
-  const inDynamicPool =
-    truthy(row.in_dynamic_pool) ||
-    row.range_type_name === 'DHCP Scope' ||
-    row.range_type_name === 'DHCP Pool';
+  const inDynamicPool = truthy(row.in_dynamic_pool) || isDynamicPoolRange(row.range_type_name);
   let displayStatus = displayStatusFor({ allocationState, inDynamicPool });
   let statusSeverity = 'secondary';
   let tooltip = null;

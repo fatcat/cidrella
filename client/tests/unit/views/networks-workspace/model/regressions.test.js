@@ -36,6 +36,12 @@ describe('Networks workspace regressions', () => {
   it('an IPv6 network lists a searched address whatever Show available says', () =>
     walk(['network 11', 'available', 'network 16', 'search "fd00:5::abcd"']));
 
+  // Not a bug found, a guard on rules 3 and 4: each container reads its
+  // allocated share (invariant 2c), both families, and its menu offers
+  // Allocate next free prefix and nothing else.
+  it('a container reads its coverage and offers next free prefix', () =>
+    walk(['unallocated', 'container-menu 30', 'container-menu 20']));
+
   it('a network with only a reverse zone opens the DNS view on it', () =>
     walk(['tab dns', 'network 14']));
 

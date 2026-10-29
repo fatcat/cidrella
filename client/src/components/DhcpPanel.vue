@@ -369,11 +369,16 @@
         </template>
         <div class="field">
           <label>IP Address *</label>
-          <InputText
-            v-model="reservationForm.ip_address"
-            class="w-full"
-            :placeholder="reservationFamily === 6 ? 'fd00:1234::100' : '192.168.1.100'"
-          />
+          <div class="input-with-action">
+            <InputText
+              v-model="reservationForm.ip_address"
+              :placeholder="reservationFamily === 6 ? 'fd00:1234::100' : '192.168.1.100'"
+            />
+            <SuggestAddressButton
+              :subnet-id="reservationForm.subnet_id"
+              @suggested="reservationForm.ip_address = $event"
+            />
+          </div>
         </div>
         <div class="field">
           <label>Hostname</label>
@@ -500,6 +505,7 @@ import {
 } from '../utils/ipTableColumns.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import ScopeDialog from './ScopeDialog.vue';
+import SuggestAddressButton from './SuggestAddressButton.vue';
 import IpDetailsDrawer from './IpDetailsDrawer.vue';
 import { useIpDetailsDrawer } from '../composables/useIpDetailsDrawer.js';
 import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';

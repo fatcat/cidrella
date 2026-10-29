@@ -12,6 +12,23 @@ was suggested.
 
 ---
 
+## Found building IPv6 handling phase 2 (2026-10-28)
+
+#### CALC-COUNT-01: the calculator reads a /64 as "more than 2^53" addresses
+
+**low**, confirmed in the browser. `client/src/views/SubnetCalculator.vue` (`formatCount`),
+fed by `parseNetwork` in `server/src/utils/cidr.js` (`size` and `usable` through `safeNumber`).
+
+- **What happens:** Split `fd00:aa::/48` into /64s: the parent's Total IPs and Usable, and every
+  child's Usable IPs, read "more than 2^53". A /64 holds exactly 2^64.
+- **Why:** `parseNetwork` returns `size` and `usable` as null past `Number.MAX_SAFE_INTEGER`, and
+  keeps the exact BigInt only in the non-enumerable `sizeBig`/`usableBig`, which JSON drops. The
+  calculator has nothing exact to show, so it says what it knows.
+- **Fix:** Have `/subnets/calculate` add the exact counts as decimal strings (`size_text`,
+  `usable_text` or similar, on the parent and each child), and render them with
+  `formatAddressCount` from `views/networks-workspace-data.js`, which already writes a power of
+  two as `2^64`. Test with a /48 into /64s and an IPv4 /24.
+
 ## Found soaking 0.6.2-pre.2 on prod (2026-10-27)
 
 #### BACKUP-STALL-01: DNS stops answering while a backup runs

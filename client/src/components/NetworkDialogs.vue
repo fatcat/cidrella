@@ -2192,6 +2192,23 @@ function acceptStalePlan(body) {
   return true;
 }
 
+// What follows a divide that went through, by either path. A carve opened
+// from Allocate next free prefix continues to configuring what it carved.
+function finishDivide(resp, mode, nodeId) {
+  toast.add({
+    severity: 'success',
+    summary: mode === 'equal' ? 'Network divided' : 'Network created',
+    life: 3000,
+  });
+  surfacePoolAdjustments(resp);
+  surfaceLossyCleanup(resp);
+  emit('network-divided', nodeId);
+  const target = configureAfterCarve;
+  configureAfterCarve = null;
+  const carved = target && (resp?.children || []).find((child) => child.cidr === target);
+  if (carved) void openConfigure({ key: `subnet-${carved.id}`, data: carved }, carved.folder_id);
+}
+
 // Shared handler for both divide modes, intercepts the lossy-IP 409 and
 // opens the confirm dialog instead of showing an opaque toast.
 async function runDivide(nodeId, mode, params) {
@@ -2200,14 +2217,7 @@ async function runDivide(nodeId, mode, params) {
   try {
     const resp = await store.divideSubnet(nodeId, params);
     showDivide.value = false;
-    toast.add({
-      severity: 'success',
-      summary: mode === 'equal' ? 'Network divided' : 'Network created',
-      life: 3000,
-    });
-    surfacePoolAdjustments(resp);
-    surfaceLossyCleanup(resp);
-    emit('network-divided', nodeId);
+    finishDivide(resp, mode, nodeId);
   } catch (err) {
     const body = err?.response?.data;
     if (err?.response?.status === 409 && acceptStalePlan(body)) {
@@ -2247,14 +2257,7 @@ async function confirmLossyDivide() {
     showDivide.value = false;
     pendingLossyDivide.value = null;
     lossyIps.value = [];
-    toast.add({
-      severity: 'success',
-      summary: p.mode === 'equal' ? 'Network divided' : 'Network created',
-      life: 3000,
-    });
-    surfacePoolAdjustments(resp);
-    surfaceLossyCleanup(resp);
-    emit('network-divided', p.nodeId);
+    finishDivide(resp, p.mode, p.nodeId);
   } catch (err) {
     if (err?.response?.status === 409 && acceptStalePlan(err.response.data)) {
       /* reviewed above */
@@ -3042,13 +3045,23 @@ async function applyNetworkDefaults() {
   }
 }
 
-function openDivide(node) {
+// The block a carve should go on to configure once it is made, or null.
+let configureAfterCarve = null;
+
+// `cidr` opens it in carve mode on that block (Allocate next free prefix);
+// `configure` then opens the allocate form on the carved network.
+function openDivide(node, { cidr = null, configure = false } = {}) {
   divideNodeOverride.value = node || null;
-  divideMode.value = 'equal';
+  configureAfterCarve = cidr && configure ? cidr : null;
+  divideMode.value = cidr ? 'carve' : 'equal';
   divideSteps.value = 1;
   divideCount.value = 2;
   const d = divideNode.value?.data;
-  if (d) {
+  if (cidr) {
+    const [address, prefix] = cidr.split('/');
+    carveNetwork.value = address;
+    carvePrefix.value = Number(prefix);
+  } else if (d) {
     carveNetwork.value = d.network_address || d.cidr.split('/')[0];
     carvePrefix.value = d.prefix_length + 1;
   } else {
@@ -3365,13 +3378,21 @@ defineExpose({
 }
 .carve-network-input {
   flex: 1;
+  min-width: 0;
 }
 .carve-slash {
   font-size: 1.1rem;
   font-weight: 600;
 }
 .carve-prefix-input {
-  width: 4rem;
+  width: 5rem;
+  flex: none;
+}
+/* The vendor input keeps its intrinsic width inside the 5rem wrapper, which
+   pushed the carve row past the dialog's edge. */
+.carve-prefix-input :deep(input) {
+  width: 100%;
+  min-width: 0;
 }
 .mt-3 {
   margin-top: 0.75rem;

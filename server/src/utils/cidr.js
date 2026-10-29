@@ -288,16 +288,20 @@ export function splitNetwork(cidr, newPrefix, maxCount = 65536) {
   if (count > BigInt(maxCount)) {
     throw new Error(`Cannot divide into more than ${maxCount} networks`);
   }
-  const childSize = 1n << BigInt(parent.bits - newPrefix);
   const results = [];
-  for (let i = 0n; i < count; i++) {
-    results.push(
-      parseNetwork(
-        `${bigToAddress(parent.networkBig + i * childSize, parent.family)}/${newPrefix}`,
-      ),
-    );
-  }
+  for (let i = 0n; i < count; i++) results.push(childNetwork(parent, newPrefix, i));
   return results;
+}
+
+/**
+ * The child at `index` (BigInt) of a parsed network split into /newPrefix,
+ * without building the others: a page of a large split.
+ */
+export function childNetwork(parent, newPrefix, index) {
+  const childSize = 1n << BigInt(parent.bits - newPrefix);
+  return parseNetwork(
+    `${bigToAddress(parent.networkBig + index * childSize, parent.family)}/${newPrefix}`,
+  );
 }
 
 /**
