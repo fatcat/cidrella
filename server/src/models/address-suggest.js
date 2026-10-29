@@ -28,7 +28,11 @@ import {
 } from '../utils/ip.js';
 import { isDynamicPoolRange } from './ip-view.js';
 import * as Range from './range.js';
-import { getCanonicalSubnetIpRow, getSubnetIpReadContext } from './subnet-ip-read.js';
+import {
+  getCanonicalSubnetIpRow,
+  getSubnetIpReadContext,
+  rowHasFactsSql,
+} from './subnet-ip-read.js';
 
 export const SUGGEST_STRATEGIES = ['sequential', 'random'];
 const RANDOM_TRIES = 64;
@@ -39,12 +43,8 @@ const IPV6_SEQUENTIAL_OFFSET = 0x10n;
 // An EUI-64 interface ID fixes ff:fe in bits 24-39; the low 24 bits vary.
 const EUI64_LOW_BITS = 0xffffffn;
 
-// A stored row that takes its address out of the running: a claim, or any
-// sign a host was there. An IPv4 network keeps an empty row per address, and
-// that alone is not one.
-const TAKEN_ROW_SQL = `(allocation_state <> 'unassigned' OR is_online = 1 OR is_rogue = 1
-  OR first_seen_at IS NOT NULL OR last_seen_at IS NOT NULL
-  OR mac_address IS NOT NULL OR hostname IS NOT NULL)`;
+// A stored row with real facts takes its address out of the running.
+const TAKEN_ROW_SQL = rowHasFactsSql();
 
 function refusal(message) {
   return Object.assign(new Error(message), { status: 400 });

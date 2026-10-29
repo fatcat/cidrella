@@ -179,6 +179,30 @@ uses it goes through the lifecycle service like any other, which refuses it if
 a claim landed in between. A suggestion is not an allocation and adds no
 precedence.
 
+Host association (`utils/ip-hosts.js` `groupHosts`, `models/ip-hosts.js`,
+`GET /api/subnets/:id/hosts`, both families) groups a network's address rows
+into the devices holding them, so an IPv6 network reads as hosts rather than
+as every address each one holds. It is a projection: it never changes
+`allocation_state`, ownership, hostname selection or PTRs, and every address row
+stays its own identity (governance plan rule 17). Two rows are one host when
+they share any identifier: the observed MAC (`mac_address`, else
+`last_seen_mac`), the MAC inside a DUID-LL or DUID-LLT (`macFromDuid`), the MAC
+an EUI-64 interface ID encodes (`macFromEui64`), the DUID, or a DUID and MAC
+pair a DHCP lease or reservation of the network holds. The host key is the MAC
+(observed first, then derived), else the DUID, else the address itself (with
+its interface for a link-local one), a host of one. Only stored rows with real
+facts count (`rowHasFactsSql` in `models/subnet-ip-read.js`); the network
+address is no device, the gateway is. Each address gets a kind: link-local,
+reservation, static, DHCP and EUI-64 are stable; an address the lifecycle
+service recorded as `slaac_privacy` is temporary, and so is a SLAAC address
+first seen under a day ago when the host has an established SLAAC address (seen
+a day or more, or EUI-64) in the same /64, a heuristic since nothing marks an
+RFC 8981 address; anything else is shown as it is. A host's display name is the
+stored hostname of its first stable address, else its most recently seen named
+address; every distinct name is listed, and each address keeps its own. A dual
+stack host's other family is found by its MAC: stored rows in any network, and
+that family's active leases and enabled reservations.
+
 Known limitation: anomaly detection identifies a client by its DHCPv4 lease
 MAC, falling back to its address (`resolveIdentity` in `models/anomaly.js`,
 `resolve_device_key` in `server/anomaly/storage.py`). A DHCPv6 lease carries a

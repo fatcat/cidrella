@@ -312,7 +312,15 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   summary's `by_state` in the address-type wording), server `dhcpPoolUse` in
   `models/dhcp-pool-use.js` (`pool_size` and `pool_in_use` of a network's address pools, on the
   tree and the summary), `childNetwork` in `utils/cidr.js` (one child of a split by index, for
-  paging), `isEui64InterfaceId` in `utils/address.js`, `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
+  paging), `isEui64InterfaceId` and `macFromEui64` in `utils/address.js`, `groupHosts` and
+  `hostMatches` in `utils/ip-hosts.js` (a network's addresses grouped into devices by MAC and
+  DUID, a projection; the model test's fake estate uses it too) with `subnetHosts` in
+  `models/ip-hosts.js` (`GET /subnets/:id/hosts`) and `rowHasFactsSql` in
+  `models/subnet-ip-read.js` (a stored row with real facts, not an IPv4 placeholder), client
+  `networks-workspace/HostTable.vue` (the Hosts view) and `workspace-table.css` (the table
+  chrome it shares with WorkspaceTable), `dialogs/NextPrefixDialog.vue` (Allocate next free
+  prefix), the optional `track` field on a `workspace-actions.js` entry (its button's
+  `data-track`), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
   record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
   this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6

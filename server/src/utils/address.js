@@ -253,6 +253,20 @@ export function isEui64InterfaceId(str) {
 }
 
 /**
+ * The MAC a modified EUI-64 interface ID was built from: its outer six bytes
+ * with the universal/local bit flipped back. Null unless the address is IPv6
+ * with an EUI-64 interface ID. A random interface ID holds ff:fe by chance
+ * about once in 65,536, so this is evidence, not proof.
+ */
+export function macFromEui64(str) {
+  if (!isEui64InterfaceId(str)) return null;
+  const id = parseIp(str).value & 0xffffffffffffffffn;
+  const bytes = id.toString(16).padStart(16, '0').match(/.{2}/g);
+  const first = (parseInt(bytes[0], 16) ^ 0x02).toString(16).padStart(2, '0');
+  return [first, bytes[1], bytes[2], bytes[5], bytes[6], bytes[7]].join(':');
+}
+
+/**
  * A fixed-width sort key, so ORDER BY on a TEXT column sorts addresses
  * numerically and keeps the two families apart.
  *

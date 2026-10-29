@@ -177,8 +177,10 @@ The first cut classifies by evidence it has:
 - Anything else: shown, not collapsed.
   The existing one-hour offline retirement still removes departed temporary addresses.
 
-**Scale.** Grouping runs in SQL over the network's rows (group by the derived key), paged by
-host, so a /64 with thousands of temporary addresses reads as tens of hosts.
+**Scale.** Grouping reads the network's rows with real facts in one query and groups them in
+the read model, paged by host, so a /64 with thousands of temporary addresses reads as tens of
+hosts. Deriving a key needs DUID parsing and the EUI-64 bit flip, so a SQL GROUP BY would call
+the same code per row; the cost follows the stored rows, never the network's size.
 
 **Follow-on, not in 0.6.3.** The host key is the device identity anomaly detection lacks for
 IPv6 (ARCHITECTURE.md, Known limitation). Keying anomaly identity on it is a separate change
@@ -245,7 +247,10 @@ The canonical IP model gate (AGENTS.md) applies to rules 2, 5 and 7:
    `prefixCoverage` and `nextFreePrefix` in `views/networks-workspace-data.js`,
    `NextPrefixDialog`, and paged `POST /subnets/calculate`; no migration.
 3. **Hosts**: rule 5. Contract text first, then the EUI-64 helper, the host key in the read
-   model, `GET /subnets/:id/hosts`, the Hosts view and the details panel.
+   model, `GET /subnets/:id/hosts`, the Hosts view and the details panel. Done 2026-10-29:
+   `macFromEui64` in `utils/address.js`, `groupHosts` in `utils/ip-hosts.js`,
+   `models/ip-hosts.js` and `GET /subnets/:id/hosts`, the Hosts / Addresses switch and
+   `HostTable`, and the details panel's Host section; no migration.
 
 Each phase: an IPv4 and an IPv6 test for every behavior (AGENTS.md, IPv4 and IPv6), the
 Networks workspace model test extended for the new controls

@@ -10,6 +10,7 @@
       />
     </label>
     <FilterMenu
+      v-if="!hostsShown"
       v-model="filters"
       :columns="filterColumns"
       :facets="facets"
@@ -18,7 +19,7 @@
       @open="emit('filter-open')"
     />
     <label
-      v-if="allowAvailable && (activeView === 'addresses' || activeView === 'dhcp')"
+      v-if="allowAvailable && !hostsShown && (activeView === 'addresses' || activeView === 'dhcp')"
       class="toolbar-switch available-switch"
     >
       <input v-model="showAvailable" type="checkbox" />
@@ -34,6 +35,24 @@
       <span /> Show domain names
     </label>
     <span class="toolbar-space" />
+    <div
+      v-if="activeView === 'addresses' && allowGrouping"
+      class="view-switcher grouping-switcher"
+      role="group"
+      aria-label="Show hosts or addresses"
+      data-track="workspace-address-grouping"
+    >
+      <button
+        v-for="option in GROUPINGS"
+        :key="option.value"
+        :class="{ active: grouping === option.value }"
+        :aria-pressed="grouping === option.value"
+        :data-grouping="option.value"
+        @click="emit('update:grouping', option.value)"
+      >
+        {{ option.label }}
+      </button>
+    </div>
     <div
       v-if="activeView === 'addresses' && allowGrid"
       class="view-switcher"
@@ -63,6 +82,7 @@
       </button>
     </div>
     <ColumnChooserButton
+      v-if="!hostsShown"
       :table-name="columnTableName"
       :all-columns="columnCatalog"
       :visible-columns="columns"
@@ -74,7 +94,7 @@
       <i class="pi pi-plus" /> {{ viewMeta.addLabel }}
     </button>
   </div>
-  <div v-if="filterChips.length" class="filter-chips" aria-label="Active filters">
+  <div v-if="filterChips.length && !hostsShown" class="filter-chips" aria-label="Active filters">
     <button
       v-for="chip in filterChips"
       :key="chip.key"
@@ -88,6 +108,7 @@
 </template>
 
 <script setup>
+import { computed } from 'vue';
 import ColumnChooserButton from '../../components/table/ColumnChooserButton.vue';
 import FilterMenu from '../../components/table/FilterMenu.vue';
 import { filterValueLabel } from './workspace-columns.js';
@@ -95,7 +116,11 @@ import { filterValueLabel } from './workspace-columns.js';
 // Search, filters, presentation switch, column chooser and filter chips. All
 // state is owned by NetworksWorkspace.vue. A checked selection is acted on from
 // its right-click menu; there is no bar for it here.
-defineProps({
+const props = defineProps({
+  // Hosts or addresses on a network's Addresses view (docs/IPV6-HANDLING.md
+  // rule 5). The Hosts view has no filters or columns to choose.
+  grouping: { type: String, default: 'addresses' },
+  allowGrouping: { type: Boolean, default: false },
   // An IPv6 network has no grid: its address space cannot be enumerated, so
   // the switcher is withheld and the table is the one presentation.
   allowGrid: { type: Boolean, default: true },
@@ -122,7 +147,15 @@ const emit = defineEmits([
   'clear-filters',
   'filter-open',
   'add',
+  'update:grouping',
 ]);
+const GROUPINGS = [
+  { value: 'hosts', label: 'Hosts' },
+  { value: 'addresses', label: 'Addresses' },
+];
+const hostsShown = computed(
+  () => props.activeView === 'addresses' && props.allowGrouping && props.grouping === 'hosts',
+);
 const tableQuery = defineModel('tableQuery', { type: String, default: '' });
 const filters = defineModel('filters', { type: Object, required: true });
 const showAvailable = defineModel('showAvailable', { type: Boolean, default: true });
@@ -275,6 +308,12 @@ button {
   background: var(--cid-surface-card);
   color: var(--preview-accent);
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+.grouping-switcher button {
+  width: auto;
+  padding: 0 0.55rem;
+  font-size: var(--workspace-font-small);
+  font-weight: 700;
 }
 .compact-grid-icon {
   font-size: 0.66rem;

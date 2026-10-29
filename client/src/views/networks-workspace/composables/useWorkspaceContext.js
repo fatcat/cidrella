@@ -13,6 +13,9 @@ export const WORKSPACE_DEFAULT_STATE = Object.freeze({
   scope: null,
   ip: null,
   presentation: 'table',
+  // Hosts or addresses on a network's Addresses view; null is the family's
+  // default (hosts on IPv6, addresses on IPv4).
+  grouping: null,
   q: '',
   tableQ: '',
   page: 1,
@@ -25,6 +28,7 @@ export const WORKSPACE_DEFAULT_STATE = Object.freeze({
 const CONTEXTS = new Set(['all', 'folder', 'network', 'unallocated']);
 const VIEWS = new Set(['networks', 'addresses', 'dns', 'dhcp', 'ranges']);
 const PRESENTATIONS = new Set(['table', 'grid', 'compact']);
+const GROUPINGS = new Set(['hosts', 'addresses']);
 
 // Column filters: { column: [value, ...] }, a value being a string, a
 // boolean, or null for "none". Anything else in a hand-edited link is dropped.
@@ -99,6 +103,7 @@ export function decodeWorkspaceQuery(query = {}) {
     scope: positiveInteger(query.scope),
     ip: typeof query.ip === 'string' && query.ip ? query.ip : null,
     presentation,
+    grouping: GROUPINGS.has(query.grouping) ? query.grouping : null,
     q: typeof query.q === 'string' ? query.q : '',
     tableQ: typeof query.tableQ === 'string' ? query.tableQ : '',
     page: positiveInteger(query.page) || 1,
@@ -127,6 +132,7 @@ export function encodeWorkspaceQuery(state) {
   if (positiveInteger(state.scope)) query.scope = String(state.scope);
   if (state.ip && state.network) query.ip = state.ip;
   if (state.presentation !== 'table') query.presentation = state.presentation;
+  if (GROUPINGS.has(state.grouping)) query.grouping = state.grouping;
   if (state.q) query.q = state.q;
   if (state.tableQ) query.tableQ = state.tableQ;
   if (state.page > 1) query.page = String(state.page);

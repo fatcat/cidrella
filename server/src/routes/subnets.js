@@ -59,6 +59,7 @@ import {
 } from '../models/subnet-ip-read.js';
 import { suggestAddress } from '../models/address-suggest.js';
 import { dhcpPoolUse } from '../models/dhcp-pool-use.js';
+import { subnetHosts } from '../models/ip-hosts.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
 import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
@@ -2935,6 +2936,62 @@ router.get(
     if (!result.ip_address)
       return res.status(404).json({ error: `No free address in ${result.bounds}` });
     res.json(result);
+  }),
+);
+
+const HOSTS_PAGE_SIZE = 50;
+const HOSTS_PAGE_SIZE_MAX = 512;
+
+// A positive whole number from the query string, the fallback when absent,
+// or null when it is anything else.
+function queryCount(value, fallback) {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'string' || !/^[1-9]\d{0,6}$/.test(value)) return null;
+  return Number(value);
+}
+
+// GET /api/subnets/:id/hosts: the network's addresses grouped into devices
+// (models/ip-hosts.js), paged by host. `address` returns the one host
+// holding that address. A projection: nothing is written.
+router.get(
+  '/:id/hosts',
+  requirePerm('subnets:read'),
+  asyncHandler((req, res) => {
+    const db = getDb();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
+    const page = queryCount(req.query.page, 1);
+    const pageSize = queryCount(req.query.page_size, HOSTS_PAGE_SIZE);
+    if (page === null || pageSize === null || pageSize > HOSTS_PAGE_SIZE_MAX) {
+      return res.status(400).json({
+        error: `page and page_size must be whole numbers, page_size at most ${HOSTS_PAGE_SIZE_MAX}`,
+      });
+    }
+    const { q, search, address: rawAddress } = req.query;
+    if ([q, search, rawAddress].some((value) => value !== undefined && typeof value !== 'string')) {
+      return res.status(400).json({ error: 'q, search and address must be single values' });
+    }
+    let address = null;
+    let interfaceId = null;
+    if (rawAddress !== undefined) {
+      const [bare, zone] = rawAddress.split('%');
+      address = subnetAddress(subnet, bare);
+      if (!address) {
+        return res.status(400).json({ error: `address must be an address in ${subnet.cidr}` });
+      }
+      interfaceId = zone || null;
+    }
+    res.json(
+      subnetHosts(db, subnet, {
+        page,
+        pageSize,
+        q: q || '',
+        search: search || '',
+        address,
+        interfaceId,
+      }),
+    );
   }),
 );
 

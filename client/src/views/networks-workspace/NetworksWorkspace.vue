@@ -105,7 +105,9 @@
             v-model:show-available="showAvailable"
             v-model:show-domain-names="showDomainNames"
             v-model:presentation="addressPresentation"
-            :allow-grid="!isV6Network"
+            :grouping="effectiveGrouping"
+            :allow-grid="!isV6Network && !hostsMode"
+            :allow-grouping="contextKind === 'network'"
             :allow-available="!isV6Network"
             :active-view="activeView"
             :context-kind="contextKind"
@@ -124,10 +126,17 @@
             @clear-filters="clearFilters"
             @filter-open="loadFilterFacets"
             @add="runViewAdd"
+            @update:grouping="setGrouping"
           />
 
+          <HostTable
+            v-if="hostsMode"
+            :hosts="hostRows"
+            :selected-address="selectedRowView === 'addresses' ? (selectedRow?.address ?? null) : null"
+            @open-address="openCanonicalAddress"
+          />
           <AddressGrid
-            v-if="activeView === 'addresses' && effectivePresentation !== 'table'"
+            v-else-if="activeView === 'addresses' && effectivePresentation !== 'table'"
             :cells="gridCells"
             :density="effectivePresentation === 'compact-grid' ? 'compact' : 'spacious'"
             :selected-rows="selectedRows"
@@ -444,6 +453,7 @@ import ApplyStatusBanner from './ApplyStatusBanner.vue';
 import ResourceExplorer from './ResourceExplorer.vue';
 import WorkspaceContextHeader from './WorkspaceContextHeader.vue';
 import WorkspaceDetailsHost from './WorkspaceDetailsHost.vue';
+import HostTable from './HostTable.vue';
 import WorkspaceTable from './WorkspaceTable.vue';
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
 import ConfirmDialog from '../../components/ConfirmDialog.vue';
@@ -558,8 +568,23 @@ const isV6Network = computed(
       selectedNetwork.value?.address_family ?? selectedNetwork.value?.raw?.address_family ?? 4,
     ) === 6,
 );
+// Hosts or addresses on a network's Addresses view (docs/IPV6-HANDLING.md
+// rule 5). Null follows the family: hosts on IPv6, where one device holds
+// several addresses, and addresses on IPv4.
+const addressGrouping = ref(null);
+const effectiveGrouping = computed(
+  () => addressGrouping.value ?? (isV6Network.value ? 'hosts' : 'addresses'),
+);
+const hostsMode = computed(
+  () =>
+    contextKind.value === 'network' &&
+    activeView.value === 'addresses' &&
+    effectiveGrouping.value === 'hosts',
+);
+const hostRows = ref([]);
+const hostTotal = ref(0);
 const effectivePresentation = computed(() =>
-  isV6Network.value ? 'table' : addressPresentation.value,
+  isV6Network.value || hostsMode.value ? 'table' : addressPresentation.value,
 );
 // The grid draws the whole network at once, up to a /20; the table keeps
 // its 32 to 512 rows a page. A /19 or larger pages the grid in /20 chunks.
@@ -1033,6 +1058,7 @@ function workspaceQueryState() {
         : null,
     presentation:
       addressPresentation.value === 'compact-grid' ? 'compact' : addressPresentation.value,
+    grouping: addressGrouping.value,
     q: resourceQuery.value,
     tableQ: tableQuery.value,
     page: currentPage.value,
@@ -1078,6 +1104,7 @@ function restoreContextFromRoute(availableNetworks) {
   sortOrder.value = state.order === 'desc' ? -1 : 1;
   addressPresentation.value =
     state.presentation === 'compact' ? 'compact-grid' : state.presentation;
+  addressGrouping.value = state.grouping;
   if (state.context === 'network') {
     const network = availableNetworks.find((item) => Number(item.id) === Number(state.network));
     if (network) {
@@ -1203,6 +1230,7 @@ const columns = computed(() => {
 });
 const serverPagedView = computed(() => ['addresses', 'dns', 'dhcp'].includes(activeView.value));
 const visibleResourceError = computed(() => {
+  if (hostsMode.value) return workspaceResources.resources.hosts.error;
   if (activeView.value === 'addresses') return workspaceResources.resources.addresses.error;
   if (activeView.value === 'dns') return workspaceResources.resources.dns.error;
   if (activeView.value === 'dhcp') return workspaceResources.resources.dhcp.error;
@@ -2037,6 +2065,7 @@ async function onPaginatorPage({ page, rows }) {
   else clientPage.value = page + 1;
 }
 const rowTotal = computed(() => {
+  if (hostsMode.value) return hostTotal.value;
   if (activeView.value === 'addresses') return addressFilteredTotal.value;
   if (activeView.value === 'dns') return dnsTotal.value;
   if (activeView.value === 'dhcp') return dhcpTotal.value;
@@ -2044,6 +2073,9 @@ const rowTotal = computed(() => {
 });
 
 const resultCountLabel = computed(() => {
+  if (hostsMode.value) {
+    return `Showing ${hostRows.value.length} of ${hostTotal.value} ${hostTotal.value === 1 ? 'host' : 'hosts'}`;
+  }
   if (activeView.value === 'addresses' && contextKind.value === 'network') {
     return addressCountLabel({
       shown: filteredRows.value.length,
@@ -2185,8 +2217,18 @@ async function openRelatedResource(resource, identity = null) {
     await updateWorkspaceRoute();
     return;
   }
-  const address = identity?.ip_address || pinnedAddress.value;
+  const address = target.address || identity?.ip_address || pinnedAddress.value;
   if (target.view === 'addresses') {
+    // A host's address in another network (the details panel's Host
+    // section) opens that network first.
+    const elsewhere =
+      target.subnetId && Number(target.subnetId) !== Number(selectedNetwork.value?.id)
+        ? allNetworks.value.find((network) => Number(network.id) === Number(target.subnetId))
+        : null;
+    if (elsewhere) {
+      activeView.value = 'addresses';
+      await selectNetwork(elsewhere);
+    }
     await openCanonicalAddress(address);
     return;
   }
@@ -2409,6 +2451,12 @@ function openRowMenu(row, invoker = null, event = null) {
 function selectRow(row) {
   pinDetail(row);
   updateWorkspaceRoute();
+}
+async function setGrouping(grouping) {
+  addressGrouping.value = grouping;
+  currentPage.value = 1;
+  await updateWorkspaceRoute();
+  await loadNetworkContext();
 }
 
 async function openCanonicalAddress(address = selectedRow.value?.address) {
@@ -2690,21 +2738,32 @@ async function loadNetworkContext({ silent = false } = {}) {
     // Every table of the network loads for the tab badges and the details
     // panel; only the one on screen carries the search, filters and sort.
     const onScreen = (view) => (activeView.value === view ? tableRequestParams() : {});
+    // In the Hosts view the address read is only for the badges and the
+    // details panel; the page, the search and the counts are the hosts'.
+    const hosts = hostsMode.value;
     const params = {
-      page: activeView.value === 'addresses' ? currentPage.value : 1,
+      page: activeView.value === 'addresses' && !hosts ? currentPage.value : 1,
       pageSize: addressPageSize.value,
       showAvailable: effectiveShowAvailable.value ? 'true' : 'false',
-      ...onScreen('addresses'),
+      ...(hosts ? {} : onScreen('addresses')),
     };
     const protocolParams = {
       subnet_id: selectedNetwork.value.id,
       page: currentPage.value,
       page_size: pageSize.value,
     };
-    const [detail, dns, dhcp] = await Promise.all([
+    const [detail, dns, dhcp, hostPage] = await Promise.all([
       workspaceResources.loadAddresses(selectedNetwork.value.id, params),
       workspaceResources.loadDns({ ...protocolParams, ...onScreen('dns') }),
       workspaceResources.loadDhcp({ ...protocolParams, ...onScreen('dhcp') }),
+      hosts
+        ? workspaceResources.loadHosts(selectedNetwork.value.id, {
+            page: currentPage.value,
+            page_size: pageSize.value,
+            q: tableQuery.value.trim(),
+            search: resourceQuery.value.trim(),
+          })
+        : null,
       workspaceResources.loadSummary(selectedNetwork.value.id),
       workspaceResources.loadDnsTotal({ subnet_id: selectedNetwork.value.id }),
       workspaceResources.loadDhcpTotal({ subnet_id: selectedNetwork.value.id }),
@@ -2721,9 +2780,13 @@ async function loadNetworkContext({ silent = false } = {}) {
     addressTotal.value = addressSparse.value
       ? Number(workspaceResources.resources.summary.data?.known_count ?? detail?.total ?? 0)
       : Number(workspaceResources.resources.summary.data?.total_addresses ?? detail?.total ?? 0);
+    if (hosts && !hostPage)
+      throw new Error(workspaceResources.resources.hosts.error || 'Host data unavailable');
+    hostRows.value = hostPage?.items || [];
+    hostTotal.value = hostPage?.total || 0;
     if (activeView.value === 'addresses') {
-      totalPages.value = detail?.totalPages || 1;
-      currentPage.value = detail?.page || 1;
+      totalPages.value = (hosts ? hostPage?.totalPages : detail?.totalPages) || 1;
+      currentPage.value = (hosts ? hostPage?.page : detail?.page) || 1;
     }
     if (dns) {
       networkDnsRowsData.value = mapWorkspaceDnsRows(dns.items);

@@ -307,6 +307,24 @@ most 4096) beside `cidr` and `new_prefix`, and returns `count` (a decimal
 string), `first` and `last` (the first and last child) and that page of
 children. The cap of 65,536 children stays.
 
+`GET /api/subnets/:id/hosts` returns the network's addresses grouped into
+devices (ARCHITECTURE.md, Canonical IP Model, host association), paged by host:
+`{ hosts, total, page, page_size, total_pages }`. Query: `page`, `page_size`
+(default 50, at most 512, the workspace's largest page), `q` and `search` (the
+table's and the explorer's search boxes, both applied: an address in any
+spelling, a CIDR, or text in an address, hostname, MAC or DUID), and `address` (an address of the network,
+with `%interface` for a link-local one), which returns only the host holding
+it. A host is `{ key, key_kind, mac, duid, name, hostnames, online,
+last_seen_at, stable_count, temporary_count, other_count, vendor, device_type,
+os_family, addresses, other_family }`. `key_kind` is `mac`, `duid` or
+`address`. Each address is `{ ip_address, interface_id, kind, allocation_state,
+address_type, hostname, online, first_seen_at, last_seen_at }`, `kind` one of
+`link-local`, `reservation`, `static`, `dhcp`, `eui64`, `slaac`, `temporary`,
+`other`; `other_count` counts every address that is not stable. `other_family`
+lists the host's addresses in the other family as `{ ip_address, interface_id,
+subnet_id, cidr, network_name, source }`, `source` being `address`, `lease` or
+`reservation`. An IPv6 network is refused while IPv6 is switched off.
+
 ## Cross-Table Facts
 
 The Addresses, DNS and DHCP workspace tables are one table model: each can show

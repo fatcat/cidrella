@@ -8,6 +8,7 @@ import {
   isValidIpv6,
   expandIpv6,
   isEui64InterfaceId,
+  macFromEui64,
   IPV4_BITS,
   IPV6_BITS,
 } from '../../../src/utils/address.js';
@@ -286,5 +287,22 @@ describe('isEui64InterfaceId', () => {
     expect(isEui64InterfaceId('10.255.254.1')).toBe(false);
     expect(isEui64InterfaceId('not an address')).toBe(false);
     expect(isEui64InterfaceId(null)).toBe(false);
+  });
+});
+
+describe('macFromEui64', () => {
+  it('flips the universal/local bit back to give the MAC', () => {
+    // 00:1a:2b:3c:4d:5e builds 021a:2bff:fe3c:4d5e (RFC 4291 appendix A).
+    expect(macFromEui64('fd00:1::21a:2bff:fe3c:4d5e')).toBe('00:1a:2b:3c:4d:5e');
+    // A locally administered MAC (02:...) builds an interface ID with the bit clear.
+    expect(macFromEui64('fd00:1::1a:2bff:fe3c:4d5e')).toBe('02:1a:2b:3c:4d:5e');
+    expect(macFromEui64('FE80::021A:2BFF:FE3C:4D5E%eth0')).toBe('00:1a:2b:3c:4d:5e');
+  });
+
+  it('is null for other interface IDs, IPv4 and junk', () => {
+    expect(macFromEui64('fd00:1::10')).toBeNull();
+    expect(macFromEui64('10.0.0.1')).toBeNull();
+    expect(macFromEui64('not an address')).toBeNull();
+    expect(macFromEui64(null)).toBeNull();
   });
 });

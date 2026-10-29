@@ -97,6 +97,35 @@
       </button>
     </section>
 
+    <!-- The device this address belongs to (docs/IPV6-HANDLING.md rule 5),
+         shown when it holds more than this address. -->
+    <section
+      v-if="activeTab === 'overview' && hostLinks.length"
+      class="panel-section"
+      data-track="workspace-address-host"
+    >
+      <span class="eyebrow">HOST</span>
+      <p class="host-identity">
+        <strong>{{ host.name || host.mac || host.duid || 'Unnamed host' }}</strong>
+        <small v-if="host.mac || host.duid" class="mono">{{ host.mac || host.duid }}</small>
+      </p>
+      <button
+        v-for="link in hostLinks"
+        :key="`${link.subnetId}|${link.address}`"
+        class="related-button"
+        data-track="workspace-address-host-link"
+        @click="emit('navigate', { view: 'addresses', subnetId: link.subnetId, address: link.address })"
+      >
+        <i :class="link.otherFamily ? 'pi pi-arrow-right-arrow-left' : 'pi pi-sitemap'" /><span
+          ><strong class="mono">{{ link.address }}</strong><small>{{ link.note }}</small></span
+        ><i class="pi pi-chevron-right" />
+      </button>
+      <small v-if="host.temporary_count" class="muted">
+        and {{ host.temporary_count }} temporary
+        {{ host.temporary_count === 1 ? 'address' : 'addresses' }}
+      </small>
+    </section>
+
     <section v-if="activeTab === 'overview'" class="panel-section">
       <span class="eyebrow">COPY</span>
       <div class="quick-actions">
@@ -356,6 +385,8 @@ const reservationNote = ref('');
 const busyAction = ref('');
 const feedback = ref(null);
 let eventsRequest = 0;
+const host = ref(null);
+let hostRequest = 0;
 
 const raw = computed(() => props.row.raw || {});
 const macAddress = computed(() => {
@@ -425,6 +456,57 @@ async function loadEvents(limit = 100) {
       eventsError.value = `Could not load lifecycle history: ${apiError(error)}`;
   } finally {
     if (request === eventsRequest) eventsLoading.value = false;
+  }
+}
+
+const KIND_NOTES = {
+  'link-local': 'link-local',
+  reservation: 'DHCP reservation',
+  static: 'static',
+  dhcp: 'DHCP lease',
+  eui64: 'EUI-64',
+  slaac: 'SLAAC',
+  other: 'seen',
+};
+
+// The host's other addresses in this network (temporaries counted, not
+// listed) and its addresses in the other family, wherever they are.
+const hostLinks = computed(() => {
+  if (!host.value) return [];
+  const current = props.row.address;
+  const here = host.value.addresses
+    .filter((a) => a.kind !== 'temporary')
+    .map((a) => ({
+      address: a.interface_id ? `${a.ip_address}%${a.interface_id}` : a.ip_address,
+      subnetId: props.subnetId,
+      note: KIND_NOTES[a.kind] || a.kind,
+      otherFamily: false,
+    }))
+    .filter((link) => link.address !== current);
+  const elsewhere = (host.value.other_family || [])
+    .filter((a) => a.subnet_id != null)
+    .map((a) => ({
+      address: a.ip_address,
+      subnetId: a.subnet_id,
+      note: [a.network_name || a.cidr, a.source === 'address' ? null : `DHCP ${a.source}`]
+        .filter(Boolean)
+        .join(' · '),
+      otherFamily: true,
+    }));
+  return [...here, ...elsewhere];
+});
+
+async function loadHost() {
+  const request = ++hostRequest;
+  host.value = null;
+  try {
+    const { data } = await api.get(`/subnets/${props.subnetId}/hosts`, {
+      params: { address: props.row.address },
+    });
+    if (request === hostRequest) host.value = data.hosts?.[0] || null;
+  } catch {
+    // The section is extra: without it the panel still shows the address.
+    if (request === hostRequest) host.value = null;
   }
 }
 
@@ -630,6 +712,7 @@ watch(
     device.value = {};
     deviceHistory.value = [];
     loadEvents(100);
+    void loadHost();
   },
   { immediate: true },
 );
@@ -802,6 +885,12 @@ dd {
   gap: 0.42rem;
   padding: 0.75rem 0.9rem;
   border-bottom: 1px solid var(--preview-line);
+}
+.host-identity {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  margin: 0 0 0.3rem;
 }
 .related-button {
   display: grid;

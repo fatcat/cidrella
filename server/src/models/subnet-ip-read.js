@@ -42,6 +42,19 @@ export function functionalRangeForIp(rangeLookup, ip) {
   return rangeLookup.find((range) => value >= range.start && value <= range.end) || null;
 }
 
+/**
+ * SQL that is true for a stored row with real facts: a claim, or any sign a
+ * host was there. An IPv4 network keeps an empty row per address, and that
+ * alone is not one. `alias` qualifies the columns when the query joins.
+ */
+export function rowHasFactsSql(alias = '') {
+  const c = alias ? `${alias}.` : '';
+  return `(${c}allocation_state <> 'unassigned' OR ${c}is_online = 1 OR ${c}is_rogue = 1
+  OR ${c}first_seen_at IS NOT NULL OR ${c}last_seen_at IS NOT NULL
+  OR ${c}mac_address IS NOT NULL OR ${c}last_seen_mac IS NOT NULL
+  OR ${c}dhcp_duid IS NOT NULL OR ${c}hostname IS NOT NULL)`;
+}
+
 export function getSubnetIpReadContext(db, subnet) {
   const ranges = Range.listSubnetDetailRanges(db, subnet.id);
   return { ranges, rangeLookup: functionalRangeLookup(ranges) };
@@ -61,10 +74,16 @@ function attachFunctionalRange(row, rangeLookup) {
 // call, made elsewhere.
 // The WHERE clause of a network's persisted rows: one address, a range of
 // sort keys (utils/cidr.js sortKeyRange) or the rows sorting below a key,
-// and optionally only the unassigned ones.
+// and optionally only the unassigned ones or only those with real facts.
 function persistedRowFilter(
   subnet,
-  { ipAddress = null, sortKeyRange = null, belowKey = null, unassignedOnly = false } = {},
+  {
+    ipAddress = null,
+    sortKeyRange = null,
+    belowKey = null,
+    unassignedOnly = false,
+    withFacts = false,
+  } = {},
 ) {
   const clauses = ['ip.subnet_id = ?'];
   const params = [subnet.id];
@@ -84,6 +103,7 @@ function persistedRowFilter(
     clauses.push('ip.allocation_state = ?');
     params.push(ALLOCATION_STATE.UNASSIGNED);
   }
+  if (withFacts) clauses.push(rowHasFactsSql('ip'));
   return { where: clauses.join(' AND '), params };
 }
 

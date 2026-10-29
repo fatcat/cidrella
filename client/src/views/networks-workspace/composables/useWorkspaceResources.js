@@ -39,6 +39,7 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
       page: 1,
       totalPages: 1,
     }),
+    hosts: resourceState({ items: [], total: 0, page: 1, totalPages: 1 }),
     summary: resourceState(null),
     facets: resourceState(null),
     detail: resourceState(null),
@@ -170,6 +171,20 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
       }),
     );
   }
+  // A network's addresses grouped into devices (GET /subnets/:id/hosts).
+  function loadHosts(subnetId, params = {}) {
+    return read(
+      'hosts',
+      'subnets:read',
+      () => api.get(`/subnets/${subnetId}/hosts`, { params: compactParams(params) }),
+      (response) => ({
+        items: response.data.hosts || [],
+        total: Number(response.data.total || 0),
+        page: Number(response.data.page || 1),
+        totalPages: Number(response.data.total_pages || 1),
+      }),
+    );
+  }
   // The filter counts of one IP table, over its whole result. One row is
   // enough: only the facets and the column kinds are wanted.
   function loadFacets(view, { subnetId = null, ...params } = {}) {
@@ -284,6 +299,7 @@ export function useWorkspaceResources({ can, onForbidden = null }) {
     loadDhcp,
     loadDhcpTotal,
     loadAddresses,
+    loadHosts,
     loadSummary,
     loadFacets,
     loadAddressDetail,

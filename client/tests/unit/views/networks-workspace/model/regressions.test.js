@@ -105,4 +105,18 @@ describe('Networks workspace regressions', () => {
       'table-search "lease"',
       'estate',
     ]));
+
+  // An IPv6 network opens on its hosts (docs/IPV6-HANDLING.md rule 5); a
+  // host lists its addresses, one opens the details panel, and the choice of
+  // Addresses or Hosts survives a reload.
+  it('an IPv6 network shows hosts, and an address of one opens', () =>
+    walk([
+      'network 16',
+      'row 2',
+      'host-address fd00:5::7f2e:91c4:aa01:3b6d',
+      'table-search "nas"',
+      'grouping addresses',
+      'network 13',
+      'grouping hosts',
+    ]));
 });

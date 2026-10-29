@@ -4,7 +4,8 @@ import {
   facetFields,
   matchesColumnFilters,
 } from '@shared/ip-columns.js';
-import { expandIpv6 } from '@shared/address.js';
+import { expandIpv6, sortKey } from '@shared/address.js';
+import { groupHosts, hostMatches } from '@shared/ip-hosts.js';
 import { networkContains, networksOverlap, parseAddressQuery } from '@shared/cidr.js';
 
 // An in-memory estate that answers the Networks workspace's reads the way the
@@ -284,15 +285,25 @@ export function dhcpRow(entry) {
 }
 
 // What the IPv6 /64 stores: a static host and a few SLAAC addresses. The
-// listing is these plus the network address (subnet-router anycast).
+// listing is these plus the network address (subnet-router anycast). As
+// hosts: a laptop (the EUI-64 address and the SLAAC one the neighbor table
+// gave its MAC), a DUID-only DHCPv6 client, and the NAS on its own.
 export const V6_STORED = [
   { ip_address: 'fd00:5::10', allocation_state: 'static_dns', hostname: 'nas.lab.example' },
-  ...['fd00:5::21a:2bff:fe3c:4d5e', 'fd00:5::7f2e:91c4:aa01:3b6d', 'fd00:5::c0a8:1:2'].map(
-    (ip) => ({ ip_address: ip, allocation_state: 'slaac', hostname: null }),
-  ),
+  { ip_address: 'fd00:5::21a:2bff:fe3c:4d5e', allocation_state: 'slaac' },
+  {
+    ip_address: 'fd00:5::7f2e:91c4:aa01:3b6d',
+    allocation_state: 'slaac',
+    last_seen_mac: '00:1a:2b:3c:4d:5e',
+  },
+  {
+    ip_address: 'fd00:5::c0a8:1:2',
+    allocation_state: 'slaac',
+    dhcp_duid: '00:02:00:00:ab:11:01:02:03:04',
+  },
 ];
 
-function v6Row(network, ip, state, hostname = null) {
+function v6Row(network, ip, state, hostname = null, evidence = {}) {
   const inUse = state !== 'unassigned';
   return {
     ip_address: ip,
@@ -305,6 +316,8 @@ function v6Row(network, ip, state, hostname = null) {
     in_dynamic_pool: 0,
     hostname,
     mac_address: null,
+    last_seen_mac: evidence.last_seen_mac ?? null,
+    dhcp_duid: evidence.dhcp_duid ?? null,
     is_online: 0,
     scanning_enabled: true,
     scan_enabled: null,
@@ -319,7 +332,9 @@ const v6Key = (ip) => (expandIpv6(ip) || '').replaceAll(':', '');
 function v6AddressRows(network, params) {
   const rows = [
     v6Row(network, network.network_address, 'system'),
-    ...V6_STORED.map((row) => v6Row(network, row.ip_address, row.allocation_state, row.hostname)),
+    ...V6_STORED.map((row) =>
+      v6Row(network, row.ip_address, row.allocation_state, row.hostname ?? null, row),
+    ),
   ];
   for (const term of [params.search, params.table_search]) {
     const query = parseAddressQuery(term);
@@ -397,6 +412,37 @@ function addressQuery(network, params) {
   const fields = ['ip_address', 'hostname', 'mac_address'];
   rows = rows.filter((row) => matchesAny(row, fields, params.search));
   return rows.filter((row) => matchesAny(row, fields, params.table_search));
+}
+// GET /subnets/:id/hosts (models/ip-hosts.js): the stored rows with real
+// facts, the network address left out, grouped by the server's own
+// groupHosts and searched by both boxes.
+export function queryHosts(networkId, params = {}) {
+  const network = networkById(networkId);
+  const rows = (
+    network.address_family === 6 ? v6AddressRows(network, {}) : addressRows(network)
+  ).filter(
+    (row) =>
+      row.allocation_state !== 'system' &&
+      (row.allocation_state !== 'unassigned' ||
+        row.hostname ||
+        row.mac_address ||
+        row.last_seen_mac ||
+        row.dhcp_duid),
+  );
+  let hosts = groupHosts(
+    rows.map((row) => ({ ...row, address_sort_key: sortKey(row.ip_address) })),
+  );
+  if (params.address)
+    hosts = hosts.filter((host) => host.addresses.some((a) => a.ip_address === params.address));
+  else
+    hosts = hosts.filter((host) => hostMatches(host, params.q) && hostMatches(host, params.search));
+  return hosts.map((host) => ({
+    ...host,
+    vendor: null,
+    device_type: null,
+    os_family: null,
+    other_family: [],
+  }));
 }
 export function queryAddresses(networkId, params = {}, filters = {}) {
   return applyColumnFilters(addressQuery(networkById(networkId), params), filters, 'addresses');
@@ -656,6 +702,20 @@ export function createFakeApi() {
         pageSize: size,
         totalPages: Math.max(1, Math.ceil(rows.length / size)),
         ...extra,
+      });
+    }
+    const hostList = url.match(/^\/subnets\/(\d+)\/hosts$/);
+    if (hostList) {
+      const hosts = queryHosts(hostList[1], params);
+      const size = Number(params.page_size) || 50;
+      const pages = Math.max(1, Math.ceil(hosts.length / size));
+      const at = Math.min(Math.max(1, Number(params.page) || 1), pages);
+      return reply({
+        hosts: hosts.slice((at - 1) * size, at * size),
+        total: hosts.length,
+        page: at,
+        page_size: size,
+        total_pages: pages,
       });
     }
     const summary = url.match(/^\/subnets\/(\d+)\/summary$/);
