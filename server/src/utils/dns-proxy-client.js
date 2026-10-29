@@ -78,6 +78,9 @@ function onMessage(message) {
       statusAt = Date.now();
       settle(message.id, status);
       return;
+    case 'db-released':
+      settle(message.id, true);
+      return;
     case 'drain-result':
       settle(message.id, {
         metrics: metricsFromWire(message.metrics),
@@ -201,11 +204,11 @@ export function sendReload(what, extra = {}) {
   write({ type: 'reload', what, ...extra });
 }
 
-function request(type) {
+function request(type, timeoutMs = REQUEST_TIMEOUT_MS) {
   if (!connected) return Promise.resolve(null);
   const id = nextId++;
   return new Promise((resolve) => {
-    const timer = setTimeout(() => settle(id, null), REQUEST_TIMEOUT_MS);
+    const timer = setTimeout(() => settle(id, null), timeoutMs);
     timer.unref?.();
     waiting.set(id, { resolve, timer });
     write({ type, id });
@@ -217,6 +220,13 @@ export const requestDrain = () => request('drain');
 
 /** Restart the encrypted forwarder; resolves with the status after it, or null. */
 export const requestApplyForwarder = () => request('apply-forwarder');
+
+/**
+ * Have the proxy close its database before a restore swaps the files, and
+ * keep it closed until the restored web app says hello. Resolves true once
+ * it has, null if it did not answer within 1 s.
+ */
+export const requestDbRelease = () => request('db-release', 1000);
 
 export function sendShutdown() {
   write({ type: 'shutdown' });

@@ -21,7 +21,8 @@ import { ipv6Enabled } from '../../utils/ipv6-support.js';
 import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
 import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
 import { createUnitControl } from '../shared/unit-control.js';
-import { backendDnsPort, ENCRYPTED_FORWARDER_PORT } from '../../config/defaults.js';
+import { backendDnsPort } from '../../config/defaults.js';
+import { recursionTargets } from '../../utils/forwarding-settings.js';
 import {
   validateConfigSafeValue,
   validateTxtValue,
@@ -380,9 +381,12 @@ export function regenerateDnsmasqConf(_db) {
   // disabled, emit NO upstreams (authoritative-only). Otherwise send everything
   // to the in-Node forwarder stub on loopback, in every mode: it picks the
   // resolver (primary, backup, turns) and speaks plain DNS, DoT or DoH to it.
+  // recursionTargets says when the stub is down and where to go instead.
   const noResolvIdx = filtered.findIndex((l) => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
-  const serverLines = noRecursion ? [] : [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`];
+  const serverLines = noRecursion
+    ? []
+    : recursionTargets().map(({ address, port }) => `server=${address}#${port}`);
   const localLines = reservedLocalLines({ addresses: forwardedAddresses({ noRecursion }) });
   filtered.splice(insertIdx, 0, ...LOCAL_ANSWER_LINES, ...localLines, ...serverLines);
 

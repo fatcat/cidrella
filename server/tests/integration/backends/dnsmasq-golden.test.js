@@ -169,6 +169,42 @@ describe('dnsmasq backend golden output', () => {
     await expect(`${on}\n%%%%% bypass off\n${snapshot()}`).toMatchFileSnapshot(golden('06-bypass'));
   });
 
+  // The DNS proxy process down in bypass takes the forwarder with it: in
+  // plaintext mode dnsmasq asks the plain servers itself, either family;
+  // encrypted, it keeps the forwarder.
+  it('06b forwards around a forwarder that is down, only in plaintext', async () => {
+    const keys = ['forwarder_encryption', 'dns_upstream_servers', 'dns_upstream_backup_servers'];
+    const saved = keys.map((key) =>
+      db.prepare('SELECT key, value FROM settings WHERE key = ?').get(key),
+    );
+    const serverLines = () =>
+      fs
+        .readFileSync(path.join(DNSMASQ_DIR, 'dnsmasq.conf'), 'utf-8')
+        .split('\n')
+        .filter((line) => line.startsWith('server='))
+        .join('\n');
+    const states = [];
+    setSetting('dns_forwarder_down', 'true');
+    await applyPaths.bypass(true);
+    states.push(`%%%%% forwarder down, encrypted\n${serverLines()}`);
+    setSetting('forwarder_encryption', 'off');
+    setSetting('dns_upstream_servers', JSON.stringify(['9.9.9.9', '2620:fe::fe']));
+    setSetting('dns_upstream_backup_servers', JSON.stringify(['149.112.112.112']));
+    await applyPaths.bypass(true);
+    states.push(`%%%%% forwarder down, plaintext\n${serverLines()}`);
+    db.prepare("DELETE FROM settings WHERE key = 'dns_forwarder_down'").run();
+    await applyPaths.bypass(false);
+    states.push(`%%%%% forwarder back\n${serverLines()}`);
+    await expect(`${states.join('\n')}\n`).toMatchFileSnapshot(golden('06b-forwarder-down'));
+
+    for (const [i, key] of keys.entries()) {
+      if (saved[i]) setSetting(key, saved[i].value);
+      else db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+    }
+    await applyPaths.bypass(false);
+    snapshot(); // the commands so far belong to this step
+  });
+
   it('07 turns recursion off and DNSSEC off', async () => {
     setSetting('dns_no_recursion', 'true');
     setSetting('dnssec_enabled', 'false');

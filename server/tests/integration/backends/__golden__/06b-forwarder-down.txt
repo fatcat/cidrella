@@ -1,0 +1,8 @@
+%%%%% forwarder down, encrypted
+server=127.0.0.1#5356
+%%%%% forwarder down, plaintext
+server=9.9.9.9#53
+server=2620:fe::fe#53
+server=149.112.112.112#53
+%%%%% forwarder back
+server=127.0.0.1#5356

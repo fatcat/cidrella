@@ -23,12 +23,14 @@ import {
 import { proxyLog } from '../dns-proxy/log.js';
 import { codeId } from '../dns-proxy/code-id.js';
 import { inlineProxyDb, proxySettings } from './dns-proxy-inline-db.js';
+import { closeProxyDb } from '../dns-proxy/db.js';
 import { proxyIsSeparate } from './dns-proxy-mode.js';
 import * as Server from '../dns-proxy/server.js';
 import * as Client from './dns-proxy-client.js';
 import { getAndResetForwarderMetrics } from './encrypted-forwarder.js';
 import { sinkQueryRow, sinkClientSeen, sinkResolution } from '../services/dns-proxy-sinks.js';
 import { startWatchdog, stopWatchdog, isProxyBypassed } from '../services/dns-proxy-watchdog.js';
+import { restartProxyProcess } from '../services/dns-proxy-supervisor.js';
 
 // The proxy's pure helpers and policy, for the tests that exercise them.
 export {
@@ -170,15 +172,17 @@ export function proxyConfigNow() {
  * them (the DNS port, DNS on or off, the interfaces) calls this when it is
  * written; the DNS backend changing does too.
  */
-export function refreshProxyConfig({ rebind = false } = {}) {
+export function refreshProxyConfig({ rebind = false, serve = !isProxyBypassed() } = {}) {
   const proxy = proxyConfigNow();
   if (!separate) {
     Server.setProxyConfig(proxy);
     return;
   }
   // DEFAULTS: what a setting reads as when nothing is stored, which the
-  // proxy process cannot import (dns-proxy/db.js).
-  Client.sendProxyConfig({ proxy, defaults: DEFAULTS, serve: true }, { rebind });
+  // proxy process cannot import (dns-proxy/db.js). `serve` is false in
+  // bypass, where the backend holds the LAN port; the saved config keeps it
+  // that way across the proxy's own restarts.
+  Client.sendProxyConfig({ proxy, defaults: DEFAULTS, serve }, { rebind });
 }
 
 let followingBackend = false;
@@ -190,15 +194,44 @@ function followBackend() {
   });
 }
 
-// The watchdog's view of the proxy running in this process.
-const handle = {
-  sockets: () => Server.serverStatus().sockets,
+// The watchdog's view of the proxy (services/dns-proxy-watchdog.js), one for
+// each place it runs.
+const startInline = () => {
+  refreshProxyConfig();
+  Server.startServing();
+};
+const inlineHandle = {
+  dead: () => Server.serverStatus().sockets === 0,
+  misses: 1,
+  restart: startInline,
+  settleMs: 500,
   anyBound: () => Server.serverStatus().bound > 0,
-  start: () => {
-    refreshProxyConfig();
-    Server.startServing();
+  bind: startInline,
+  release: Server.cancelBindRetries,
+  processDown: () => false,
+  listenAddresses: () => proxyConfigNow().listenAddresses,
+};
+
+// The proxy process counts as dead when it stops reporting (gone, or its
+// event loop hung) or binds nothing while it should. Three checks in a row,
+// so one slow status is not a restart.
+const processHandle = {
+  dead() {
+    const status = Client.freshProxyStatus();
+    return !status || (status.serve && status.server.sockets === 0);
   },
-  cancelBindRetries: Server.cancelBindRetries,
+  misses: 3,
+  // Alive but bound to nothing: bind again, the forwarder keeps running.
+  // Not reporting: kill it and have it started again.
+  async restart() {
+    if (Client.freshProxyStatus()) refreshProxyConfig({ rebind: true });
+    else await restartProxyProcess(Client.lastProxyStatus()?.status.pid);
+  },
+  settleMs: 5000,
+  anyBound: () => (Client.freshProxyStatus()?.server.bound ?? 0) > 0,
+  bind: () => refreshProxyConfig({ serve: true, rebind: true }),
+  release: () => refreshProxyConfig({ serve: false }),
+  processDown: () => !Client.freshProxyStatus(),
   listenAddresses: () => proxyConfigNow().listenAddresses,
 };
 
@@ -213,19 +246,20 @@ export function startProxy() {
       codeId: codeId(),
       handlers: { queryRow: sinkQueryRow, clientSeen: sinkClientSeen, resolution: sinkResolution },
     });
+    startWatchdog(processHandle);
     return;
   }
-  handle.start();
-  startWatchdog(handle);
+  startInline();
+  startWatchdog(inlineHandle);
 }
 
 export function stopProxy() {
+  stopWatchdog();
   if (separate) {
     Client.stopProxyClient();
     return;
   }
   Server.stopServing();
-  stopWatchdog();
 }
 
 // Rebind proxy sockets (called when interface config changes)
@@ -242,7 +276,7 @@ export function rebindProxy() {
     return;
   }
   Server.stopServing();
-  handle.start();
+  startInline();
 }
 
 // Start proxy (always-on, called on server startup). The proxy process reads
@@ -254,6 +288,21 @@ export async function startProxyIfEnabled() {
     Server.startOverridesRefresh();
   }
   startProxy();
+}
+
+/**
+ * Before a restore swaps the database files: the proxy closes its
+ * connection (and keeps it closed until the restored web app starts), so it
+ * never reads a half-swapped database or holds the old file.
+ */
+export async function releaseProxyDatabase() {
+  if (separate) {
+    if (!(await Client.requestDbRelease())) {
+      proxyLog('warn', 'The DNS proxy did not confirm it closed the database; restoring anyway');
+    }
+    return;
+  }
+  closeProxyDb();
 }
 
 // Get proxy status. The proxy process's comes from its last status message;

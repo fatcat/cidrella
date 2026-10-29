@@ -3,12 +3,17 @@
  * answering, restarts it, and when it cannot, puts the DNS backend on the LAN
  * port (bypass) and tries the proxy again now and then (docs/ARCHITECTURE.md,
  * Proxy bypass). It reaches the proxy through a handle, so it does not care
- * where the proxy runs:
+ * where the proxy runs (utils/dns-proxy.js builds one for each mode):
  *
- *   sockets()          UDP sockets bound or still binding
- *   anyBound()         whether any of them answers
- *   start()            bind the listen addresses
- *   cancelBindRetries()
+ *   dead()             not serving: no sockets, or a proxy process that
+ *                      stopped reporting
+ *   misses             dead checks in a row before the watchdog acts
+ *   restart()          start it again (may return a Promise)
+ *   settleMs           how long a restart takes to show
+ *   anyBound()         whether any socket answers
+ *   bind()             bind the listen addresses (leaving bypass)
+ *   release()          let go of the LAN port and stop retrying it (bypass)
+ *   processDown()      the proxy process is gone, and the forwarder with it
  *   listenAddresses()  the addresses the proxy binds
  */
 import dgram from 'dgram';
@@ -31,6 +36,8 @@ import { proxyLog } from '../dns-proxy/log.js';
 
 
 let proxy = null;
+// Dead checks in a row so far.
+let deadChecks = 0;
 
 // Bypass mode, when proxy dies and can't restart, dnsmasq takes over port 53
 let bypassMode = false;
@@ -73,7 +80,12 @@ export function startWatchdog(handle) {
       }
       return;
     }
-    if (proxy.sockets() > 0) return; // proxy is alive
+    if (!proxy.dead()) {
+      deadChecks = 0;
+      return;
+    }
+    if (++deadChecks < (proxy.misses ?? 1)) return;
+    deadChecks = 0;
 
     healthBusy = true;
     try {
@@ -85,6 +97,7 @@ export function startWatchdog(handle) {
 }
 
 export function stopWatchdog() {
+  deadChecks = 0;
   if (healthTimer) {
     clearInterval(healthTimer);
     healthTimer = null;
@@ -96,10 +109,10 @@ async function restartOrBypass() {
 
   for (let attempt = 1; attempt <= PROXY_MAX_RESTART_ATTEMPTS; attempt++) {
     try {
-      proxy.start();
-      // Give sockets a moment to bind
-      await new Promise((r) => setTimeout(r, 500));
-      if (proxy.sockets() > 0) {
+      await proxy.restart();
+      // Give it a moment to bind (and a process to start and report)
+      await new Promise((r) => setTimeout(r, proxy.settleMs ?? 500));
+      if (!proxy.dead()) {
         proxyLog('info', 'Proxy restarted successfully', { attempt });
         return;
       }
@@ -142,6 +155,18 @@ async function listenAddressUsable() {
 async function tryRecovery() {
   const wait = () => scheduleRecovery(recoveryWaitMs);
   if (switchInProgress()) return;
+  // A proxy process that is gone comes back first, still kept off the LAN
+  // port; it then has to bind like any other.
+  if (proxy.processDown()) {
+    await proxy.restart();
+    await new Promise((r) => setTimeout(r, proxy.settleMs ?? 500));
+    if (proxy.processDown()) {
+      proxyLog('warn', 'The DNS proxy process is still down, bypass stays on', {
+        nextTryMinutes: Math.round(wait() / 60000),
+      });
+      return;
+    }
+  }
   if (!(await listenAddressUsable())) {
     wait();
     return;
@@ -150,6 +175,7 @@ async function tryRecovery() {
   try {
     const db = getDb();
     Setting.deleteSetting(db, 'dns_proxy_bypass');
+    Setting.deleteSetting(db, 'dns_forwarder_down');
     await applyListenNow(db);
   } catch (err) {
     proxyLog('error', 'Could not move the backend off the LAN port', { error: err.message });
@@ -158,7 +184,7 @@ async function tryRecovery() {
     return;
   }
   try {
-    proxy.start();
+    proxy.bind();
   } catch (err) {
     proxyLog('error', 'Proxy start failed', { error: err.message });
   }
@@ -170,7 +196,7 @@ async function tryRecovery() {
     return;
   }
   // Binds still waiting on an address would only fail on the LAN port again.
-  proxy.cancelBindRetries();
+  proxy.release();
   await setBypassListen();
   proxyLog('warn', 'The proxy still cannot bind, bypass stays on', {
     nextTryMinutes: Math.round(wait() / 60000),
@@ -208,6 +234,7 @@ async function activateBypass() {
       source: 'proxy-health',
       details: {
         reason: `the proxy did not restart after ${PROXY_MAX_RESTART_ATTEMPTS} attempts`,
+        forwarderDown: proxy.processDown(),
         backend: getDnsBackend().name,
       },
     });
@@ -215,6 +242,7 @@ async function activateBypass() {
     proxyLog('error', 'Could not record the bypass in the audit log', { error: err.message });
   }
   scheduleRecovery(PROXY_RECOVERY_FIRST_MS);
+  proxy.release();
   await setBypassListen();
 }
 
@@ -224,6 +252,10 @@ async function activateBypass() {
 async function setBypassListen() {
   try {
     setSetting('dns_proxy_bypass', 'true');
+    // The forwarder runs in the proxy process: gone with it, the backend
+    // forwards around it (utils/forwarding-settings.js recursionTargets).
+    if (proxy.processDown()) setSetting('dns_forwarder_down', 'true');
+    else Setting.deleteSetting(getDb(), 'dns_forwarder_down');
     await applyListenNow(getDb());
     proxyLog('info', 'DNS backend reconfigured for bypass mode (LAN port)');
   } catch (err) {
@@ -254,6 +286,8 @@ function deactivateBypass({ reason }) {
  * Without this a bypass outlived every restart and update.
  */
 export function clearBypassAtBoot(db) {
+  Setting.deleteSetting(db, 'dns_forwarder_down');
+  bypassMode = false;
   if (Setting.readSetting(db, 'dns_proxy_bypass') !== 'true') return false;
   Setting.deleteSetting(db, 'dns_proxy_bypass');
   proxyLog('info', 'Bypass was on before the restart, trying the proxy first');

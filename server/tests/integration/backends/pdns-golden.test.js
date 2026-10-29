@@ -35,7 +35,8 @@ const { setSetting } = await import('../../../src/db/init.js');
 const { ESTATE_INTERFACES, seedBackendEstate } = await import('../../helpers/backend-estate.js');
 const { startFakePdns } = await import('../../helpers/fake-pdns.js');
 const { ensureSecret } = await import('../../../src/backends/shared/secret.js');
-const { PDNS_DIR, SECRET_DIR, API_KEY_FILE } = await import('../../../src/backends/pdns/paths.js');
+const { PDNS_DIR, SECRET_DIR, API_KEY_FILE, RECURSOR_CONF } =
+  await import('../../../src/backends/pdns/paths.js');
 
 let db;
 let tmpDir;
@@ -157,6 +158,45 @@ describe('PowerDNS backend golden output', () => {
     db.prepare("DELETE FROM settings WHERE key = 'dns_proxy_bypass'").run();
     await backend.dns.applyListen(db);
     await expect(`${on}\n${snapshot()}`).toMatchFileSnapshot(golden('05-bypass'));
+  });
+
+  // The DNS proxy process down in bypass takes the forwarder with it: in
+  // plaintext mode Recursor forwards to the plain servers itself, either
+  // family; encrypted, it keeps the forwarder.
+  it('05b forwards around a forwarder that is down, only in plaintext', async () => {
+    const keys = ['forwarder_encryption', 'dns_upstream_servers', 'dns_upstream_backup_servers'];
+    const saved = keys.map((key) =>
+      db.prepare('SELECT key, value FROM settings WHERE key = ?').get(key),
+    );
+    const recurse = () => {
+      const lines = fs.readFileSync(RECURSOR_CONF, 'utf-8').split('\n');
+      const start = lines.indexOf('  forward_zones_recurse:');
+      const end = lines.findIndex((line, i) => i > start && !line.startsWith('    '));
+      return lines.slice(start, end).join('\n');
+    };
+    const states = [];
+    setSetting('dns_proxy_bypass', 'true');
+    setSetting('dns_forwarder_down', 'true');
+    await backend.dns.applyResolver(db);
+    states.push(`%%%%% forwarder down, encrypted\n${recurse()}`);
+    setSetting('forwarder_encryption', 'off');
+    setSetting('dns_upstream_servers', JSON.stringify(['9.9.9.9', '2620:fe::fe']));
+    setSetting('dns_upstream_backup_servers', JSON.stringify(['149.112.112.112']));
+    await backend.dns.applyResolver(db);
+    states.push(`%%%%% forwarder down, plaintext\n${recurse()}`);
+    db.prepare(
+      "DELETE FROM settings WHERE key IN ('dns_forwarder_down', 'dns_proxy_bypass')",
+    ).run();
+    await backend.dns.applyResolver(db);
+    states.push(`%%%%% forwarder back\n${recurse()}`);
+    await expect(`${states.join('\n')}\n`).toMatchFileSnapshot(golden('05b-forwarder-down'));
+
+    for (const [i, key] of keys.entries()) {
+      if (saved[i]) setSetting(key, saved[i].value);
+      else db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+    }
+    await backend.dns.applyResolver(db);
+    snapshot(); // the requests and commands so far belong to this step
   });
 
   it('06 stops recursion', async () => {

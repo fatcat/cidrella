@@ -10,12 +10,14 @@
  *   reload {what, path?}    read something again (RELOADERS in main.js)
  *   drain {id}              the counters since the last drain, as drain-result
  *   apply-forwarder {id}    restart the encrypted forwarder, answered by status
+ *   db-release {id}         close the database until the next hello (a restore)
  *   shutdown                exit; the supervisor starts the proxy again
  *
  * proxy to web app:
  *   hello {v, codeId, pid}
  *   status {...}            every STATUS_INTERVAL_MS, and the heartbeat
  *   drain-result {id, metrics, forwarder}
+ *   db-released {id}
  *   applied {id, ...status} the forwarder restarted, and the status after it
  *   rows {rows}             analytics rows, for DuckDB
  *   liveness {clients}      client addresses seen

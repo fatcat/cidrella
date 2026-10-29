@@ -163,6 +163,38 @@ describe('the DNS proxy process', () => {
     expect(Array.isArray(drained.forwarder)).toBe(true);
   });
 
+  it('lets go of the database for a restore, and opens the restored one after hello', async () => {
+    const dbFile = path.join(tmpDir, 'cidrella.db');
+    await waitFor(() => Client.freshProxyStatus()?.dbOpen);
+    expect(await Client.requestDbRelease()).toBe(true);
+    await waitFor(() => Client.freshProxyStatus()?.dbOpen === false);
+
+    // The swap: a new file renamed over the old, as a restore does.
+    const staged = `${dbFile}.staged`;
+    fs.copyFileSync(dbFile, staged);
+    fs.renameSync(staged, dbFile);
+    // Still closed: the restore is not done until the web app is back.
+    await new Promise((resolve) => setTimeout(resolve, 1500));
+    expect(Client.freshProxyStatus().dbOpen).toBe(false);
+
+    // The restored web app connects and says hello.
+    Client.stopProxyClient();
+    startClient();
+    await waitFor(() => Client.freshProxyStatus()?.dbOpen, 10000);
+  }, 20000);
+
+  it('opens the database again when the file is replaced under it', async () => {
+    const dbFile = path.join(tmpDir, 'cidrella.db');
+    const before = await waitFor(() => Client.freshProxyStatus()?.dbIdentity);
+    const staged = `${dbFile}.staged`;
+    fs.copyFileSync(dbFile, staged);
+    fs.renameSync(staged, dbFile);
+    await waitFor(() => {
+      const now = Client.freshProxyStatus()?.dbIdentity;
+      return now && now !== before;
+    }, 15000);
+  }, 20000);
+
   it('created its socket and saved config owner-only', () => {
     const { socket } = proxyRuntimePaths(tmpDir);
     expect(fs.statSync(socket).mode & 0o077).toBe(0);

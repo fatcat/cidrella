@@ -288,7 +288,7 @@ export function renderRecursorConfig({
   listen,
   port,
   authPort,
-  forwarderPort,
+  forwarders,
   recursion,
   validation,
   networkTimeoutMs,
@@ -308,7 +308,7 @@ export function renderRecursorConfig({
       security_poll_suffix: '',
       serve_rfc1918: false,
       forward_zones_recurse: recursion
-        ? [{ zone: '.', forwarders: [`127.0.0.1:${forwarderPort}`] }]
+        ? [{ zone: '.', forwarders }]
         : [],
     },
     dnssec: { validation },

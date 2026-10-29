@@ -124,12 +124,16 @@ export async function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIG
 }
 
 /**
- * Write the listen config and restart the backend right away, not through
- * the after-commit hooks: proxy bypass must have the backend on port 53
- * before it returns.
+ * Write the listen and forward config and restart the backend right away,
+ * not through the after-commit hooks: proxy bypass must have the backend on
+ * port 53 before it returns. Bypass can move where recursion goes too (the
+ * forwarder down with the proxy process, utils/forwarding-settings.js
+ * recursionTargets), so both are written before the one restart.
  */
 export async function applyListenNow(db) {
-  getDnsBackend().applyListen(db, { activate: false });
+  const dns = getDnsBackend();
+  dns.applyListen(db, { activate: false });
+  dns.applyResolver(db, { activate: false });
   await getService('dns').restart();
 }
 

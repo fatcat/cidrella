@@ -19,6 +19,7 @@ import { APP_VERSION } from './version.js';
 import { compareSemver } from './semver.js';
 import { runCommand } from './run-command.js';
 import { runDbTask } from './db-worker/index.js';
+import { releaseProxyDatabase } from './dns-proxy.js';
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const PRE_RESTORE_DIR = path.join(DATA_DIR, 'snapshots', 'pre-restore');
 const MANIFEST_NAME = 'cidrella-backup-manifest.json';
@@ -925,6 +926,9 @@ async function applyRestore(
       throw err;
     }
   }
+
+  // The DNS proxy reads the database too: it lets go before the swap.
+  await releaseProxyDatabase();
 
   // 4. Swap staged files into DATA_DIR.
   //    The DB handle is kept open during this loop. better-sqlite3 still

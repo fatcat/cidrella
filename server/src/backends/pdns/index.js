@@ -20,7 +20,6 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import Database from 'better-sqlite3';
 import {
-  ENCRYPTED_FORWARDER_PORT,
   RECURSOR_NETWORK_TIMEOUT_MS,
   backendDnsPort,
 } from '../../config/defaults.js';
@@ -30,6 +29,8 @@ import { listenableAddresses, selectInterfaceNames } from '../../utils/interface
 import { findExecutable } from '../../utils/executable.js';
 import { getNtpStatusSync } from '../../utils/ntp-status.js';
 import { runCommand } from '../../utils/run-command.js';
+import { formatHostPort } from '../../utils/address.js';
+import { recursionTargets } from '../../utils/forwarding-settings.js';
 import { declareSupport } from '../features.js';
 import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
 import { createUnitControl } from '../shared/unit-control.js';
@@ -216,7 +217,7 @@ export function createPdnsBackend(deps = {}) {
         zones,
         ...listenPlan(),
         authPort: authDnsPort(),
-        forwarderPort: ENCRYPTED_FORWARDER_PORT,
+        forwarders: recursionTargets().map(({ address, port }) => formatHostPort(address, port)),
         recursion: getSetting('dns_no_recursion') !== 'true',
         validation: validationMode(),
         networkTimeoutMs: RECURSOR_NETWORK_TIMEOUT_MS,
