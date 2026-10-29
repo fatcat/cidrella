@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  formatHostPort,
   parseIp,
   canonicalizeIp,
   sortKey,
@@ -198,6 +199,13 @@ describe('addressFamily / validators', () => {
     expect(isValidIp('10.0.0.256')).toBe(false);
     expect(isValidIpv6('2001:db8::1')).toBe(true);
     expect(isValidIpv6('10.0.0.1')).toBe(false);
+  });
+});
+
+describe('formatHostPort', () => {
+  it('brackets an IPv6 address and leaves an IPv4 one bare', () => {
+    expect(formatHostPort('9.9.9.9', 53)).toBe('9.9.9.9:53');
+    expect(formatHostPort('2620:fe::fe', 53)).toBe('[2620:fe::fe]:53');
   });
 });
 

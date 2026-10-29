@@ -223,12 +223,12 @@ export function formatIp(value, bits) {
   return groups.join(':');
 }
 
-/** Parse then re-render, giving the one canonical spelling. Null if invalid. */
 /** `address:port`, an IPv6 address in brackets (`[2620:fe::fe]:53`). */
 export function formatHostPort(address, port) {
   return addressFamily(address) === 6 ? `[${address}]:${port}` : `${address}:${port}`;
 }
 
+/** Parse then re-render, giving the one canonical spelling. Null if invalid. */
 export function canonicalizeIp(str) {
   const parsed = parseIp(str);
   if (!parsed) return null;
