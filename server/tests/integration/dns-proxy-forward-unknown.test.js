@@ -13,6 +13,7 @@ vi.mock('../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 const { setupTestDb, cleanupTestDb } = await import('../helpers/test-db.js');
 const { backend } = await import('../../src/backends/index.js');
 const { setSetting } = await import('../../src/db/init.js');
+const { clearSettingCache } = await import('../../src/dns-proxy/db.js');
 // The proxy reads the backend's flag from its config, which the facade
 // refreshes when the DNS backend changes; a test flipping the flag refreshes it.
 const { wantsUnknownRetry, refreshProxyConfig } = await import('../../src/utils/dns-proxy.js');
@@ -55,6 +56,8 @@ describe('wantsUnknownRetry', () => {
 
   it('never retries with recursion off', () => {
     setSetting('dns_no_recursion', 'true');
+    // A query reads it through a 2 s cache (dns-proxy/db.js).
+    clearSettingCache();
     expect(wantsUnknownRetry(nx, 'vpn.corp.example')).toBe(false);
   });
 });

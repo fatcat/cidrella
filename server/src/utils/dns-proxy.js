@@ -18,6 +18,7 @@ import { roleSwitchedOff } from './role-switches.js';
 import { getDnsBackend, onBackendChanged } from '../backends/index.js';
 import { DATA_DIR, resolveDnsmasqInternalPort, resolveDnsListenPort } from '../config/defaults.js';
 import { proxyLog } from '../dns-proxy/log.js';
+import { inlineProxyDb, proxySettings } from './dns-proxy-inline-db.js';
 import {
   configureProxyServer,
   setProxyConfig,
@@ -72,8 +73,8 @@ export {
 export { clearBypassAtBoot, isProxyBypassed } from '../services/dns-proxy-watchdog.js';
 
 configureProxyServer({
-  setting: (key) => getSetting(key),
-  db: () => getDb(),
+  ...proxySettings,
+  db: inlineProxyDb,
   queryRow: (entry) => logDnsQuery(entry),
   liveness: (clientIp) => {
     try {

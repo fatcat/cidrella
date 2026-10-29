@@ -31,9 +31,11 @@ import { proxyLog } from './log.js';
 // (passive liveness) and a Resolution Map event.
 let deps = {
   setting: () => null,
-  db: () => {
-    throw new Error('the DNS proxy has no database');
-  },
+  // What a query reads: may be a little stale (dns-proxy/db.js).
+  cachedSetting: (key) => deps.setting(key),
+  // Null while no database is open: loaders keep what they have, and
+  // filtering lets everything through.
+  db: () => null,
   queryRow: () => {},
   liveness: () => {},
   resolution: () => {},
@@ -215,6 +217,7 @@ export function isGeoipLoaded() {
 // Load GeoIP rules into memory (call on startup and settings change)
 export function loadGeoipRules() {
   const db = deps.db();
+  if (!db) return;
   geoipMode = deps.setting('geoip_mode') || 'blocklist';
   const enabledRules = db.prepare('SELECT country_code FROM geoip_rules WHERE enabled = 1').all();
   geoipRuleSet = new Set(enabledRules.map((r) => r.country_code));
@@ -226,6 +229,7 @@ export function loadGeoipRules() {
 // exception). Reloaded on any allowlist change via the /geoip/allowlist routes.
 export function loadGeoipAllowlist() {
   const db = deps.db();
+  if (!db) return;
   const rows = db.prepare('SELECT value FROM geoip_ip_allowlist').all();
   geoipAllowEntries = rows.map((r) => parseCidrEntry(r.value)).filter(Boolean);
   proxyLog('info', 'GeoIP IP allowlist loaded', { count: geoipAllowEntries.length });
@@ -242,6 +246,7 @@ function isGeoipAllowed(ip) {
 // allowlist change via generateBlocklistConfig().
 export function loadAllowlist() {
   const db = deps.db();
+  if (!db) return;
   const rows = db.prepare('SELECT domain FROM blocklist_allowlist').all();
   allowlistSet = new Set(rows.map((r) => r.domain.toLowerCase()));
   proxyLog('info', 'Allowlist loaded', { count: allowlistSet.size });
@@ -416,6 +421,7 @@ function encodeServfail(query) {
 // settings and the set of enabled category slugs. Domains stay in SQLite.
 export function loadBlocklist() {
   const db = deps.db();
+  if (!db) return;
   const enabled = deps.setting('blocklist_enabled');
   blocklistEnabled = enabled === 'true';
   blocklistRedirectIp = deps.setting('blocklist_redirect_ip') || '';
@@ -471,7 +477,9 @@ function checkBlocklist(queryName) {
   // to happen here or allowlisted domains would start getting blocked.
   if (isAllowlisted(queryName)) return null;
 
-  const stmt = getLookupStmt(deps.db());
+  const db = deps.db();
+  if (!db) return null;
+  const stmt = getLookupStmt(db);
 
   for (const candidate of domainSuffixes(queryName)) {
     // A domain can appear in several categories; the first enabled one wins.
@@ -595,10 +603,12 @@ let loggedForwardUnknownRetry = false;
 
 function underForwardUnknownZone(queryName) {
   const now = Date.now();
+  const db = deps.db();
+  if (!db) return false;
   if (now - forwardUnknownZones.at > FORWARD_UNKNOWN_CACHE_MS) {
     forwardUnknownZones = {
       at: now,
-      names: deps.db()
+      names: db
         .prepare('SELECT name FROM dns_zones WHERE enabled = 1 AND forward_unknown = 1')
         .all()
         .map((row) => normalizeZoneName(row.name)),
@@ -617,7 +627,7 @@ const normalizeZoneName = (name) =>
 export function wantsUnknownRetry(response, queryName) {
   if (response?.rcode !== 'NXDOMAIN' || !queryName) return false;
   if (config.forwardsUnknownItself !== false) return false;
-  if (deps.setting('dns_no_recursion') === 'true') return false;
+  if (deps.cachedSetting('dns_no_recursion') === 'true') return false;
   return underForwardUnknownZone(queryName);
 }
 
@@ -897,7 +907,7 @@ function deliverResponse(pending, msg, response) {
     const rcode = response.rcode || rcodeNames[0];
     const firstIp = ips.length > 0 ? ips[0] : null;
     const dnssecSupported = classifyDnssecSupport(response, {
-      enabled: deps.setting('dnssec_enabled') === 'true',
+      enabled: deps.cachedSetting('dnssec_enabled') === 'true',
       checkingDisabled: pending.checkingDisabled,
     });
     noteQuery({
@@ -1098,7 +1108,7 @@ async function handleTcpQuery(msg, clientSock) {
   statsTotal++;
   writeTcpMessage(clientSock, withClientRd(Buffer.from(respMsg), asksRecursion(msg)));
   const dnssecSupported = classifyDnssecSupport(response, {
-    enabled: deps.setting('dnssec_enabled') === 'true',
+    enabled: deps.cachedSetting('dnssec_enabled') === 'true',
     checkingDisabled: !!query.flag_cd,
   });
   noteQuery({

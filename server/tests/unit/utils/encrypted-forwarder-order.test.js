@@ -1,12 +1,11 @@
-import { describe, it, expect, vi, afterAll } from 'vitest';
+import { describe, it, expect, afterAll } from 'vitest';
+
+const { configureForwarder, applyEncryptedForwarder, stopEncryptedForwarder, firstUpstream } =
+  await import('../../../src/dns-proxy/forwarder.js');
 
 // Settings the forwarder reads when it is (re)applied.
 let settings = {};
-vi.mock('../../../src/db/init.js', () => ({ getSetting: (key) => settings[key] }));
-vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
-
-const { applyEncryptedForwarder, stopEncryptedForwarder, firstUpstream } =
-  await import('../../../src/utils/encrypted-forwarder.js');
+configureForwarder({ setting: (key) => settings[key] });
 
 const QUAD9 = { hostname: 'dns10.quad9.net', addresses: ['9.9.9.10', '2620:fe::10'] };
 const ADGUARD = { hostname: 'unfiltered.adguard-dns.com', addresses: ['94.140.14.140'] };

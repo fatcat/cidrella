@@ -18,6 +18,8 @@ const PROXY_MODULES = [
   'dns-proxy/log.js',
   'dns-proxy/server.js',
   'dns-proxy/forwarder.js',
+  'dns-proxy/db.js',
+  'models/setting-value.js',
   'utils/query-log-writer.js',
   'utils/query-log-line.js',
   'models/filtering-exemption-read.js',
@@ -43,7 +45,7 @@ const FORBIDDEN = [
   /^src\/routes\//,
   /^src\/middleware\//,
   /^src\/utils\/(ip-liveness|switch-state|interface-config|role-switches|request-actor)\.js$/,
-  /^src\/models\/(?!filtering-exemption-read\.js$)/,
+  /^src\/models\/(?!(?:filtering-exemption-read|setting-value)\.js$)/,
 ];
 const FORBIDDEN_PACKAGES = /^(express|@duckdb\/|duckdb)/;
 

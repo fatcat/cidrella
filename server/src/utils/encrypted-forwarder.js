@@ -1,10 +1,11 @@
 /**
- * The forwarder (dns-proxy/forwarder.js), reading the web app's settings.
+ * The forwarder (dns-proxy/forwarder.js), reading settings through the
+ * proxy's own read-only connection.
  */
-import { getSetting } from '../db/init.js';
 import { configureForwarder } from '../dns-proxy/forwarder.js';
+import { proxySettings } from './dns-proxy-inline-db.js';
 
-configureForwarder({ setting: (key) => getSetting(key) });
+configureForwarder({ setting: proxySettings.setting });
 
 export {
   applyEncryptedForwarder,
