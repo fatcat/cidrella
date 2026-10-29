@@ -46,7 +46,6 @@
   display: flex;
   gap: 0.25rem;
 }
-/* The button row at the foot of a dialog body (not the Dialog footer slot). */
 /* A field's input with a small action beside it (Suggest). */
 .input-with-action {
   display: flex;
@@ -57,7 +56,7 @@
   flex: 1;
   min-width: 0;
 }
-
+/* The button row at the foot of a dialog body (not the Dialog footer slot). */
 .dialog-actions {
   display: flex;
   justify-content: flex-end;
