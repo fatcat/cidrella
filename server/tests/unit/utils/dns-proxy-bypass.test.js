@@ -11,8 +11,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 // The proxy under test runs in this process.
-vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
-  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+vi.mock('../../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../../helpers/proxy-in-process.js')).inProcessProxyClient(),
 );
 import os from 'os';
 import { EventEmitter } from 'events';
@@ -111,7 +111,8 @@ async function intoBypass() {
   calls.audits.length = 0;
   port.blocked = true;
   proxy.startProxy();
-  await vi.advanceTimersByTimeAsync(15 * 1000);
+  // Three dead checks 3 s apart, then three restarts 5 s apart.
+  await vi.advanceTimersByTimeAsync(40 * 1000);
   expect(proxy.isProxyBypassed()).toBe(true);
   expect(getSetting('dns_proxy_bypass')).toBe('true');
   expect(actions()).toEqual(['dns_proxy_bypass_activated']);

@@ -2,11 +2,11 @@
  * The DNS proxy's watchdog, in the web app: notices a proxy that stopped
  * answering, restarts it, and when it cannot, puts the DNS backend on the LAN
  * port (bypass) and tries the proxy again now and then (docs/ARCHITECTURE.md,
- * Proxy bypass). It reaches the proxy through a handle, so it does not care
- * where the proxy runs (utils/dns-proxy.js builds one for each mode):
+ * Proxy bypass). It reaches the proxy process through a handle
+ * (utils/dns-proxy.js builds it; the tests pass a fake):
  *
- *   dead()             not serving: no sockets, or a proxy process that
- *                      stopped reporting
+ *   dead()             not serving: no sockets while it should, or the
+ *                      process stopped reporting
  *   misses             dead checks in a row before the watchdog acts
  *   restart()          start it again (may return a Promise)
  *   settleMs           how long a restart takes to show

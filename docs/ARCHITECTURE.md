@@ -25,8 +25,9 @@ installs.
 
 ### Event loop
 
-The web API, the DNS proxy, the health monitor and daemon control share one Node event loop, so
-anything synchronous after boot delays every DNS answer until it returns. The rules:
+The web API, the DNS proxy's watchdog and daemon control share one Node event loop. The DNS
+proxy and the encrypted forwarder run in a process of their own (DNS proxy process, below), so
+a slow handler now delays the web UI and the watchdog, not DNS answers. The rules still hold:
 
 - A command runs through `runCommand` (`server/src/utils/run-command.js`): async, always with a
   timeout, rejecting with the exit code and stderr. `npm run lint` refuses a new `execSync`,
@@ -450,13 +451,68 @@ saves it, and Bulk Change sets it on the selected scopes when its row is
 ticked, a SLAAC-only scope included (that scope takes the lifetime and no
 options), reporting the change with `field: 'address_lifetime'` and no code.
 
+### DNS proxy process
+
+The DNS proxy (`server/src/dns-proxy/server.js`) and the encrypted forwarder
+(`dns-proxy/forwarder.js`, 127.0.0.1:5356) run as their own process,
+`dns-proxy/main.js`, so DNS keeps answering while the web app restarts,
+updates or stalls. It runs as `cidrella-dns-proxy.service` natively, the
+`dns-proxy` s6 longrun in Docker, and a child of the web app in development.
+`CIDRELLA_DNS_PROXY_SUPERVISOR` tells the web app which (`systemd`, `s6`, or
+unset for the child).
+
+- **Talking to it.** The web app's client (`utils/dns-proxy-client.js`)
+  connects to `DATA_DIR/runtime/dns-proxy.sock` (owner-only; the path must fit
+  in 107 bytes) and sends one JSON object per line (`dns-proxy/protocol.js`).
+  `dns-proxy/runtime.js` answers the messages; the tests drive the same
+  runtime in their own process (`tests/helpers/proxy-in-process.js`).
+  `utils/dns-proxy.js` and `utils/encrypted-forwarder.js` keep their export
+  names as facades over the client.
+- **Config.** Where to listen and forward is computed in the web app
+  (`proxyConfigNow`) and saved to `DATA_DIR/runtime/dns-proxy-config.json`
+  (0600), so a proxy that starts first serves from it.
+- **The database.** The proxy opens it read-only with a zero busy timeout
+  (`dns-proxy/db.js`) and never writes it; a setting reads through a 2 s
+  cache. It sends query rows, the clients it saw and Resolution Map events to
+  the web app (`services/dns-proxy-sinks.js`), which stays the only DuckDB
+  writer and records liveness through the lifecycle rules. While the web app
+  is away those wait in a bounded outbox, the oldest dropped and counted.
+- **Restore and rollback.** Before the database files are swapped the proxy
+  closes its connection (`db-release` from a restore, `systemctl kill -s
+  SIGUSR2 cidrella-dns-proxy` from `update.sh` and `rollback.sh`) until the
+  next web app says hello. It also opens the file again when the database or
+  its `-shm` is replaced under it.
+- **Updates.** `update.sh` restarts only `cidrella`. Both processes compute a
+  code id over the proxy's import closure (`dns-proxy/code-id.js`); when the
+  web app's differs from the running proxy's, it asks the proxy to exit once,
+  and the supervisor starts the new code. A guard test keeps the closure away
+  from the web app's modules.
+- **A rollback to a release without it.** The proxy exits when the file it
+  started from is gone, and the unit's `ConditionPathExists` keeps it down,
+  so the old web app can run the proxy itself.
+
 ### Proxy bypass
 
 The DNS proxy holds the LAN port and the backend answers it on an internal
-port. When the proxy stops listening and three restarts fail, bypass puts the
-backend on the LAN port (`dns_proxy_bypass`, `activateBypass` in
-`utils/dns-proxy.js`), so names still resolve without filtering, GeoIP
-blocking or the query log. Bypass ends on its own:
+port. The watchdog in the web app (`services/dns-proxy-watchdog.js`) checks
+the proxy every 3 seconds: dead is a process that stopped reporting (gone, or
+its event loop hung) or one bound to nothing while it should serve. After
+three dead checks in a row it restarts it: a rebind for one that reports, a
+SIGKILL and a start by its supervisor for one that does not
+(`services/dns-proxy-supervisor.js`). When three restarts fail, bypass puts
+the backend on the LAN port (`dns_proxy_bypass`, `activateBypass`), so names
+still resolve without filtering, GeoIP blocking or the query log, and the
+proxy's saved config says not to serve, so its own restarts leave the port
+alone.
+
+With the process gone the forwarder is gone too, so the bypass sets
+`dns_forwarder_down` and the backend forwards to the plaintext upstreams
+(`recursionTargets` in `utils/forwarding-settings.js`). Only in plaintext
+mode: with DoT or DoH it keeps pointing at 127.0.0.1:5356, and recursion
+fails rather than go out in the clear. No setting allows a plain backup in
+an encrypted mode.
+
+Bypass ends on its own:
 
 - While bypassed, the health monitor tries the proxy again: the backend back
   on its internal port, then the proxy on the LAN port. The first try comes
@@ -505,8 +561,9 @@ latency), plaintext included.
 ### Upstream forwarding: primary, backup, and the timing chain
 
 With recursion on, dnsmasq has one `server=` line, `127.0.0.1#5356`, in every
-mode. The forwarder there (`utils/encrypted-forwarder.js`, named for where it
-started) sends each query on as plain DNS, DoT or DoH. Plaintext has its own
+mode (but bypass with the proxy process down, Proxy bypass above). The
+forwarder there (`dns-proxy/forwarder.js`, in the DNS proxy process) sends
+each query on as plain DNS, DoT or DoH. Plaintext has its own
 path because dnsmasq left to itself does not take turns: on dnsmasq 2.91 two
 plain servers got 45 queries to 1.
 
@@ -637,7 +694,7 @@ Rows are kept `audit_log_retention_days` (90).
 ### Filtering pause and hosts with filtering off
 
 Before either filtering check (the blocklist before forwarding, GeoIP on the
-answer), the DNS proxy asks `filteringBypass(clientIp)` in `utils/dns-proxy.js`.
+answer), the DNS proxy asks `filteringBypass(clientIp)` in `dns-proxy/server.js`.
 Filtering is skipped for every client while `filtering_paused_until` is in the
 future, and for one client whose address is in the exempt set. Bypassed
 queries log as `allowed`.

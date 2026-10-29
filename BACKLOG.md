@@ -93,8 +93,15 @@ process turned up three pieces of work, in this order.
    - `systemctl --no-block start cidrella-update@` in `routes/version.js`, which returns at
      once.
 
-2. **Move the DNS proxy into its own service.** A `cidrella-dns-proxy` systemd unit, and an s6
-   longrun in Docker. What the shared process costs today:
+2. **Move the DNS proxy into its own service.** Done on `dev/0.6.3` (2026-10-29, same plan):
+   `cidrella-dns-proxy.service` and the `dns-proxy` s6 longrun run the proxy and the encrypted
+   forwarder, the web app is the outside watchdog, and an update restarts the proxy only when
+   its code changed. docs/ARCHITECTURE.md, DNS proxy process and Proxy bypass, has the design.
+   Left out on purpose: an `EADDRINUSE` retry on bind (`dns-proxy-bind-retry.test.js` keeps it
+   final, from DNS-PROXY-BIND-01; the watchdog's restarts cover a busy port). Still to verify
+   on testerella: the first-split update from 0.6.2, an update with unchanged proxy code (no
+   DNS gap), auto-rollback, and `cidrella-rollback` to 0.6.2 with its old script. What the
+   shared process cost before:
    - One event loop: any slow handler delays every DNS answer.
    - Port 53 belongs to the proxy, and the backend sits on an internal port behind it, so every
      `systemctl restart cidrella` in `update.sh` leaves port 53 unanswered until the new process
@@ -122,7 +129,8 @@ process turned up three pieces of work, in this order.
    network probes (the scanner, the DHCP probes, rogue DHCP detection) out with the proxy lets
    the web process drop `CAP_NET_RAW`; it keeps `CAP_NET_BIND_SERVICE` only if it serves on 443.
    Daemon control behind a small privileged helper is cleaner still, but a bigger job; decide
-   that once 2 is done.
+   that once 2 is done. Item 2 is done: the proxy's process holds only
+   `CAP_NET_BIND_SERVICE`, and the web process still has both.
 
 Looked at and fine in-process: the scanner's tool runs (async `execFile`), DuckDB (its own
 threads), the blocklist refresh (streamed), lease sync, the vendor and update checks, and the

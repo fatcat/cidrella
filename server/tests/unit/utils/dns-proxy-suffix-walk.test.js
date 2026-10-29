@@ -11,7 +11,7 @@ vi.mock('../../../src/backends/index.js', async () =>
   (await import('../../helpers/fake-backends.js')).fakeBackendsModule(),
 );
 
-const { domainSuffixes } = await import('../../../src/utils/dns-proxy.js');
+const { domainSuffixes } = await import('../../../src/dns-proxy/server.js');
 
 /**
  * Duplicate-logic audit #12. The allowlist and the blocklist each carried their

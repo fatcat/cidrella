@@ -7,7 +7,7 @@ import dnsPacket from 'dns-packet';
 
 vi.mock('../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
-const { formErrReply } = await import('../../src/utils/dns-proxy.js');
+const { formErrReply } = await import('../../src/dns-proxy/server.js');
 
 // ID 0xbeef, opcode 0 with RD, one question whose first label claims 63
 // bytes and has none: "Cannot decode name (buffer overflow)".

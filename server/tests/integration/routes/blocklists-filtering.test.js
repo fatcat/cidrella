@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 // The proxy under test runs in this process.
-vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
-  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+vi.mock('../../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../../helpers/proxy-in-process.js')).inProcessProxyClient(),
 );
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
@@ -18,7 +18,7 @@ vi.mock('../../../src/backends/index.js', async () =>
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
 const { default: blocklistsRouter } = await import('../../../src/routes/blocklists.js');
-const { filteringBypass } = await import('../../../src/utils/dns-proxy.js');
+const { filteringBypass } = await import('../../../src/dns-proxy/server.js');
 const { default: request } = await import('supertest');
 
 /**

@@ -8,17 +8,7 @@ vi.mock('../../../src/backends/index.js', async () =>
 );
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
-const {
-  buildServfail,
-  fitToUdp,
-  forwardDoT,
-  forwardDoH,
-  forwardPlain,
-  queryUpstreams,
-  getAndResetForwarderMetrics,
-  heldProviders,
-  releaseHolds,
-} = await import('../../../src/utils/encrypted-forwarder.js');
+const { buildServfail, fitToUdp, forwardDoT, forwardDoH, forwardPlain, queryUpstreams, getAndResetForwarderMetrics, heldProviders, releaseHolds } = await import('../../../src/dns-proxy/forwarder.js');
 const { pinnedLookup } = await import('../../../src/utils/upstream-pool.js');
 const { plainDnsServer } = await import('../../helpers/plain-dns-server.js');
 

@@ -292,7 +292,26 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   is what the proxy and the reads both use) and `utils/filtering-pause.js` (the pause periods,
   client through `@shared`), `utils/query-log.js` (the DNS proxy's query lines in the DNS
   backend's log, for a backend whose `logSource()` says `proxyQueries`; the line format and its
-  parser are `utils/query-log-line.js`), `utils/resolution-feed.js` (the Resolution Map's live event
+  parser are `utils/query-log-line.js`; the writer itself, path given, is
+  `utils/query-log-writer.js`), the DNS proxy process in `dns-proxy/` (`main.js` the entry,
+  `runtime.js` its answers to the web app's messages, `server.js` the proxy, `forwarder.js` the
+  encrypted forwarder, `db.js` its read-only connection and cached `setting`, `protocol.js` the
+  socket framing, `ipc-server.js` with the bounded outbox, `code-id.js` the id an update compares,
+  `constants.js` the DATA_DIR rule and `proxyRuntimePaths`; it imports leaf helpers only, no
+  database, config, backend, service, route or model module but the two read ones below, which
+  `tests/unit/dns-proxy/closure-guard.test.js` enforces), the web app's side of it: `utils/dns-proxy.js` and
+  `utils/encrypted-forwarder.js` (facades, same names as before), `utils/dns-proxy-client.js`
+  (the socket client: `freshProxyStatus`, `requestDrain`, `sendProxyConfig`, `sendReload`),
+  `services/dns-proxy-sinks.js` (where its reports land), `services/dns-proxy-watchdog.js`
+  (restart and bypass) and `services/dns-proxy-supervisor.js` (`restartProxyProcess`); a test of
+  the proxy's behavior mocks the client with `inProcessProxyClient` from
+  `tests/helpers/proxy-in-process.js`; `models/filtering-exemption-read.js` (`exemptAddressSet`
+  without the model's writes), `models/setting-value.js` (a stored setting's value, decoded, for
+  both processes), `utils/atomic-write.js` (`atomicWrite`, re-exported by
+  `backends/shared/validated-files.js`), `utils/forwarding-modes.js` (`backupModeOf`, the pure
+  rule `backupMode` reads), `recursionTargets` in `utils/forwarding-settings.js` (where the DNS
+  backend sends recursion: the forwarder, or the plaintext upstreams while `dns_forwarder_down`),
+  `formatHostPort` in `utils/address.js` (`host:port`, bracketing IPv6), `utils/resolution-feed.js` (the Resolution Map's live event
   buffer; the map never reads the proxy's `getAndReset*` counters) and `utils/geo-cities.js`
   (the city table: coarsening, file format and lookup, shared with
   `scripts/build-geo-cities.js`), client `components/analytics/ResolutionCanvas.vue` (the map and

@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 // The proxy under test runs in this process.
-vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
-  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+vi.mock('../../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../../helpers/proxy-in-process.js')).inProcessProxyClient(),
 );
 import fs from 'fs';
 import path from 'path';
@@ -36,8 +36,8 @@ const download = () =>
 
 const { default: geoipRouter } = await import('../../../src/routes/geoip.js');
 const { getDb, setSetting, getSetting } = await import('../../../src/db/init.js');
-const { evaluateResolvedPolicy, isGeoipLoaded, unloadMmdb } =
-  await import('../../../src/utils/dns-proxy.js');
+const { isGeoipLoaded, unloadMmdb } = await import('../../../src/utils/dns-proxy.js');
+const { evaluateResolvedPolicy } = await import('../../../src/dns-proxy/server.js');
 const { default: request } = await import('supertest');
 
 let tmpDir, app;

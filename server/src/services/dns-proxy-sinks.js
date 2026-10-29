@@ -2,8 +2,7 @@
  * Where the DNS proxy's reports land in the web app: analytics rows into
  * DuckDB, the clients it saw into passive liveness (through the lifecycle
  * rules in ip-liveness.js), and Resolution Map events into the feed. The
- * proxy running inside the web app calls these per query; the proxy process
- * sends them in batches (utils/dns-proxy-client.js).
+ * proxy process sends them in batches (utils/dns-proxy-client.js).
  */
 import { getDb } from '../db/init.js';
 import { logDnsQuery } from '../db/duckdb.js';

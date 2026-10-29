@@ -27,12 +27,14 @@ const LIVE = process.env.PDNS_LIVE === '1';
 const UPSTREAM = process.env.PDNS_LIVE_UPSTREAM || '9.9.9.9';
 
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../../../helpers/test-db.js');
-const { setSetting } = await import('../../../../src/db/init.js');
+const { setSetting, getSetting } = await import('../../../../src/db/init.js');
 const { seedBackendEstate } = await import('../../../helpers/backend-estate.js');
 const { createPdnsBackend } = await import('../../../../src/backends/pdns/index.js');
 const { AUTH_DIR, RECURSOR_DIR, binary } = await import('../../../../src/backends/pdns/paths.js');
-const { applyEncryptedForwarder, stopEncryptedForwarder } =
-  await import('../../../../src/utils/encrypted-forwarder.js');
+// The forwarder runs here, in the test, reading the test database's settings.
+const { configureForwarder, applyEncryptedForwarder, stopEncryptedForwarder } =
+  await import('../../../../src/dns-proxy/forwarder.js');
+configureForwarder({ setting: getSetting });
 
 const PORT = 5353;
 let db;

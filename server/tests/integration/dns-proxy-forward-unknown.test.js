@@ -5,8 +5,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
 // The proxy under test runs in this process.
-vi.mock('../../src/utils/dns-proxy-mode.js', async () =>
-  (await import('../helpers/proxy-mode.js')).inlineProxyMode(),
+vi.mock('../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../helpers/proxy-in-process.js')).inProcessProxyClient(),
 );
 
 vi.mock('../../src/backends/index.js', async () =>
@@ -20,7 +20,8 @@ const { setSetting } = await import('../../src/db/init.js');
 const { clearSettingCache } = await import('../../src/dns-proxy/db.js');
 // The proxy reads the backend's flag from its config, which the facade
 // refreshes when the DNS backend changes; a test flipping the flag refreshes it.
-const { wantsUnknownRetry, refreshProxyConfig } = await import('../../src/utils/dns-proxy.js');
+const { refreshProxyConfig } = await import('../../src/utils/dns-proxy.js');
+const { wantsUnknownRetry } = await import('../../src/dns-proxy/server.js');
 
 let tmpDir;
 let db;

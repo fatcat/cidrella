@@ -4,8 +4,8 @@
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 // The proxy under test runs in this process.
-vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
-  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+vi.mock('../../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../../helpers/proxy-in-process.js')).inProcessProxyClient(),
 );
 import os from 'os';
 import dnsPacket from 'dns-packet';
@@ -16,7 +16,8 @@ vi.mock('../../../src/backends/index.js', async () =>
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
-import { createBlockedResponse, loadBlocklist } from '../../../src/utils/dns-proxy.js';
+import { loadBlocklist } from '../../../src/utils/dns-proxy.js';
+import { createBlockedResponse } from '../../../src/dns-proxy/server.js';
 
 let tmpDir;
 let db;

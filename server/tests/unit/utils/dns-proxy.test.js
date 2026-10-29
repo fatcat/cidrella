@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 // The proxy under test runs in this process.
-vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
-  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+vi.mock('../../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../../helpers/proxy-in-process.js')).inProcessProxyClient(),
 );
 
 // Fake backend registry before importing dns-proxy (no dnsmasq writes or restarts)
@@ -16,20 +16,8 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { getDb } from '../../../src/db/init.js';
-import {
-  lookupCountry,
-  getProxyStatus,
-  resetStats,
-  isProxyBypassed,
-  getBlockedDelta,
-  getAndResetCountryHits,
-  getAndResetPerformanceMetrics,
-  loadBlocklist,
-  loadAllowlist,
-  getAndResetBlocklistHits,
-  evaluateInboundPolicy,
-  noteAnswer,
-} from '../../../src/utils/dns-proxy.js';
+import { getProxyStatus, resetStats, isProxyBypassed, loadBlocklist, loadAllowlist } from '../../../src/utils/dns-proxy.js';
+import { lookupCountry, getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics, getAndResetBlocklistHits, evaluateInboundPolicy, noteAnswer } from '../../../src/dns-proxy/server.js';
 import dnsPacket from 'dns-packet';
 import { edeOption } from '../../../src/utils/dns-ede.js';
 

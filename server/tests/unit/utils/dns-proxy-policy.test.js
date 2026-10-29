@@ -1,7 +1,7 @@
 import { describe, it, expect, beforeAll, afterAll, afterEach, vi } from 'vitest';
 // The proxy under test runs in this process.
-vi.mock('../../../src/utils/dns-proxy-mode.js', async () =>
-  (await import('../../helpers/proxy-mode.js')).inlineProxyMode(),
+vi.mock('../../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../../helpers/proxy-in-process.js')).inProcessProxyClient(),
 );
 
 // Fake backend registry before importing dns-proxy (no dnsmasq writes or restarts)
@@ -16,16 +16,8 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { getDb } from '../../../src/db/init.js';
-import {
-  evaluateInboundPolicy,
-  evaluateResolvedPolicy,
-  loadBlocklist,
-  loadAllowlist,
-  loadGeoipRules,
-  loadGeoipAllowlist,
-  loadFilteringOverrides,
-  filteringBypass,
-} from '../../../src/utils/dns-proxy.js';
+import { loadBlocklist, loadAllowlist, loadGeoipRules, loadGeoipAllowlist, loadFilteringOverrides } from '../../../src/utils/dns-proxy.js';
+import { evaluateInboundPolicy, evaluateResolvedPolicy, filteringBypass } from '../../../src/dns-proxy/server.js';
 import { setHostFiltering } from '../../../src/models/filtering-exemption.js';
 
 let tmpDir;
