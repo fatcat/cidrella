@@ -9,6 +9,10 @@
  * The config is also written to DATA_DIR/runtime, owner-only, so a proxy
  * that starts before the web app serves from it.
  *
+ * The hello carries both code ids (dns-proxy/code-id.js): a proxy running
+ * other code than this web app is asked to restart once, so an update
+ * restarts it only when its code changed.
+ *
  * With no supervisor (development: CIDRELLA_DNS_PROXY_SUPERVISOR unset), the
  * client starts the proxy itself as a child and stops it at exit.
  */
@@ -41,6 +45,9 @@ let handlers = {};
 let child = null;
 let nextId = 1;
 const waiting = new Map();
+// The proxy code id a restart was last asked for, so code that keeps
+// differing (a broken install) is not restarted in a loop.
+let restartAskedFor = null;
 
 function write(message) {
   if (!connected) return false;
@@ -66,6 +73,23 @@ function onMessage(message) {
           web: PROTOCOL_VERSION,
         });
         write({ type: 'shutdown' });
+      } else if (codeId && message.codeId !== codeId) {
+        // The proxy runs other code than this web app ships (an update): it
+        // exits, and its supervisor starts the new code. Unchanged code
+        // keeps running, and DNS with it.
+        if (restartAskedFor === message.codeId) {
+          proxyLog('error', 'The DNS proxy still runs other code after a restart', {
+            proxy: message.codeId,
+            web: codeId,
+          });
+        } else {
+          restartAskedFor = message.codeId;
+          proxyLog('info', 'The DNS proxy runs other code, asking it to restart', {
+            proxy: message.codeId,
+            web: codeId,
+          });
+          write({ type: 'shutdown' });
+        }
       }
       handlers.onHello?.(peer);
       return;

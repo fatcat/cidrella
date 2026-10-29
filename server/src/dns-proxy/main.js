@@ -252,6 +252,18 @@ function shutdown(code) {
   process.exit(code);
 }
 
+// The file the proxy was started from gone means the code it came from is
+// gone: a rollback to a release without a separate proxy. It exits, and its
+// unit's ConditionPathExists keeps it from being started again; the old web
+// app runs the proxy itself.
+const entry = process.argv[1];
+setInterval(() => {
+  if (!fs.existsSync(entry)) {
+    proxyLog('info', 'The proxy code is gone (a rollback?), exiting', { entry });
+    shutdown(0);
+  }
+}, 1000).unref();
+
 // Started by the web app itself (development, no supervisor): exit when it
 // is gone, however it ended.
 const parentPid = Number(process.env.CIDRELLA_DNS_PROXY_PARENT) || null;

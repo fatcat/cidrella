@@ -200,3 +200,45 @@ describe('the DNS proxy process', () => {
     expect(fs.statSync(socket).mode & 0o077).toBe(0);
   });
 });
+
+// Each starts its own proxy, so it can end it.
+describe('when the proxy exits by itself', () => {
+  const exited = (child) =>
+    new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+
+  async function startProxy(entry, dir = fs.mkdtempSync(path.join(tmpDir, 'own-'))) {
+    const child = spawn(process.execPath, [entry], {
+      env: { ...process.env, DATA_DIR: dir },
+      stdio: 'ignore',
+    });
+    await waitFor(() => fs.existsSync(proxyRuntimePaths(dir).socket));
+    return { child, dir };
+  }
+
+  it('restarts once for a web app that ships other code, and not again', async () => {
+    Client.stopProxyClient();
+    const { child, dir } = await startProxy(PROXY_ENTRY);
+    const done = exited(child);
+    Client.startProxyClient({ dataDir: dir, codeId: 'other-code', handlers: {} });
+    expect(await done).toEqual({ code: 0, signal: null });
+
+    // Its supervisor starts the same code again: still other than the web
+    // app's, but asked once already, so it keeps running.
+    const again = await startProxy(PROXY_ENTRY, dir);
+    await waitFor(() => Client.proxyPeer()?.pid === again.child.pid);
+    await new Promise((resolve) => setTimeout(resolve, 1000));
+    expect(again.child.exitCode).toBeNull();
+    Client.stopProxyClient();
+    again.child.kill('SIGTERM');
+    await exited(again.child);
+  }, 20000);
+
+  it('exits when the file it was started from is gone', async () => {
+    const link = path.join(tmpDir, 'main-link.js');
+    fs.symlinkSync(PROXY_ENTRY, link);
+    const { child } = await startProxy(link);
+    const done = exited(child);
+    fs.unlinkSync(link);
+    expect(await done).toEqual({ code: 0, signal: null });
+  }, 15000);
+});
