@@ -10,12 +10,12 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@openvue/themes": "1.0.0",
-    "axios": "^1.7.0",
+    "@openvue/themes": "1.1.0",
+    "axios": "^1.21.0",
     "chart.js": "^4.5.1",
     "chartjs-plugin-datalabels": "^2.2.0",
     "d3-geo": "^3.1.1",
-    "openvue": "1.0.0",
+    "openvue": "1.1.0",
     "pinia": "^4.0.2",
     "primeicons": "7.0.0",
     "qrcode": "^1.5.4",
