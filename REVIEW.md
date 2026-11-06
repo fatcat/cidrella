@@ -14,24 +14,6 @@ was suggested.
 
 ## Found testing a rollback on testerella (2026-11-06)
 
-#### VT-SECOND-SCAN-01: a release published after another that UTC day may get no VirusTotal scan
-
-**medium**, the failures are confirmed from the Actions history; the cause is inferred.
-`.github/workflows/virustotal.yml:33`.
-
-- **What happens:** On all three UTC days with more than one scan, the first passed and every later
-  one failed: 2026-10-11 (5.7 h apart), 2026-10-22 (5 h), 2026-11-06 (22, 33 and 57 minutes after
-  the first). Today's error is HTTP 429 a few seconds after the download; the older logs have
-  expired. `v0.5.3-pre.2`, `v0.6.1-pre.2` and `v0.6.3-pre.3` to `pre.5` have no scan link. The
-  failed step also skips the Pages rebuild, so a final release published after a pre-release that
-  day would have no scan and a stale `/virustotal/` redirect, while the README badge says every
-  release is scanned.
-- **Why:** The action hides the response body, so `QuotaExceededError` and `TooManyRequestsError`
-  look alike. The 5 h gaps rule out the 4 a minute limit, and a few scans are far from the reported
-  500 a day, so this is a limit on the key not visible from here, or another user of it. Unconfirmed.
-- **Fix:** Read the key's quota once to confirm. Then have a failed scan retry after 00:00 UTC, and
-  let the Pages rebuild run whether or not the scan passed.
-
 #### HARNESS-RESET-01: the test harness's wipe leaves the newer units running
 
 **medium**, read from the code. `scripts/test-harness/run.sh:117` (`reset_host`).
