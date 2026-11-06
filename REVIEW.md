@@ -12,22 +12,44 @@ was suggested.
 
 ---
 
-## Found testing a rollback on testerella (2026-11-06)
+## Found testing the harness wipe (2026-11-06)
 
-#### HARNESS-RESET-01: the test harness's wipe leaves the newer units running
+#### FRESH-FORWARDER-01: a fresh install of 0.6.3 cannot resolve outside names
 
-**medium**, read from the code. `scripts/test-harness/run.sh:117` (`reset_host`).
+**high**, reproduced on testerella on 2 of 2 fresh installs of `v0.6.3-pre.5`. An update from 0.6.2
+does not hit it, so prod is not affected.
+`server/src/dns-proxy/runtime.js:220`, `server/src/dns-proxy/forwarder.js:472`,
+`server/src/index.js:275`, `server/src/utils/dns-proxy-client.js:233`.
 
-- **What happens:** It stops only `cidrella`, `cidrella-dnsmasq` and `cidrella-anomaly`, then
-  deletes `/etc/systemd/system/cidrella*.service`. On a host with `cidrella-dns-proxy`, Kea,
-  PowerDNS or radvd running, those processes survive with their unit files gone and keep port 53
-  and the DHCP ports, so the next scenario's install starts on a host that is not clean. It also
-  leaves `/etc/polkit-1/rules.d/49-cidrella.rules`, the unit drop-in directories, the Kea, PowerDNS
-  and radvd packages, and their apt lists.
-- **Why:** The list predates the proxy process and the second stack.
-- **Fix:** Stop and disable every `cidrella*` unit from `systemctl list-units`, including the
-  templated Kea ones, remove `/etc/systemd/system/cidrella*` and the polkit rule, and purge those
-  packages and lists.
+- **What happens:** After `install.sh`, `dig @10.0.0.8 example.com` times out over UDP and TCP
+  returns REFUSED, while a local name answers NXDOMAIN. Nothing listens on 127.0.0.1:5356, where
+  `dnsmasq.conf` sends recursion (`server=127.0.0.1#5356`). `systemctl restart cidrella` does not
+  help. `systemctl restart cidrella-dns-proxy` does, and it stays fixed.
+- **Why:** The install starts the proxy before the web app has created the database and before any
+  saved config exists. `applyEncryptedForwarder` runs once at the proxy's start, reads no upstreams,
+  and leaves the listeners off. Nothing asks again when the web app connects: `config` and
+  `reload all` don't touch the forwarder, and the web app's own call at `index.js:275` runs before
+  its client connects, so `request()` returns null without sending. That call does nothing on any
+  boot. Changing a forwarding setting in the UI should start it, from reading `routes/dns.js`; not
+  run. Docker starts the proxy first too, so it probably fails the same way; not run.
+- **Fix:** Have the runtime apply the forwarder when a web app's first config arrives, or have the
+  client send `apply-forwarder` on connect, and remove the call at `index.js:275`. Add an integration
+  test that starts the proxy with no database or config, connects, and queries through 5356, and an
+  outside lookup to the `fresh-install` scenario.
+
+#### HARNESS-STACK-SWITCH-01: the stack-switch scenario fails on two stale checks and tests no recursion
+
+**low**, read from the code and one run against `v0.6.3-pre.5` (23 pass, 2 fail).
+`scripts/test-harness/scenarios/stack-switch.sh:125`, `:127` and `:51`.
+
+- **What happens:** It expects `kea@dhcp6` active, but IPv6 is off on a new install, so Kea runs only
+  `dhcp4` (`backends/kea/index.js:95`). It expects `runtime/dnsmasq.disabled` to exist, but the
+  assertions run after the scenario has switched back to dnsmasq, and the same file is then
+  asserted missing, so that check can never pass. `dns_answers` queries a local name on 5353, so it
+  passes with FRESH-FORWARDER-01 present.
+- **Why:** The assertions all run after `scenario_run`, and the unit list predates the IPv6 switch.
+- **Fix:** Record the marker's presence in `scenario_run` while on PowerDNS + Kea and assert the
+  recorded result, expect `dhcp6` only with IPv6 on, and add a lookup of an outside name.
 
 ## Found reading prod's address history (2026-11-06)
 

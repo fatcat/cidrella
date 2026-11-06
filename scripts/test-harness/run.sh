@@ -118,16 +118,32 @@ reset_host() {
   echo "[reset] wiping host..."
   ssh "root@$HOST" bash <<'RESET'
 set -eu
-systemctl stop cidrella cidrella-dnsmasq cidrella-anomaly 2>/dev/null || true
-systemctl disable cidrella cidrella-dnsmasq cidrella-anomaly 2>/dev/null || true
-systemctl reset-failed cidrella-update cidrella-dnsmasq 2>/dev/null || true
-rm -f /etc/systemd/system/cidrella*.service /etc/sudoers.d/cidrella /usr/local/bin/cidrella-*
+# Every CIDRella unit that exists, found rather than listed: the proxy, Kea
+# (templated, so running instances only show here), PowerDNS, radvd and
+# whatever comes next. Stopped before the unit files go, or they keep running
+# with no unit and hold the DNS and DHCP ports through the next install.
+units=$(systemctl list-units --all --plain --no-legend 'cidrella*' | awk '{print $1}')
+for unit in $units; do
+  systemctl stop "$unit" 2>/dev/null || true
+  systemctl disable "$unit" 2>/dev/null || true
+done
+systemctl reset-failed 2>/dev/null || true
+rm -rf /etc/systemd/system/cidrella* /etc/systemd/system/multi-user.target.wants/cidrella*
+rm -f /etc/sudoers.d/cidrella /etc/polkit-1/rules.d/49-cidrella.rules /etc/logrotate.d/cidrella* /usr/local/bin/cidrella-*
 systemctl daemon-reload 2>/dev/null || true
-rm -rf /opt/cidrella* /var/lib/cidrella /tmp/install.sh /tmp/install-output.log /tmp/hook-sentinel-* /tmp/cidrella*
-apt-get purge -y dnsmasq dnsmasq-base nodejs sqlite3 >/dev/null 2>&1 || true
+rm -rf /opt/cidrella* /var/lib/cidrella /var/log/cidrella /tmp/install.sh /tmp/install-output.log /tmp/hook-sentinel-* /tmp/cidrella*
+# Only what is installed: apt refuses the whole list over one name it has no
+# source for, and these packages come from repositories a host may never have had.
+dpkg-query -W -f='${db:Status-Status} ${Package}\n' dnsmasq dnsmasq-base dnsmasq-utils nodejs sqlite3 radvd \
+  isc-kea-common isc-kea-dhcp4 isc-kea-dhcp6 isc-kea-hooks \
+  pdns-server pdns-backend-bind pdns-backend-sqlite3 pdns-recursor 2>/dev/null \
+  | awk '$1 == "installed" {print $2}' \
+  | xargs -r apt-get purge -y >/dev/null 2>&1 || true
 apt-get autoremove -y >/dev/null 2>&1 || true
 userdel cidrella 2>/dev/null || true
 rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg
+rm -f /etc/apt/sources.list.d/isc-kea-3-0.list /usr/share/keyrings/isc-kea-3-0-archive-keyring.gpg
+rm -f /etc/apt/sources.list.d/powerdns.list /usr/share/keyrings/powerdns-archive-keyring.gpg /etc/apt/preferences.d/powerdns
 RESET
 }
 

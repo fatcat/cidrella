@@ -39,7 +39,7 @@ Treat harness green as "testerella didn't regress", not "the install surface is 
 
 ## DO NOT point this at prod
 
-The runner wipes the target host aggressively between scenarios: stops and uninstalls CIDRella, removes `/var/lib/cidrella`, purges dnsmasq and nodejs, deletes the cidrella user. This is correct behavior for a throwaway test LXC and destructive behavior for anything real. The runner requires SSH access and assumes you are intentionally using it on an expendable host.
+The runner wipes the target host aggressively between scenarios: stops every `cidrella*` unit and uninstalls CIDRella, removes `/var/lib/cidrella`, purges dnsmasq, Kea, PowerDNS, radvd and nodejs with their apt sources, deletes the cidrella user. This is correct behavior for a throwaway test LXC and destructive behavior for anything real. The runner requires SSH access and assumes you are intentionally using it on an expendable host.
 
 ## How a scenario works
 
