@@ -13,6 +13,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import dnsPacket from 'dns-packet';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { CODE_GONE_EXIT } from '../../src/dns-proxy/code-gone.js';
 import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
 
 process.env.CIDRELLA_DNS_PROXY_SUPERVISOR = 'test';
@@ -239,6 +240,6 @@ describe('when the proxy exits by itself', () => {
     const { child } = await startProxy(link);
     const done = exited(child);
     fs.unlinkSync(link);
-    expect(await done).toEqual({ code: 0, signal: null });
+    expect(await done).toEqual({ code: CODE_GONE_EXIT, signal: null });
   }, 15000);
 });

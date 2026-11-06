@@ -14,7 +14,7 @@ import fs from 'fs';
 import path from 'path';
 import { DATA_DIR, proxyRuntimePaths } from './constants.js';
 import { codeId } from './code-id.js';
-import { proxyCodeGone } from './code-gone.js';
+import { CODE_GONE_EXIT, proxyCodeGone } from './code-gone.js';
 import { proxyLog } from './log.js';
 import { STATUS_INTERVAL_MS } from './protocol.js';
 import { createIpcServer, createOutbox, OUTBOX_BATCH } from './ipc-server.js';
@@ -93,13 +93,14 @@ function shutdown(code) {
 }
 
 // The code this came from gone means a rollback to a release without a
-// separate proxy. It exits, and its unit's ConditionPathExists keeps it from
-// being started again; the old web app runs the proxy itself.
+// separate proxy. It exits with a status its unit does not restart, and the
+// unit's ConditionPathExists keeps a later start or boot from running it; the
+// old web app runs the proxy itself.
 const entry = process.argv[1];
 setInterval(() => {
   if (proxyCodeGone(entry)) {
     proxyLog('info', 'The proxy code is gone (a rollback?), exiting', { entry });
-    shutdown(0);
+    shutdown(CODE_GONE_EXIT);
   }
 }, CODE_GONE_CHECK_MS).unref();
 

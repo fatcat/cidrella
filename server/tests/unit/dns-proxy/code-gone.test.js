@@ -3,7 +3,7 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { proxyCodeGone } from '../../../src/dns-proxy/code-gone.js';
+import { CODE_GONE_EXIT, proxyCodeGone } from '../../../src/dns-proxy/code-gone.js';
 
 const ENTRY = 'server/src/dns-proxy/main.js';
 
@@ -91,5 +91,30 @@ describe('proxyCodeGone', () => {
     point(slot('a'));
 
     expect(proxyCodeGone(entry, install)).toBe(false);
+  });
+});
+
+describe('the unit and the exit status', () => {
+  const unit = fs.readFileSync(
+    new URL('../../../../scripts/systemd/cidrella-dns-proxy.service', import.meta.url),
+    'utf8',
+  );
+  const statuses = (key) =>
+    unit
+      .match(new RegExp(`^${key}=(.*)$`, 'm'))[1]
+      .trim()
+      .split(/\s+/)
+      .map(Number);
+
+  it('does not restart the proxy when its code is gone', () => {
+    expect(statuses('RestartPreventExitStatus')).toContain(CODE_GONE_EXIT);
+  });
+
+  it('counts it as a clean stop, not a failed unit', () => {
+    expect(statuses('SuccessExitStatus')).toContain(CODE_GONE_EXIT);
+  });
+
+  it('still restarts on the exit the web app asks for', () => {
+    expect(statuses('RestartPreventExitStatus')).not.toContain(0);
   });
 });

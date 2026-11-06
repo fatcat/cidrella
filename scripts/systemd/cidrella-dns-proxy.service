@@ -6,8 +6,9 @@ After=network.target
 # update changed its code (server/src/dns-proxy/code-id.js).
 #
 # A rollback to a release from before the proxy ran on its own leaves no
-# such file; the proxy then exits, this keeps it from starting again, and
-# the old web app runs the proxy itself.
+# such file. The proxy then exits with status 64, which Restart= below leaves
+# down, this keeps a later start or boot from running it, and the old web app
+# runs the proxy itself.
 ConditionPathExists=/opt/cidrella/server/src/dns-proxy/main.js
 StartLimitIntervalSec=60
 StartLimitBurst=10
@@ -24,7 +25,9 @@ Environment=NODE_ENV=production
 # watchdog kills it outright when it stops answering. Both expect it back.
 Restart=always
 RestartSec=1
-SuccessExitStatus=143
+# 64: its code is gone (server/src/dns-proxy/code-gone.js, CODE_GONE_EXIT).
+RestartPreventExitStatus=64
+SuccessExitStatus=143 64
 
 # The same sandbox as cidrella.service.
 ProtectSystem=strict

@@ -491,8 +491,9 @@ unset for the child).
   from the web app's modules.
 - **A rollback to a release without it.** The proxy exits when its code is
   gone from the path through the install symlink (`dns-proxy/code-gone.js`; the
-  slot it started from stays on disk), and the unit's `ConditionPathExists`
-  keeps it down, so the old web app can run the proxy itself.
+  slot it started from stays on disk). Its exit status keeps the unit from
+  restarting it and `ConditionPathExists` covers a later start or boot, so the
+  old web app can run the proxy itself.
 
 ### Proxy bypass
 

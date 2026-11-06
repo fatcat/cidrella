@@ -14,6 +14,11 @@ import path from 'path';
 
 const INSTALL_DIR = '/opt/cidrella';
 
+// The exit status for it. The unit's RestartPreventExitStatus and
+// SuccessExitStatus name it: systemd does not check ConditionPathExists on an
+// automatic restart, and exit 0 means the web app wants the proxy back.
+export const CODE_GONE_EXIT = 64;
+
 export function proxyCodeGone(entry, installDir = INSTALL_DIR) {
   const home = [installDir, `${installDir}-a`, `${installDir}-b`].find((dir) =>
     entry.startsWith(`${dir}/`),
