@@ -563,6 +563,16 @@ Measured on dnsmasq 2.91 (2026-10-08, scratch instances on testerella):
   under 4.5 seconds.
 - Local names answer with no EDE.
 
+**A forwarded CNAME chain ending in a wildcard** goes to PowerDNS one step at a
+time. PowerDNS Recursor (5.3 and 5.4) checks the wildcard's NSEC proof under the
+query name, finds it does not cover that name, and answers SERVFAIL with EDE 12:
+`www.nasa.gov`, a CNAME to a wildcard under `go-vip.net`, failed on every query.
+Full recursion passes, and forwarding straight to Quad9 or Google fails the same
+way. So for a backend with `splitWildcardChains`, the forwarder cuts such an
+answer to the query name's own records (`dns-proxy/wildcard-chain.js`), and the
+recursor asks for the target itself. Every record is still validated. dnsmasq
+validates the whole chain and does not chase a CNAME, so it gets the answer as is.
+
 Each upstream address also gets a minute row in `metrics_forwarder` (queries,
 answers, timeouts, resent drops, refused connections, failovers, p50 and p95
 latency), plaintext included.

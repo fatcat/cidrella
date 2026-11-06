@@ -19,10 +19,7 @@ import os from 'os';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import Database from 'better-sqlite3';
-import {
-  RECURSOR_NETWORK_TIMEOUT_MS,
-  backendDnsPort,
-} from '../../config/defaults.js';
+import { RECURSOR_NETWORK_TIMEOUT_MS, backendDnsPort } from '../../config/defaults.js';
 import { getDb, getSetting } from '../../db/init.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
 import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
@@ -415,6 +412,9 @@ export function createPdnsBackend(deps = {}) {
     // Authoritative answers NXDOMAIN for a name it has no record for; the
     // DNS proxy asks the forwarder again under a forward-unknown zone.
     forwardsUnknownItself: false,
+    // Recursor 5.3 and 5.4 call a forwarded CNAME chain ending in a wildcard
+    // Bogus, and validate it asked one step at a time.
+    splitWildcardChains: true,
   };
 
   return {

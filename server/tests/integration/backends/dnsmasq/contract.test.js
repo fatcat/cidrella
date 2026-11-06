@@ -56,6 +56,7 @@ runBackendContract('dnsmasq', async () => {
     backend: createDnsmasqBackend(),
     db: setup.db,
     readOptions: { settleMs: 0, attempts: 2 },
+    splitWildcardChains: false,
     seedLeases(leases) {
       const v4 = leases.filter((lease) => lease.dhcpVersion === 4).map(leaseLine);
       const v6 = leases.filter((lease) => lease.dhcpVersion === 6).map(leaseLine);

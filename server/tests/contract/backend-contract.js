@@ -8,6 +8,7 @@
  *     seedLeases(leases),      make the backend report these BackendLeases
  *     readOptions,             passed to readLeases (timing for tests)
  *     tearLeases?(),           make the next read see a half-written lease set
+ *     splitWildcardChains?,    what a DNS adapter must say it wants (contract.js)
  *   }
  */
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -74,6 +75,7 @@ export function runBackendContract(label, makeHarness) {
         expect(typeof note, id).toBe('string');
       }
       if (h.backend.roles.includes('dns')) {
+        expect(h.backend.dns.splitWildcardChains).toBe(h.splitWildcardChains);
         for (const record of [
           { type: 'A', ttl: null },
           { type: 'AAAA', ttl: 900 },

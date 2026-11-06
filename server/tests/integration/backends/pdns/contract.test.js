@@ -42,5 +42,6 @@ runBackendContract('pdns', async () => {
       ntpStatus: () => ({ available: true, synchronized: true }),
     }),
     db: setup.db,
+    splitWildcardChains: true,
   };
 });

@@ -296,7 +296,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   parser are `utils/query-log-line.js`; the writer itself, path given, is
   `utils/query-log-writer.js`), the DNS proxy process in `dns-proxy/` (`main.js` the entry,
   `runtime.js` its answers to the web app's messages, `server.js` the proxy, `forwarder.js` the
-  encrypted forwarder, `db.js` its read-only connection and cached `setting`, `protocol.js` the
+  encrypted forwarder, `wildcard-chain.js` the one answer it edits (a backend's
+  `splitWildcardChains`), `db.js` its read-only connection and cached `setting`, `protocol.js` the
   socket framing, `ipc-server.js` with the bounded outbox, `code-id.js` the id an update compares,
   `constants.js` the DATA_DIR rule and `proxyRuntimePaths`; it imports leaf helpers only, no
   database, config, backend, service, route or model module but the two read ones below, which

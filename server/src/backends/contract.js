@@ -59,6 +59,10 @@ export const ROLES = Object.freeze(['dns', 'dhcp', 'ra']);
  * - forwardsUnknownItself: boolean property; whether a zone set to forward
  *   unknown names sends them upstream without help (dnsmasq), or answers
  *   them NXDOMAIN and leaves the DNS proxy to ask again (PowerDNS)
+ * - splitWildcardChains: boolean property; whether the forwarder hands this
+ *   backend only the first step of a CNAME chain ending in a wildcard. PowerDNS
+ *   rejects the whole chain and asks for the target itself; dnsmasq validates
+ *   it and does not chase a CNAME (dns-proxy/wildcard-chain.js)
  */
 export const DNS_OPS = Object.freeze([
   'applyZones',

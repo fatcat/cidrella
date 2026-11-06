@@ -12,6 +12,9 @@
  * has no turns of its own (it favors the fastest server), and going through
  * here gives plaintext the same per-resolver metrics as the encrypted modes.
  *
+ * The one answer not returned verbatim is a CNAME chain ending in a wildcard,
+ * for a backend that asks to have it split (wildcard-chain.js).
+ *
  * FAIL CLOSED: any failure returns SERVFAIL, never a silent fallback to
  * plaintext (or, in plaintext mode, to anything else). The cost is that
  * resolution is down if the path is broken (surfaced via
@@ -32,6 +35,7 @@ import { createReservoir, quantileOfSorted } from '../utils/samples.js';
 import { backupModeOf } from '../utils/forwarding-modes.js';
 import { plainUdpQuery, plainTcpQuery } from '../utils/plain-dns.js';
 import { DOH_PROVIDERS } from '../data/doh-providers.js';
+import { splitWildcardChain } from './wildcard-chain.js';
 import {
   ENCRYPTED_FORWARDER_PORT,
   ENCRYPTED_FORWARDER_TIMEOUT_MS,
@@ -47,6 +51,16 @@ let getSetting = () => null;
 export function configureForwarder({ setting }) {
   getSetting = setting;
 }
+
+// Whether the DNS backend wants wildcard chains split: its choice, from the
+// web app's config (backends/contract.js).
+let splitChains = false;
+export function setSplitWildcardChains(split) {
+  splitChains = split === true;
+}
+
+/** What goes back to the backend for an upstream's answer. */
+export const answerForBackend = (resp) => (splitChains ? splitWildcardChain(resp) : resp);
 
 // Module state
 let udpSocket = null;
@@ -382,7 +396,7 @@ async function handleQuery(reqBuf, { tcp = false } = {}) {
     forward && upstreams.length
       ? await queryUpstreams(reqBuf, upstreams, { first: firstUpstream(), forward })
       : null;
-  return resp || buildServfail(reqBuf, NO_UPSTREAM_ANSWER); // fail closed
+  return resp ? answerForBackend(resp) : buildServfail(reqBuf, NO_UPSTREAM_ANSWER); // fail closed
 }
 
 function startListeners() {

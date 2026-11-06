@@ -98,11 +98,11 @@ function listenAddresses() {
   return addresses;
 }
 
-function forwardsUnknownItself() {
+function dnsBackendProperty(name, withoutBackend) {
   try {
-    return getDnsBackend().forwardsUnknownItself;
+    return getDnsBackend()[name];
   } catch {
-    return true; // no backend yet: nothing to ask again
+    return withoutBackend;
   }
 }
 
@@ -117,7 +117,9 @@ export function proxyConfigNow() {
     listenAddresses: listenAddresses(),
     listenPort: resolveDnsListenPort(port),
     internalPort: resolveDnsmasqInternalPort(port),
-    forwardsUnknownItself: forwardsUnknownItself(),
+    // No backend yet: nothing to ask again, and no chain to split.
+    forwardsUnknownItself: dnsBackendProperty('forwardsUnknownItself', true),
+    splitWildcardChains: dnsBackendProperty('splitWildcardChains', false),
     queryLogPath: queryLogPath(),
     dnsOff: roleSwitchedOff('dns'),
     geoipDbPath: geoipDbPath(),

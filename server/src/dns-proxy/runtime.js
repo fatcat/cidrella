@@ -134,6 +134,7 @@ export function createProxyRuntime({
     current = next;
     Db.setSettingDefaults(next.defaults || {});
     Server.setProxyConfig(next.proxy || {});
+    Forwarder.setSplitWildcardChains(next.proxy?.splitWildcardChains);
     if (!changed && !rebind && !deaf) return;
     Server.stopServing();
     if (next.serve !== false) Server.startServing();

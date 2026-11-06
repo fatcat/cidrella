@@ -122,6 +122,8 @@ export function createDnsmasqBackend() {
       // A zone set to forward unknown names gets no local=, so dnsmasq
       // forwards them itself.
       forwardsUnknownItself: true,
+      // dnsmasq validates the whole chain, and does not chase a CNAME itself.
+      splitWildcardChains: false,
       // Optional op: clear what older releases left behind.
       retireLegacyArtifacts: () => retireLegacyBlocklistConf(),
     },

@@ -12,6 +12,50 @@ was suggested.
 
 ---
 
+## Found soaking v0.6.3-pre.6 on prod (2026-11-06)
+
+#### UPDATE-POLKIT-PIPEFAIL-01: an update is refused when polkit has not started since boot
+
+**medium**, `scripts/update.sh:1417` and `:1420`, under `set -euo pipefail` at `:2`.
+
+- **What happens:** On testerella just after a boot, `cidrella-update` stopped with `Pre-flight
+  failed: polkit daemon is not running after reconciliation`, and blamed a failed daemon. The journal
+  shows polkit was never started. The running version stays safe, and the slot is left extracted.
+  After `systemctl start polkit` the same update passed.
+- **Why:** `systemctl list-unit-files | grep -q '^polkit\.service'` fails under `pipefail`: `grep -q`
+  exits at the match and `systemctl` dies on the closed pipe. Measured: 20 of 20 failed with
+  `pipefail`, 0 of 20 without. `POLKIT_UNIT` stays empty, so the `systemctl start` never runs.
+  polkit is started on demand, so a host passes only when something has used it since boot.
+- **Fix:** Ask with `systemctl cat polkit.service >/dev/null 2>&1`, which needs no pipe, for both unit
+  names. Add a harness case that stops polkit before an update.
+
+#### EDE-NO-EDNS-01: a DNSSEC failure counts as "other" when the client sent no EDNS
+
+**low**, `server/src/dns-proxy/server.js:360` (`noteAnswer`), `server/src/utils/dns-ede.js:85`
+(`failureCause`).
+
+- **What happens:** A client query without EDNS for `www.nasa.gov` is logged `SERVFAIL (other)`. The
+  same query with EDNS is logged `SERVFAIL (dnssec)`. 64 of the 65 lines above read `other`, and
+  `servfail_dnssec` is 0 for all of the last eight days on prod, so the DNSSEC failures series on
+  Performance shows nothing while they happen.
+- **Why:** The cause comes from the EDE in the backend's answer, and the backend can only send one
+  to a query that carried an OPT record. The proxy forwards the client's query as it came.
+- **Fix:** Have the proxy add an OPT record on the way to the backend when the client sent none, and
+  strip it from the answer. Test that a client without EDNS still gets an answer without one.
+
+#### PERF-PROCESS-01: the Process panel on Performance shows the web app, not the proxy
+
+**low**, `server/src/utils/metrics-aggregator.js:164` and `:172`, `client/src/views/Performance.vue:167`.
+
+- **What happens:** `metrics_proxy_perf` stores the CPU, RSS and heap of whichever process runs the
+  aggregator. Since the proxy moved out that is the web app: prod's row read 222 MB when the web app
+  held 224 MB and the proxy 115 MB. The page puts those figures next to the proxy's latency, so a
+  leak or a busy loop in the proxy would not show there, and the web app's would look like the proxy's.
+- **Why:** The aggregator still calls `process.memoryUsage()` and `process.cpuUsage()` itself, as it
+  did when both lived in one process.
+- **Fix:** Add CPU and memory to the proxy's drain result and store those. Say which process the
+  panel is about, and decide whether the web app's figures get a place of their own.
+
 ## Found reading prod's address history (2026-11-06)
 
 #### RETIRE-SLEEP-01: a laptop that sleeps past the offline hour is forgotten at every wake
