@@ -220,9 +220,6 @@ export function migrateLegacyScopeOptions(db) {
   );
   const migrate = db.transaction(() => {
     for (const scope of scopes) {
-      if (scope.gateway) {
-        insert.run(scope.id, 3, scope.gateway);
-      }
       if (scope.dns_servers) {
         try {
           const servers = JSON.parse(scope.dns_servers);

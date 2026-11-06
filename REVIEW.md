@@ -12,6 +12,66 @@ was suggested.
 
 ---
 
+## Found reading prod's address history (2026-11-06)
+
+#### RETIRE-SLEEP-01: a laptop that sleeps past the offline hour is forgotten at every wake
+
+**medium**, confirmed from prod's `ip_events` and the code.
+`server/src/services/ip-lifecycle-service.js:40` (`OFFLINE_RETIREMENT_MS`),
+`server/src/models/ip-address.js:595` (`retireLearnedMetadata`).
+
+- **What happens:** A MacBook on 10.0.0.21 (`daniels-mbp`, scope lease 900 s) wakes about every
+  four hours, takes a lease, sleeps, and the lease expires 15 minutes later. An hour after that
+  (every gap measured is 60 or 61 minutes) the address is retired: hostname, MAC, first and last
+  seen are cleared, and its DNS record goes, with a DNS regeneration queued. The next wake learns
+  it all again. That is 27 retirements and about 7 history rows per cycle in 7 days, and 40 audit
+  rows since 2026-10-11. While the laptop sleeps its name does not resolve and the address reads
+  as empty, and `first_seen_at` never gets older than the last wake.
+- **Why:** The window is a fixed hour from going offline, whatever the lease time or the device's
+  habits. Any host that sleeps longer than lease time plus an hour cycles this way.
+- **Fix:** Decide the window first. 9cad51c made it a fixed hour on purpose, and
+  `tests/integration/security.test.js:697` refuses the old configurable setting as obsolete, though
+  neither says why, so changing it reverses a decision. A lease longer than the sleep (about 4 h
+  here) stops the cycle with no code change, since the address never goes offline for long enough.
+  In code: a longer fixed window, or one that scales with the scope's lease time. Test: a lease
+  that lapses, a wake inside and outside the window, IPv4 and IPv6 (SLAAC retirement shares the
+  code path).
+
+#### SETTING-RETENTION-01: a retired setting's row is still in prod's database
+
+**low**, confirmed. No reference in `server/src`, `client/src`, `docs` or `scripts`; the settings
+route refuses the key (`tests/integration/security.test.js:697`).
+
+- **What happens:** Prod holds `offline_metadata_retention_days = 7`, which reads as a 7 day
+  window, while addresses retire after one hour. Nothing acts on it.
+- **Why:** 9cad51c replaced it with the fixed `OFFLINE_RETIREMENT_MS` and left stored rows behind.
+- **Fix:** Delete the row in a migration.
+
+#### SCOPE-LEGACY-BRANCH-01: the legacy branch in `v4Options` cannot run
+
+**low**, confirmed in the code. `server/src/backends/shared/dhcp-scope-model.js:84`
+
+- **What happens:** The `effective.options.length === 0` block never runs, so its fallbacks to
+  the legacy `dns_servers`, `domain_name`, `ntp_servers` and `domain_search` columns are dead.
+  It reads as though those columns reach a client from here. No client is affected.
+- **Why:** `loadDhcpScopes` inner-joins `subnets`, so `subnet_cidr` is always set, and
+  `resolveEffectiveScopeOptions` then always returns options 1 and 28 for IPv4.
+- **Fix:** Delete the block. Its fallbacks for 15 and 119 repeat what the resolver already did.
+
+#### TEST-STALE-MOCK-01: three test files mock modules that no longer exist
+
+**low**, confirmed in the code. `server/tests/integration/routes/dns-zone-forward-unknown.test.js`,
+`dns-target-names.test.js` and `dns-backup-resolver.test.js`, each `vi.mock` of
+`src/utils/dnsmasq.js` or `src/utils/dhcp.js`.
+
+- **What happens:** The mocks do nothing, so these tests run the real backend apply, and on a dev
+  box that tries `systemctl restart cidrella-dnsmasq`. Under load a test can pass its 10 s limit:
+  `dhcp-scope-defaults.test.js` had the same mocks and timed out in two of three full runs until
+  it moved to `stubBackendApply`.
+- **Why:** Those modules moved into `backends/` and the mocks were left behind.
+- **Fix:** Replace them with `stubBackendApply` from `tests/helpers/fake-backends.js`, checking
+  first whether a test relies on the real apply.
+
 ## Found building IPv6 handling phase 2 (2026-10-28)
 
 #### CALC-COUNT-01: the calculator reads a /64 as "more than 2^53" addresses

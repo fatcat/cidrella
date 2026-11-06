@@ -31,8 +31,8 @@ function createSubnetAndScope() {
   return db
     .prepare(
       `
-    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, dns_servers, domain_name)
-    VALUES (?, ?, '24h', '10.70.0.1', '["10.70.0.8"]', 'legacy.test')
+    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name)
+    VALUES (?, ?, '24h', '["10.70.0.8"]', 'legacy.test')
   `,
     )
     .run(rangeId, subnetId).lastInsertRowid;
@@ -107,11 +107,13 @@ describe('DHCP option ownership', () => {
         'SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ? ORDER BY option_code',
       )
       .all(scopeId);
+    db.prepare(
+      "INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, 3, '10.70.0.1')",
+    ).run(scopeId);
     const cleaned = DhcpOption.cleanupRedundantGatewayOptions(db);
 
     expect(migrated).toBe(1);
     expect(migratedRows).toEqual([
-      { option_code: 3, value: '10.70.0.1' },
       { option_code: 6, value: '10.70.0.8' },
       { option_code: 15, value: 'legacy.test' },
     ]);

@@ -64,12 +64,17 @@ import { DEFAULTS } from '../config/defaults.js';
 
 const router = Router();
 
+// A scope has no router of its own. An API caller that still sends one is told
+// so: storing nothing and answering 200 would say it took effect. DHCPv4 clients
+// get the network's gateway; DHCPv6 clients learn routers from RA.
+const SCOPE_GATEWAY_REFUSED =
+  "A scope has no gateway of its own: DHCPv4 hands out the network's gateway, set it on the network; DHCPv6 routers come from RA";
+
 // What a scope edit can change, for its audit row.
 const SCOPE_AUDIT_FIELDS = [
   'lease_time',
   'dns_servers',
   'domain_name',
-  'gateway',
   'ntp_servers',
   'domain_search',
   'enabled',
@@ -309,6 +314,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   if (!range_id || !subnet_id) {
     return res.status(400).json({ error: 'range_id and subnet_id are required' });
   }
+  if (gateway) return res.status(400).json({ error: SCOPE_GATEWAY_REFUSED });
 
   // v0.4.15 type guards + injection guards. domain_name / domain_search land
   // in dnsmasq config as dhcp-option=15 / 119 so newlines would inject
@@ -391,15 +397,6 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     dnsServers = json;
   }
 
-  // Validate gateway. DHCPv6 never carries a router: clients learn it from
-  // the Router Advertisement, so an IPv6 scope refuses one outright.
-  if (gateway && subnet.address_family === 6) {
-    return res.status(400).json({ error: 'DHCPv6 scopes take no gateway; routers come from RA' });
-  }
-  if (gateway && (!isValidAddress(gateway) || addressFamily(gateway) !== 4)) {
-    return res.status(400).json({ error: 'Invalid gateway IP address: an IPv4 scope needs IPv4' });
-  }
-
   // Validate NTP servers
   let ntpServers = ntp_servers;
   if (ntp_servers) {
@@ -430,7 +427,6 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
       lease_time,
       dns_servers: dnsServers,
       domain_name,
-      gateway: gateway ? canonicalizeIp(gateway) : gateway,
       ntp_servers: ntpServers,
       domain_search,
       description,
@@ -523,17 +519,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   const v6 = resolveV6Mode(scopeSubnet, v6_mode, scope.v6_mode);
   if (v6.error) return res.status(400).json({ error: v6.error });
 
-  if (gateway && scopeSubnet.address_family === 6) {
-    return res.status(400).json({ error: 'DHCPv6 scopes take no gateway; routers come from RA' });
-  }
-  if (
-    gateway !== undefined &&
-    gateway !== null &&
-    gateway !== '' &&
-    (!isValidAddress(gateway) || addressFamily(gateway) !== 4)
-  ) {
-    return res.status(400).json({ error: 'Invalid gateway IP address: an IPv4 scope needs IPv4' });
-  }
+  if (gateway) return res.status(400).json({ error: SCOPE_GATEWAY_REFUSED });
 
   let ntpServers = ntp_servers;
   if (ntp_servers !== undefined && ntp_servers !== null) {
@@ -609,7 +595,6 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       lease_time,
       dns_servers: dnsServers,
       domain_name,
-      gateway: gateway ? canonicalizeIp(gateway) : gateway,
       ntp_servers: ntpServers,
       domain_search,
       enabled,

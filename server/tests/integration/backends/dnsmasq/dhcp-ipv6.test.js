@@ -71,7 +71,7 @@ function scopeFor(subnetId) {
 describe('DHCPv6 scopes', () => {
   it('creates one scope per network with its mode and no router options', async () => {
     const stateful = scopeFor(subnets.stateful);
-    expect(stateful).toMatchObject({ address_family: 6, v6_mode: 'stateful', gateway: null });
+    expect(stateful).toMatchObject({ address_family: 6, v6_mode: 'stateful' });
     const pool = db
       .prepare('SELECT start_ip, end_ip FROM dhcp_scope_pools WHERE scope_id = ?')
       .get(stateful.id);

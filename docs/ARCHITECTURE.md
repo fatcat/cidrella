@@ -430,7 +430,9 @@ reaches no existing scope. (Migration 086 had made a scope follow a default
 through a `value IS NULL` row, Use default; migration 091 turned every such row
 into the scope's own copy and retired the model.) Precedence, lowest first:
 IPv4 the scope's own rows, the legacy scope columns (only when the scope has no
-rows), the network; IPv6 legacy columns, own rows, the network.
+rows), the network; IPv6 legacy columns, own rows, the network. The router
+(option 3) is always the network's gateway, or none when the network has none: a
+scope has no gateway of its own (migration 093 dropped the column).
 
 Every scope has one lease time, its `lease_time`, never an option row, and
 every option list shows it as its first row. IPv4: option 51, as the defaults

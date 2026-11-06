@@ -67,8 +67,11 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 
 ### Upgrading
 
-Upgrades directly from 0.4.17 or later. One database migration runs on upgrade: 092 replaces
-the per-network address index with one that pages a network's addresses in order.
+Upgrades directly from 0.4.17 or later. Two database migrations run on upgrade: 092 replaces
+the per-network address index with one that pages a network's addresses in order, and 093 drops
+`dhcp_scopes.gateway`. That column was never served: a scope hands out its network's gateway, and
+what clients get does not change. The scope API no longer returns `gateway` and refuses a request
+that sets one (400); set the gateway on the network.
 
 The update installs and starts `cidrella-dns-proxy.service`. The first update to 0.6.3 has the
 same short DNS gap as any update before it; later updates leave the proxy running unless its

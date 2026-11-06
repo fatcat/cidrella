@@ -16,19 +16,9 @@ import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 import { databaseThrough } from '../../helpers/migrations.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  regenerateConfigs: vi.fn(),
-  applyInterfaceConfig: vi.fn(),
-  regenerateDnsmasqConf: vi.fn(),
-  signalDnsmasq: vi.fn(),
-  restartDnsmasq: vi.fn(),
-}));
-vi.mock('../../../src/utils/dhcp.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  regenerateDhcpConfigs: vi.fn(),
-  startLeaseWatcher: vi.fn(),
-}));
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal()),
+);
 
 const { getSetting } = await import('../../../src/db/init.js');
 const { default: subnetRouter } = await import('../../../src/routes/subnets.js');
@@ -157,6 +147,42 @@ describe.each([
     });
   },
 );
+
+describe('a scope has no gateway of its own', () => {
+  it.each([
+    [4, '10.63.0.0/24', '10.63.0.9', '10.63.0.254'],
+    [6, 'fd63::/64', 'fd63::9', null],
+  ])(
+    'refuses one for IPv%i and keeps serving what it served',
+    async (family, cidr, gateway, router) => {
+      const { subnetId, scopeId } = await network(cidr, {
+        gateway_policy: family === 4 ? 'last' : 'none',
+      });
+      const before = await served(scopeId);
+
+      const put = await request(app).put(`/api/dhcp/scopes/${scopeId}`).send({ gateway });
+      expect(put.status).toBe(400);
+      expect(put.body.error).toContain('no gateway of its own');
+
+      const range = db.prepare('SELECT range_id FROM dhcp_scopes WHERE id = ?').get(scopeId);
+      const post = await request(app)
+        .post('/api/dhcp/scopes')
+        .send({ range_id: range.range_id, subnet_id: subnetId, gateway });
+      expect(post.status).toBe(400);
+      expect(post.body.error).toContain('no gateway of its own');
+
+      // Saving an edit without one still works, and the router is untouched.
+      const edit = await request(app)
+        .put(`/api/dhcp/scopes/${scopeId}`)
+        .send({ description: 'edited', gateway: null });
+      expect(edit.status).toBe(200);
+      expect(edit.body).not.toHaveProperty('gateway');
+      const after = await served(scopeId);
+      expect(after).toEqual(before);
+      expect(after[3]?.value ?? null).toBe(router);
+    },
+  );
+});
 
 describe('divide copies rows as they are', () => {
   it.each([

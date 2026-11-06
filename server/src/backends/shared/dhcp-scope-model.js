@@ -82,8 +82,6 @@ function v4Options(scope, effective) {
   const merged = new Map();
   for (const opt of effective.options) merged.set(opt.option_code, opt.value);
   if (effective.options.length === 0) {
-    const gw = scope.gateway || scope.subnet_gateway;
-    if (gw && !merged.has(3)) merged.set(3, gw);
     setServerList(merged, 6, scope.dns_servers);
     if (scope.domain_name && !merged.has(15)) merged.set(15, scope.domain_name);
     setServerList(merged, 42, scope.ntp_servers);

@@ -327,7 +327,6 @@ export function resolveEffectiveScopeOptions(db, scope) {
   }
 
   if (explicit.length === 0) {
-    set(3, scope.gateway, 'legacy_scope');
     set(15, scope.domain_name, 'legacy_scope');
     set(42, legacyListValue(scope.ntp_servers), 'legacy_scope');
     set(119, scope.domain_search, 'legacy_scope');
@@ -420,9 +419,9 @@ export function createScope(db, fields, { subnet, defaultLeaseTime }) {
     const result = db
       .prepare(
         `
-      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway,
+      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name,
         ntp_servers, domain_search, description, address_family, v6_mode)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -431,7 +430,6 @@ export function createScope(db, fields, { subnet, defaultLeaseTime }) {
         fields.lease_time || defaultLeaseTime,
         fields.dns_servers || null,
         fields.domain_name || null,
-        fields.gateway || null,
         fields.ntp_servers || null,
         fields.domain_search || null,
         fields.description || null,
@@ -460,7 +458,7 @@ export function updateScope(db, scope, fields, { subnet }) {
     db.prepare(
       `
       UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
-        gateway = ?, ntp_servers = ?, domain_search = ?, enabled = ?, description = ?,
+        ntp_servers = ?, domain_search = ?, enabled = ?, description = ?,
         v6_mode = ?, updated_at = datetime('now')
       WHERE id = ?
     `,
@@ -468,7 +466,6 @@ export function updateScope(db, scope, fields, { subnet }) {
       fields.lease_time ?? scope.lease_time,
       fields.dns_servers !== undefined ? fields.dns_servers : scope.dns_servers,
       fields.domain_name !== undefined ? fields.domain_name : scope.domain_name,
-      fields.gateway !== undefined ? fields.gateway || null : scope.gateway,
       fields.ntp_servers !== undefined ? fields.ntp_servers || null : scope.ntp_servers,
       fields.domain_search !== undefined ? fields.domain_search || null : scope.domain_search,
       fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : scope.enabled,

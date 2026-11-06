@@ -230,11 +230,11 @@ export function createAutoScope(db, subnetId, parsed, gateway, domainName, pool)
   const scopeResult = db
     .prepare(
       `
-    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
-    VALUES (?, ?, ?, ?, ?, 'Auto-created DHCP scope')
+    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, domain_name, description)
+    VALUES (?, ?, ?, ?, 'Auto-created DHCP scope')
   `,
     )
-    .run(rangeResult.lastInsertRowid, subnetId, defaultLeaseTime(db, 4), gateway, effectiveDomain);
+    .run(rangeResult.lastInsertRowid, subnetId, defaultLeaseTime(db, 4), effectiveDomain);
   db.prepare(
     `
     INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
@@ -349,7 +349,7 @@ function createDefaultScopeFromSource(db, source, targetId, parsed, gateway) {
   db.prepare(
     `
     UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
-      gateway = ?, enabled = ?, description = ?, ntp_servers = ?,
+      enabled = ?, description = ?, ntp_servers = ?,
       domain_search = ?, updated_at = datetime('now')
     WHERE id = ?
   `,
@@ -357,7 +357,6 @@ function createDefaultScopeFromSource(db, source, targetId, parsed, gateway) {
     source.lease_time,
     source.dns_servers,
     source.domain_name,
-    gateway,
     source.enabled,
     source.description,
     source.ntp_servers,
@@ -549,8 +548,8 @@ export function rebaseScopeTopologyOptions(db, scopeId, parsed, gateway) {
 export function rebaseScopeForNetwork(db, scopeId, parsed, gateway) {
   rebaseScopeTopologyOptions(db, scopeId, parsed, gateway);
   return db
-    .prepare("UPDATE dhcp_scopes SET gateway = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(gateway, scopeId);
+    .prepare("UPDATE dhcp_scopes SET updated_at = datetime('now') WHERE id = ?")
+    .run(scopeId);
 }
 
 export function captureScopeTemplate(db, sourceIds) {
