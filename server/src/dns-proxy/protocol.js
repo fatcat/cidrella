@@ -10,6 +10,7 @@
  *   reload {what, path?}    read something again (RELOADERS in main.js)
  *   drain {id}              the counters since the last drain, as drain-result
  *   apply-forwarder {id}    restart the encrypted forwarder, answered by status
+ *   refresh-forwarder       apply the forwarder's settings if they changed
  *   db-release {id}         close the database until the next hello (a restore)
  *   shutdown                exit; the supervisor starts the proxy again
  *

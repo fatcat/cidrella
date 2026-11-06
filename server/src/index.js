@@ -88,7 +88,6 @@ import { recordVersionChange } from './services/version-audit.js';
 import { APP_VERSION } from './utils/version.js';
 import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
-import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
@@ -269,10 +268,6 @@ async function main() {
     await ensureNtpEnabled();
     armDnssecTimecheckWhenSynced();
   }
-
-  // Encrypted DNS forwarders: start the in-Node DoT/DoH stub if enabled
-  // (dnsmasq's server= already points at it via applyAtBoot above).
-  void applyEncryptedForwarder();
 
   // 2. Initialize DuckDB analytics
   await initAnalyticsDb(DATA_DIR);

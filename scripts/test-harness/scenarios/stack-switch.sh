@@ -86,6 +86,7 @@ scenario_setup() {
 scenario_run() {
   api GET /backend-stack > /tmp/stack-preflight.json
   dns_answers; echo $? > /tmp/stack-dns-dnsmasq.txt
+  outside_name_answers; echo $? > /tmp/stack-outside-dnsmasq.txt
 
   local started ended
   started=$(date +%s%N)
@@ -93,9 +94,14 @@ scenario_run() {
   ended=$(date +%s%N)
   echo $(( (ended - started) / 1000000 )) > /tmp/stack-to-pdns-ms.txt
   systemctl is-active cidrella-pdns-auth cidrella-pdns-recursor cidrella-kea@dhcp4 \
-    cidrella-kea@dhcp6 > /tmp/stack-units-on.txt 2>&1
+    > /tmp/stack-units-on.txt 2>&1
+  # IPv6 is off on a new install, so Kea runs no DHCPv6 daemon.
+  systemctl is-active cidrella-kea@dhcp6 > /tmp/stack-dhcp6-on.txt 2>&1
+  # Read now: the assertions run after the switch back removes it.
+  [ -f /var/lib/cidrella/runtime/dnsmasq.disabled ]; echo $? > /tmp/stack-marker-on-pdns.txt
   systemctl is-active cidrella-dnsmasq > /tmp/stack-dnsmasq-on-pdns.txt 2>&1
   dns_answers; echo $? > /tmp/stack-dns-pdns.txt
+  outside_name_answers; echo $? > /tmp/stack-outside-pdns.txt
 
   # The choice survives a restart: boot reads backend_stack and keeps
   # dnsmasq stopped.
@@ -107,6 +113,7 @@ scenario_run() {
   api POST /backend-stack '{"stack":"dnsmasq"}' > /tmp/stack-to-dnsmasq.json
   api GET /backend-stack > /tmp/stack-state-dnsmasq.json
   dns_answers; echo $? > /tmp/stack-dns-back.txt
+  outside_name_answers; echo $? > /tmp/stack-outside-back.txt
 }
 
 scenario_assert() {
@@ -119,13 +126,16 @@ scenario_assert() {
   assert_command_ok "systemctl is-enabled radvd 2>&1 | grep -q masked"
   assert_command_ok "test \"\$(json_field targets.0.blocked < /tmp/stack-preflight.json)\" = None"
   assert_command_ok "test \"\$(cat /tmp/stack-dns-dnsmasq.txt)\" = 0"
+  assert_command_ok "test \"\$(cat /tmp/stack-outside-dnsmasq.txt)\" = 0"
 
-  # dnsmasq to PowerDNS + Kea: committed, the four daemons up, dnsmasq off.
+  # dnsmasq to PowerDNS + Kea: committed, the daemons up, dnsmasq off.
   assert_command_ok "test \"\$(json_field to < /tmp/stack-to-pdns.json)\" = pdns-kea"
-  assert_command_ok "test \"\$(tr '\\n' ' ' < /tmp/stack-units-on.txt)\" = 'active active active active '"
+  assert_command_ok "test \"\$(tr '\\n' ' ' < /tmp/stack-units-on.txt)\" = 'active active active '"
+  assert_command_ok "test \"\$(cat /tmp/stack-dhcp6-on.txt)\" = inactive"
   assert_command_ok "! grep -qx active /tmp/stack-dnsmasq-on-pdns.txt"
-  assert_file_exists /var/lib/cidrella/runtime/dnsmasq.disabled
+  assert_command_ok "test \"\$(cat /tmp/stack-marker-on-pdns.txt)\" = 0"
   assert_command_ok "test \"\$(cat /tmp/stack-dns-pdns.txt)\" = 0"
+  assert_command_ok "test \"\$(cat /tmp/stack-outside-pdns.txt)\" = 0"
 
   # Kept across a restart.
   assert_command_ok "test \"\$(json_field current < /tmp/stack-state-after-restart.json)\" = pdns-kea"
@@ -142,6 +152,7 @@ scenario_assert() {
   assert_file_missing /var/lib/cidrella/runtime/dnsmasq.disabled
   assert_file_missing /var/lib/cidrella/stack-switch.json
   assert_command_ok "test \"\$(cat /tmp/stack-dns-back.txt)\" = 0"
+  assert_command_ok "test \"\$(cat /tmp/stack-outside-back.txt)\" = 0"
 }
 
 scenario_capture() {

@@ -169,8 +169,10 @@ export function createProxyRuntime({
   async function handle(message) {
     switch (message.type) {
       case 'hello':
-        // A web app saying hello is past any restore; open the database again.
+        // A web app saying hello is past any restore, and on a first boot has
+        // just created the database; open it now, not at the next retry.
         releasedUntil = 0;
+        lastDbTry = 0;
         send({ type: 'hello', v: PROTOCOL_VERSION, codeId, pid }, { always: true });
         return;
       case 'config':
@@ -203,6 +205,12 @@ export function createProxyRuntime({
       case 'apply-forwarder':
         Forwarder.applyEncryptedForwarder();
         send({ ...statusMessage(), type: 'applied', id: message.id }, { always: true });
+        return;
+      case 'refresh-forwarder':
+        // Without a database the settings would read as none, which would stop
+        // a forwarder that is running.
+        checkDbFile();
+        if (database()) Forwarder.refreshEncryptedForwarder();
         return;
       case 'shutdown':
         proxyLog('info', 'The web app asked the proxy to exit');

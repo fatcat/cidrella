@@ -37,6 +37,7 @@ scenario_assert() {
   assert_systemctl_active cidrella
   assert_systemctl_active cidrella-dnsmasq
   assert_systemctl_active cidrella-anomaly
+  assert_command_ok "outside_name_answers"
 
   # ─── Wrappers installed (v0.4.6+/0.4.8+) ──────────────
   assert_file_exists /usr/local/bin/cidrella-node

@@ -159,6 +159,10 @@ function connect() {
     write({ type: 'hello', v: PROTOCOL_VERSION, codeId });
     if (config) write({ type: 'config', config });
     write({ type: 'reload', what: 'all' });
+    // After the config, whose defaults it can read as: the proxy may have
+    // started before there was a database, or the settings changed while this
+    // process was down (a restore).
+    write({ type: 'refresh-forwarder' });
   });
   sock.on(
     'data',

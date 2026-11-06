@@ -510,7 +510,9 @@ export function loadFilteringOverrides() {
   try {
     const until = Date.parse(deps.setting('filtering_paused_until') || '');
     filteringPausedUntil = Number.isFinite(until) ? until : 0;
-    exemptClients = exemptAddressSet(deps.db());
+    // No database yet on a first boot, or none for a moment during a restore.
+    const db = deps.db();
+    if (db) exemptClients = exemptAddressSet(db);
   } catch (err) {
     proxyLog('error', 'Failed to load filtering overrides', { error: err.message });
   }

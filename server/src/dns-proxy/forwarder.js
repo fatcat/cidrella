@@ -453,8 +453,23 @@ function stopListeners() {
   tcpServer = null;
 }
 
+// Every setting the forwarder runs from, to tell whether one changed.
+const settingsKey = () =>
+  JSON.stringify(
+    [
+      'forwarder_encryption',
+      'forwarder_encrypted_upstreams',
+      'dns_upstream_servers',
+      'dns_upstream_backup_servers',
+      'dns_upstream_backup_mode',
+      'dns_no_recursion',
+    ].map((key) => getSetting(key) ?? null),
+  );
+let appliedKey = null;
+
 // Start/stop/reconfigure from settings. Call at startup and on settings change.
 export function applyEncryptedForwarder() {
+  appliedKey = settingsKey();
   mode = getSetting('forwarder_encryption') || 'off';
   upstreams = mode === 'off' ? plainResolvers() : getSetting('forwarder_encrypted_upstreams') || [];
   order = backupModeOf(getSetting('dns_upstream_backup_mode'));
@@ -477,7 +492,15 @@ export function applyEncryptedForwarder() {
   else efLog('info', 'Forwarder reconfigured', { mode, upstreams: upstreams.length });
 }
 
+// Apply only if a setting differs from what it last applied: a first start
+// that had nothing to read yet, a restore while the web app was down. A web
+// app restart with nothing changed keeps its listeners and connections.
+export function refreshEncryptedForwarder() {
+  if (settingsKey() !== appliedKey) applyEncryptedForwarder();
+}
+
 export function stopEncryptedForwarder() {
+  appliedKey = null;
   stopListeners();
   closePools();
 }

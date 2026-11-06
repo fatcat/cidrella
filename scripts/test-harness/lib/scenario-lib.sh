@@ -254,6 +254,14 @@ assert_file_contains() {
 
 # ─── Shared scenario actions ─────────────────────────────
 
+# outside_name_answers
+#   Asks the DNS backend on its internal port for a name only an upstream can
+#   answer, so the whole recursion path works: backend, encrypted forwarder,
+#   resolver. A local name proves none of that. Needs outbound DNS.
+outside_name_answers() {
+  dig +noall +comments +time=3 +tries=2 -p 5353 @127.0.0.1 example.com | grep -q 'status: NOERROR'
+}
+
 # install_latest_release
 #   Fetches install.sh from main and runs it non-interactively, capturing
 #   output to /tmp/install-output.log. Used by any scenario whose scenario_run

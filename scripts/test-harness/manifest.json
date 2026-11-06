@@ -15,7 +15,8 @@
         "missing v0.4.9+ lib files (rotation.sh, tighten-secrets.sh)",
         "deep-health subsystem failures",
         "bundled Node runtime missing or wrong version",
-        "events.jsonl not populated during install"
+        "events.jsonl not populated during install",
+        "a fresh install that cannot resolve outside names (no forwarder, no recursion)"
       ],
       "expected_duration_sec": 90,
       "requires_fresh_host": true
@@ -125,7 +126,8 @@
         "polkit rule gaps for any of the units (start, stop, restart)",
         "a switch that fails to start the new stack, to stop dnsmasq, or to hand DNS and DHCP back to dnsmasq",
         "boot starting dnsmasq on a PowerDNS + Kea install (the disable flag and the unit's start condition)",
-        "the daemons refusing the paths or capabilities their units give them"
+        "the daemons refusing the paths or capabilities their units give them",
+        "a stack that answers local names but cannot resolve outside ones"
       ],
       "does_not_catch": [
         "a real client's Renew or Rebind across a switch (no client on the served link; hardware check in BACKLOG.md)",

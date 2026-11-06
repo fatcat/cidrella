@@ -8,7 +8,17 @@ vi.mock('../../../src/backends/index.js', async () =>
 );
 vi.mock('../../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
-const { buildServfail, fitToUdp, forwardDoT, forwardDoH, forwardPlain, queryUpstreams, getAndResetForwarderMetrics, heldProviders, releaseHolds } = await import('../../../src/dns-proxy/forwarder.js');
+const {
+  buildServfail,
+  fitToUdp,
+  forwardDoT,
+  forwardDoH,
+  forwardPlain,
+  queryUpstreams,
+  getAndResetForwarderMetrics,
+  heldProviders,
+  releaseHolds,
+} = await import('../../../src/dns-proxy/forwarder.js');
 const { pinnedLookup } = await import('../../../src/utils/upstream-pool.js');
 const { plainDnsServer } = await import('../../helpers/plain-dns-server.js');
 
@@ -445,5 +455,36 @@ describe('forwardPlain', () => {
     );
     expect(answer).toBeNull();
     expect(getAndResetForwarderMetrics()).toEqual([]);
+  });
+});
+
+describe('refreshEncryptedForwarder', () => {
+  // No upstreams, so none of this binds the forwarder's port.
+  it('applies only when a setting changed', async () => {
+    const Forwarder = await import('../../../src/dns-proxy/forwarder.js');
+    const settings = { forwarder_encryption: 'tls', forwarder_encrypted_upstreams: [] };
+    let reads = 0;
+    Forwarder.configureForwarder({
+      setting: (key) => {
+        reads += 1;
+        return settings[key];
+      },
+    });
+    Forwarder.applyEncryptedForwarder();
+
+    const readsForRefresh = () => {
+      reads = 0;
+      Forwarder.refreshEncryptedForwarder();
+      return reads;
+    };
+    const unchanged = readsForRefresh();
+
+    settings.forwarder_encryption = 'https';
+    const changed = readsForRefresh();
+    expect(Forwarder.getEncryptedForwarderStatus().mode).toBe('https');
+    // Applying reads the settings again on top of comparing them.
+    expect(changed).toBeGreaterThan(unchanged);
+    expect(readsForRefresh()).toBe(unchanged);
+    Forwarder.stopEncryptedForwarder();
   });
 });

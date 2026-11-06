@@ -14,6 +14,7 @@ import { spawn } from 'child_process';
 import dnsPacket from 'dns-packet';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { CODE_GONE_EXIT } from '../../src/dns-proxy/code-gone.js';
+import Database from 'better-sqlite3';
 import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
 
 process.env.CIDRELLA_DNS_PROXY_SUPERVISOR = 'test';
@@ -202,20 +203,20 @@ describe('the DNS proxy process', () => {
   });
 });
 
-// Each starts its own proxy, so it can end it.
+const exited = (child) =>
+  new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
+
+// Each test using it starts its own proxy, so it can end it.
+async function startProxy(entry, dir = fs.mkdtempSync(path.join(tmpDir, 'own-'))) {
+  const child = spawn(process.execPath, [entry], {
+    env: { ...process.env, DATA_DIR: dir },
+    stdio: 'ignore',
+  });
+  await waitFor(() => fs.existsSync(proxyRuntimePaths(dir).socket));
+  return { child, dir };
+}
+
 describe('when the proxy exits by itself', () => {
-  const exited = (child) =>
-    new Promise((resolve) => child.on('exit', (code, signal) => resolve({ code, signal })));
-
-  async function startProxy(entry, dir = fs.mkdtempSync(path.join(tmpDir, 'own-'))) {
-    const child = spawn(process.execPath, [entry], {
-      env: { ...process.env, DATA_DIR: dir },
-      stdio: 'ignore',
-    });
-    await waitFor(() => fs.existsSync(proxyRuntimePaths(dir).socket));
-    return { child, dir };
-  }
-
   it('restarts once for a web app that ships other code, and not again', async () => {
     Client.stopProxyClient();
     const { child, dir } = await startProxy(PROXY_ENTRY);
@@ -242,4 +243,46 @@ describe('when the proxy exits by itself', () => {
     fs.unlinkSync(link);
     expect(await done).toEqual({ code: CODE_GONE_EXIT, signal: null });
   }, 15000);
+});
+
+describe('the forwarder of a proxy that started first', () => {
+  it('starts once the web app has made the database, and follows a change', async () => {
+    Client.stopProxyClient();
+    const { child, dir } = await startProxy(PROXY_ENTRY);
+    const connect = () => Client.startProxyClient({ dataDir: dir, handlers: {} });
+    const forwarderRunning = () => Client.freshProxyStatus()?.forwarder.running;
+
+    // A first boot: no database and no saved config, so nothing to forward to.
+    connect();
+    await waitFor(() => Client.freshProxyStatus());
+    expect(forwarderRunning()).toBe(false);
+
+    // The web app restarts with the database made, and sends what it defaults to.
+    Client.stopProxyClient();
+    const dbFile = path.join(dir, 'cidrella.db');
+    const { getDb } = await import('../../src/db/init.js');
+    getDb().prepare('VACUUM INTO ?').run(dbFile);
+    connect();
+    Client.sendProxyConfig({
+      proxy: {},
+      defaults: { dns_upstream_servers: ['192.0.2.53', '2001:db8::53'] },
+      serve: false,
+    });
+    await waitFor(forwarderRunning, 10000);
+
+    // A setting changed while the web app was away, as a restore does.
+    Client.stopProxyClient();
+    const db = new Database(dbFile);
+    db.prepare(
+      "INSERT INTO settings (key, value) VALUES ('dns_no_recursion', 'true') " +
+        'ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    ).run();
+    db.close();
+    connect();
+    await waitFor(() => forwarderRunning() === false, 10000);
+
+    Client.stopProxyClient();
+    child.kill('SIGTERM');
+    await exited(child);
+  }, 30000);
 });

@@ -46,3 +46,11 @@ describe('reloadAll with GeoIP on', () => {
     expect(Server.isGeoipLoaded()).toBe(false);
   });
 });
+
+describe('loadFilteringOverrides', () => {
+  it('logs no error before the database exists', () => {
+    const error = vi.spyOn(console, 'error').mockImplementation(() => {});
+    Server.loadFilteringOverrides();
+    expect(error).not.toHaveBeenCalled();
+  });
+});
