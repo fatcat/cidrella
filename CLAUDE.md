@@ -250,6 +250,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   one checked transaction; `createUnitControl` for starting, stopping, reloading and checking
   a daemon (`installed`, `awaitStopped`), with `enableFile` for one s6 keeps down until wanted
   and `disableFile` for one that runs unless told not to, dnsmasq),
+  `utils/preflight.js` (`isPreflightBoot`: update.sh's probe, which must not touch a host service),
   `utils/ntp-status.js` (`getNtpStatus`: is the clock synchronized),
   `utils/lease-time.js` (`leaseSeconds`, `isValidLeaseTime`: every read of a stored lease
   time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and

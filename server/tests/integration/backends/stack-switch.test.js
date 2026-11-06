@@ -349,6 +349,24 @@ describe('switchStack back to dnsmasq', () => {
 });
 
 describe('selectStackAtBoot', () => {
+  it('stops nothing in a preflight boot, whose empty database names the default', async () => {
+    vi.stubEnv('CIDRELLA_PREFLIGHT', '1');
+    try {
+      db.prepare("DELETE FROM settings WHERE key = 'backend_stack'").run();
+      b.pdns.running = true;
+      b.kea.running = true;
+      log.length = 0;
+      expect((await selectStackAtBoot(db)).stack).toBe('dnsmasq');
+      expect(b.pdns.running).toBe(true);
+      expect(b.kea.running).toBe(true);
+      expect(log.filter((entry) => entry.endsWith(' stop'))).toEqual([]);
+    } finally {
+      vi.unstubAllEnvs();
+      b.pdns.running = false;
+      b.kea.running = false;
+    }
+  });
+
   it('takes the stack from the setting and stops what is outside it', async () => {
     upsertSetting(db, 'backend_stack', 'pdns-kea');
     b.dnsmasq.running = true;

@@ -56,7 +56,11 @@ describe('createUnitControl under s6', () => {
   it('restarts a running daemon by TERM and keeps it enabled', async () => {
     host({ running: true });
     await control().restart();
-    expect(execFileSync).toHaveBeenCalledWith('pkill', ['-TERM', '-x', 'kea-dhcp4'], expect.any(Object));
+    expect(execFileSync).toHaveBeenCalledWith(
+      'pkill',
+      ['-TERM', '-x', 'kea-dhcp4'],
+      expect.any(Object),
+    );
     expect(fs.existsSync(enableFile)).toBe(true);
   });
 
@@ -66,7 +70,11 @@ describe('createUnitControl under s6', () => {
     await unit.restart();
     await unit.stop();
     expect(fs.existsSync(enableFile)).toBe(false);
-    expect(execFileSync).toHaveBeenLastCalledWith('pkill', ['-TERM', '-x', 'kea-dhcp4'], expect.any(Object));
+    expect(execFileSync).toHaveBeenLastCalledWith(
+      'pkill',
+      ['-TERM', '-x', 'kea-dhcp4'],
+      expect.any(Object),
+    );
   });
 
   it('marks a restart pending for a daemon with no enable file that is not running', async () => {
@@ -101,7 +109,11 @@ describe('createUnitControl with a disable flag (dnsmasq)', () => {
     execFileSync.mockImplementation(() => {});
     await control().stop();
     expect(fs.existsSync(disableFile)).toBe(true);
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['stop', 'cidrella-dnsmasq'], expect.any(Object));
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['stop', 'cidrella-dnsmasq'],
+      expect.any(Object),
+    );
   });
 
   it('restart clears the flag before asking systemctl, whose start condition reads it', async () => {
@@ -236,5 +248,31 @@ describe('a hung systemctl', () => {
     await unit.restart();
     warn.mockRestore();
     expect(unit.restartPending()).toBe(true);
+  });
+});
+
+describe('createUnitControl in a preflight boot', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('changes nothing on the host, and may still look', async () => {
+    vi.stubEnv('CIDRELLA_PREFLIGHT', '1');
+    const control = createUnitControl({
+      unit: 'cidrella-kea@dhcp4',
+      processName: 'kea-dhcp4',
+      restartPendingFile,
+      enableFile,
+    });
+    await control.restart();
+    await control.reload();
+    await control.stop();
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(fs.existsSync(enableFile)).toBe(false);
+
+    await control.isRunning();
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['is-active', '--quiet', 'cidrella-kea@dhcp4'],
+      expect.anything(),
+    );
   });
 });

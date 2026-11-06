@@ -11,6 +11,7 @@ import { getDnsBackend, getRaBackend, getService, uniqueServices } from '../back
 import fs from 'fs';
 import { syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { BACKEND_RESTART_MARKER } from '../config/defaults.js';
+import { isPreflightBoot } from '../utils/preflight.js';
 
 // Each apply resolves once the backend has taken the change (the restart or
 // reload done); the after-commit runner waits for it.
@@ -73,7 +74,7 @@ export function onDhcpApplied(listener) {
  * 'skipped' in an update preflight). After a restore every service restarts
  * (BACKEND_RESTART_MARKER), so each loads the restored leases.
  */
-export async function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT === '1' } = {}) {
+export async function applyAtBoot(db, { preflight = isPreflightBoot() } = {}) {
   const dns = getService('dns');
   let dnsChanged = false;
   try {

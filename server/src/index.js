@@ -104,6 +104,7 @@ import { initAnalyticsDb } from './db/duckdb.js';
 import { getCapabilityWarning } from './utils/capabilities.js';
 import { captureBootServiceHealth } from './utils/service-health.js';
 import { markBackendReady } from './utils/startup-status.js';
+import { isPreflightBoot } from './utils/preflight.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -134,7 +135,7 @@ async function main() {
   }
   console.log('Database initialized');
   // An update or rollback run from the shell leaves its only trace here.
-  if (process.env.CIDRELLA_PREFLIGHT !== '1') {
+  if (!isPreflightBoot()) {
     try {
       recordVersionChange(getDb(), { version: APP_VERSION, dataDir: DATA_DIR });
     } catch (err) {

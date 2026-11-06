@@ -54,6 +54,10 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 
 ### Fixed
 
+- **An update no longer stops PowerDNS and Kea while it checks the new release.** On the
+  PowerDNS + Kea stack, the update's preflight check stopped both, taking DNS down for about 15 s
+  and DHCP for about 12 s (measured on a production appliance), and an update that then failed
+  could have left them stopped. The check now leaves every service on the host alone.
 - **DNS keeps answering while a backup runs.** A backup stopped every DNS answer until it
   finished (13 s measured on a production appliance).
 - **Opening the blocklist stats no longer stops DNS for up to 3 s.** The domain count is

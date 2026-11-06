@@ -28,6 +28,7 @@ import * as Client from './dns-proxy-client.js';
 import { sinkQueryRow, sinkClientSeen, sinkResolution } from '../services/dns-proxy-sinks.js';
 import { startWatchdog, stopWatchdog, isProxyBypassed } from '../services/dns-proxy-watchdog.js';
 import { restartProxyProcess } from '../services/dns-proxy-supervisor.js';
+import { isPreflightBoot } from './preflight.js';
 
 export { clearBypassAtBoot, isProxyBypassed } from '../services/dns-proxy-watchdog.js';
 
@@ -174,7 +175,7 @@ export function startProxy() {
   followBackend();
   // An update's preflight boots on a scratch data directory: no config
   // written, no connection, nothing spawned.
-  if (process.env.CIDRELLA_PREFLIGHT === '1') return;
+  if (isPreflightBoot()) return;
   refreshProxyConfig();
   Client.startProxyClient({
     codeId: codeId(),

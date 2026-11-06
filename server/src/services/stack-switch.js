@@ -45,6 +45,7 @@ import { nameQuery } from '../utils/upstream-probe.js';
 import { recordAudit } from './audit.js';
 import { applyDhcp } from './backend-apply.js';
 import { holdLeaseSync } from './dhcp-lease-sync.js';
+import { isPreflightBoot } from '../utils/preflight.js';
 
 export const SETTING_KEY = 'backend_stack';
 // 0.5.2's hidden DHCP-only switch. An install it left on Kea moves back to
@@ -545,7 +546,9 @@ export async function selectStackAtBoot(db) {
   if (readSetting(db, SETTING_KEY) !== name) upsertSetting(db, SETTING_KEY, name);
   deleteSetting(db, LEGACY_SETTING_KEY);
   writeStackFile(name);
-  await stopOutside(name);
+  // The probe's empty database always says the default stack, and what runs on
+  // the host is the live release's stack: stopping the rest would stop that.
+  if (!isPreflightBoot()) await stopOutside(name);
   clearRetiredLogs(name);
 
   const last = marker || legacyMarker;

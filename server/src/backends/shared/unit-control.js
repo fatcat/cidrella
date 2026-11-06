@@ -12,6 +12,7 @@
 import fs from 'fs';
 import path from 'path';
 import { runCommand } from '../../utils/run-command.js';
+import { isPreflightBoot } from '../../utils/preflight.js';
 import { emitUnitEvent } from './unit-events.js';
 
 const stderrOf = (err) => err?.stderr?.toString?.().trim();
@@ -220,11 +221,13 @@ export function createUnitControl({
 
   // One change to the daemon at a time, in the order asked: a reload sent
   // while a restart is under way would reach systemd as a second job on the
-  // same unit. Two apply hooks can each ask for one back to back.
+  // same unit. Two apply hooks can each ask for one back to back. A preflight
+  // boot changes nothing: the units on the host belong to the running release.
   let queue = Promise.resolve();
   const inTurn =
     (fn) =>
     (...args) => {
+      if (isPreflightBoot()) return Promise.resolve();
       const turn = queue.then(() => fn(...args));
       queue = turn.catch(() => {});
       return turn;
