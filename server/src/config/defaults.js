@@ -200,10 +200,10 @@ export const ANALYTICS_RETENTION_CLEANUP_MS = 6 * 60 * 60 * 1000; // 6 hours
 // (DHCPv6) from 2.pool.ntp.org, the one pool name that answers with IPv6.
 // scripts/refresh-ntp-defaults.js refreshes both at release-build time so new
 // installs and reset databases do not carry stale pool answers indefinitely.
-export const DHCP_DEFAULT_NTP_SERVERS = '69.164.213.136,172.234.25.10,172.233.189.68,198.44.55.245';
+export const DHCP_DEFAULT_NTP_SERVERS = '216.229.4.69,162.244.81.139,40.160.28.79,198.137.202.32';
 export const DHCP6_DEFAULT_NTP_SERVERS =
-  '2602:fcac:0:7b::74,2603:c020:0:8369:feed:feed:feed:feed,2600:1702:4a73:e00f:c3ee:91f2:71d8:5243,2607:f710:35::29c:0:6';
-export const DHCP_DEFAULT_NTP_SERVERS_REFRESHED_AT = '2026-10-05';
+  '2001:4998:c:1028::1000,2602:81c:1000:2::662,2602:fc26:12:1::48,2602:81c:1000:2::651';
+export const DHCP_DEFAULT_NTP_SERVERS_REFRESHED_AT = '2026-11-06';
 
 export {
   GEOIP_CACHE_MAX,

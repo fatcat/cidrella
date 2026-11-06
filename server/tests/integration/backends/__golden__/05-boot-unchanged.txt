@@ -5,7 +5,7 @@ dhcp-range=set:scope1,10.60.0.100,10.60.0.199,255.255.255.0,3600
 dhcp-option=tag:scope1,3,10.60.0.1
 dhcp-option=tag:scope1,6,10.60.0.2
 dhcp-option=tag:scope1,15,golden.test
-dhcp-option=tag:scope1,42,69.164.213.136,172.234.25.10,172.233.189.68,198.44.55.245
+dhcp-option=tag:scope1,42,216.229.4.69,162.244.81.139,40.160.28.79,198.137.202.32
 dhcp-option=tag:scope1,66,tftp.golden.test
 dhcp-option=tag:scope1,119,golden.test
 
@@ -20,7 +20,7 @@ dhcp-range=set:scope2,fd00:61::,ra-only,64,1h
 enable-ra
 ra-param=*,0,0
 dhcp-range=set:scope3,fd00:62::,ra-stateless,ra-names,64,1h
-dhcp-option=tag:scope3,option6:ntp-server,[2602:fcac:0:7b::74],[2603:c020:0:8369:feed:feed:feed:feed],[2600:1702:4a73:e00f:c3ee:91f2:71d8:5243],[2607:f710:35::29c:0:6]
+dhcp-option=tag:scope3,option6:ntp-server,[2001:4998:c:1028::1000],[2602:81c:1000:2::662],[2602:fc26:12:1::48],[2602:81c:1000:2::651]
 
 === conf.d/dhcp-scope-4.conf ===
 # DHCPv6 scope for fd00:63::/64 (stateful)
@@ -28,7 +28,7 @@ enable-ra
 ra-param=*,0,0
 dhcp-range=set:scope4,fd00:63::1000,fd00:63::1fff,64,1h
 dhcp-option=tag:scope4,option6:domain-search,golden.test
-dhcp-option=tag:scope4,option6:ntp-server,[2602:fcac:0:7b::74],[2603:c020:0:8369:feed:feed:feed:feed],[2600:1702:4a73:e00f:c3ee:91f2:71d8:5243],[2607:f710:35::29c:0:6]
+dhcp-option=tag:scope4,option6:ntp-server,[2001:4998:c:1028::1000],[2602:81c:1000:2::662],[2602:fc26:12:1::48],[2602:81c:1000:2::651]
 
 === conf.d/local-zones.conf ===
 local=/0.0.0.0.0.0.0.0.3.6.0.0.0.0.d.f.ip6.arpa/
