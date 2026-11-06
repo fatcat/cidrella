@@ -14,12 +14,16 @@ import fs from 'fs';
 import path from 'path';
 import { DATA_DIR, proxyRuntimePaths } from './constants.js';
 import { codeId } from './code-id.js';
+import { proxyCodeGone } from './code-gone.js';
 import { proxyLog } from './log.js';
 import { STATUS_INTERVAL_MS } from './protocol.js';
 import { createIpcServer, createOutbox, OUTBOX_BATCH } from './ipc-server.js';
 import { createProxyRuntime } from './runtime.js';
 
 const DB_CHECK_MS = 5000;
+// Well inside the second or so a rolled-back web app takes to bind what this
+// process holds.
+const CODE_GONE_CHECK_MS = 250;
 const paths = proxyRuntimePaths();
 const outbox = createOutbox();
 const myCodeId = codeId();
@@ -88,17 +92,16 @@ function shutdown(code) {
   process.exit(code);
 }
 
-// The file the proxy was started from gone means the code it came from is
-// gone: a rollback to a release without a separate proxy. It exits, and its
-// unit's ConditionPathExists keeps it from being started again; the old web
-// app runs the proxy itself.
+// The code this came from gone means a rollback to a release without a
+// separate proxy. It exits, and its unit's ConditionPathExists keeps it from
+// being started again; the old web app runs the proxy itself.
 const entry = process.argv[1];
 setInterval(() => {
-  if (!fs.existsSync(entry)) {
+  if (proxyCodeGone(entry)) {
     proxyLog('info', 'The proxy code is gone (a rollback?), exiting', { entry });
     shutdown(0);
   }
-}, 1000).unref();
+}, CODE_GONE_CHECK_MS).unref();
 
 // Started by the web app itself (development, no supervisor): exit when it
 // is gone, however it ended.

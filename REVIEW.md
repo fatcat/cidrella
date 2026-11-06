@@ -12,6 +12,23 @@ was suggested.
 
 ---
 
+## Found testing a rollback on testerella (2026-11-06)
+
+#### HARNESS-RESET-01: the test harness's wipe leaves the newer units running
+
+**medium**, read from the code. `scripts/test-harness/run.sh:117` (`reset_host`).
+
+- **What happens:** It stops only `cidrella`, `cidrella-dnsmasq` and `cidrella-anomaly`, then
+  deletes `/etc/systemd/system/cidrella*.service`. On a host with `cidrella-dns-proxy`, Kea,
+  PowerDNS or radvd running, those processes survive with their unit files gone and keep port 53
+  and the DHCP ports, so the next scenario's install starts on a host that is not clean. It also
+  leaves `/etc/polkit-1/rules.d/49-cidrella.rules`, the unit drop-in directories, the Kea, PowerDNS
+  and radvd packages, and their apt lists.
+- **Why:** The list predates the proxy process and the second stack.
+- **Fix:** Stop and disable every `cidrella*` unit from `systemctl list-units`, including the
+  templated Kea ones, remove `/etc/systemd/system/cidrella*` and the polkit rule, and purge those
+  packages and lists.
+
 ## Found reading prod's address history (2026-11-06)
 
 #### RETIRE-SLEEP-01: a laptop that sleeps past the offline hour is forgotten at every wake

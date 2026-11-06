@@ -489,9 +489,10 @@ unset for the child).
   web app's differs from the running proxy's, it asks the proxy to exit once,
   and the supervisor starts the new code. A guard test keeps the closure away
   from the web app's modules.
-- **A rollback to a release without it.** The proxy exits when the file it
-  started from is gone, and the unit's `ConditionPathExists` keeps it down,
-  so the old web app can run the proxy itself.
+- **A rollback to a release without it.** The proxy exits when its code is
+  gone from the path through the install symlink (`dns-proxy/code-gone.js`; the
+  slot it started from stays on disk), and the unit's `ConditionPathExists`
+  keeps it down, so the old web app can run the proxy itself.
 
 ### Proxy bypass
 

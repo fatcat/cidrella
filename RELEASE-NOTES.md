@@ -83,8 +83,8 @@ that sets one (400); set the gateway on the network.
 
 The update installs and starts `cidrella-dns-proxy.service`. The first update to 0.6.3 has the
 same short DNS gap as any update before it; later updates leave the proxy running unless its
-code changed. Rolling back to 0.6.2 with `cidrella-rollback` works: the new proxy exits about a
-second after the 0.6.2 code is in place, and 0.6.2 runs its proxy itself.
+code changed. Rolling back to 0.6.2 with `cidrella-rollback` works: the new proxy exits within a
+second of the 0.6.2 code being in place, and 0.6.2 runs its proxy itself.
 
 ## v0.6.2 — 2026-10-26
 
