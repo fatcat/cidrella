@@ -1607,15 +1607,20 @@ fi
 # anomaly detection was silently dead. Explicitly check each auxiliary unit
 # that ships with CIDRella: if the unit is enabled but not active, start it.
 # Missing units (e.g. dnsmasq mode=include) are silently skipped.
-for _aux in cidrella-anomaly cidrella-dns-proxy; do
-  if systemctl list-unit-files "${_aux}.service" >/dev/null 2>&1 \
-     && systemctl is-enabled --quiet "$_aux" 2>/dev/null \
-     && ! systemctl is-active --quiet "$_aux" 2>/dev/null; then
-    info "Starting $_aux (was enabled but inactive)..."
-    systemctl start "$_aux" || warn "Failed to start $_aux (non-fatal)"
-    emit_event switchover pass "unit=${_aux}.service" action=started
-  fi
-done
+start_stopped_units() {
+  local phase="$1" unit
+  shift
+  for unit in "$@"; do
+    if systemctl list-unit-files "${unit}.service" >/dev/null 2>&1 \
+       && systemctl is-enabled --quiet "$unit" 2>/dev/null \
+       && ! systemctl is-active --quiet "$unit" 2>/dev/null; then
+      info "Starting $unit (was enabled but inactive)..."
+      systemctl start "$unit" || warn "Failed to start $unit (non-fatal)"
+      emit_event "$phase" pass "unit=${unit}.service" action=started
+    fi
+  done
+}
+start_stopped_units switchover cidrella-anomaly cidrella-dns-proxy
 
 # ═══════════════════════════════════════════════════════════
 # PHASE 7: VERIFY HEALTH (auto-rollback on failure)
@@ -1871,6 +1876,10 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 done
 
 if [ "$ROLLBACK_OK" = true ]; then
+  # A new version that failed to start took the anomaly unit down with it
+  # (Requires=), and the restart above only restarts units still running. The
+  # proxy's fate was decided above, so it is not named here.
+  start_stopped_units rollback cidrella-anomaly
   err "Update FAILED, automatically rolled back to v${CURRENT_VERSION}."
   err "Check logs: journalctl -u cidrella -n 100"
   emit_event rollback pass "restored_version=$CURRENT_VERSION"

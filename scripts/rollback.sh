@@ -311,6 +311,12 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 done
 
 if systemctl is-active --quiet cidrella; then
+  # PartOf= stopped it along with cidrella, and starting cidrella does not bring
+  # it back. Not fatal: DNS, DHCP and the web app are up without it.
+  if systemctl is-enabled --quiet cidrella-anomaly 2>/dev/null; then
+    systemctl reset-failed cidrella-anomaly 2>/dev/null || true
+    systemctl start cidrella-anomaly 2>/dev/null || warn "cidrella-anomaly did not start; see journalctl -u cidrella-anomaly"
+  fi
   echo ""
   ok "Rollback complete. CIDRella v${INACTIVE_VERSION} is running."
   echo ""

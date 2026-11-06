@@ -58,6 +58,10 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
   PowerDNS + Kea stack, the update's preflight check stopped both, taking DNS down for about 15 s
   and DHCP for about 12 s (measured on a production appliance), and an update that then failed
   could have left them stopped. The check now leaves every service on the host alone.
+- **A rollback no longer leaves anomaly detection stopped.** `cidrella-rollback` and an update's
+  automatic rollback start it again; it used to stay down, with no error, until the next reboot
+  or update. An update installs the rollback tool of the release it replaces, so
+  `cidrella-rollback` has this from the update after 0.6.3.
 - **DNS keeps answering while a backup runs.** A backup stopped every DNS answer until it
   finished (13 s measured on a production appliance).
 - **Opening the blocklist stats no longer stops DNS for up to 3 s.** The domain count is
