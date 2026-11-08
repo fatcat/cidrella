@@ -264,7 +264,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   upstream, DoT or DoH: reused connections, retry, address failover, fail closed),
   `plainUpstreams` and `backupMode` in `utils/forwarding-settings.js` (the plaintext primary
   then backup, and On failure or Load balance; nothing else joins the two lists),
-  `utils/plain-dns.js` (`plainUdpQuery`, `plainTcpQuery`: one plain query, either family),
+  `utils/plain-dns.js` (`plainUdpQuery`, `plainTcpQuery`: one plain query, either family;
+  tests stand up a server with `plainDnsServer` in `tests/helpers/plain-dns-server.js`, and take a
+  port with `freePort` in `tests/helpers/free-port.js`), `utils/dns-wire.js` (TCP framing, and
+  `addEdns`/`removeOpt`: the OPT record the proxy adds for a client without EDNS and strips again),
   `timeQuery` in `utils/upstream-probe.js` (one timed query over plain, DoT or DoH) and
   `services/resolver-benchmark.js` (the one-minute resolver performance test),
   `failureCause` in `utils/dns-ede.js` (the one place a failed DNS answer gets its cause,

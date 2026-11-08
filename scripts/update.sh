@@ -1412,13 +1412,17 @@ if [ -f "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" ]; then
   # race where the freshly-created polkitd user isn't visible to systemd's
   # first start attempt (exit code 217/USER); `systemctl daemon-reload` +
   # `reset-failed` clears that path.
+  #
+  # grep reads the whole list, not `grep -q`: under pipefail, `grep -q`
+  # stopping at its match kills systemctl on the closed pipe, the test fails,
+  # and the daemon is never started (19 of 20 tries on a stock host).
   systemctl daemon-reload 2>/dev/null || true
   POLKIT_UNIT=""
   if systemctl list-unit-files polkit.service >/dev/null 2>&1 && \
-     systemctl list-unit-files 2>/dev/null | grep -q '^polkit\.service'; then
+     systemctl list-unit-files 2>/dev/null | grep '^polkit\.service' >/dev/null; then
     POLKIT_UNIT="polkit.service"
   elif systemctl list-unit-files polkitd.service >/dev/null 2>&1 && \
-       systemctl list-unit-files 2>/dev/null | grep -q '^polkitd\.service'; then
+       systemctl list-unit-files 2>/dev/null | grep '^polkitd\.service' >/dev/null; then
     POLKIT_UNIT="polkitd.service"
   fi
 

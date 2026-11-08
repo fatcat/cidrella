@@ -7,7 +7,7 @@ import { LRUCache } from 'lru-cache';
 import { canonicalizeIp } from '../utils/address.js';
 import { exemptAddressSet } from '../models/filtering-exemption-read.js';
 import { parseCidrEntry, ipInAny } from '../utils/cidr-match.js';
-import { frameTcpMessage, extractTcpMessages } from '../utils/dns-wire.js';
+import { frameTcpMessage, extractTcpMessages, addEdns, removeOpt } from '../utils/dns-wire.js';
 import { extractEde, failureCause, FAILURE_CAUSES } from '../utils/dns-ede.js';
 import { createReservoir, quantileOfSorted } from '../utils/samples.js';
 import { loadCityTable, unloadCityTable, cityPlace } from '../utils/geo-cities.js';
@@ -819,6 +819,8 @@ function handleQuery(msg, rinfo, sock) {
       }
     }, PROXY_UDP_TIMEOUT_MS);
 
+    const opt = getQueryOpt(query);
+    const asked = askedOfBackend(msg, opt);
     pendingQueries.set(internalId, {
       address: rinfo.address,
       clientIp,
@@ -828,15 +830,16 @@ function handleQuery(msg, rinfo, sock) {
       queryName: queryName || '',
       queryType,
       checkingDisabled: !!query.flag_cd,
-      opt: getQueryOpt(query), // echoed on a synthesized GeoIP-block response
-      query: msg, // asked again of the forwarder for a forward-unknown zone
+      opt, // echoed on a synthesized GeoIP-block response
+      addedOpt: !opt,
+      query: asked, // asked again of the forwarder for a forward-unknown zone
       clientRd: asksRecursion(msg),
       timer,
       startNs,
     });
 
     // Rewrite query ID and forward to the backend on the internal port.
-    const fwdBuf = withRecursionDesired(msg);
+    const fwdBuf = withRecursionDesired(asked);
     fwdBuf.writeUInt16BE(internalId, 0);
     dnsmasqSocket.send(fwdBuf, config.internalPort, '127.0.0.1');
   } catch (err) {
@@ -860,6 +863,13 @@ export function withClientRd(reply, clientRd) {
   if (reply.length > 2) reply[2] = (reply[2] & ~RD_BIT) | (clientRd ? RD_BIT : 0);
   return reply;
 }
+
+// A query that came without EDNS goes to the backend with it: only an EDNS
+// answer carries an Extended DNS Error, so without it a client's failed answer
+// lost its cause in the log. The client gets the answer back without the OPT
+// record (`forClient`), as a server answers a client that sent none.
+export const askedOfBackend = (msg, opt) => (opt ? msg : addEdns(msg));
+export const forClient = (reply, addedOpt) => (addedOpt ? removeOpt(reply) : reply);
 
 // Handle a response from dnsmasq
 function handleDnsmasqResponse(msg) {
@@ -935,7 +945,7 @@ function deliverResponse(pending, msg, response) {
     // Allowed, forward original response (restore original query ID)
     statsAllowed++;
     statsTotal++;
-    const buf = withClientRd(Buffer.from(msg), pending.clientRd);
+    const buf = forClient(withClientRd(Buffer.from(msg), pending.clientRd), pending.addedOpt);
     buf.writeUInt16BE(pending.originalId, 0);
     pending.socket.send(buf, pending.port, pending.address);
     const latencyUs = Number(process.hrtime.bigint() - pending.startNs) / 1000;
@@ -969,8 +979,9 @@ function deliverResponse(pending, msg, response) {
 // DNS-over-TCP frames each message with a 2-byte big-endian length prefix.
 // Unlike the UDP path, each query gets its own independent connection to
 // dnsmasq, so there's no 16-bit ID multiplexing, we relay the client's bytes
-// (and dnsmasq's response bytes) verbatim, which keeps DNSSEC signatures and
-// the query ID intact. TCP fallback is what validating-stub resolvers use for
+// (and dnsmasq's response bytes) as they are, but for the RD bit and the OPT
+// record a query without EDNS gets (askedOfBackend), which keeps DNSSEC
+// signatures and the query ID intact. TCP fallback is what validating-stub resolvers use for
 // large/truncated signed answers, so this path is required for end-to-end
 // DNSSEC while filtering stays in place.
 
@@ -1063,8 +1074,9 @@ async function handleTcpQuery(msg, clientSock) {
 
   // Relay to dnsmasq over TCP (same internal port it serves UDP on).
   const internalPort = config.internalPort;
+  const asked = askedOfBackend(msg, getQueryOpt(query));
   let respMsg = await relayQueryOverTcp(
-    withRecursionDesired(msg),
+    withRecursionDesired(asked),
     '127.0.0.1',
     internalPort,
     PROXY_TCP_RELAY_TIMEOUT_MS,
@@ -1079,7 +1091,7 @@ async function handleTcpQuery(msg, clientSock) {
     if (wantsUnknownRetry(first, queryName)) {
       noteUnknownRetry(queryName);
       const elapsedMs = Number(process.hrtime.bigint() - startNs) / 1e6;
-      const retried = await askForwarder(msg, {
+      const retried = await askForwarder(asked, {
         tcp: true,
         timeoutMs: PROXY_TCP_RELAY_TIMEOUT_MS - elapsedMs,
       });
@@ -1142,10 +1154,14 @@ async function handleTcpQuery(msg, clientSock) {
   }
 
   // Allowed, relay the backend's raw bytes (preserves signatures + ID), with
-  // the client's own RD bit; the header is outside every signature.
+  // the client's own RD bit and without an OPT record the proxy added; the
+  // header and the OPT record are outside every signature.
   statsAllowed++;
   statsTotal++;
-  writeTcpMessage(clientSock, withClientRd(Buffer.from(respMsg), asksRecursion(msg)));
+  writeTcpMessage(
+    clientSock,
+    forClient(withClientRd(Buffer.from(respMsg), asksRecursion(msg)), asked !== msg),
+  );
   const dnssecSupported = classifyDnssecSupport(response, {
     enabled: deps.cachedSetting('dnssec_enabled') === 'true',
     checkingDisabled: !!query.flag_cd,
@@ -1442,6 +1458,25 @@ export function getAndResetCountryHits() {
   return copy;
 }
 
+// What this process cost since the last drain: CPU time over wall time (100 is
+// one core busy, as top reads a process), RSS and heap in MB. The proxy
+// measures itself; the web app's aggregator used to measure the web app.
+let lastCpuUsage = process.cpuUsage();
+let lastCpuAt = Date.now();
+const megabytes = (bytes) => Math.round((bytes / 1048576) * 10) / 10;
+function processUsage(now = Date.now()) {
+  const cpu = process.cpuUsage(lastCpuUsage);
+  const wallMs = now - lastCpuAt;
+  lastCpuUsage = process.cpuUsage();
+  lastCpuAt = now;
+  const mem = process.memoryUsage();
+  return {
+    cpuPercent: wallMs > 0 ? Math.round(((cpu.user + cpu.system) / 1000 / wallMs) * 10000) / 100 : 0,
+    rssMb: megabytes(mem.rss),
+    heapMb: megabytes(mem.heapUsed),
+  };
+}
+
 // Get and reset performance metrics (for metrics aggregator)
 export function getAndResetPerformanceMetrics() {
   const { sorted: samples, seen } = latency.drain();
@@ -1460,6 +1495,17 @@ export function getAndResetPerformanceMetrics() {
   failureCounts = noFailures();
   nxdomainCount = 0;
 
+  const counted = {
+    cacheHits: hits,
+    cacheMisses: misses,
+    timeouts,
+    pendingQueries: pending,
+    startupMs: proxyStartupMs,
+    failures,
+    nxdomain,
+    ...processUsage(),
+  };
+
   if (samples.length === 0) {
     return {
       queryCount: 0,
@@ -1467,13 +1513,7 @@ export function getAndResetPerformanceMetrics() {
       latencyAvg: null,
       latencyMax: null,
       latencyP95: null,
-      cacheHits: hits,
-      cacheMisses: misses,
-      timeouts,
-      pendingQueries: pending,
-      startupMs: proxyStartupMs,
-      failures,
-      nxdomain,
+      ...counted,
     };
   }
 
@@ -1485,13 +1525,7 @@ export function getAndResetPerformanceMetrics() {
     latencyAvg: Math.round(sum / samples.length),
     latencyMax: Math.round(samples[samples.length - 1]),
     latencyP95: Math.round(quantileOfSorted(samples, 0.95)),
-    cacheHits: hits,
-    cacheMisses: misses,
-    timeouts,
-    pendingQueries: pending,
-    startupMs: proxyStartupMs,
-    failures,
-    nxdomain,
+    ...counted,
   };
 }
 
@@ -1515,6 +1549,10 @@ export function emptyMetrics() {
       startupMs: null,
       failures: noFailures(),
       nxdomain: 0,
+      // Unknown, not zero: the minute shows as a gap.
+      cpuPercent: null,
+      rssMb: null,
+      heapMb: null,
     },
   };
 }

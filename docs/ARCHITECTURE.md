@@ -542,6 +542,12 @@ The DNS proxy sorts every failed answer into one cause with `failureCause` in
 option 15) in the answer. The query log keeps the EDE code and the cause per
 query; the minute rows keep a count per cause.
 
+A backend can only send an EDE in an answer to a query with EDNS, so the proxy
+asks the backend with an OPT record (no DO bit, 512-byte limit) when the client
+sent none, and takes it out of the answer before the client sees it
+(`addEdns` and `removeOpt` in `utils/dns-wire.js`). Without that, a client that
+asks without EDNS had every failure logged as `other`.
+
 | Cause | When |
 | --- | --- |
 | `dnssec` | SERVFAIL with EDE 1, 2, 5 to 12, 25 or 27 |

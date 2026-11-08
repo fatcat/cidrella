@@ -27,9 +27,6 @@ let lastDhcpCounters = null;
 let unsubscribeBackend = null;
 let cycleCount = 0;
 
-// CPU tracking for delta computation
-let lastCpuUsage = process.cpuUsage();
-let lastCpuTs = Date.now();
 let startupRecorded = false;
 
 // Prepared statements (initialized on start)
@@ -157,22 +154,6 @@ async function aggregate() {
     const perf = proxy.performance;
     const forwarderRows = proxy.forwarder;
 
-    // Process-level CPU (delta since last cycle)
-    const now = Date.now();
-    const cpu = process.cpuUsage(lastCpuUsage);
-    const wallMs = now - lastCpuTs;
-    const cpuPercent =
-      wallMs > 0 && cpu
-        ? Math.round(((cpu.user + cpu.system) / 1000 / wallMs) * 100 * 100) / 100
-        : 0;
-    lastCpuUsage = process.cpuUsage();
-    lastCpuTs = now;
-
-    // Process-level memory
-    const mem = process.memoryUsage();
-    const rssMb = Math.round((mem.rss / 1048576) * 10) / 10;
-    const heapMb = Math.round((mem.heapUsed / 1048576) * 10) / 10;
-
     // Record startup_ms only once
     const startupMs = !startupRecorded && perf.startupMs != null ? perf.startupMs : null;
     if (perf.startupMs != null) startupRecorded = true;
@@ -209,9 +190,10 @@ async function aggregate() {
         perf.cacheMisses,
         perf.timeouts,
         perf.pendingQueries,
-        cpuPercent,
-        rssMb,
-        heapMb,
+        // The proxy's own CPU and memory, null for a minute it did not answer.
+        perf.cpuPercent ?? null,
+        perf.rssMb ?? null,
+        perf.heapMb ?? null,
         startupMs,
         perf.failures?.dnssec ?? 0,
         perf.failures?.upstream ?? 0,

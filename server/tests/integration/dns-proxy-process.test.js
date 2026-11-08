@@ -16,6 +16,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import { CODE_GONE_EXIT } from '../../src/dns-proxy/code-gone.js';
 import Database from 'better-sqlite3';
 import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
+import { freePort } from '../helpers/free-port.js';
 
 process.env.CIDRELLA_DNS_PROXY_SUPERVISOR = 'test';
 const { proxyRuntimePaths } = await import('../../src/dns-proxy/constants.js');
@@ -31,14 +32,6 @@ const waitFor = async (check, ms = 5000) => {
   }
   throw new Error('timed out');
 };
-
-async function freePort() {
-  const sock = dgram.createSocket('udp4');
-  await new Promise((resolve) => sock.bind(0, '127.0.0.1', resolve));
-  const { port } = sock.address();
-  sock.close();
-  return port;
-}
 
 // The DNS backend: answers every A query with 192.0.2.1.
 function startBackend(port) {

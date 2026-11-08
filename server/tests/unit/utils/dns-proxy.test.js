@@ -162,6 +162,21 @@ describe('getAndResetPerformanceMetrics', () => {
     expect(m.pendingQueries).toBe(0);
   });
 
+  it('measures the process it runs in', () => {
+    getAndResetPerformanceMetrics();
+    const spinUntil = Date.now() + 60;
+    while (Date.now() < spinUntil) {
+      /* busy: CPU time to count */
+    }
+    const m = getAndResetPerformanceMetrics();
+    const rssMb = process.memoryUsage().rss / 1048576;
+    expect(m.cpuPercent).toBeGreaterThan(0);
+    expect(m.rssMb).toBeGreaterThan(rssMb * 0.8);
+    expect(m.rssMb).toBeLessThan(rssMb * 1.2);
+    expect(m.heapMb).toBeGreaterThan(0);
+    expect(m.heapMb).toBeLessThanOrEqual(m.rssMb);
+  });
+
   it('resets counters after read (drain semantics)', () => {
     // First call drains
     getAndResetPerformanceMetrics();

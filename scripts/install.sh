@@ -271,7 +271,9 @@ if command -v timedatectl >/dev/null 2>&1; then
     info "Enabling NTP time synchronization (required for DNSSEC)..."
     # Ensure a client exists: prefer an already-installed timesyncd/chrony/ntp,
     # otherwise install systemd-timesyncd (smallest footprint).
-    if ! systemctl list-unit-files 2>/dev/null | grep -qE '^(systemd-timesyncd|chrony|chronyd|ntp)\.service'; then
+    # grep reads the whole list: `grep -q` under pipefail failed this test now
+    # and then though the client was there (see update.sh, the polkit check).
+    if ! systemctl list-unit-files 2>/dev/null | grep -E '^(systemd-timesyncd|chrony|chronyd|ntp)\.service' >/dev/null; then
       apt-get install -y -qq systemd-timesyncd >/dev/null 2>&1 || \
         warn "Could not install systemd-timesyncd, enable an NTP client manually for DNSSEC."
     fi

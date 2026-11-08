@@ -61,6 +61,13 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 - **Sites behind a CNAME to a wildcard resolve on PowerDNS with DNSSEC on.** `www.nasa.gov` and
   names like it answered SERVFAIL on every query, though their signatures are valid. PowerDNS
   Recursor rejects that answer from a forwarder, so it now gets the chain one step at a time.
+- **An update no longer stops at "polkit daemon is not running" after a reboot.** It checked for
+  polkit in a way that failed whenever polkit had not been started since boot, and then refused.
+- **DNSSEC failures are counted for every client.** A client that asks without EDNS, as many
+  appliances and older tools do, had its DNSSEC failures logged as "other", so the DNSSEC
+  failures series on Performance stayed empty while they happened.
+- **The Process panel on Performance shows the DNS proxy.** Since the proxy became its own
+  service the panel showed the web app's CPU and memory beside the proxy's latency.
 - **A rollback no longer leaves anomaly detection stopped.** `cidrella-rollback` and an update's
   automatic rollback start it again; it used to stay down, with no error, until the next reboot
   or update. An update installs the rollback tool of the release it replaces, so

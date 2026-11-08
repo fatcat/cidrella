@@ -72,6 +72,9 @@ scenario_setup() {
 }
 
 scenario_run() {
+  # As after a boot: polkit starts on demand, so nothing has run it yet. The
+  # candidate's updater has to start it itself (UPDATE-POLKIT-PIPEFAIL-01).
+  systemctl stop polkit polkitd 2>/dev/null || true
   cidrella-update --version "$CANDIDATE_VERSION" > /tmp/cidrella-update-output.log 2>&1
   echo "cidrella-update exit code: $?" >> /tmp/cidrella-update-output.log
   readlink -f /opt/cidrella > /tmp/slot-after.txt

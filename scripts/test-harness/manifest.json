@@ -108,7 +108,8 @@
         "self-bootstrap handoff breakage between updater generations",
         "min_from misconfiguration in the candidate's RELEASE.json",
         "schema migration failures on a real upgrade (vs fresh install)",
-        "A/B slot-switch and rollback plumbing regressions"
+        "A/B slot-switch and rollback plumbing regressions",
+        "an updater that cannot start polkit when nothing has started it since boot"
       ],
       "does_not_catch": [
         "upgrades from releases older than FROM_TAG (pin a different --from-tag to cover those)",

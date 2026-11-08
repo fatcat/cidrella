@@ -8,7 +8,7 @@
   <div class="workspace performance" data-track="analytics-performance">
     <WorkspaceHead
       title="Resolver performance"
-      lede="How fast the resolver answers, how often the cache saves a trip upstream, and what the process costs the box."
+      lede="How fast the resolver answers, how often the cache saves a trip upstream, and what the DNS proxy process costs the box."
       track="performance"
       :range="selectedRange"
       :loading="store.loading"
@@ -314,8 +314,8 @@ const note = computed(
 );
 const processNote = computed(() =>
   cores.value > 1
-    ? `CIDRella itself · CPU is of one core, the host has ${cores.value} · heap sits inside RSS`
-    : 'CIDRella itself · heap sits inside RSS',
+    ? `The DNS proxy process · CPU is of one core, the host has ${cores.value} · heap sits inside RSS`
+    : 'The DNS proxy process · heap sits inside RSS',
 );
 
 function refreshAll() {
