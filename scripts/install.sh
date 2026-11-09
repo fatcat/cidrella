@@ -748,6 +748,18 @@ _install_unit "$INSTALL_DIR/scripts/systemd/cidrella-dns-proxy.service" /etc/sys
 ok "Installed cidrella-dns-proxy.service"
 emit_event systemd pass unit=cidrella-dns-proxy.service
 
+# The privileged helper: the one process with CAP_NET_RAW and the polkit
+# grants for daemon control, under an account of its own, since polkit
+# grants by account (scripts/polkit/49-cidrella.rules).
+if ! ensure_service_user cidrella-helper >/dev/null; then
+  err "Could not create the cidrella-helper account."
+  emit_event systemd fail reason=helper-user
+  exit 1
+fi
+_install_unit "$INSTALL_DIR/scripts/systemd/cidrella-helper.service" /etc/systemd/system/cidrella-helper.service
+ok "Installed cidrella-helper.service"
+emit_event systemd pass unit=cidrella-helper.service
+
 # v0.4.11+: templated update worker unit. The cidrella server starts an
 # instance of this unit via polkit-gated systemctl when an in-app update is
 # triggered. See scripts/polkit/49-cidrella.rules and the comment block at
@@ -884,6 +896,11 @@ fi
 systemctl enable cidrella-dns-proxy 2>/dev/null
 systemctl start cidrella-dns-proxy
 ok "cidrella-dns-proxy started."
+
+# Before the web app, which asks it for every probe and daemon change.
+systemctl enable cidrella-helper 2>/dev/null
+systemctl start cidrella-helper
+ok "cidrella-helper started."
 
 systemctl enable cidrella 2>/dev/null
 systemctl start cidrella

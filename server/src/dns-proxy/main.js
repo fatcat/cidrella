@@ -6,18 +6,19 @@
  * It starts from what the web app last told it (the config file in
  * DATA_DIR/runtime), so it serves before the web app is up, and reads the
  * database through its own read-only connection (db.js). The web app
- * connects to its socket (ipc-server.js, protocol.js) to change the config,
+ * connects to its socket (ipc/server.js, protocol.js) to change the config,
  * have it read something again, and take its counters and reports; while the
  * web app is away the reports wait in a bounded outbox.
  */
 import fs from 'fs';
 import path from 'path';
 import { DATA_DIR, proxyRuntimePaths } from './constants.js';
-import { codeId } from './code-id.js';
-import { CODE_GONE_EXIT, proxyCodeGone } from './code-gone.js';
+import { proxyCodeId } from './code-id.js';
+import { CODE_GONE_EXIT, codeGone } from '../ipc/code-gone.js';
 import { proxyLog } from './log.js';
 import { STATUS_INTERVAL_MS } from './protocol.js';
-import { createIpcServer, createOutbox, OUTBOX_BATCH } from './ipc-server.js';
+import { createIpcServer } from '../ipc/server.js';
+import { createOutbox, OUTBOX_BATCH } from './outbox.js';
 import { createProxyRuntime } from './runtime.js';
 
 const DB_CHECK_MS = 5000;
@@ -26,7 +27,7 @@ const DB_CHECK_MS = 5000;
 const CODE_GONE_CHECK_MS = 250;
 const paths = proxyRuntimePaths();
 const outbox = createOutbox();
-const myCodeId = codeId();
+const myCodeId = proxyCodeId();
 
 let flushQueued = false;
 function flushSoon() {
@@ -66,6 +67,7 @@ function readSavedConfig() {
 
 const ipc = createIpcServer({
   socketPath: paths.socket,
+  name: 'DNS proxy',
   onMessage: (message) => {
     runtime.handle(message).catch((err) =>
       proxyLog('error', 'Handling a web app message failed', {
@@ -98,7 +100,7 @@ function shutdown(code) {
 // old web app runs the proxy itself.
 const entry = process.argv[1];
 setInterval(() => {
-  if (proxyCodeGone(entry)) {
+  if (codeGone(entry)) {
     proxyLog('info', 'The proxy code is gone (a rollback?), exiting', { entry });
     shutdown(CODE_GONE_EXIT);
   }

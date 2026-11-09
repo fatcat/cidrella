@@ -1,7 +1,7 @@
 [Unit]
 Description=CIDRella IPAM Server
-After=network.target cidrella-dnsmasq.service
-Wants=cidrella-dnsmasq.service
+After=network.target cidrella-dnsmasq.service cidrella-helper.service
+Wants=cidrella-dnsmasq.service cidrella-helper.service
 # StartLimit* belongs in [Unit], not [Service]. systemd 229+ silently
 # ignores these keys when placed under [Service] with an "Unknown key"
 # warning, which is where they used to live in this file. Result: the
@@ -23,6 +23,9 @@ Environment=HTTP_PORT=8080
 # The DNS proxy runs as cidrella-dns-proxy.service; the web app has systemd
 # restart it rather than start one of its own.
 Environment=CIDRELLA_DNS_PROXY_SUPERVISOR=systemd
+# The privileged helper (cidrella-helper.service) runs the scans' arping and
+# ping and every systemctl change; the web app asks it over this socket.
+Environment=CIDRELLA_HELPER_SOCKET=/run/cidrella-helper/helper.sock
 # Always restart, the service is critical infrastructure. We restart
 # on crash (on-failure semantics) AND on deliberate exit (triggered by
 # the restore endpoint after a DB file swap). StartLimit* above bounds
@@ -57,18 +60,20 @@ RestrictNamespaces=true
 RemoveIPC=true
 
 # Capabilities: bound the service to exactly what it needs, no more.
-# CAP_NET_RAW is used by active liveness scans: child arping probes inherit
-# CAP_NET_RAW via the ambient set for directly-connected subnets. ICMP
-# fallback uses system ping. Do not set file capabilities on the Node binary;
-# file-cap exec clears the ambient set and breaks arping.
-# CAP_NET_BIND_SERVICE lets the process bind privileged ports if needed.
+# CAP_NET_BIND_SERVICE: the web ports when set under 1024 (443, 80), and the
+# DHCP probes' client ports (68, 546).
+# CAP_NET_RAW: no longer used. The privileged helper runs arping and ping.
+# It stays for one release so a rollback to a release that ran them itself
+# still scans (rollback.sh does not reinstall units), and goes in the next.
+# Do not set file capabilities on the Node binary; file-cap exec clears the
+# ambient set.
 CapabilityBoundingSet=CAP_NET_BIND_SERVICE CAP_NET_RAW
 AmbientCapabilities=CAP_NET_RAW CAP_NET_BIND_SERVICE
 
 # NOTE on NoNewPrivileges: NOT set explicitly, but several directives above
 # implicitly set NoNewPrivileges=yes per systemd.exec(5). That is fine for
-# current CIDRella: update/dnsmasq management uses polkit-gated systemctl
-# over D-Bus, and active scans use ambient capabilities instead of sudo.
+# current CIDRella: daemon control, updates and NTP go through the privileged
+# helper (polkit-gated systemctl over D-Bus), never sudo.
 #
 # NOT enabled (would break functionality):
 #   PrivateUsers=true: creates a user namespace; can interfere with service

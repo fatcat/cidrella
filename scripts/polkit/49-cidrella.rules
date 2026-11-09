@@ -1,88 +1,75 @@
-// CIDRella polkit rules: authorize the unprivileged `cidrella` service
-// account to manage a narrow set of systemd units via D-Bus, without
-// requiring sudo and therefore without depending on setuid escalation.
+// CIDRella polkit rules: let CIDRella's service accounts manage a narrow set
+// of systemd units over D-Bus, without sudo and so without setuid escalation
+// (cidrella.service runs with NoNewPrivileges, which sudo cannot get past).
 //
-// Why this exists: v0.4.8 added a comprehensive systemd sandbox to
-// cidrella.service. Several of the directives in that sandbox (most
-// notably RestrictSUIDSGID=, ProtectKernelTunables=, ProtectKernelModules=,
-// ProtectKernelLogs=, ProtectClock=, PrivateDevices=, LockPersonality=)
-// implicitly set NoNewPrivileges=yes per systemd.exec(5). Under
-// NoNewPrivileges, sudo's setuid bit cannot escalate, so every sudo call
-// from the cidrella process fails with "sudo: unable to change to root
-// gid: Operation not permitted". v0.4.11 replaces the affected sudo
-// callsites with direct systemctl invocations gated by these polkit rules.
+// The rules are deliberately narrow: only the exact units CIDRella runs,
+// only the verbs it needs, only these accounts.
 //
-// The rules are deliberately narrow, only the exact units the server
-// needs to manage, only the exact verbs it needs.
+//   cidrella-helper  the privileged helper (cidrella-helper.service), which
+//                    runs every one of these for the web app.
+//   cidrella         the web app. It no longer uses these grants; they stay
+//                    for one release so a rollback to a release that ran
+//                    systemctl itself still works, and go in the next one.
+
+// Each unit, and the verbs on it. server/src/helper/commands.js holds the
+// same table (MANAGED_UNITS), and a test holds the two together.
+var CIDRELLA_UNITS = {
+    // dnsmasq: reload on a config change, restart to rebind interfaces, and
+    // start and stop when the stack switches to and from PowerDNS + Kea.
+    "cidrella-dnsmasq.service": ["start", "stop", "restart", "reload"],
+    // Kea, PowerDNS and radvd while their stack serves.
+    "cidrella-kea@dhcp4.service": ["start", "stop", "restart", "reload"],
+    "cidrella-kea@dhcp6.service": ["start", "stop", "restart", "reload"],
+    "cidrella-pdns-auth.service": ["start", "stop", "restart", "reload"],
+    "cidrella-pdns-recursor.service": ["start", "stop", "restart", "reload"],
+    "cidrella-radvd.service": ["start", "stop", "restart", "reload"],
+    // The DNS proxy: started again by the watchdog when it stopped answering
+    // (reset-failed first, for a unit past its start limit).
+    "cidrella-dns-proxy.service": ["start", "stop", "restart", "reset-failed"]
+};
+
+// Verbs only the helper has: the web app never had them.
+var HELPER_ONLY_VERBS = ["reset-failed"];
+
+function cidrellaAccount(user) {
+    return user === "cidrella-helper" || user === "cidrella";
+}
 
 polkit.addRule(function(action, subject) {
     if (action.id !== "org.freedesktop.systemd1.manage-units") {
         return polkit.Result.NOT_HANDLED;
     }
-    if (subject.user !== "cidrella") {
+    if (!cidrellaAccount(subject.user)) {
         return polkit.Result.NOT_HANDLED;
     }
 
     var unit = action.lookup("unit") || "";
     var verb = action.lookup("verb") || "";
 
-    // In-app update worker. Templated so we never have to touch this rule
-    // when we cut a new release: the version is the instance name.
+    // The in-app update worker. Templated, so this rule never changes for a
+    // new release: the instance is the version and a start time.
     if (unit.indexOf("cidrella-update@") === 0 && unit.lastIndexOf(".service") === unit.length - 8) {
         if (verb === "start") {
             return polkit.Result.YES;
         }
     }
 
-    // dnsmasq reload (config changes) and restart (interface rebind), and
-    // start and stop when the stack switches to and from PowerDNS + Kea.
-    if (unit === "cidrella-dnsmasq.service") {
-        if (verb === "start" || verb === "stop" || verb === "reload" || verb === "restart") {
-            return polkit.Result.YES;
+    if (Object.prototype.hasOwnProperty.call(CIDRELLA_UNITS, unit) &&
+        CIDRELLA_UNITS[unit].indexOf(verb) !== -1) {
+        if (subject.user === "cidrella" && HELPER_ONLY_VERBS.indexOf(verb) !== -1) {
+            return polkit.Result.NOT_HANDLED;
         }
-    }
-
-    // Kea, while it is the DHCP server: started and restarted on a switch
-    // or a config change, stopped when dnsmasq takes DHCP back.
-    if (unit === "cidrella-kea@dhcp4.service" || unit === "cidrella-kea@dhcp6.service") {
-        if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reload") {
-            return polkit.Result.YES;
-        }
-    }
-
-    // PowerDNS, while it is the DNS server: started and restarted on a
-    // switch or a config change, stopped when dnsmasq takes DNS back.
-    if (unit === "cidrella-pdns-auth.service" || unit === "cidrella-pdns-recursor.service") {
-        if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reload") {
-            return polkit.Result.YES;
-        }
-    }
-
-    // The DNS proxy: started (again) by the watchdog when it stopped
-    // answering, and restarted when an update changed its code.
-    if (unit === "cidrella-dns-proxy.service") {
-        if (verb === "start" || verb === "stop" || verb === "restart") {
-            return polkit.Result.YES;
-        }
-    }
-
-    // radvd, while the PowerDNS + Kea stack sends the Router Advertisements.
-    if (unit === "cidrella-radvd.service") {
-        if (verb === "start" || verb === "stop" || verb === "restart" || verb === "reload") {
-            return polkit.Result.YES;
-        }
+        return polkit.Result.YES;
     }
 
     return polkit.Result.NOT_HANDLED;
 });
 
-// System clock / NTP control. DNSSEC signature validation needs an accurate
-// clock; this lets the cidrella service account turn NTP on at runtime
-// (`timedatectl set-ntp true`) when it finds the clock unsynchronized, without
-// sudo. Scoped to exactly that one action and the cidrella user.
+// System clock: DNSSEC validation needs an accurate clock, so CIDRella turns
+// NTP on (`timedatectl set-ntp true`) when it finds the clock unsynchronized.
+// install.sh enables it earlier as root. Scoped to exactly that one action.
 polkit.addRule(function(action, subject) {
-    if (action.id === "org.freedesktop.timedate1.set-ntp" &&
-        subject.user === "cidrella") {
+    if (action.id === "org.freedesktop.timedate1.set-ntp" && cidrellaAccount(subject.user)) {
         return polkit.Result.YES;
     }
     return polkit.Result.NOT_HANDLED;

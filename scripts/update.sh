@@ -1483,6 +1483,19 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-dns-proxy.service" ]; then
   systemctl daemon-reload 2>/dev/null || true
   systemctl enable cidrella-dns-proxy 2>/dev/null || warn "Could not enable cidrella-dns-proxy (non-fatal)"
 fi
+# The privileged helper (0.6.3), under an account of its own: polkit grants
+# by account. Like the proxy, the update that brings it adds it, and it is
+# started after the swap below.
+if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-helper.service" ]; then
+  if [ "$(ensure_service_user cidrella-helper)" = "created" ]; then
+    ok "Created the cidrella-helper account"
+  fi
+  if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-helper.service" /etc/systemd/system/cidrella-helper.service)" = "changed" ]; then
+    emit_event switchover pass unit=cidrella-helper.service
+  fi
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable cidrella-helper 2>/dev/null || warn "Could not enable cidrella-helper (non-fatal)"
+fi
 # cidrella-dnsmasq.service is refreshed (v0.5.3 added its start condition,
 # which keeps it down while the PowerDNS + Kea stack serves) but never
 # restarted: dnsmasq keeps running. Only where it is ours (install.sh's
@@ -1584,6 +1597,13 @@ if systemctl is-enabled --quiet cidrella-dns-proxy 2>/dev/null; then
   systemctl reset-failed cidrella-dns-proxy 2>/dev/null || true
   systemctl start cidrella-dns-proxy || warn "Failed to start cidrella-dns-proxy (non-fatal, the web app retries)"
 fi
+# The privileged helper, before the web app too: the new web app asks it for
+# every probe and daemon change from its first boot. A failure shows in the
+# health check below, which rolls the update back.
+if systemctl is-enabled --quiet cidrella-helper 2>/dev/null; then
+  systemctl reset-failed cidrella-helper 2>/dev/null || true
+  systemctl start cidrella-helper || warn "Failed to start cidrella-helper"
+fi
 
 track_progress "switching" 90 "Restarting CIDRella..."
 info "Restarting cidrella service (DNS and DHCP daemons stay running)..."
@@ -1624,7 +1644,7 @@ start_stopped_units() {
     fi
   done
 }
-start_stopped_units switchover cidrella-anomaly cidrella-dns-proxy
+start_stopped_units switchover cidrella-anomaly cidrella-dns-proxy cidrella-helper
 
 # ═══════════════════════════════════════════════════════════
 # PHASE 7: VERIFY HEALTH (auto-rollback on failure)
@@ -1830,6 +1850,18 @@ if systemctl is-active --quiet cidrella-dns-proxy 2>/dev/null; then
     sleep 1
   else
     systemctl stop cidrella-dns-proxy 2>/dev/null || true
+  fi
+fi
+# The privileged helper: started again for a release that has it (the
+# restored web app restarts it if its code differs), stopped for one from
+# before it, which runs its probes and daemon control itself with the rights
+# cidrella.service and the polkit rule still grant it.
+if systemctl list-unit-files cidrella-helper.service >/dev/null 2>&1; then
+  if [ -f "$ACTIVE_SLOT/server/src/helper/main.js" ]; then
+    systemctl reset-failed cidrella-helper 2>/dev/null || true
+    systemctl start cidrella-helper 2>/dev/null || warn "cidrella-helper did not start; see journalctl -u cidrella-helper"
+  else
+    systemctl stop cidrella-helper 2>/dev/null || true
   fi
 fi
 

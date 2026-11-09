@@ -1,13 +1,13 @@
 import os from 'os';
-import { execFile } from 'child_process';
 import { parseNetwork, longToIp, parsedNetworkContains } from './ip.js';
 import { addressFamily, canonicalizeIp } from './address.js';
 import { parseArpingMac, readArpCache } from './arp-cache.js';
 import { findNeighbor, readNdCache } from './nd-cache.js';
 import { observeIpv6Presence } from '../services/ip-lifecycle-service.js';
 import { ipv6DiscoveryPolicy } from '../models/dhcp-scope.js';
+import * as Privileged from './privileged.js';
+import { RefusedError } from '../helper/commands.js';
 import {
-  ARPING_TIMEOUT_MS,
   OFFLINE_CONFIRM_PINGS,
   PING_TIMEOUT_MS,
   SCAN_BATCH_SIZE,
@@ -20,44 +20,39 @@ import { isLocalAddress } from './local-addresses.js';
 import * as ScanRun from '../models/scan-run.js';
 import { macIsAuthoritative } from '../models/ip-lifecycle.js';
 
+// A probe the privileged helper could not run says nothing about the host.
+// The scan stops instead of recording every address as not responding.
+function probeFailed(result) {
+  if (result.helperDown) {
+    throw new Error(`Scan stopped: ${Privileged.HELPER_DOWN_MESSAGE}`);
+  }
+  return result;
+}
+
 /**
  * Run arping on a single IP. It only responds for directly-reachable peers;
  * off-link targets fall through to ICMP.
  * Returns { responded, mac } or { responded: false, mac: null }.
  */
-function arpingIp(ip) {
-  return new Promise((resolve) => {
-    execFile(
-      '/usr/sbin/arping',
-      ['-c', '1', '-w', '1', ip],
-      { timeout: ARPING_TIMEOUT_MS },
-      (error, stdout) => {
-        if (error) {
-          resolve({ responded: false, mac: null });
-          return;
-        }
-        resolve({
-          responded: true,
-          mac: parseArpingMac(stdout),
-        });
-      },
-    );
-  });
+async function arpingIp(ip) {
+  const result = probeFailed(await Privileged.arping(ip));
+  return result.ok
+    ? { responded: true, mac: parseArpingMac(result.stdout) }
+    : { responded: false, mac: null };
 }
 
-function pingIp(ip, { count = 1 } = {}) {
-  return new Promise((resolve) => {
-    const timeoutSeconds = Math.max(1, Math.ceil(PING_TIMEOUT_MS / 1000));
-    const family = addressFamily(ip) === 6 ? ['-6'] : [];
-    execFile(
-      'ping',
-      [...family, '-c', String(count), '-W', String(timeoutSeconds), ip],
-      { timeout: PING_TIMEOUT_MS * count + 500 },
-      (error) => {
-        resolve({ responded: !error, mac: null });
-      },
-    );
-  });
+// `iface` zones an IPv6 target (a link-local address, or ff02::1). An
+// interface that went away since the scan read it gets no answer.
+async function pingIp(ip, { count = 1, iface = null } = {}) {
+  const timeoutSec = Math.max(1, Math.ceil(PING_TIMEOUT_MS / 1000));
+  let result;
+  try {
+    result = await Privileged.ping(ip, { count, timeoutSec, iface });
+  } catch (err) {
+    if (iface && err instanceof RefusedError) return { responded: false, mac: null };
+    throw err;
+  }
+  return { responded: probeFailed(result).ok, mac: null };
 }
 
 /**
@@ -72,18 +67,18 @@ function pingIp(ip, { count = 1 } = {}) {
  */
 async function probeIp(ip, iface = null, { wasOnline = false } = {}) {
   const v6 = addressFamily(ip) === 6;
-  const target = v6 && iface ? `${ip}%${iface}` : ip;
+  const zone = v6 && iface ? iface : null;
   const method = v6 ? 'icmpv6' : 'icmp';
   if (!v6) {
     const arp = await arpingIp(ip);
     if (arp.responded) return { ...arp, method: 'arp' };
   }
-  const icmp = await pingIp(target);
+  const icmp = await pingIp(ip, { iface: zone });
   if (icmp.responded || !wasOnline) return { ...icmp, method };
   // A host that was online gets a few more echoes before it is called
   // offline. Unicast frames are retried over WiFi and broadcast ARP is not,
   // so a WiFi host can miss one probe of each while it is up.
-  const confirm = await pingIp(target, { count: OFFLINE_CONFIRM_PINGS });
+  const confirm = await pingIp(ip, { count: OFFLINE_CONFIRM_PINGS, iface: zone });
   return { ...confirm, method };
 }
 
@@ -155,7 +150,7 @@ function interfacesOnNetwork(parsed) {
 export async function discoverIpv6Hosts(parsed, { neighbors = readNdCache } = {}) {
   const interfaces = interfacesOnNetwork(parsed);
   for (const name of interfaces) {
-    await pingIp(`ff02::1%${name}`, { count: 2 });
+    await pingIp('ff02::1', { count: 2, iface: name });
   }
   const found = [];
   for (const [key, entry] of await neighbors({ force: true })) {

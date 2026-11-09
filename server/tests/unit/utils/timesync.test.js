@@ -79,7 +79,9 @@ describe('ensureNtpEnabled', () => {
   it('enables NTP when disabled', async () => {
     vi.mocked(execFileSync).mockReturnValue('no\nno\n');
     expect(await ensureNtpEnabled()).toBe(true);
-    expect(execFileSync).toHaveBeenCalledWith('timedatectl', ['set-ntp', 'true'], {});
+    expect(execFileSync).toHaveBeenCalledWith('timedatectl', ['set-ntp', 'true'], {
+      timeout: 15_000,
+    });
   });
 });
 

@@ -1,98 +1,35 @@
 /**
  * The web app's end of the socket to the DNS proxy process
- * (dns-proxy/main.js, protocol.js). It connects and keeps reconnecting, and
- * on every connect sends hello, the config and "read everything again", so a
- * proxy that outlived the web app, or one that restarted, catches up. It
- * keeps the last status the proxy sent, for the synchronous reads (proxy and
- * forwarder status), and hands the proxy's reports to the sinks.
+ * (dns-proxy/main.js, protocol.js), on the shared process client
+ * (ipc/client.js). On every connect it sends the config and "read everything
+ * again", so a proxy that outlived the web app, or one that restarted,
+ * catches up. It keeps the last status the proxy sent, for the synchronous
+ * reads (proxy and forwarder status), and hands the proxy's reports to the
+ * sinks.
  *
  * The config is also written to DATA_DIR/runtime, owner-only, so a proxy
  * that starts before the web app serves from it.
- *
- * The hello carries both code ids (dns-proxy/code-id.js): a proxy running
- * other code than this web app is asked to restart once, so an update
- * restarts it only when its code changed.
  *
  * With no supervisor (development: CIDRELLA_DNS_PROXY_SUPERVISOR unset), the
  * client starts the proxy itself as a child and stops it at exit.
  */
 import fs from 'fs';
-import net from 'net';
 import path from 'path';
-import { spawn } from 'child_process';
-import { proxyRuntimePaths, socketPathTooLong, DATA_DIR } from '../dns-proxy/constants.js';
+import { proxyRuntimePaths, DATA_DIR } from '../dns-proxy/constants.js';
 import { PROXY_ENTRY } from '../dns-proxy/code-id.js';
-import { PROTOCOL_VERSION, encode, createDecoder, metricsFromWire } from '../dns-proxy/protocol.js';
+import { PROTOCOL_VERSION, metricsFromWire } from '../dns-proxy/protocol.js';
+import { createProcessClient } from '../ipc/client.js';
 import { atomicWrite } from './atomic-write.js';
 import { proxyLog } from '../dns-proxy/log.js';
 
-const BACKOFF_FIRST_MS = 250;
-const BACKOFF_MAX_MS = 2000;
-const REQUEST_TIMEOUT_MS = 3000;
-
 let paths = proxyRuntimePaths();
-let socket = null;
-let connected = false;
-let running = false;
-let backoff = BACKOFF_FIRST_MS;
-let retryTimer = null;
 let config = null;
-let codeId = null;
 let status = null;
 let statusAt = 0;
-let peer = null;
 let handlers = {};
-let child = null;
-let nextId = 1;
-const waiting = new Map();
-// The proxy code id a restart was last asked for, so code that keeps
-// differing (a broken install) is not restarted in a loop.
-let restartAskedFor = null;
 
-function write(message) {
-  if (!connected) return false;
-  socket.write(encode(message));
-  return true;
-}
-
-function settle(id, value) {
-  const entry = waiting.get(id);
-  if (!entry) return;
-  waiting.delete(id);
-  clearTimeout(entry.timer);
-  entry.resolve(value);
-}
-
-function onMessage(message) {
+function onMessage(message, settle) {
   switch (message.type) {
-    case 'hello':
-      peer = { v: message.v, codeId: message.codeId, pid: message.pid };
-      if (message.v !== PROTOCOL_VERSION) {
-        proxyLog('warn', 'The DNS proxy speaks another protocol version, asking it to restart', {
-          proxy: message.v,
-          web: PROTOCOL_VERSION,
-        });
-        write({ type: 'shutdown' });
-      } else if (codeId && message.codeId !== codeId) {
-        // The proxy runs other code than this web app ships (an update): it
-        // exits, and its supervisor starts the new code. Unchanged code
-        // keeps running, and DNS with it.
-        if (restartAskedFor === message.codeId) {
-          proxyLog('error', 'The DNS proxy still runs other code after a restart', {
-            proxy: message.codeId,
-            web: codeId,
-          });
-        } else {
-          restartAskedFor = message.codeId;
-          proxyLog('info', 'The DNS proxy runs other code, asking it to restart', {
-            proxy: message.codeId,
-            web: codeId,
-          });
-          write({ type: 'shutdown' });
-        }
-      }
-      handlers.onHello?.(peer);
-      return;
     case 'status':
       status = message;
       statusAt = Date.now();
@@ -125,95 +62,37 @@ function onMessage(message) {
   }
 }
 
-function spawnChild() {
-  if (child || process.env.CIDRELLA_DNS_PROXY_SUPERVISOR) return;
-  proxyLog('info', 'Starting the DNS proxy process (no supervisor)');
-  child = spawn(process.execPath, [PROXY_ENTRY], {
-    // The child goes when this process does, however it ends.
-    env: { ...process.env, DATA_DIR, CIDRELLA_DNS_PROXY_PARENT: String(process.pid) },
-    stdio: 'inherit',
-  });
-  child.on('exit', (code, signal) => {
-    proxyLog('warn', 'The DNS proxy process exited', { code, signal });
-    child = null;
-  });
-}
-
-function scheduleConnect() {
-  if (!running || retryTimer) return;
-  retryTimer = setTimeout(() => {
-    retryTimer = null;
-    connect();
-  }, backoff);
-  retryTimer.unref?.();
-  backoff = Math.min(backoff * 2, BACKOFF_MAX_MS);
-}
-
-function connect() {
-  if (!running || socket) return;
-  const sock = net.connect(paths.socket);
-  socket = sock;
-  sock.on('connect', () => {
-    connected = true;
-    backoff = BACKOFF_FIRST_MS;
-    write({ type: 'hello', v: PROTOCOL_VERSION, codeId });
+const client = createProcessClient({
+  name: 'DNS proxy',
+  protocolVersion: PROTOCOL_VERSION,
+  entry: PROXY_ENTRY,
+  supervisorEnv: 'CIDRELLA_DNS_PROXY_SUPERVISOR',
+  parentEnv: 'CIDRELLA_DNS_PROXY_PARENT',
+  childEnv: () => ({ DATA_DIR }),
+  log: proxyLog,
+  onMessage,
+  onHello: (peer) => handlers.onHello?.(peer),
+  onConnect(write) {
     if (config) write({ type: 'config', config });
     write({ type: 'reload', what: 'all' });
     // After the config, whose defaults it can read as: the proxy may have
     // started before there was a database, or the settings changed while this
     // process was down (a restore).
     write({ type: 'refresh-forwarder' });
-  });
-  sock.on(
-    'data',
-    createDecoder(onMessage, (err) => {
-      proxyLog('warn', 'Closing the DNS proxy connection', { error: err.message });
-      sock.destroy();
-    }),
-  );
-  sock.on('error', (err) => {
-    if (err.code === 'ENOENT' || err.code === 'ECONNREFUSED') spawnChild();
-  });
-  sock.on('close', () => {
-    if (socket !== sock) return;
-    socket = null;
-    connected = false;
-    peer = null;
-    for (const id of [...waiting.keys()]) settle(id, null);
-    scheduleConnect();
-  });
-}
+  },
+});
 
 /**
  * Start talking to the proxy. `handlers` are the sinks for its reports
  * (queryRow, clientSeen, resolution) and onHello(peer).
  */
-export function startProxyClient({ codeId: id, handlers: sinks = {}, dataDir } = {}) {
+export function startProxyClient({ codeId, handlers: sinks = {}, dataDir } = {}) {
   if (dataDir) paths = proxyRuntimePaths(dataDir);
-  codeId = id ?? null;
   handlers = sinks;
-  if (running) return;
-  const tooLong = socketPathTooLong(paths.socket);
-  if (tooLong) {
-    proxyLog('error', tooLong);
-    return;
-  }
-  running = true;
-  connect();
+  client.start({ socketPath: paths.socket, codeId: codeId ?? null });
 }
 
-export function stopProxyClient({ stopChild = true } = {}) {
-  running = false;
-  clearTimeout(retryTimer);
-  retryTimer = null;
-  socket?.destroy();
-  socket = null;
-  connected = false;
-  if (stopChild && child) {
-    child.kill('SIGTERM');
-    child = null;
-  }
-}
+export const stopProxyClient = (options) => client.stop(options);
 
 /** Give the proxy its config: written for its next start, and sent now. */
 export function sendProxyConfig(next, { rebind = false } = {}) {
@@ -224,40 +103,29 @@ export function sendProxyConfig(next, { rebind = false } = {}) {
   } catch (err) {
     proxyLog('error', 'Could not save the DNS proxy config', { error: err.message });
   }
-  write({ type: 'config', config: next, rebind });
+  client.write({ type: 'config', config: next, rebind });
 }
 
 /** Have the proxy read something again (RELOADERS in dns-proxy/main.js). */
 export function sendReload(what, extra = {}) {
-  write({ type: 'reload', what, ...extra });
-}
-
-function request(type, timeoutMs = REQUEST_TIMEOUT_MS) {
-  if (!connected) return Promise.resolve(null);
-  const id = nextId++;
-  return new Promise((resolve) => {
-    const timer = setTimeout(() => settle(id, null), timeoutMs);
-    timer.unref?.();
-    waiting.set(id, { resolve, timer });
-    write({ type, id });
-  });
+  client.write({ type: 'reload', what, ...extra });
 }
 
 /** The proxy's counters since the last drain, or null when it does not answer. */
-export const requestDrain = () => request('drain');
+export const requestDrain = () => client.request('drain');
 
 /** Restart the encrypted forwarder; resolves with the status after it, or null. */
-export const requestApplyForwarder = () => request('apply-forwarder');
+export const requestApplyForwarder = () => client.request('apply-forwarder');
 
 /**
  * Have the proxy close its database before a restore swaps the files, and
  * keep it closed until the restored web app says hello. Resolves true once
  * it has, null if it did not answer within 1 s.
  */
-export const requestDbRelease = () => request('db-release', 1000);
+export const requestDbRelease = () => client.request('db-release', {}, 1000);
 
 export function sendShutdown() {
-  write({ type: 'shutdown' });
+  client.write({ type: 'shutdown' });
 }
 
 // A status older than this means the proxy process is not reporting.
@@ -273,10 +141,5 @@ export function freshProxyStatus(now = Date.now()) {
   return status && now - statusAt < STATUS_STALE_MS ? status : null;
 }
 
-export const proxyConnected = () => connected;
-export const proxyPeer = () => peer;
-
-// The child must not outlive the web app in development. A web app that is
-// killed outright fires no exit event; the child watches for that itself
-// (CIDRELLA_DNS_PROXY_PARENT in dns-proxy/main.js).
-process.on('exit', () => child?.kill('SIGTERM'));
+export const proxyConnected = () => client.connected();
+export const proxyPeer = () => client.peer();

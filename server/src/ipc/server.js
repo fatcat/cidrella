@@ -1,16 +1,27 @@
 /**
- * The proxy process's end of the socket to the web app (protocol.js), and the
- * outbox that holds what the proxy reports while the web app is away.
+ * The listening end of a CIDRella process socket (framing.js): the DNS proxy
+ * and the privileged helper each run one, and the web app is the client.
  *
  * One client at a time: a new connection replaces the old one, so a web app
- * that restarted is never shut out by its own dead predecessor. The socket is
- * created owner-only.
+ * that restarted is never shut out by its own dead predecessor. The socket
+ * file gets `mode` (owner-only unless the caller widens it).
  */
 import fs from 'fs';
 import net from 'net';
 import path from 'path';
-import { encode, createDecoder } from './protocol.js';
-import { socketPathTooLong } from './constants.js';
+import { encode, createDecoder } from './framing.js';
+
+// A Unix socket path holds at most 107 bytes, and a longer one is cut short
+// without an error; both ends refuse one instead.
+export const MAX_SOCKET_PATH_BYTES = 107;
+
+/** Why `socketPath` cannot be used, or null. `name` says whose socket it is. */
+export function socketPathTooLong(socketPath, name) {
+  const bytes = Buffer.byteLength(socketPath);
+  return bytes > MAX_SOCKET_PATH_BYTES
+    ? `the ${name} socket path is ${bytes} bytes, more than a Unix socket path holds (${MAX_SOCKET_PATH_BYTES}): ${socketPath}`
+    : null;
+}
 
 // Is something answering on this socket now?
 function answering(socketPath) {
@@ -30,7 +41,15 @@ function answering(socketPath) {
  * returns false when there is no client or the client is not keeping up;
  * the caller keeps what it could not send.
  */
-export function createIpcServer({ socketPath, onMessage, onConnect, onDisconnect, log }) {
+export function createIpcServer({
+  socketPath,
+  name,
+  mode = 0o600,
+  onMessage,
+  onConnect,
+  onDisconnect,
+  log,
+}) {
   let server = null;
   let client = null;
   let backedUp = false;
@@ -73,17 +92,18 @@ export function createIpcServer({ socketPath, onMessage, onConnect, onDisconnect
 
   return {
     async listen() {
-      const tooLong = socketPathTooLong(socketPath);
+      const tooLong = socketPathTooLong(socketPath, name);
       if (tooLong) throw new Error(tooLong);
       fs.mkdirSync(path.dirname(socketPath), { recursive: true, mode: 0o700 });
       if (fs.existsSync(socketPath)) {
         if (await answering(socketPath)) {
-          throw new Error(`another DNS proxy answers on ${socketPath}`);
+          throw new Error(`another ${name} answers on ${socketPath}`);
         }
         fs.unlinkSync(socketPath);
       }
       server = net.createServer(accept);
-      const umask = process.umask(0o177);
+      // The socket is created with the mode from the start, never wider.
+      const umask = process.umask(0o777 & ~mode);
       try {
         await new Promise((resolve, reject) => {
           server.once('error', reject);
@@ -118,12 +138,9 @@ export function createIpcServer({ socketPath, onMessage, onConnect, onDisconnect
   };
 }
 
-export const OUTBOX_LIMITS = { rows: 50_000, resolutions: 2_000, liveness: 10_000 };
-export const OUTBOX_BATCH = 500;
-
 // A queue that drops its oldest entries past `limit`, without copying the
 // array on every push once it is full.
-function boundedQueue(limit) {
+export function boundedQueue(limit) {
   let items = [];
   let head = 0;
   let dropped = 0;
@@ -159,55 +176,5 @@ function boundedQueue(limit) {
     },
     size: () => items.length - head,
     dropped: () => dropped,
-  };
-}
-
-/**
- * What the proxy reports, held until the web app takes it: analytics rows,
- * Resolution Map events, and client addresses seen (each address once).
- * Each kind is bounded; past its limit the oldest go and are counted.
- */
-export function createOutbox(limits = OUTBOX_LIMITS) {
-  const rows = boundedQueue(limits.rows);
-  const resolutions = boundedQueue(limits.resolutions);
-  let liveness = new Set();
-  let livenessDropped = 0;
-
-  return {
-    row: (entry) => rows.push(entry),
-    resolution: (event) => resolutions.push(event),
-    client(ip) {
-      if (liveness.has(ip)) return;
-      liveness.add(ip);
-      if (liveness.size > limits.liveness) {
-        liveness.delete(liveness.values().next().value);
-        livenessDropped++;
-      }
-    },
-    rowCount: () => rows.size(),
-    /** Send what is held, in batches, for as long as `send` takes them. */
-    flush(send) {
-      for (const [queue, type, key] of [
-        [rows, 'rows', 'rows'],
-        [resolutions, 'resolutions', 'events'],
-      ]) {
-        while (queue.size() > 0) {
-          const batch = queue.take(OUTBOX_BATCH);
-          if (!send({ type, [key]: batch })) {
-            queue.unshift(batch);
-            return;
-          }
-        }
-      }
-      if (liveness.size > 0) {
-        const clients = [...liveness];
-        if (send({ type: 'liveness', clients })) liveness = new Set();
-      }
-    },
-    dropped: () => ({
-      rows: rows.dropped(),
-      resolutions: resolutions.dropped(),
-      liveness: livenessDropped,
-    }),
   };
 }

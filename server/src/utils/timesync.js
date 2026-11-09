@@ -12,7 +12,7 @@
  * They never throw into the startup path.
  */
 
-import { runCommand } from './run-command.js';
+import { enableNtp } from './privileged.js';
 import { getSetting } from '../db/init.js';
 import { getDnsBackend } from '../backends/index.js';
 import { getNtpStatus } from './ntp-status.js';
@@ -22,9 +22,9 @@ export { getNtpStatus };
 
 let timecheckTimer = null;
 
-// Turn on NTP if it isn't already. At runtime the `timedatectl set-ntp true`
-// call is polkit-gated for the cidrella service account (49-cidrella.rules);
-// install.sh enables it earlier as root. Tolerates failure / missing timedatectl.
+// Turn on NTP if it isn't already. At runtime the privileged helper runs
+// `timedatectl set-ntp true` (polkit, 49-cidrella.rules); install.sh enables
+// it earlier as root. Tolerates failure / missing timedatectl.
 export async function ensureNtpEnabled() {
   const status = await getNtpStatus();
   if (!status.available) {
@@ -34,15 +34,13 @@ export async function ensureNtpEnabled() {
     return false;
   }
   if (status.ntpEnabled) return true;
-  try {
-    await runCommand('timedatectl', ['set-ntp', 'true']);
+  const result = await enableNtp();
+  if (result.ok) {
     console.log('[timesync] NTP time synchronization enabled');
     return true;
-  } catch (err) {
-    const stderr = err?.stderr?.toString?.().trim();
-    console.warn('[timesync] Failed to enable NTP:', stderr || err?.message || err);
-    return false;
   }
+  console.warn('[timesync] Failed to enable NTP:', result.stderr.trim() || `exit ${result.code}`);
+  return false;
 }
 
 function disarm() {

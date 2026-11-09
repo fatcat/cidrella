@@ -13,7 +13,7 @@ import path from 'path';
 import { spawn } from 'child_process';
 import dnsPacket from 'dns-packet';
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import { CODE_GONE_EXIT } from '../../src/dns-proxy/code-gone.js';
+import { CODE_GONE_EXIT } from '../../src/ipc/code-gone.js';
 import Database from 'better-sqlite3';
 import { setupTestDb, cleanupTestDb } from '../helpers/test-db.js';
 import { freePort } from '../helpers/free-port.js';

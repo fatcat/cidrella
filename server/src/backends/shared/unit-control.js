@@ -1,8 +1,8 @@
 /**
  * Starting, reloading and checking a backend daemon. Native installs run it
- * as its own systemd unit, which the cidrella account may restart and reload
- * (polkit, /etc/polkit-1/rules.d/49-cidrella.rules; no sudo, since
- * cidrella.service runs with NoNewPrivileges). Docker has no systemctl: s6
+ * as its own systemd unit; the privileged helper restarts, reloads and stops
+ * it (utils/privileged.js, with polkit's grant in 49-cidrella.rules), and the
+ * reads (installed, running) need no right. Docker has no systemctl: s6
  * supervises the daemon, so a signal by process name does the same job.
  *
  * A restart that fails both ways leaves a marker, so the next boot restarts
@@ -12,16 +12,24 @@
 import fs from 'fs';
 import path from 'path';
 import { runCommand } from '../../utils/run-command.js';
+import { resultError, unitCommand } from '../../utils/privileged.js';
 import { isPreflightBoot } from '../../utils/preflight.js';
 import { emitUnitEvent } from './unit-events.js';
 
 const stderrOf = (err) => err?.stderr?.toString?.().trim();
 
-// systemctl restart waits for the unit to come up; everything else answers
-// at once. A command that hangs past these is a failure, never a wait.
-const RESTART_TIMEOUT_MS = 90_000;
+// A command that hangs past this is a failure, never a wait. The changes
+// (systemctl restart, reload, stop) carry their own timeouts in
+// helper/commands.js.
 const COMMAND_TIMEOUT_MS = 15_000;
-const run = (cmd, args, timeout = COMMAND_TIMEOUT_MS) => runCommand(cmd, args, { timeout });
+const run = (cmd, args) => runCommand(cmd, args, { timeout: COMMAND_TIMEOUT_MS });
+
+// systemctl `verb` on `unit` through the privileged helper; throws as
+// runCommand would, with `code` 'ENOENT' where there is no systemctl.
+async function systemctl(verb, unit) {
+  const result = await unitCommand(verb, unit);
+  if (!result.ok) throw resultError(result, `systemctl ${verb} ${unit}`);
+}
 
 /**
  * `unit` is the systemd unit, `processName` the executable s6 runs, and
@@ -110,7 +118,7 @@ export function createUnitControl({
 
   async function reload() {
     try {
-      await run('systemctl', ['reload', unit]);
+      await systemctl('reload', unit);
       return;
     } catch (err) {
       const stderr = stderrOf(err);
@@ -139,7 +147,7 @@ export function createUnitControl({
       return;
     }
     try {
-      await run('systemctl', ['restart', unit], RESTART_TIMEOUT_MS);
+      await systemctl('restart', unit);
       console.log(`${processName} restarted via systemctl`);
       setRestartPending(false);
       tell('restarted');
@@ -186,7 +194,7 @@ export function createUnitControl({
       /* gone already */
     }
     try {
-      await run('systemctl', ['stop', unit], RESTART_TIMEOUT_MS);
+      await systemctl('stop', unit);
       tell('stopped');
       return;
     } catch (err) {

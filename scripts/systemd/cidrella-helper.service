@@ -1,0 +1,70 @@
+[Unit]
+Description=CIDRella privileged helper (network probes and daemon control)
+After=network.target
+# The one CIDRella process with CAP_NET_RAW (arping, ping) and the polkit
+# grants to start, stop, restart and reload CIDRella's daemons
+# (49-cidrella.rules, user cidrella-helper). It runs a closed list of
+# operations for the web app (server/src/helper/commands.js) over
+# /run/cidrella-helper/helper.sock and keeps no state.
+#
+# The web app has it restarted when an update changed its code
+# (server/src/ipc/code-id.js). A rollback to a release from before the
+# helper leaves no such file: it exits 64, which Restart= below leaves down,
+# this keeps a later start or boot from running it, and the old web app runs
+# its probes itself.
+ConditionPathExists=/opt/cidrella/server/src/helper/main.js
+StartLimitIntervalSec=60
+StartLimitBurst=10
+
+[Service]
+Type=simple
+User=cidrella-helper
+Group=cidrella-helper
+WorkingDirectory=/opt/cidrella
+# The socket's directory: owned by the helper, group cidrella, setgid, so the
+# socket it creates there (mode 0660) takes group cidrella and only the web
+# app's account can connect. Run as root (+), before the helper starts.
+ExecStartPre=+/usr/bin/install -d -o cidrella-helper -g cidrella -m 2750 /run/cidrella-helper
+ExecStart=/usr/local/bin/cidrella-node server/src/helper/main.js
+Environment=CIDRELLA_HELPER_SOCKET=/run/cidrella-helper/helper.sock
+Environment=NODE_ENV=production
+# Where arping, ping, systemctl and timedatectl are found. The web app
+# cannot change it: it sends an operation and its checked arguments only.
+Environment=PATH=/usr/sbin:/usr/bin:/sbin:/bin
+# Always: the web app asks it to exit when its code changed, and expects it
+# back.
+Restart=always
+RestartSec=1
+# 64: its code is gone (server/src/ipc/code-gone.js, CODE_GONE_EXIT).
+RestartPreventExitStatus=64
+SuccessExitStatus=143 64
+
+# The cidrella.service sandbox, with nothing writable but its socket.
+ProtectSystem=strict
+ReadWritePaths=/run/cidrella-helper
+ProtectHome=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectHostname=true
+ProtectClock=true
+LockPersonality=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+RestrictNamespaces=true
+RemoveIPC=true
+NoNewPrivileges=true
+SystemCallArchitectures=native
+# Its socket and the system bus (AF_UNIX), ICMP (AF_INET, AF_INET6), ARP
+# (AF_PACKET), and the interface list (AF_NETLINK).
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK AF_PACKET
+
+# Raw sockets for arping and ping, which inherit it through the ambient set.
+# Daemon control and NTP go through polkit over D-Bus and need no capability.
+CapabilityBoundingSet=CAP_NET_RAW
+AmbientCapabilities=CAP_NET_RAW
+
+[Install]
+WantedBy=multi-user.target

@@ -3,11 +3,11 @@ import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { CODE_GONE_EXIT, proxyCodeGone } from '../../../src/dns-proxy/code-gone.js';
+import { CODE_GONE_EXIT, codeGone } from '../../../src/ipc/code-gone.js';
 
 const ENTRY = 'server/src/dns-proxy/main.js';
 
-describe('proxyCodeGone', () => {
+describe('codeGone', () => {
   let root;
   let install;
   const slot = (name) => `${install}-${name}`;
@@ -32,12 +32,12 @@ describe('proxyCodeGone', () => {
 
   it('sees a rollback, though the slot the proxy came from is still there', () => {
     const entry = path.join(slot('b'), ENTRY);
-    expect(proxyCodeGone(entry, install)).toBe(false);
+    expect(codeGone(entry, install)).toBe(false);
 
     point(slot('a'));
 
     expect(fs.existsSync(entry)).toBe(true);
-    expect(proxyCodeGone(entry, install)).toBe(true);
+    expect(codeGone(entry, install)).toBe(true);
   });
 
   it('stays when the other slot has a proxy too', () => {
@@ -47,40 +47,40 @@ describe('proxyCodeGone', () => {
 
     point(slot('a'));
 
-    expect(proxyCodeGone(entry, install)).toBe(false);
+    expect(codeGone(entry, install)).toBe(false);
   });
 
   it('reads the entry Node really gives a process started through the symlink', () => {
     fs.writeFileSync(path.join(slot('b'), 'argv.js'), 'console.log(process.argv[1])');
     const argv = execFileSync(process.execPath, ['argv.js'], { cwd: install, encoding: 'utf8' });
     expect(argv.trim()).toBe(path.join(slot('b'), 'argv.js'));
-    expect(proxyCodeGone(argv.trim(), install)).toBe(false);
+    expect(codeGone(argv.trim(), install)).toBe(false);
 
     point(slot('a'));
 
-    expect(proxyCodeGone(argv.trim(), install)).toBe(true);
+    expect(codeGone(argv.trim(), install)).toBe(true);
   });
 
   it('handles an install that is a plain directory', () => {
     fs.rmSync(install);
     fs.mkdirSync(path.dirname(path.join(install, ENTRY)), { recursive: true });
     fs.writeFileSync(path.join(install, ENTRY), '');
-    expect(proxyCodeGone(path.join(install, ENTRY), install)).toBe(false);
+    expect(codeGone(path.join(install, ENTRY), install)).toBe(false);
 
     fs.rmSync(path.join(install, ENTRY));
 
-    expect(proxyCodeGone(path.join(install, ENTRY), install)).toBe(true);
+    expect(codeGone(path.join(install, ENTRY), install)).toBe(true);
   });
 
   it('watches the entry itself outside an install', () => {
     const entry = path.join(root, 'app', ENTRY);
     fs.mkdirSync(path.dirname(entry), { recursive: true });
     fs.writeFileSync(entry, '');
-    expect(proxyCodeGone(entry, install)).toBe(false);
+    expect(codeGone(entry, install)).toBe(false);
 
     fs.rmSync(entry);
 
-    expect(proxyCodeGone(entry, install)).toBe(true);
+    expect(codeGone(entry, install)).toBe(true);
   });
 
   it('does not take a sibling directory for the install', () => {
@@ -90,13 +90,13 @@ describe('proxyCodeGone', () => {
 
     point(slot('a'));
 
-    expect(proxyCodeGone(entry, install)).toBe(false);
+    expect(codeGone(entry, install)).toBe(false);
   });
 });
 
-describe('the unit and the exit status', () => {
+describe.each(['cidrella-dns-proxy', 'cidrella-helper'])('the %s unit and the exit status', (name) => {
   const unit = fs.readFileSync(
-    new URL('../../../../scripts/systemd/cidrella-dns-proxy.service', import.meta.url),
+    new URL(`../../../../scripts/systemd/${name}.service`, import.meta.url),
     'utf8',
   );
   const statuses = (key) =>
@@ -106,7 +106,7 @@ describe('the unit and the exit status', () => {
       .split(/\s+/)
       .map(Number);
 
-  it('does not restart the proxy when its code is gone', () => {
+  it('does not restart it when its code is gone', () => {
     expect(statuses('RestartPreventExitStatus')).toContain(CODE_GONE_EXIT);
   });
 
@@ -116,5 +116,12 @@ describe('the unit and the exit status', () => {
 
   it('still restarts on the exit the web app asks for', () => {
     expect(statuses('RestartPreventExitStatus')).not.toContain(0);
+  });
+
+  it('does not start where the release has no such process', () => {
+    const process = name.replace('cidrella-', '');
+    expect(unit).toMatch(
+      new RegExp(`^ConditionPathExists=/opt/cidrella/server/src/${process}/main\\.js$`, 'm'),
+    );
   });
 });

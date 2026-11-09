@@ -140,6 +140,7 @@ dpkg-query -W -f='${db:Status-Status} ${Package}\n' dnsmasq dnsmasq-base dnsmasq
   | awk '$1 == "installed" {print $2}' \
   | xargs -r apt-get purge -y >/dev/null 2>&1 || true
 apt-get autoremove -y >/dev/null 2>&1 || true
+userdel cidrella-helper 2>/dev/null || true
 userdel cidrella 2>/dev/null || true
 rm -f /etc/apt/sources.list.d/nodesource.list /etc/apt/keyrings/nodesource.gpg
 rm -f /etc/apt/sources.list.d/isc-kea-3-0.list /usr/share/keyrings/isc-kea-3-0-archive-keyring.gpg

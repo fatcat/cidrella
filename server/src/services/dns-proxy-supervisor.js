@@ -3,8 +3,9 @@
  * outright (a hung event loop never runs a SIGTERM handler, and systemd would
  * wait out its stop timeout), and whatever supervises it starts it again:
  *
- *   systemd  Restart=always, and `systemctl start` here too, for a unit that
- *            hit its start limit or was stopped
+ *   systemd  Restart=always, and `systemctl start` here too (through the
+ *            privileged helper), for a unit that hit its start limit or was
+ *            stopped
  *   s6       the longrun restarts it
  *   none     development: the proxy client starts a new child when it
  *            cannot connect (utils/dns-proxy-client.js)
@@ -12,7 +13,7 @@
  * CIDRELLA_DNS_PROXY_SUPERVISOR names which (unset means none).
  */
 import fs from 'fs';
-import { runCommand } from '../utils/run-command.js';
+import { unitCommand } from '../utils/privileged.js';
 import { proxyLog } from '../dns-proxy/log.js';
 
 export const PROXY_UNIT = 'cidrella-dns-proxy.service';
@@ -37,10 +38,12 @@ export async function restartProxyProcess(pid) {
     }
   }
   if (process.env.CIDRELLA_DNS_PROXY_SUPERVISOR !== 'systemd') return;
-  try {
-    await runCommand('systemctl', ['reset-failed', PROXY_UNIT]).catch(() => {});
-    await runCommand('systemctl', ['start', PROXY_UNIT]);
-  } catch (err) {
-    proxyLog('error', 'Could not start the DNS proxy unit', { error: err.message });
+  // A unit past its start limit refuses a start until it is reset.
+  await unitCommand('reset-failed', PROXY_UNIT);
+  const started = await unitCommand('start', PROXY_UNIT);
+  if (!started.ok) {
+    proxyLog('error', 'Could not start the DNS proxy unit', {
+      error: started.stderr || `exit ${started.code}`,
+    });
   }
 }

@@ -21,7 +21,7 @@ import {
   resolveDnsListenPort,
 } from '../config/defaults.js';
 import { proxyLog } from '../dns-proxy/log.js';
-import { codeId } from '../dns-proxy/code-id.js';
+import { proxyCodeId } from '../dns-proxy/code-id.js';
 // emptyMetrics: what a drain reads as when the proxy process does not answer.
 import * as Server from '../dns-proxy/server.js';
 import * as Client from './dns-proxy-client.js';
@@ -180,7 +180,7 @@ export function startProxy() {
   if (isPreflightBoot()) return;
   refreshProxyConfig();
   Client.startProxyClient({
-    codeId: codeId(),
+    codeId: proxyCodeId(),
     handlers: { queryRow: sinkQueryRow, clientSeen: sinkClientSeen, resolution: sinkResolution },
   });
   startWatchdog(processHandle);

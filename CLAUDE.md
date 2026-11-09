@@ -198,7 +198,16 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   is keyed by address, never by row, so it outlives the row), `utils/executable.js` (`findExecutable`: where a
   command would run from, searched on PATH as a shell does), `runCommand` in
   `utils/run-command.js` (every command the server runs after boot: async, with a timeout; tests
-  mock it with `fakeRunCommandModule` in `tests/helpers/fake-run-command.js`), `runDbTask` in
+  mock it with `fakeRunCommandModule` in `tests/helpers/fake-run-command.js`), `utils/privileged.js`
+  (every arping, ping, `systemctl` start/stop/restart/reload, update start and `set-ntp`: the
+  privileged helper runs it where `CIDRELLA_HELPER_SOCKET` is set, the web app itself where not;
+  resolves `{ok, code, stdout, stderr}`, `helperDown` when the helper is away; never run these
+  through `runCommand`), the privileged helper process in `helper/` (`main.js` the entry,
+  `commands.js` the closed list of operations and `MANAGED_UNITS`, which the polkit rule must
+  match, `run.js`, `protocol.js`; leaf imports only, which
+  `tests/unit/helper/closure-guard.test.js` enforces) and `utils/helper-client.js` (its socket
+  client, used by `privileged.js` alone), `createLog` in `ipc/log.js` (a process's log lines),
+  `ensure_service_user` in `scripts/lib/systemd-install.sh` (a system account for a unit), `runDbTask` in
   `utils/db-worker/index.js` (slow SQL in a worker thread with its own connection; a task is a
   function in `db-worker/tasks.js`), `recountBlocklistDomains` and `storedBlocklistDomainCount`
   in `utils/blocklist.js` (the enabled-domain count, recounted in the worker and stored; the
@@ -300,8 +309,11 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `utils/query-log-writer.js`), the DNS proxy process in `dns-proxy/` (`main.js` the entry,
   `runtime.js` its answers to the web app's messages, `server.js` the proxy, `forwarder.js` the
   encrypted forwarder, `wildcard-chain.js` the one answer it edits (a backend's
-  `splitWildcardChains`), `db.js` its read-only connection and cached `setting`, `protocol.js` the
-  socket framing, `ipc-server.js` with the bounded outbox, `code-id.js` the id an update compares,
+  `splitWildcardChains`), `db.js` its read-only connection and cached `setting`, `protocol.js` its
+  messages, `outbox.js` the bounded outbox, `code-id.js` its code id; the socket is the shared
+  `ipc/`: `framing.js`, `server.js` (`createIpcServer`, `boundedQueue`), `client.js`
+  (`createProcessClient`: reconnect, hello, code-id restart, requests by id), `code-id.js` and
+  `code-gone.js`,
   `constants.js` the DATA_DIR rule and `proxyRuntimePaths`; it imports leaf helpers only, no
   database, config, backend, service, route or model module but the two read ones below, which
   `tests/unit/dns-proxy/closure-guard.test.js` enforces), the web app's side of it: `utils/dns-proxy.js` and

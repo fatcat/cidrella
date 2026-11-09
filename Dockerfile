@@ -37,14 +37,12 @@ RUN apk add --no-cache \
     tzdata \
     logrotate \
     libcap && \
-    command -v dhcp_release && \
-    setcap cap_net_raw+ep /usr/sbin/arping
+    command -v dhcp_release
 
 # arping is iputils' (Alpine's separate arping package now conflicts with
-# iputils over the command). The scanner runs it as cidrella, which has no
-# capabilities of its own, so the binary carries CAP_NET_RAW; compose's
-# cap_add grants it. Without it every ARP probe failed and the scanner fell
-# back to ICMP.
+# iputils over the command). The privileged helper runs it (below), as an
+# account with no capabilities of its own, so the binary carries CAP_NET_RAW;
+# compose's cap_add grants it.
 
 # Kea, the other DHCP server. It stays down until CIDRella serves DHCP from
 # it (rootfs/etc/s6-overlay/scripts/kea.sh). It runs as cidrella, so the
@@ -86,13 +84,26 @@ RUN apk add --no-cache radvd && \
 RUN addgroup -g 65532 cidrella && \
     adduser -D -u 65532 -G cidrella -H -s /sbin/nologin cidrella
 
-# Allow cidrella user to send signals to dnsmasq and run network scans.
+# The privileged helper's account (rootfs/etc/s6-overlay/s6-rc.d/helper). It
+# alone may run arping and ping, so the web app and the DNS proxy, which run
+# as cidrella, send no raw packets. The capability goes on last: chown clears
+# it. A busybox ping would take the whole multi-call binary with it, so the
+# build stops instead.
+RUN addgroup -g 65531 cidrella-helper && \
+    adduser -D -u 65531 -G cidrella-helper -H -s /sbin/nologin cidrella-helper && \
+    for tool in arping ping; do \
+      bin=$(readlink -f "$(command -v "$tool")") && \
+      case "$bin" in *busybox*) echo "$tool is busybox: $bin" >&2; exit 1 ;; esac && \
+      chown root:cidrella-helper "$bin" && chmod 0750 "$bin" || exit 1; \
+    done && \
+    setcap cap_net_raw+ep "$(readlink -f "$(command -v arping)")"
+
+# Allow cidrella user to send signals to dnsmasq.
 # nmap was in this allowlist historically but the app never called it;
 # removed in v0.4.10 to drop both the unused binary and its wildcard
-# sudoers rule. arping is kept because the scanner actually uses it.
+# sudoers rule. arping went in 0.6.3: the privileged helper runs it.
 RUN echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/kill -HUP [0-9]*' > /etc/sudoers.d/cidrella-dnsmasq && \
     echo 'cidrella ALL=(root) NOPASSWD: /usr/bin/pkill -TERM -x dnsmasq' >> /etc/sudoers.d/cidrella-dnsmasq && \
-    echo 'cidrella ALL=(root) NOPASSWD: /usr/sbin/arping *' >> /etc/sudoers.d/cidrella-dnsmasq && \
     chmod 440 /etc/sudoers.d/cidrella-dnsmasq
 
 # Set up app directory
@@ -104,7 +115,7 @@ RUN apk add --no-cache python3 py3-pip py3-scikit-learn py3-numpy py3-joblib && 
     apk add --no-cache --virtual .build-deps py3-setuptools make g++ && \
     cd server && npm ci --omit=dev && cd .. && \
     apk del .build-deps && \
-    setcap cap_net_raw,cap_net_bind_service+ep $(readlink -f $(which node))
+    setcap cap_net_bind_service+ep $(readlink -f $(which node))
 
 # Copy application code
 COPY package.json LICENSE NOTICE ./

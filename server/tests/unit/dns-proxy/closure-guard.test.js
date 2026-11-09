@@ -8,20 +8,24 @@
  */
 import { describe, it, expect } from 'vitest';
 import { fileURLToPath } from 'url';
-import { importClosure } from '../../../src/dns-proxy/code-id.js';
+import { importClosure } from '../../../src/ipc/code-id.js';
 
 const src = (rel) => fileURLToPath(new URL(`../../../src/${rel}`, import.meta.url));
 
 const PROXY_MODULES = [
   'dns-proxy/constants.js',
   'dns-proxy/code-id.js',
-  'dns-proxy/code-gone.js',
+  'ipc/code-id.js',
+  'ipc/code-gone.js',
+  'ipc/framing.js',
+  'ipc/server.js',
+  'ipc/log.js',
   'dns-proxy/log.js',
   'dns-proxy/server.js',
   'dns-proxy/forwarder.js',
   'dns-proxy/db.js',
   'dns-proxy/protocol.js',
-  'dns-proxy/ipc-server.js',
+  'dns-proxy/outbox.js',
   'dns-proxy/main.js',
   'models/setting-value.js',
   'utils/query-log-writer.js',

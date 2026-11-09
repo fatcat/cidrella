@@ -485,7 +485,7 @@ unset for the child).
   next web app says hello. It also opens the file again when the database or
   its `-shm` is replaced under it.
 - **Updates.** `update.sh` restarts only `cidrella`. Both processes compute a
-  code id over the proxy's import closure (`dns-proxy/code-id.js`); when the
+  code id over the proxy's import closure (`ipc/code-id.js`); when the
   web app's differs from the running proxy's, it asks the proxy to exit once,
   and the supervisor starts the new code. A guard test keeps the closure away
   from the web app's modules.
@@ -495,10 +495,55 @@ unset for the child).
   only if they changed, so that start, or a restore, takes effect and a plain
   web app restart keeps its listeners.
 - **A rollback to a release without it.** The proxy exits when its code is
-  gone from the path through the install symlink (`dns-proxy/code-gone.js`; the
+  gone from the path through the install symlink (`ipc/code-gone.js`; the
   slot it started from stays on disk). Its exit status keeps the unit from
   restarting it and `ConditionPathExists` covers a later start or boot, so the
   old web app can run the proxy itself.
+
+### Privileged helper
+
+The web app serves the login page and every API route, so it holds no
+raw-socket capability and no right to control daemons. One small process does
+that for it: `server/src/helper/main.js`, run as `cidrella-helper.service`
+(user `cidrella-helper`) natively and the `helper` s6 longrun in Docker.
+
+- **What it runs.** A closed list (`helper/commands.js`): `arping` for one IPv4
+  address, `ping` for one address of either family (zoned to a host interface
+  for a link-local target or `ff02::1`), `systemctl` start, stop, restart,
+  reload and reset-failed on CIDRella's own units (`MANAGED_UNITS`), the update
+  worker's start, and `timedatectl set-ntp true`. Every argument is checked and
+  rewritten to its canonical form; nothing runs through a shell. It keeps no
+  state and reads no database, settings or config, and a guard test
+  (`tests/unit/helper/closure-guard.test.js`) keeps its imports to its own
+  modules, `ipc/` and four leaf utilities.
+- **Its rights.** `CAP_NET_RAW` (ambient, for arping and ping), and the polkit
+  grants in `scripts/polkit/49-cidrella.rules`, which match the account: that
+  is why it runs as its own user. The rule holds the same unit and verb table
+  as `MANAGED_UNITS`, and a test runs the rule file against it. In Docker,
+  arping carries its own file capability and arping and ping are mode 0750,
+  group `cidrella-helper`, so the web app and the DNS proxy cannot run them;
+  s6 has no systemctl, so daemon control stays on its signal path there.
+- **Talking to it.** `/run/cidrella-helper/helper.sock`, mode 0660 in a setgid
+  directory of group `cidrella`: only the web app's account connects. The
+  framing, hello, code-id restart and code-gone exit are the DNS proxy's
+  (`ipc/`), so an update restarts it only when its code changed, and a
+  rollback to a release without it leaves it down (exit 64).
+- **The one door.** `utils/privileged.js` is the only place the web app runs
+  these commands. With `CIDRELLA_HELPER_SOCKET` set it asks the helper;
+  unset (development, tests, update.sh's preflight probe) it runs the same
+  commands itself, built by the same `commands.js`. A preflight probe never
+  connects: the helper serves one web app at a time.
+- **When it is down.** A scan fails ("the privileged helper is not
+  answering") rather than recording every address as unanswered, which would
+  mark a network offline and retire its hosts a day later. A daemon change
+  fails as a denied `systemctl` does (the restart-pending marker, the unit
+  events). `/api/health/deep` fails its ping check, which an update's health
+  check rolls back on.
+- **Rollback, and the rights left behind.** `rollback.sh` reinstalls neither
+  units nor polkit rules, so `cidrella.service` keeps `CAP_NET_RAW` and the
+  polkit rule keeps the `cidrella` account's old grants for one release, unused,
+  so a rollback to a release that ran these itself still works. The next
+  release, with `min_from` at this one, removes both (BACKLOG.md).
 
 ### Proxy bypass
 
@@ -646,9 +691,10 @@ Expected low-level write exceptions:
 - maintenance CLI scripts such as password reset and web port reset
 - metrics/log/cache utilities that are explicitly allowlisted
 
-Native installs should rely on systemd ambient capabilities for privileged
-ports and raw probes. The install path should warn if ambient capabilities are
-not supported.
+Native installs rely on systemd ambient capabilities for privileged ports (the
+web app, the DNS proxy) and raw probes (the privileged helper alone; see
+Privileged helper). The web app warns when the process that runs the probes
+lacks the capability.
 
 Outbound URL fetches must use the guarded/pinned URL helper in
 `utils/url-guard.js` when the URL is operator supplied.

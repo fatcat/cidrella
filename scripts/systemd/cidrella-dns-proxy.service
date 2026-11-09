@@ -3,7 +3,7 @@ Description=CIDRella DNS proxy and encrypted forwarder
 After=network.target
 # Nothing ties it to cidrella.service: DNS keeps answering while the web
 # app restarts, updates or stalls. The web app has it restarted when an
-# update changed its code (server/src/dns-proxy/code-id.js).
+# update changed its code (server/src/ipc/code-id.js).
 #
 # A rollback to a release from before the proxy ran on its own leaves no
 # such file. The proxy then exits with status 64, which Restart= below leaves
@@ -25,7 +25,7 @@ Environment=NODE_ENV=production
 # watchdog kills it outright when it stops answering. Both expect it back.
 Restart=always
 RestartSec=1
-# 64: its code is gone (server/src/dns-proxy/code-gone.js, CODE_GONE_EXIT).
+# 64: its code is gone (server/src/ipc/code-gone.js, CODE_GONE_EXIT).
 RestartPreventExitStatus=64
 SuccessExitStatus=143 64
 

@@ -1,0 +1,11 @@
+#!/command/execlineb -P
+# The privileged helper: the one process that may run arping and ping
+# (their binaries are its group's alone). The web app asks it for every
+# probe over this socket; the directory's group (cidrella, setgid) is who may
+# connect. Daemon control stays with the web app here: s6 has no systemctl.
+foreground { install -d -o cidrella-helper -g cidrella -m 2750 /run/cidrella-helper }
+export CIDRELLA_HELPER_SOCKET /run/cidrella-helper/helper.sock
+# arping carries its own capability; the helper's process has none.
+export CIDRELLA_HELPER_FILE_CAPS 1
+s6-setuidgid cidrella-helper
+node /app/server/src/helper/main.js

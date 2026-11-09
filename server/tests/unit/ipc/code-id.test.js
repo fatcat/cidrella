@@ -6,7 +6,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
-import { codeId, importClosure } from '../../../src/dns-proxy/code-id.js';
+import { codeId, importClosure } from '../../../src/ipc/code-id.js';
 
 let dir;
 const write = (rel, text) => {

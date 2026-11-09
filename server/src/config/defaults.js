@@ -133,7 +133,6 @@ export const SCAN_HISTORY_KEEP = 100;
 export const GEOIP_CHECK_INTERVAL_MS = 6 * 60 * 60 * 1000; // 6 hours
 export const GEOIP_STARTUP_DELAY_MS = 15000; // 15 seconds
 export const GEOIP_DOWNLOAD_TIMEOUT_MS = 60000; // 60 seconds
-export const ARPING_TIMEOUT_MS = 5000;
 export const PING_TIMEOUT_MS = 1500;
 // Echoes sent before a host the scanner last saw online is called offline,
 // once its ARP and single echo both went unanswered. WiFi clients drop

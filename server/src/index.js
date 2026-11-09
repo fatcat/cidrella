@@ -100,7 +100,7 @@ import anomalyRoutes from './routes/anomalies.js';
 import rogueDhcpRoutes from './routes/rogue-dhcp.js';
 import deviceRoutes from './routes/devices.js';
 import { initAnalyticsDb } from './db/duckdb.js';
-import { getCapabilityWarning } from './utils/capabilities.js';
+import * as Privileged from './utils/privileged.js';
 import { captureBootServiceHealth } from './utils/service-health.js';
 import { markBackendReady } from './utils/startup-status.js';
 import { isPreflightBoot } from './utils/preflight.js';
@@ -111,6 +111,10 @@ async function main() {
   // Capture the previous process' systemd/journal crash context before the
   // normal boot path writes enough logs to bury the useful failure lines.
   captureBootServiceHealth();
+
+  // The privileged helper runs the scans' probes and the daemon control
+  // (utils/privileged.js). Connect first: boot restarts daemons.
+  Privileged.startPrivileged();
 
   // Ensure data directories exist
   const dataDirs = ['certs', 'backups', 'blocklists', 'geoip'];
@@ -229,15 +233,19 @@ async function main() {
   // Sync server IP into DNS Servers default
   syncServerDnsDefault(getDb());
 
-  try {
-    const warning = getCapabilityWarning();
-    if (warning) {
-      console.warn(
-        `[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`,
-      );
+  // Without the privileged helper (development) this process runs the probes
+  // itself; the helper logs its own warning when it says hello.
+  if (!Privileged.usesHelper()) {
+    try {
+      const warning = Privileged.capabilityWarning();
+      if (warning) {
+        console.warn(
+          `[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`,
+        );
+      }
+    } catch (err) {
+      console.warn(`[capabilities] Unable to inspect process capabilities: ${err?.message || err}`);
     }
-  } catch (err) {
-    console.warn(`[capabilities] Unable to inspect process capabilities: ${err?.message || err}`);
   }
 
   // Start DHCP lease file watcher

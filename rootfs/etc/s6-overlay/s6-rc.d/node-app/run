@@ -2,5 +2,7 @@
 # The DNS proxy runs as its own longrun (dns-proxy): the web app has s6
 # restart it rather than start one of its own.
 export CIDRELLA_DNS_PROXY_SUPERVISOR s6
+# The privileged helper (its own longrun, helper) runs the scans' probes.
+export CIDRELLA_HELPER_SOCKET /run/cidrella-helper/helper.sock
 s6-setuidgid cidrella
 node /app/server/src/index.js

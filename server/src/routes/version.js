@@ -1,5 +1,4 @@
 import { Router } from 'express';
-import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { getSetting } from '../db/init.js';
@@ -11,6 +10,7 @@ import { isDockerEnvironment } from '../utils/environment.js';
 import { requirePerm } from '../auth/require-perm.js';
 import { requireRole } from '../auth/roles.js';
 import { DATA_DIR } from '../config/defaults.js';
+import { startUpdate } from '../utils/privileged.js';
 
 const router = Router();
 const STATUS_FILE = path.join(DATA_DIR, 'update-status.json');
@@ -291,7 +291,7 @@ router.get('/ip-lifecycle-migration-report', requireRole('admin'), (req, res) =>
 });
 
 // POST /api/version/install: trigger update installation (admin only)
-router.post('/install', requireRole('admin'), (req, res) => {
+router.post('/install', requireRole('admin'), async (req, res) => {
   if (isDockerEnvironment()) {
     return res.status(400).json({
       error: 'Auto-update is not available in Docker deployments. Pull the latest image to update.',
@@ -329,40 +329,31 @@ router.post('/install', requireRole('admin'), (req, res) => {
   }
 
   // Start the update as its own systemd unit instance. The unit is a static
-  // template (cidrella-update@.service) with no hardening, it runs as root
-  // with default access, so update.sh can manipulate /opt and the data dir
-  // freely. The cidrella service account is authorized to start instances
-  // of this template via /etc/polkit-1/rules.d/49-cidrella.rules.
-  //
-  // This replaces the v0.4.8 path which called `sudo systemd-run …`. That
-  // path broke silently when v0.4.8's hardening on cidrella.service began
-  // implicitly setting NoNewPrivileges=yes, blocking sudo's setuid bit. The
-  // failure was invisible because the spawn used stdio:'ignore'. We now use
-  // execFileSync with --no-block (returns within ~50ms once systemd accepts
-  // the start request) and capture stderr so any future failure surfaces in
-  // the status file the UI reads, instead of leaving the panel stuck at
+  // template (cidrella-update@.service) with no hardening: it runs as root
+  // with default access, so update.sh can manipulate /opt and the data dir.
+  // The privileged helper starts it (polkit, 49-cidrella.rules), with
+  // --no-block, so it answers once systemd takes the job; a failure lands in
+  // the status file the UI reads instead of leaving the panel stuck at
   // "Starting update...".
-  // Instance name includes a wall-clock seconds suffix so a retry of the
-  // same target version doesn't reuse a previous instance's state. Without
-  // the suffix, a failed run of `cidrella-update@0.4.11.service` would
-  // leave that exact unit instance in `failed` state until manually reset,
-  // and the next start would refuse to launch. The suffix guarantees a
-  // fresh instance per attempt. The polkit rule's prefix-match
-  // (`cidrella-update@*.service`) accepts any suffix.
+  //
+  // The instance carries a wall-clock seconds suffix, so a retry of the same
+  // version is a fresh instance: a failed `cidrella-update@0.4.11.service`
+  // would stay failed until reset, and the next start would refuse.
   const instanceTag = `${targetVersion}_${Math.floor(Date.now() / 1000)}`;
   const unitInstance = `cidrella-update@${instanceTag}.service`;
+  let started;
   try {
-    execFileSync('systemctl', ['--no-block', 'start', unitInstance], {
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    started = await startUpdate(instanceTag);
   } catch (err) {
-    const stderr = err?.stderr?.toString?.().trim() || err.message || 'unknown error';
+    started = { ok: false, stderr: err.message };
+  }
+  if (!started.ok) {
     const failedStatus = {
       ...initialStatus,
       state: 'failed',
       progress_pct: 0,
       message: 'Failed to start update worker',
-      error: `systemctl start ${unitInstance} failed: ${stderr}`,
+      error: `systemctl start ${unitInstance} failed: ${started.stderr?.trim() || `exit ${started.code}`}`,
       updated_at: new Date().toISOString(),
     };
     try {

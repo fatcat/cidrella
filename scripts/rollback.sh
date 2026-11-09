@@ -260,17 +260,21 @@ emit_event rollback pass phase=symlink-swap "active_slot=$INACTIVE_SLOT"
 info "Reloading systemd..."
 systemctl daemon-reload
 
-# A release from before the DNS proxy had its own process runs it in the web
-# app: stop this one so the two do not fight over port 53. One that has it
-# keeps it running; the restored web app restarts it if its code differs.
-if systemctl list-unit-files cidrella-dns-proxy.service >/dev/null 2>&1; then
-  if [ -f "$INACTIVE_SLOT/server/src/dns-proxy/main.js" ]; then
-    systemctl reset-failed cidrella-dns-proxy 2>/dev/null || true
-    systemctl start cidrella-dns-proxy 2>/dev/null || warn "cidrella-dns-proxy did not start; see journalctl -u cidrella-dns-proxy"
-  else
-    systemctl stop cidrella-dns-proxy 2>/dev/null || true
+# The processes of their own a release may or may not have: the DNS proxy
+# and the privileged helper. A release from before one does its job in the
+# web app (and the proxy would fight it over port 53), so it is stopped. One
+# that has it keeps it running; the restored web app restarts it if its code
+# differs.
+for _process in dns-proxy helper; do
+  if systemctl list-unit-files "cidrella-${_process}.service" >/dev/null 2>&1; then
+    if [ -f "$INACTIVE_SLOT/server/src/${_process}/main.js" ]; then
+      systemctl reset-failed "cidrella-${_process}" 2>/dev/null || true
+      systemctl start "cidrella-${_process}" 2>/dev/null || warn "cidrella-${_process} did not start; see journalctl -u cidrella-${_process}"
+    else
+      systemctl stop "cidrella-${_process}" 2>/dev/null || true
+    fi
   fi
-fi
+done
 
 if [ "$STACK_HANDBACK" = true ]; then
   info "Handing DNS and DHCP back to dnsmasq..."

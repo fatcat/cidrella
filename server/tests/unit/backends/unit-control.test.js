@@ -11,6 +11,14 @@ const { execFileSync } = vi.hoisted(() => ({ execFileSync: vi.fn() }));
 vi.mock('../../../src/utils/run-command.js', async () =>
   (await import('../../helpers/fake-run-command.js')).fakeRunCommandModule(execFileSync),
 );
+// The helper, for the case where the privileged helper runs the changes.
+const { helperRun } = vi.hoisted(() => ({ helperRun: vi.fn() }));
+vi.mock('../../../src/utils/helper-client.js', () => ({
+  helperRun,
+  helperPeer: () => null,
+  helperConnected: () => false,
+  startHelperClient: vi.fn(),
+}));
 
 const { createUnitControl } = await import('../../../src/backends/shared/unit-control.js');
 const { unitEvents } = await import('../../../src/backends/shared/unit-events.js');
@@ -274,5 +282,47 @@ describe('createUnitControl in a preflight boot', () => {
       ['is-active', '--quiet', 'cidrella-kea@dhcp4'],
       expect.anything(),
     );
+  });
+});
+
+describe('createUnitControl with the privileged helper', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const control = () =>
+    createUnitControl({ unit: 'cidrella-dnsmasq', processName: 'dnsmasq', restartPendingFile });
+
+  it('has the helper restart, reload and stop it, and reads the state itself', async () => {
+    vi.stubEnv('CIDRELLA_HELPER_SOCKET', '/run/cidrella-helper/helper.sock');
+    helperRun.mockReset().mockResolvedValue({ ok: true, code: 0, stdout: '', stderr: '' });
+    const unit = control();
+    await unit.restart();
+    await unit.reload();
+    await unit.stop();
+    expect(helperRun.mock.calls.map(([op, args]) => [op, args.verb, args.unit])).toEqual([
+      ['unit', 'restart', 'cidrella-dnsmasq'],
+      ['unit', 'reload', 'cidrella-dnsmasq'],
+      ['unit', 'stop', 'cidrella-dnsmasq'],
+    ]);
+    expect(execFileSync.mock.calls.filter(([cmd]) => cmd === 'systemctl')).toEqual([]);
+    expect(unit.restartPending()).toBe(false);
+
+    await unit.isRunning();
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['is-active', '--quiet', 'cidrella-dnsmasq'],
+      expect.anything(),
+    );
+  });
+
+  it('marks a restart pending when the helper is not answering', async () => {
+    vi.stubEnv('CIDRELLA_HELPER_SOCKET', '/run/cidrella-helper/helper.sock');
+    helperRun.mockReset().mockResolvedValue(null);
+    execFileSync.mockImplementation((cmd) => {
+      if (cmd === 'pkill') throw notRunning;
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unit = control();
+    await unit.restart();
+    warn.mockRestore();
+    expect(unit.restartPending()).toBe(true);
   });
 });

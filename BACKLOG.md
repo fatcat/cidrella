@@ -90,8 +90,6 @@ process turned up three pieces of work, in this order.
    - The operator-run certificate routes in `routes/operations.js` (`openssl`): checks run
      well under a second, but a 4096-bit RSA key or CSR can take a second or two. A candidate
      for `runCommand` if that shows up on prod.
-   - `systemctl --no-block start cidrella-update@` in `routes/version.js`, which returns at
-     once.
 
 2. **Move the DNS proxy into its own service.** Done on `dev/0.6.3` (2026-10-29, same plan):
    `cidrella-dns-proxy.service` and the `dns-proxy` s6 longrun run the proxy and the encrypted
@@ -123,14 +121,40 @@ process turned up three pieces of work, in this order.
    poll. A worker thread was considered and is the smaller step, but it fixes only the shared
    event loop, not crashes or update restarts.
 
-3. **Take raw sockets away from the web process.** `cidrella.service` runs the login page and
-   every API route with `CAP_NET_RAW` and `CAP_NET_BIND_SERVICE`, plus the polkit and sudo
-   rights to control daemons and start updates. A bug in any route gets all of it. Moving the
-   network probes (the scanner, the DHCP probes, rogue DHCP detection) out with the proxy lets
-   the web process drop `CAP_NET_RAW`; it keeps `CAP_NET_BIND_SERVICE` only if it serves on 443.
-   Daemon control behind a small privileged helper is cleaner still, but a bigger job; decide
-   that once 2 is done. Item 2 is done: the proxy's process holds only
-   `CAP_NET_BIND_SERVICE`, and the web process still has both.
+3. **Take raw sockets away from the web process.** `cidrella.service` ran the login page and
+   every API route with `CAP_NET_RAW` and `CAP_NET_BIND_SERVICE`, plus the polkit rights to
+   control daemons, start updates and turn on NTP. A bug in any route got all of it.
+
+   **Stage A, done on `dev/0.6.3`** (2026-11-09, plan `~/.claude/plans/tender-moseying-pascal.md`):
+   the privileged helper (`cidrella-helper.service`, user `cidrella-helper`; docs/ARCHITECTURE.md,
+   Privileged helper) runs every arping, ping, `systemctl` change, update start and
+   `set-ntp`, and the web app asks it through `utils/privileged.js`. Decided with the maintainer:
+   a helper of its own rather than the DNS proxy (polkit grants by account, and the proxy runs
+   as `cidrella`), daemon control included, and `CAP_NET_BIND_SERVICE` kept in the web process
+   (443 and 80, ports under 1024 set in the UI, and the DHCP probes' client ports 68 and 546).
+   Measured first: `CAP_NET_RAW` was used by arping and ping only; prod's `ping_group_range` is
+   `65534 65534`, so neither works as `cidrella` without it, and `dhcp_release` needs no raw
+   socket on prod's kernel. Docker got the full effect at once: the node binary keeps only
+   `cap_net_bind_service`, arping and ping are the helper group's alone, and the sudoers rule
+   that let `cidrella` run arping as root is gone.
+
+   Still to verify on testerella (never prod): the helper runs as `cidrella-helper` with
+   `CapEff` holding only `CAP_NET_RAW`, its socket is `0660 cidrella-helper:cidrella`, a scan
+   finds hosts by arping and ping in both families, a reservation change reloads dnsmasq, a
+   stack switch both ways, the in-app update starts, NTP turns on, a stopped helper fails a scan
+   with its message and fails deep health, and auto-rollback to pre.7 keeps scans and daemon
+   control working on the old web app's own rights.
+
+   **Stage B, a later release with `min_from` at or above the one that ships stage A.**
+   `rollback.sh` reinstalls neither units nor polkit rules, so stage A left the web process its
+   old rights, unused, for a rollback to a release that still runs these itself. Stage B removes
+   them, so a rollback from it can only land on a release that uses the helper:
+   - `cidrella.service` drops `CAP_NET_RAW` from `CapabilityBoundingSet` and
+     `AmbientCapabilities`.
+   - `49-cidrella.rules` drops the `cidrella` account from `cidrellaAccount` (both rules), and
+     the test in `tests/unit/helper/commands.test.js` that keeps its old grants turns into one
+     that it has none.
+   - `update.sh` installs both, as it does now; nothing else changes there.
 
 Looked at and fine in-process: the scanner's tool runs (async `execFile`), DuckDB (its own
 threads), the blocklist refresh (streamed), lease sync, the vendor and update checks, and the

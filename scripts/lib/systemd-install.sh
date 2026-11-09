@@ -6,6 +6,7 @@
 #   - reload_systemd:                      daemon-reload wrapper
 #   - install_logrotate_configs <dir>:     every file in <dir> into
 #                                          /etc/logrotate.d
+#   - ensure_service_user <name>:          a system account for a unit
 #
 # Depends on log.sh. Caller must source log.sh first.
 
@@ -60,4 +61,17 @@ install_logrotate_configs() {
     install -m 0644 -o root -g root "$conf" "/etc/logrotate.d/$(basename "$conf")"
     ok "Installed logrotate config (/etc/logrotate.d/$(basename "$conf"))"
   done
+}
+
+# ensure_service_user <name>
+#   A system account with a group of its own, no home and no login shell, for
+#   a unit to run as (cidrella-helper). Nothing when it exists. Echoes
+#   "created" when it made one; returns 1 when useradd failed.
+ensure_service_user() {
+  local name="${1:?user name required}"
+  if id "$name" >/dev/null 2>&1; then
+    return 0
+  fi
+  useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$name" || return 1
+  printf 'created\n'
 }

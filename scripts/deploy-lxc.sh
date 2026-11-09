@@ -112,7 +112,7 @@ restart_services_on_failure() {
   local status=$?
   if [ "$status" -ne 0 ] && [ "$SERVICES_STOPPED" = true ]; then
     warn "Deploy failed with the services stopped; starting them again on ${LXC_HOST}."
-    ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella-dns-proxy cidrella cidrella-anomaly 2>/dev/null || true" ||
+    ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella-dns-proxy cidrella-helper cidrella cidrella-anomaly 2>/dev/null || true" ||
       warn "Could not reach ${LXC_HOST} to start them: ssh ${SSH_TARGET} systemctl start cidrella-dnsmasq cidrella"
   fi
 }
@@ -284,7 +284,7 @@ UNITS_UPDATED=false
 
 # Compare and update systemd units
 for UNIT in cidrella.service cidrella-dnsmasq.service cidrella-anomaly.service cidrella-dns-proxy.service \
-  cidrella-pdns-auth.service cidrella-pdns-recursor.service; do
+  cidrella-helper.service cidrella-pdns-auth.service cidrella-pdns-recursor.service; do
   SRC="${INSTALL_DIR}/scripts/systemd/${UNIT}"
   DST="/etc/systemd/system/${UNIT}"
   CHANGED=$(ssh "$SSH_TARGET" "
@@ -306,6 +306,16 @@ done
 if [ "$UNITS_UPDATED" = true ]; then
   ssh "$SSH_TARGET" "systemctl daemon-reload"
 fi
+
+# The privileged helper's account, and the polkit rule that grants it daemon
+# control (update.sh does both on a tarball update).
+ssh "$SSH_TARGET" "
+  id cidrella-helper >/dev/null 2>&1 ||
+    useradd --system --user-group --no-create-home --shell /usr/sbin/nologin cidrella-helper
+  if [ -d /etc/polkit-1/rules.d ] && [ -f ${INSTALL_DIR}/scripts/polkit/49-cidrella.rules ]; then
+    install -m 0644 -o root -g root ${INSTALL_DIR}/scripts/polkit/49-cidrella.rules /etc/polkit-1/rules.d/49-cidrella.rules
+  fi
+"
 
 # Update sudoers
 ssh "$SSH_TARGET" "
@@ -354,6 +364,15 @@ ssh "$SSH_TARGET" "
     systemctl start cidrella-dns-proxy 2>/dev/null || true
   fi
 "
+# The privileged helper, before the web app, which asks it for every probe
+# and daemon change. Restarted, so it runs the code just synced.
+ssh "$SSH_TARGET" "
+  if [ -f /etc/systemd/system/cidrella-helper.service ]; then
+    systemctl enable cidrella-helper 2>/dev/null || true
+    systemctl reset-failed cidrella-helper 2>/dev/null || true
+    systemctl restart cidrella-helper 2>/dev/null || true
+  fi
+"
 ssh "$SSH_TARGET" "systemctl start cidrella-dnsmasq cidrella"
 SERVICES_STOPPED=false
 
@@ -377,6 +396,7 @@ DNSMASQ_OK=false
 case "$DNSMASQ_STATUS" in active | off*) DNSMASQ_OK=true ;; esac
 ANOMALY_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-anomaly 2>/dev/null || echo failed")
 PROXY_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-dns-proxy 2>/dev/null || echo failed")
+HELPER_STATUS=$(ssh "$SSH_TARGET" "systemctl is-active cidrella-helper 2>/dev/null || echo failed")
 
 if [ "$CIDRELLA_STATUS" = "active" ] && $DNSMASQ_OK; then
   ok "Core services running."
@@ -386,6 +406,7 @@ else
   warn "Check logs: ssh ${SSH_TARGET} journalctl -u cidrella -n 30"
 fi
 [ "$PROXY_STATUS" = "active" ] || warn "cidrella-dns-proxy: ${PROXY_STATUS}"
+[ "$HELPER_STATUS" = "active" ] || warn "cidrella-helper: ${HELPER_STATUS}"
 
 if [ "$ANOMALY_STATUS" = "active" ]; then
   ok "Anomaly detection service running."
@@ -407,4 +428,5 @@ echo -e "  cidrella:         ${CIDRELLA_STATUS}"
 echo -e "  cidrella-dnsmasq: ${DNSMASQ_STATUS}"
 echo -e "  cidrella-anomaly: ${ANOMALY_STATUS}"
 echo -e "  cidrella-dns-proxy: ${PROXY_STATUS}"
+echo -e "  cidrella-helper: ${HELPER_STATUS}"
 echo ""

@@ -16,16 +16,6 @@ export const DATA_DIR =
 // Where the web app and the proxy process meet: the socket the proxy listens
 // on, and the config the web app last gave it (read at the proxy's start, so
 // it serves before the web app is up).
-// A Unix socket path holds at most 107 bytes, and a longer one is cut short
-// without an error; both ends refuse one instead.
-export const MAX_SOCKET_PATH_BYTES = 107;
-export function socketPathTooLong(socketPath) {
-  const bytes = Buffer.byteLength(socketPath);
-  return bytes > MAX_SOCKET_PATH_BYTES
-    ? `the DNS proxy socket path is ${bytes} bytes, more than a Unix socket path holds (${MAX_SOCKET_PATH_BYTES}): ${socketPath}`
-    : null;
-}
-
 export function proxyRuntimePaths(dataDir = DATA_DIR) {
   const dir = path.join(dataDir, 'runtime');
   return {

@@ -42,9 +42,19 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 - **DHCPv6 pool use.** An IPv6 network with a DHCPv6 pool shows how full the pool is (the
   explorer meter, utilization, "X of Y in use"), and the IPv6 Known tile breaks its count down
   by address type.
+- **A privileged helper does the work that needs privileges.** `cidrella-helper` (the `helper`
+  service in Docker) is now the one process that sends ARP and ping probes, starts, stops and
+  reloads the DNS and DHCP daemons, starts an update and turns NTP on, from a fixed list and
+  under an account of its own. The web app, which serves the sign-in page and every API route,
+  asks it instead of doing these itself, so a flaw in a page can no longer send raw packets or
+  control daemons. In Docker the web app has already lost both. On a native install it keeps
+  them, unused, for one more release so a rollback still works.
 
 ### Changed
 
+- **A scan fails while the privileged helper is down** ("the privileged helper is not
+  answering") instead of recording every address as unanswered, and the deep health check fails
+  with it.
 - **A host that goes offline keeps its name, MAC and DNS record for a day, not an hour.** A
   laptop that slept longer than its lease plus an hour was forgotten at every wake and learned
   again: its name stopped resolving while it slept, and its history filled with retirements.
@@ -104,6 +114,15 @@ The update installs and starts `cidrella-dns-proxy.service`. The first update to
 same short DNS gap as any update before it; later updates leave the proxy running unless its
 code changed. Rolling back to 0.6.2 with `cidrella-rollback` works: the new proxy exits within a
 second of the 0.6.2 code being in place, and 0.6.2 runs its proxy itself.
+
+The update also creates the `cidrella-helper` account, installs a new polkit rule granting it
+daemon control, and installs and starts `cidrella-helper.service` before the web app. A rollback
+to 0.6.2 works the same way: the helper exits once its code is gone, and 0.6.2 runs its probes
+and daemon control itself with the rights `cidrella.service` and the polkit rule still give it.
+The next release removes those rights from the web app and requires 0.6.3 or later to upgrade.
+
+Docker: the image adds a `cidrella-helper` user (UID and GID 65531). Only it may run `arping`
+and `ping`, and the `cidrella` sudoers rule for `arping` is gone.
 
 ## v0.6.2 — 2026-10-26
 
