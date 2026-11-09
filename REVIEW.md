@@ -10,9 +10,13 @@ Each entry: an ID, the severity (**high**: wrong data, a broken feature or a sec
 was confirmed in the code or is only plausible, where it is, what happens, why, and the fix that
 was suggested.
 
+Entries under **Will not fix** are decided: the maintainer chose to leave them. They stay here so
+the behavior they describe is explained when someone runs into it. Do not raise or fix them
+again unless the maintainer reopens one.
+
 ---
 
-## Found reading prod's logs (2026-10-06)
+## Will not fix
 
 #### DNSMASQ-02: A reservation change reaches dnsmasq twice and logs a duplicate per line
 
@@ -30,5 +34,6 @@ was suggested.
 - **Fix:** Cosmetic, once per reservation change; leaving it is reasonable. To silence it, write
   reservations to a file dnsmasq reads only on reload (`dhcp-hostsfile` instead of
   `dhcp-hostsdir`), which also drops the inotify path.
-- **Decided 2026-10-08: leave it.** The fix rewrites every managed install's live dnsmasq.conf
-  and cannot reach include-mode installs, for log noise only.
+- **Will not fix** (decided 2026-10-08, confirmed 2026-11-09). The fix rewrites every managed
+  install's live dnsmasq.conf and cannot reach include-mode installs, for log noise only.
+  Found reading prod's logs, 2026-10-06.

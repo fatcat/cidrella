@@ -50,6 +50,10 @@ suite, `npm run lint`, and `npm run check:db-ownership`.
   mark it fixed: git history is the record of what was fixed and when.
 - If work on an entry starts and then stalls (a blocker, a measurement, a
   rejected approach worth keeping), move it to `BACKLOG.md` with that context.
+- An entry the maintainer decides to leave goes under **Will not fix** in
+  `REVIEW.md`, with the decision and its reason. Those are settled: do not
+  raise them as open findings, count them as work left, or fix them unless the
+  maintainer reopens one.
 
 ## Code structure: the graphify graph
 
