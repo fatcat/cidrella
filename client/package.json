@@ -10,17 +10,17 @@
     "preview": "vite preview"
   },
   "dependencies": {
-    "@openvue/themes": "1.0.0",
-    "axios": "^1.7.0",
+    "@openvue/themes": "1.1.1",
+    "axios": "^1.21.0",
     "chart.js": "^4.5.1",
     "chartjs-plugin-datalabels": "^2.2.0",
-    "d3-geo": "^3.1.1",
-    "openvue": "1.0.0",
+    "d3-geo": "^3.1.2",
+    "openvue": "1.1.1",
     "pinia": "^4.0.2",
     "primeicons": "7.0.0",
     "qrcode": "^1.5.4",
     "topojson-client": "^3.1.0",
-    "vue": "^3.5.0",
+    "vue": "^3.5.45",
     "vue-chartjs": "^5.3.3",
     "vue-router": "^5.1.0",
     "world-atlas": "^2.0.2"
@@ -29,8 +29,8 @@
     "@vitejs/plugin-vue": "^6.0.7",
     "@vue/test-utils": "^2.4.11",
     "happy-dom": "^21.0.3",
-    "vite": "^8.0.14",
-    "vitest": "^5.0.5"
+    "vite": "^8.3.6",
+    "vitest": "^5.1.0"
   },
   "overrides": {
     "rolldown": "1.2.6"
