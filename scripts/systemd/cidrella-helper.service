@@ -24,6 +24,8 @@ WorkingDirectory=/opt/cidrella
 # The socket's directory: owned by the helper, group cidrella, setgid, so the
 # socket it creates there (mode 0660) takes group cidrella and only the web
 # app's account can connect. Run as root (+), before the helper starts.
+# Not RuntimeDirectory=: systemd chowns that to User and Group again for
+# every process it starts, which would take group cidrella away.
 ExecStartPre=+/usr/bin/install -d -o cidrella-helper -g cidrella -m 2750 /run/cidrella-helper
 ExecStart=/usr/local/bin/cidrella-node server/src/helper/main.js
 Environment=CIDRELLA_HELPER_SOCKET=/run/cidrella-helper/helper.sock
@@ -39,9 +41,12 @@ RestartSec=1
 RestartPreventExitStatus=64
 SuccessExitStatus=143 64
 
-# The cidrella.service sandbox, with nothing writable but its socket.
+# The cidrella.service sandbox, with nothing writable but its socket's
+# directory. The - lets the sandbox be built while that directory does not
+# exist yet: systemd builds it for the ExecStartPre above too, which is what
+# creates it.
 ProtectSystem=strict
-ReadWritePaths=/run/cidrella-helper
+ReadWritePaths=-/run/cidrella-helper
 ProtectHome=true
 PrivateTmp=true
 PrivateDevices=true

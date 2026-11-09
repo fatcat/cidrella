@@ -147,16 +147,13 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
     return res.status(404).json({ error: 'No matching subnet found for this IP' });
   }
 
+  // A scan record for this targeted probe, removed after it, failed or not,
+  // so probes do not clutter the scan history.
+  const scanId = ScanRun.createPending(db, resolvedSubnetId);
   try {
-    // Create a scan record for this targeted probe
-    const scanId = ScanRun.createPending(db, resolvedSubnetId);
-
     // Run the scan synchronously with the targeted IPs
     const scanResult = await startScan(db, scanId, resolvedSubnetId, { targetIps: targets });
     const results = targets.map((target) => probeResult(scanId, scanResult, target, db));
-
-    // Clean up the probe scan record (don't clutter scan history)
-    ScanRun.deleteById(db, scanId);
 
     if (many) return res.json({ results: results.filter(Boolean) });
     if (!results[0]) {
@@ -165,6 +162,8 @@ router.post('/probe', requirePerm('subnets:write'), async (req, res) => {
     res.json(results[0]);
   } catch (err) {
     res.status(500).json({ error: `Probe failed: ${err.message}` });
+  } finally {
+    ScanRun.deleteById(db, scanId);
   }
 });
 

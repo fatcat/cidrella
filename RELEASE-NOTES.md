@@ -99,6 +99,9 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 - **The carve row's network and prefix inputs no longer overflow the divide dialog.**
 - **The subnet calculator gives exact sizes for large IPv6 networks.** A /64 read "more than
   2^53" addresses; it now reads 2^64, and its usable count is given in full.
+- **A probe that cannot run says why.** Probing one or more addresses answered an empty result
+  (or "Probe completed but no result recorded") when its scan failed, and left the failed scan in
+  the network's scan history. It now answers with the reason and leaves no scan behind.
 
 ### Upgrading
 

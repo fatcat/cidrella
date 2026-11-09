@@ -86,7 +86,9 @@ describe.each([
     const subnetId = network(cidr);
     const scan = ScanRun.createPendingIfIdle(db, subnetId);
     helperRun.mockClear();
-    await startScan(db, scan.scanId, subnetId).catch(() => {});
+    await expect(startScan(db, scan.scanId, subnetId)).rejects.toThrow(
+      /privileged helper is not answering/,
+    );
 
     const run = db.prepare('SELECT status, error FROM network_scans WHERE id = ?').get(scan.scanId);
     expect(run.status).toBe('failed');

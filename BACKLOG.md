@@ -138,12 +138,18 @@ process turned up three pieces of work, in this order.
    `cap_net_bind_service`, arping and ping are the helper group's alone, and the sudoers rule
    that let `cidrella` run arping as root is gone.
 
-   Still to verify on testerella (never prod): the helper runs as `cidrella-helper` with
-   `CapEff` holding only `CAP_NET_RAW`, its socket is `0660 cidrella-helper:cidrella`, a scan
-   finds hosts by arping and ping in both families, a reservation change reloads dnsmasq, a
-   stack switch both ways, the in-app update starts, NTP turns on, a stopped helper fails a scan
-   with its message and fails deep health, and auto-rollback to pre.7 keeps scans and daemon
-   control working on the old web app's own rights.
+   Verified on testerella with `deploy-lxc.sh` (2026-11-09): the helper runs as
+   `cidrella-helper` with `CapEff` holding only `CAP_NET_RAW`; its socket is
+   `0660 cidrella-helper:cidrella` and another account gets EACCES; arping finds a host with its
+   MAC, ping answers in both families (a global and a zoned link-local IPv6 address, ff02::1 on
+   eth0, an absent address as no answer); an off-list unit is refused; the stack switch works both
+   ways with every daemon restart through the helper; NTP turns on at boot; a stopped helper
+   fails a probe with its message and fails deep health, and both recover when it restarts. The
+   first deploy found the unit could not start (`ReadWritePaths` named a directory its own
+   ExecStartPre creates) and a probe that answered an empty result when its scan failed; both are
+   fixed. Still to verify, with pre.8: a reservation change reloading dnsmasq on the dnsmasq
+   stack, the in-app update starting, and auto-rollback to pre.7 keeping scans and daemon control
+   working on the old web app's own rights.
 
    **Stage B, a later release with `min_from` at or above the one that ships stage A.**
    `rollback.sh` reinstalls neither units nor polkit rules, so stage A left the web process its
