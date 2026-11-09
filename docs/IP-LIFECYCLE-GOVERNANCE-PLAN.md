@@ -24,7 +24,11 @@ competing authorities for the address's allocation state.
 - Make the IP object the canonical aggregate returned to every functional view.
 - Ensure DNS, DHCP, network, scanner, and passive paths produce identical
   lifecycle decisions.
-- Retire dynamic and rogue host metadata after one continuous hour offline.
+- Retire dynamic and rogue host metadata after 24 continuous hours offline
+  (`OFFLINE_RETIREMENT_MS`). The window was one hour until 2026-11-09; at one
+  hour a host that slept longer than its lease plus an hour, a laptop on a
+  15-minute lease asleep for four, was forgotten and relearned at every wake
+  (RETIRE-SLEEP-01).
 - Preserve learned metadata for administratively assigned addresses until the
   administrator changes or removes the assignment.
 - Reconcile existing contradictory data safely during migration.
@@ -129,7 +133,7 @@ desired model use the same words differently.
    Neighbor Discovery, Router Advertisement context, or other evidence that it
    is autonomously configured. Stable and temporary/privacy SLAAC addresses use
    the same allocation state with separate address properties and lifetimes.
-7. **IPv6 retirement.** This plan applies the one-hour offline retirement rule
+7. **IPv6 retirement.** This plan applies the offline retirement rule
    to learned dynamic DHCPv6, SLAAC, privacy, and rogue address metadata after
    their authoritative lifetime has ended. A still-valid DHCPv6 lease or SLAAC
    valid lifetime remains an allocation claim even if liveness is offline.
@@ -453,7 +457,7 @@ online -> offline
 - The passive timeout owns it only where no active scanner will do so.
 - Preserve `last_seen_at` on static DNS, static DHCP, reserved, system, and
   gateway addresses indefinitely.
-- Start a one-hour retirement window for dynamic DHCP, expired SLAAC, and rogue
+- Start the offline retirement window for dynamic DHCP, expired SLAAC, and rogue
   metadata.
 
 ### Dynamic or rogue retirement
@@ -464,12 +468,12 @@ expired slaac -> unassigned
 rogue classification -> unassigned classification
 ```
 
-After one continuous hour offline:
+After 24 continuous hours offline (`OFFLINE_RETIREMENT_MS`):
 
 - Clear `last_seen_at`, observed MAC, dynamic hostname, rogue reason, and other
   address-bound learned metadata.
 
-The dynamic hostname does not wait for that hour when the host is online: a
+The dynamic hostname does not wait for that window when the host is online: a
 lease that lapses while its holder still answers, or a holder that comes back
 online as a rogue while its retained lease name is still on the row, loses the
 lease name immediately. The retention window exists for absent hosts only.
@@ -848,9 +852,9 @@ At minimum, automated tests must cover the following.
 | Active scan response from assigned host | online, last seen updated |
 | Active scan response from unassigned host | online rogue |
 | Failed scan after prior response | offline edge emitted once |
-| Dynamic host offline for 59 minutes | metadata retained |
-| Dynamic host offline for 60 minutes | returned to scope, metadata/DNS cleared |
-| Rogue offline for 60 minutes | returned to scope/available, metadata cleared |
+| Dynamic host offline a minute short of 24 hours | metadata retained |
+| Dynamic host offline for 24 hours | returned to scope, metadata/DNS cleared |
+| Rogue offline for 24 hours | returned to scope/available, metadata cleared |
 | Static DNS/static DHCP offline indefinitely | last seen preserved |
 | Delete static DNS assignment | immediately unassigned, forward DNS removed, managed IPv4 PTR reset to its IP placeholder |
 | Delete DHCP Reservation | immediately unassigned, generated forward DNS removed, managed IPv4 PTR reset to its IP placeholder |
@@ -870,7 +874,7 @@ At minimum, automated tests must cover the following.
 | Trusted Router Advertisement identifies router | protected `gateway` projection |
 | SLAAC address before preferred lifetime | `slaac`, preferred, `in use` |
 | SLAAC address after preferred but before valid lifetime | `slaac`, deprecated, `in use` |
-| SLAAC address after valid lifetime and one hour offline | retired and metadata cleared |
+| SLAAC address after valid lifetime and 24 hours offline | retired and metadata cleared |
 | Temporary and stable IPv6 addresses on one device | distinct IPs, optional shared host association |
 | Neighbor Discovery response | IPv6 liveness and last seen updated |
 | IPv6 prefix enumeration | no attempt to materialize or scan the full address space |
@@ -957,7 +961,7 @@ The lifecycle remediation is complete only when:
 - SLAAC and DHCPv6 have explicit lifetime and client-identity semantics, and
   DHCPv6 cannot become the IPv6 gateway authority.
 - DHCP and DNS passive activity update liveness through the same operation.
-- Dynamic and rogue metadata retires after one continuous hour offline.
+- Dynamic and rogue metadata retires after 24 continuous hours offline.
 - Static assignment observations persist until administrative removal.
 - Network, DNS, DHCP, host details, API search, and sorting show the same IP
   facts.

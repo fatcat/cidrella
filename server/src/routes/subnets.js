@@ -2065,6 +2065,15 @@ router.delete(
   }),
 );
 
+// A network as the calculator shows it: its exact address counts as decimal
+// strings, which JSON carries at any size (`size` and `usable` are null past
+// 2^53, a /64 among them).
+const withExactCounts = (net) => ({
+  ...net,
+  size_text: net.sizeBig.toString(),
+  usable_text: net.usableBig.toString(),
+});
+
 // POST /api/subnets/calculate: standalone calculator.
 // v0.4.15: refuse divides that would return more than MAX_CALCULATE_CHILDREN
 // subnets. In v0.4.14 the endpoint would happily emit 1M+ rows (~60 MB JSON)
@@ -2120,10 +2129,10 @@ router.post(
     const end = start + BigInt(pageSize) < childCount ? start + BigInt(pageSize) : childCount;
     const subnets = [];
     for (let index = start; index < end; index++) {
-      subnets.push(childNetwork(parent, new_prefix, index));
+      subnets.push(withExactCounts(childNetwork(parent, new_prefix, index)));
     }
     res.json({
-      parent,
+      parent: withExactCounts(parent),
       count: childCount.toString(),
       first: childNetwork(parent, new_prefix, 0n).cidr,
       last: childNetwork(parent, new_prefix, childCount - 1n).cidr,

@@ -480,7 +480,7 @@ export function syncDhcpDnsRecords(db, leases) {
       if (!activeRecordIds.has(r.id)) {
         // A vanished dynamic lease loses allocation authority immediately, but
         // its generated name remains with the learned host metadata until the
-        // one-hour continuous-offline retirement boundary. A replacement name
+        // continuous-offline retirement boundary (OFFLINE_RETIREMENT_MS). A replacement name
         // for the same active IP still removes this stale row immediately, and
         // so does an active lease now answering the same name (its client came
         // back on a new address, ADR 005), so the name never answers with both.

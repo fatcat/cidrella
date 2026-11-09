@@ -50,10 +50,10 @@ Amended 2026-10-21:
 - **A lapsed lease's record does not outlive it.** When a lease lapses while
   its host is online, its name goes at once (the hostname rule in
   ARCHITECTURE.md), and so do the record and PTR it made. Otherwise the record
-  is removed when the address retires after its hour offline, and an address
-  still named by such a record stays a retirement candidate until it is. A
-  record whose address has no row and no lease goes once the lease sync has
-  left it untouched for that hour.
+  is removed when the address retires after its offline window (a day, see
+  OFFLINE_RETIREMENT_MS), and an address still named by such a record stays a
+  retirement candidate until it is. A record whose address has no row and no
+  lease goes once the lease sync has left it untouched for that window.
 
 ## Consequences
 

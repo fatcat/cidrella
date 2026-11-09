@@ -17,6 +17,9 @@ let ingestLeases;
 let syncLeasesNow;
 let invalidateSubnetCache;
 let retireStaleDynamicAddresses;
+let OFFLINE_RETIREMENT_MS;
+// An hour past the offline window, so the address is due for retirement.
+const pastWindow = () => new Date(Date.now() - OFFLINE_RETIREMENT_MS - 3600 * 1000).toISOString();
 let leaseFile;
 let computeIpView;
 
@@ -33,7 +36,7 @@ beforeAll(async () => {
   ({ ingestLeases, syncLeasesNow } = await import('../../../../src/services/dhcp-lease-sync.js'));
   ({ invalidateSubnetCache } = await import('../../../../src/utils/ip-sync.js'));
   ({ computeIpView } = await import('../../../../src/models/ip-view.js'));
-  ({ retireStaleDynamicAddresses } =
+  ({ retireStaleDynamicAddresses, OFFLINE_RETIREMENT_MS } =
     await import('../../../../src/services/ip-lifecycle-service.js'));
   leaseFile = path.join(tmpDir, 'dnsmasq', 'dnsmasq.leases');
   fs.mkdirSync(path.dirname(leaseFile), { recursive: true });
@@ -354,7 +357,7 @@ describe('a client coming back on a new address (ADR 005)', () => {
     renew([f.lease(f.mac, f.first, base)]);
     db.prepare('DELETE FROM dhcp_leases WHERE ip_address = ?').run(f.first);
     renew([f.lease(f.other, f.third, 'bystander')]);
-    setLiveness(f.first, false, new Date(Date.now() - 2 * 3600 * 1000).toISOString());
+    setLiveness(f.first, false, pastWindow());
     await retireStaleDynamicAddresses(db, { releaseLease: () => ({ released: true }) });
     expect(nameRecords(base)).toEqual([]);
 
@@ -366,7 +369,7 @@ describe('a client coming back on a new address (ADR 005)', () => {
   });
 
   for (const f of families) {
-    it(`retires a lease record whose address has no row, once it is an hour stale (${f.family})`, async () => {
+    it(`retires a lease record whose address has no row, once it is stale for the offline window (${f.family})`, async () => {
       const zoneId = db.prepare("SELECT id FROM dns_zones WHERE name = 'example.test'").get().id;
       const ip = f.family === 'IPv4' ? '10.0.1.199' : 'fd00:a1::1199';
       const insert = db.prepare(
@@ -491,13 +494,13 @@ describe('a client coming back on a new address (ADR 005)', () => {
       renew([f.lease(f.mac, f.first, base)]);
       // What a lease that lapsed with the host online left before this fix:
       // the address unassigned with no detection source, the record still up.
-      const twoHoursAgo = new Date(Date.now() - 2 * 3600 * 1000).toISOString();
+      const offlineSince = pastWindow();
       db.prepare(
         `UPDATE ip_addresses SET allocation_state = 'unassigned', allocation_source_type = NULL,
            allocation_source_id = NULL, hostname = NULL, detection_source = NULL,
            is_online = 0, offline_since_at = ?, dhcp_version = NULL, dhcp_duid = NULL
          WHERE ip_address = ?`,
-      ).run(twoHoursAgo, f.first);
+      ).run(offlineSince, f.first);
       db.prepare('DELETE FROM dhcp_leases WHERE ip_address = ?').run(f.first);
       expect(nameRecords(base).filter((r) => r.type === f.type)).toHaveLength(1);
 

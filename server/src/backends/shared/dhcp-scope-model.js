@@ -64,29 +64,13 @@ function optionValue(value, type, family, resolve, entry) {
   return validateConfigSafeValue(value, guard) == null ? { text: value } : null;
 }
 
-// A legacy JSON server-list column, as a comma list under `code`.
-function setServerList(merged, code, column) {
-  if (!column || merged.has(code)) return;
-  try {
-    const servers = JSON.parse(column);
-    if (Array.isArray(servers) && servers.length > 0) merged.set(code, servers.join(','));
-  } catch {
-    /* skip */
-  }
-}
-
-// DHCPv4: the scope's effective options, then the legacy columns of a scope
-// with none, then the network's gateway and domain. Option 51 moves into the
-// lease time; 1 and 28 come from the pool's mask, never an option row.
+// DHCPv4: the scope's effective options (the legacy scope columns are
+// resolveEffectiveScopeOptions' job), then the network's gateway and domain.
+// Option 51 moves into the lease time; 1 and 28 come from the pool's mask,
+// never an option row.
 function v4Options(scope, effective) {
   const merged = new Map();
   for (const opt of effective.options) merged.set(opt.option_code, opt.value);
-  if (effective.options.length === 0) {
-    setServerList(merged, 6, scope.dns_servers);
-    if (scope.domain_name && !merged.has(15)) merged.set(15, scope.domain_name);
-    setServerList(merged, 42, scope.ntp_servers);
-    if (scope.domain_search && !merged.has(119)) merged.set(119, scope.domain_search);
-  }
   if (!merged.has(3) && scope.subnet_gateway) merged.set(3, scope.subnet_gateway);
   if (!merged.has(15) && scope.subnet_domain_name) merged.set(15, scope.subnet_domain_name);
   if (!merged.has(119) && scope.subnet_domain_name) merged.set(119, scope.subnet_domain_name);

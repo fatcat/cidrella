@@ -302,6 +302,29 @@ describe('IPv6 networks', () => {
     expect(v4Bound.status).toBe(400);
   });
 
+  it('gives the calculator exact counts, either family', async () => {
+    const v6 = await request(app)
+      .post('/api/subnets/calculate')
+      .send({ cidr: 'fd00:aa::/48', new_prefix: 64, page_size: 2 });
+    expect(v6.status).toBe(200);
+    expect(v6.body.parent).toMatchObject({
+      size: null,
+      size_text: String(2n ** 80n),
+      usable_text: String(2n ** 80n - 1n),
+    });
+    expect(v6.body.subnets[0]).toMatchObject({
+      size_text: '18446744073709551616',
+      usable_text: '18446744073709551615',
+    });
+
+    const v4 = await request(app)
+      .post('/api/subnets/calculate')
+      .send({ cidr: '192.168.0.0/24', new_prefix: 26 });
+    expect(v4.status).toBe(200);
+    expect(v4.body.parent).toMatchObject({ size_text: '256', usable_text: '254' });
+    expect(v4.body.subnets.map((net) => net.usable_text)).toEqual(['62', '62', '62', '62']);
+  });
+
   it('merges unallocated IPv6 buddies back together', async () => {
     const spare = db.prepare("SELECT id FROM subnets WHERE cidr = 'fd00:1234::/64'").get().id;
     const divide = await request(app).post(`/api/subnets/${spare}/divide`).send({ new_prefix: 66 });

@@ -305,7 +305,9 @@ ARCHITECTURE.md (Canonical IP Model). The answer reserves nothing.
 `POST /api/subnets/calculate` takes `page` and `page_size` (default 256, at
 most 4096) beside `cidr` and `new_prefix`, and returns `count` (a decimal
 string), `first` and `last` (the first and last child) and that page of
-children. The cap of 65,536 children stays.
+children. The parent and every child carry `size_text` and `usable_text`, their
+exact address counts as decimal strings: `size` and `usable` are null past 2^53,
+a /64 among them. The cap of 65,536 children stays.
 
 `GET /api/subnets/:id/hosts` returns the network's addresses grouped into
 devices (ARCHITECTURE.md, Canonical IP Model, host association), paged by host:

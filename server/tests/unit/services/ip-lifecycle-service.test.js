@@ -12,6 +12,7 @@ import {
   observeRouterAdvertisement,
   observeScanResult,
   observeSlaac,
+  OFFLINE_RETIREMENT_MS,
   retireStaleDynamicAddresses,
   setManualReservation,
 } from '../../../src/services/ip-lifecycle-service.js';
@@ -312,8 +313,13 @@ describe('IP lifecycle service allocation boundary', () => {
   });
 });
 
-describe('one-hour continuous-offline retirement', () => {
+describe('continuous-offline retirement', () => {
   const baseTime = new Date('2031-05-20T12:00:00.000Z');
+  const MINUTE = 60 * 1000;
+  // Times relative to baseTime. Offline since windowStart, an address reaches
+  // the retirement boundary at baseTime.
+  const at = (offsetMs) => new Date(baseTime.getTime() + offsetMs);
+  const windowStart = at(-OFFLINE_RETIREMENT_MS).toISOString();
 
   function seedDynamic(ip = '10.99.0.23') {
     createDynamicScope();
@@ -378,7 +384,7 @@ describe('one-hour continuous-offline retirement', () => {
     ).run(reverseZoneId);
   }
 
-  it('keeps dynamic observations at 59 minutes and retires them at 60 minutes', async () => {
+  it('keeps dynamic observations a minute short of the window and retires them at it', async () => {
     const lease = seedDynamic();
     seedDynamicDns(lease.ip);
     db.prepare(
@@ -387,11 +393,11 @@ describe('one-hour continuous-offline retirement', () => {
       WHERE subnet_id = ? AND ip_address = ?
     `,
     ).run(subnetId, lease.ip);
-    setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
+    setOfflineAt(lease.ip, windowStart);
     const releaseLease = vi.fn(() => ({ released: true }));
 
     const beforeBoundary = await retireStaleDynamicAddresses(db, {
-      now: new Date('2031-05-20T11:59:00.000Z'),
+      now: at(-MINUTE),
       releaseLease,
     });
     expect(beforeBoundary.retired).toBe(0);
@@ -439,9 +445,32 @@ describe('one-hour continuous-offline retirement', () => {
     expect(releaseLease).toHaveBeenCalledTimes(1);
   });
 
+  // RETIRE-SLEEP-01: a laptop on a 15-minute lease that sleeps four hours was
+  // forgotten at every wake while the window was one hour.
+  it('keeps a host asleep for hours, IPv4 lease and IPv6 SLAAC', async () => {
+    const asleep = at(-4 * 60 * MINUTE).toISOString();
+    const lease = seedDynamic();
+    setOfflineAt(lease.ip, asleep);
+    observeSlaac(db, subnetId, '2001:db8::44', {
+      interfaceId: 'eth0',
+      preferredUntil: at(-5 * 60 * MINUTE).toISOString(),
+      validUntil: asleep,
+    });
+    setOfflineAt('2001:db8::44', asleep);
+
+    const result = await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() });
+    expect(result.retired).toBe(0);
+    expect(address(lease.ip)).toMatchObject({
+      hostname: lease.hostname,
+      mac_address: lease.mac,
+      allocation_state: 'dynamic_dhcp',
+    });
+    expect(address('2001:db8::44')).toMatchObject({ valid_until: asleep });
+  });
+
   it('cancels retirement when activity resumes before the boundary', async () => {
     const lease = seedDynamic();
-    setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
+    setOfflineAt(lease.ip, windowStart);
 
     observeScanResult(db, subnetId, lease.ip, {
       responded: 1,
@@ -478,7 +507,7 @@ describe('one-hour continuous-offline retirement', () => {
     expect(
       (
         await retireStaleDynamicAddresses(db, {
-          now: new Date('2031-05-20T12:59:00.000Z'),
+          now: at(OFFLINE_RETIREMENT_MS - MINUTE),
           releaseLease: vi.fn(),
         })
       ).retired,
@@ -497,7 +526,7 @@ describe('one-hour continuous-offline retirement', () => {
     expect(
       (
         await retireStaleDynamicAddresses(db, {
-          now: new Date('2031-05-20T13:00:00.000Z'),
+          now: at(OFFLINE_RETIREMENT_MS),
           releaseLease: vi.fn(() => ({ released: true })),
         })
       ).retired,
@@ -506,7 +535,7 @@ describe('one-hour continuous-offline retirement', () => {
 
   it('defers database cleanup when an active sticky lease cannot be released', async () => {
     const lease = seedDynamic();
-    setOfflineAt(lease.ip, '2031-05-20T11:00:00.000Z');
+    setOfflineAt(lease.ip, windowStart);
 
     const result = await retireStaleDynamicAddresses(db, {
       now: baseTime,
@@ -538,14 +567,14 @@ describe('one-hour continuous-offline retirement', () => {
          address_sort_key, offline_since_at)
       VALUES (?, '10.99.0.39', 'observed-host', 'aa:bb:cc:dd:ee:39', 0, 0,
               'Address is not allocated', 'scanner', 'unassigned', 4,
-              '40000000000000000000000000a630027', '2031-05-20T11:00:00.000Z')
+              '40000000000000000000000000a630027', ?)
     `,
-    ).run(subnetId);
+    ).run(subnetId, windowStart);
 
     expect(
       (
         await retireStaleDynamicAddresses(db, {
-          now: new Date('2031-05-20T11:59:00.000Z'),
+          now: at(-MINUTE),
           releaseLease: vi.fn(),
         })
       ).retired,
@@ -576,26 +605,26 @@ describe('one-hour continuous-offline retirement', () => {
          address_family, address_sort_key, offline_since_at)
       VALUES (?, '10.99.0.40', 0, 0, NULL,
               'rogue-host', 'aa:bb:cc:dd:ee:40', 'scanner', 'unassigned',
-              4, '40000000000000000000000000a630028', '2031-05-20T11:00:00.000Z')
+              4, '40000000000000000000000000a630028', ?)
     `,
-    ).run(subnetId);
+    ).run(subnetId, windowStart);
     observeSlaac(db, subnetId, '2001:db8::41', {
       interfaceId: 'eth0',
       preferredUntil: '2031-05-20T10:00:00.000Z',
       validUntil: '2031-05-20T11:00:00.000Z',
     });
-    setOfflineAt('2001:db8::41', '2031-05-20T11:00:00.000Z');
+    setOfflineAt('2001:db8::41', windowStart);
     observeSlaac(db, subnetId, '2001:db8::42', {
       interfaceId: 'eth0',
       preferredUntil: '2031-05-20T13:00:00.000Z',
       validUntil: '2031-05-20T14:00:00.000Z',
     });
-    setOfflineAt('2001:db8::42', '2031-05-20T11:00:00.000Z');
+    setOfflineAt('2001:db8::42', windowStart);
     observeSlaac(db, subnetId, 'fe80::43%eth0', {
       preferredUntil: '2031-05-20T10:00:00.000Z',
       validUntil: '2031-05-20T11:00:00.000Z',
     });
-    setOfflineAt('fe80::43', '2031-05-20T11:00:00.000Z');
+    setOfflineAt('fe80::43', windowStart);
 
     expect(
       (await retireStaleDynamicAddresses(db, { now: baseTime, releaseLease: vi.fn() })).retired,
@@ -629,9 +658,16 @@ describe('one-hour continuous-offline retirement', () => {
         INSERT INTO ip_addresses
           (subnet_id, ip_address, hostname, mac_address, is_online,
            allocation_state, detection_source, offline_since_at)
-        VALUES (?, ?, ?, ?, 0, ?, 'scanner', '2031-05-20T10:00:00.000Z')
+        VALUES (?, ?, ?, ?, 0, ?, 'scanner', ?)
       `,
-      ).run(subnetId, ip, `${state}-host`, `aa:bb:cc:dd:ef:${50 + index}`, state);
+      ).run(
+        subnetId,
+        ip,
+        `${state}-host`,
+        `aa:bb:cc:dd:ef:${50 + index}`,
+        state,
+        at(-OFFLINE_RETIREMENT_MS - 60 * MINUTE).toISOString(),
+      );
     }
 
     expect(

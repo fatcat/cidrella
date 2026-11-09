@@ -82,6 +82,40 @@ describe('SubnetCalculator', () => {
     expect(wrapper.findComponent(DataTableStub).props('first')).toBe(1792);
   });
 
+  it('shows exact address counts, either family', async () => {
+    const counts = (cidr, size_text, usable_text) => ({
+      network: cidr.split('/')[0],
+      prefix: Number(cidr.split('/')[1]),
+      size_text,
+      usable_text,
+    });
+    api.post.mockResolvedValueOnce(
+      page('fd00:aa::/64', 66, 'fd00:aa::', 4, {
+        parent: counts('fd00:aa::/64', '18446744073709551616', '18446744073709551615'),
+      }),
+    );
+    const v6 = mountCalculator();
+    v6.vm.cidr = 'fd00:aa::/64';
+    v6.vm.newPrefix = 66;
+    await v6.vm.calculate();
+    expect(v6.text()).toContain('Total IPs: 2^64');
+    expect(v6.text()).toContain('Usable: 18,446,744,073,709,551,615');
+    expect(v6.text()).not.toContain('2^53');
+    v6.unmount();
+    // A fresh visit, not one that asks for the remembered IPv6 split again.
+    globalThis.localStorage.removeItem('cidrella-subnet-calc');
+
+    api.post.mockResolvedValueOnce(
+      page('10.0.0.0/24', 26, '10.0.0.0', 4, { parent: counts('10.0.0.0/24', '256', '254') }),
+    );
+    const v4 = mountCalculator();
+    v4.vm.cidr = '10.0.0.0/24';
+    v4.vm.newPrefix = 26;
+    await v4.vm.calculate();
+    expect(v4.text()).toContain('Total IPs: 256');
+    expect(v4.text()).toContain('Usable: 254');
+  });
+
   it('IPv4: remembers the inputs, never the result, and asks again on return', async () => {
     api.post.mockResolvedValue(page('10.90.0.0/22', 28, '10.90.0.0', 64));
     const first = mountCalculator();

@@ -175,7 +175,8 @@ The first cut classifies by evidence it has:
 - A SLAAC address of a host that has a longer-lived SLAAC address in the same prefix, seen for
   less than a day: likely temporary, collapsed under "N other addresses".
 - Anything else: shown, not collapsed.
-  The existing one-hour offline retirement still removes departed temporary addresses.
+  The offline retirement (24 hours offline, after the valid lifetime) still removes departed
+  temporary addresses.
 
 **Scale.** Grouping reads the network's rows with real facts in one query and groups them in
 the read model, paged by host, so a /64 with thousands of temporary addresses reads as tens of

@@ -2,12 +2,11 @@ import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vites
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  regenerateConfigs: vi.fn(),
-  regenerateDnsmasqConf: vi.fn(),
-  restartDnsmasq: vi.fn(),
-}));
+// The backend apply is stubbed: these tests are about the routes, and the
+// real one would try to restart a daemon on the test box.
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal()),
+);
 vi.mock('../../../src/utils/encrypted-forwarder.js', () => ({
   applyEncryptedForwarder: vi.fn(),
   getEncryptedForwarderStatus: vi.fn(() => ({ mode: 'off', running: false, recentErrors: 0 })),

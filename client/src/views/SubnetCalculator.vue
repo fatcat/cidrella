@@ -26,10 +26,10 @@
         </div>
         <div>
           <span class="lbl">Total IPs:</span>
-          {{ formatCount(parent.totalAddresses ?? parent.size) }}
+          {{ formatAddressCount(parent.size_text) }}
         </div>
         <div>
-          <span class="lbl">Usable:</span> {{ formatCount(parent.usableCount ?? parent.usable) }}
+          <span class="lbl">Usable:</span> {{ formatAddressCount(parent.usable_text) }}
         </div>
         <div>
           <span class="lbl">Range:</span> {{ parent.firstUsable }} – {{ parent.lastUsable }}
@@ -41,7 +41,7 @@
          browser whole. -->
     <div class="results" v-if="totalCount">
       <h3>
-        {{ formatCount(totalCount) }} Network{{ totalCount > 1 ? 's' : '' }} (each /{{
+        {{ formatAddressCount(totalCount) }} Network{{ totalCount > 1 ? 's' : '' }} (each /{{
           resultPrefix
         }}), {{ firstChild }} to {{ lastChild }}
       </h3>
@@ -74,7 +74,7 @@
         <Column field="lastUsable" header="Last Usable" />
         <Column v-if="parentFamily !== 6" field="broadcast" header="Broadcast" />
         <Column header="Usable IPs">
-          <template #body="{ data }">{{ formatCount(data.usableCount ?? data.usable) }}</template>
+          <template #body="{ data }">{{ formatAddressCount(data.usable_text) }}</template>
         </Column>
       </DataTable>
       <ContextMenu ref="contextMenuRef" :model="contextMenuItems" />
@@ -97,6 +97,7 @@ import { useSubnetStore } from '../stores/subnets.js';
 import { apiError } from '../utils/format.js';
 import { loadJson, saveJson } from '../utils/storage.js';
 import { maxPrefixFor, cidrFamily } from '../utils/ip.js';
+import { formatAddressCount } from './networks-workspace-data.js';
 
 const STORAGE_KEY = 'cidrella-subnet-calc';
 const store = useSubnetStore();
@@ -126,14 +127,6 @@ const maxPrefix = computed(() => maxPrefixFor(cidr.value));
 const parentFamily = computed(() =>
   parent.value ? cidrFamily(`${parent.value.network}/${parent.value.prefix}`) : null,
 );
-
-// Counts arrive as numbers, as strings above 2^53, or null for a prefix too
-// large to count; each reads sensibly.
-function formatCount(value) {
-  if (value === null || value === undefined) return 'more than 2^53';
-  const n = typeof value === 'string' ? Number(value) : value;
-  return Number.isSafeInteger(n) ? n.toLocaleString() : String(value);
-}
 
 async function loadPage(page) {
   const result = await store.calculateSubnets(resultCidr, resultPrefix.value, {

@@ -37,7 +37,12 @@ import { isLocalAddress } from '../utils/local-addresses.js';
 import { recordAudit, sample } from './audit.js';
 import { queueRegen } from '../utils/after-commit.js';
 
-export const OFFLINE_RETIREMENT_MS = 60 * 60 * 1000;
+// How long a dynamic, rogue or expired SLAAC address stays offline before its
+// learned details (hostname, MAC, DNS record) are retired. A day, so a host
+// that sleeps overnight or for hours between uses keeps them; at one hour a
+// laptop that slept past its lease was forgotten at every wake
+// (RETIRE-SLEEP-01).
+export const OFFLINE_RETIREMENT_MS = 24 * 60 * 60 * 1000;
 
 let lastRetirementDiagnostics = null;
 

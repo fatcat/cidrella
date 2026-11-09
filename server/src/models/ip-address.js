@@ -458,7 +458,7 @@ export function markOffline(db, subnetId, ip, { source = null } = {}) {
  * the short staleness window and the much longer scan interval. Coverage is
  * decided by the same predicate the scheduler uses, see utils/scan-coverage.js.
  *
- * Every stale row is retained until its one-hour retirement boundary. This
+ * Every stale row is retained until its offline retirement boundary. This
  * function owns only the online-to-offline edge.
  */
 export function bulkMarkStale(db, staleMinutes) {

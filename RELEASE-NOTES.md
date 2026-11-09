@@ -45,6 +45,11 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 
 ### Changed
 
+- **A host that goes offline keeps its name, MAC and DNS record for a day, not an hour.** A
+  laptop that slept longer than its lease plus an hour was forgotten at every wake and learned
+  again: its name stopped resolving while it slept, and its history filled with retirements.
+  Dynamic and rogue addresses, and SLAAC addresses past their lifetime, now retire after 24
+  hours offline.
 - **IPv6 networks list only what is known.** Show available is gone there, and the count reads
   "N known addresses". Large IPv6 networks page and count in the database instead of loading
   every address.
@@ -82,14 +87,18 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 - **A second backup, or a restore, started while one runs is refused** with a message instead
   of racing it.
 - **The carve row's network and prefix inputs no longer overflow the divide dialog.**
+- **The subnet calculator gives exact sizes for large IPv6 networks.** A /64 read "more than
+  2^53" addresses; it now reads 2^64, and its usable count is given in full.
 
 ### Upgrading
 
-Upgrades directly from 0.4.17 or later. Two database migrations run on upgrade: 092 replaces
-the per-network address index with one that pages a network's addresses in order, and 093 drops
-`dhcp_scopes.gateway`. That column was never served: a scope hands out its network's gateway, and
-what clients get does not change. The scope API no longer returns `gateway` and refuses a request
-that sets one (400); set the gateway on the network.
+Upgrades directly from 0.4.17 or later. Three database migrations run on upgrade: 092 replaces
+the per-network address index with one that pages a network's addresses in order, 093 drops
+`dhcp_scopes.gateway`, and 094 deletes the retired `offline_metadata_retention_days` setting,
+which nothing has read since addresses began retiring after a fixed hour. The gateway column was
+never served: a scope hands out its network's gateway, and what clients get does not change. The
+scope API no longer returns `gateway` and refuses a request that sets one (400); set the gateway
+on the network.
 
 The update installs and starts `cidrella-dns-proxy.service`. The first update to 0.6.3 has the
 same short DNS gap as any update before it; later updates leave the proxy running unless its

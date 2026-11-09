@@ -8,16 +8,11 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { cleanupTestDb, enableIpv6, setupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
-vi.mock('../../../src/utils/dnsmasq.js', async (importOriginal) => {
-  const original = await importOriginal();
-  return {
-    ...original,
-    regenerateConfigs: vi.fn(),
-    regenerateDnsmasqConf: vi.fn(),
-    restartDnsmasq: vi.fn(),
-    signalDnsmasq: vi.fn(),
-  };
-});
+// The backend apply is stubbed: these tests are about the routes, and the
+// real one would try to restart a daemon on the test box.
+vi.mock('../../../src/services/backend-apply.js', async (importOriginal) =>
+  (await import('../../helpers/fake-backends.js')).stubBackendApply(await importOriginal()),
+);
 
 const { default: dnsRouter } = await import('../../../src/routes/dns.js');
 const { default: request } = await import('supertest');
