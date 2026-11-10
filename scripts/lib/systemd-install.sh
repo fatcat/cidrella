@@ -7,6 +7,7 @@
 #   - install_logrotate_configs <dir>:     every file in <dir> into
 #                                          /etc/logrotate.d
 #   - ensure_service_user <name>:          a system account for a unit
+#   - install_polkit_rule <src> [dir]:     a polkit rule, swapped in whole
 #
 # Depends on log.sh. Caller must source log.sh first.
 
@@ -74,4 +75,33 @@ ensure_service_user() {
   fi
   useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$name" || return 1
   printf 'created\n'
+}
+
+# install_polkit_rule <src> [rules_dir]
+#   Installs the polkit rule <src> as <rules_dir>/<its name> (rules_dir is
+#   /etc/polkit-1/rules.d unless given), mode 0644, root's when run as root.
+#   polkitd watches the directory and reloads on the first change, so a rule
+#   written in place is read half-written: "Error loading script", and for a
+#   moment the rule grants nothing. The new copy goes to a dotfile polkitd
+#   ignores (it loads *.rules only) beside the target, then a rename swaps it
+#   in whole. Nothing is written when the installed rule already matches.
+#   Echoes "changed" when it wrote one; returns 1 on failure.
+install_polkit_rule() {
+  local src="${1:?source rule path required}"
+  local dir="${2:-/etc/polkit-1/rules.d}"
+  local dst="$dir/$(basename "$src")"
+  local tmp="$dir/.$(basename "$src").new"
+  local owner=()
+  [ -f "$src" ] || return 1
+  if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+    return 0
+  fi
+  [ "$(id -u)" = 0 ] && owner=(-o root -g root)
+  mkdir -p "$dir" || return 1
+  if install -m 0644 "${owner[@]}" "$src" "$tmp" && mv -f "$tmp" "$dst"; then
+    printf 'changed\n'
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
 }

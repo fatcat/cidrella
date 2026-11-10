@@ -1399,11 +1399,12 @@ if [ -f "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" ]; then
   fi
 
   # Install / refresh the rule file. A mismatched rule file is a common
-  # drift mode (e.g. admin edited it), so always refresh from the shipped copy.
-  mkdir -p /etc/polkit-1/rules.d
-  install -m 0644 -o root -g root \
-    "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" \
-    /etc/polkit-1/rules.d/49-cidrella.rules
+  # drift mode (e.g. admin edited it), so always refresh from the shipped copy,
+  # swapped in whole so polkitd never reads it half-written.
+  if ! install_polkit_rule "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" >/dev/null; then
+    err "Could not install the polkit rule at /etc/polkit-1/rules.d/49-cidrella.rules."
+    exit 1
+  fi
   ok "polkit rule installed at /etc/polkit-1/rules.d/49-cidrella.rules"
 
   # Ensure the daemon is active. Polkit's unit name has drifted across

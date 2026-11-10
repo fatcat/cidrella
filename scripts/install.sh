@@ -827,10 +827,11 @@ install_logrotate_configs "$INSTALL_DIR/scripts/logrotate"
 # cidrella-update@*.service instances and reload/restart cidrella-dnsmasq
 # via D-Bus, replacing the sudo+setuid path that was broken by the v0.4.8
 # NoNewPrivileges-implied hardening on cidrella.service.
-mkdir -p /etc/polkit-1/rules.d
-install -m 0644 -o root -g root \
-  "$INSTALL_DIR/scripts/polkit/49-cidrella.rules" \
-  /etc/polkit-1/rules.d/49-cidrella.rules
+# Swapped in whole, so polkitd never reads it half-written (lib/systemd-install.sh).
+if ! install_polkit_rule "$INSTALL_DIR/scripts/polkit/49-cidrella.rules" >/dev/null; then
+  err "Could not install the polkit rule at /etc/polkit-1/rules.d/49-cidrella.rules."
+  exit 1
+fi
 ok "Installed polkit rule (/etc/polkit-1/rules.d/49-cidrella.rules)"
 # Polkit picks up new rules on the next D-Bus call to logind/systemd1.
 # Modern polkitd uses inotify on the rules.d directory; older versions need

@@ -201,8 +201,11 @@ per-role log viewer, the mixed mode removed, and pre-release-only versions kept 
   `deploy-lxc.sh`, then `install_kea`, `install_pdns`, `install_radvd` and the polkit rule by
   hand, since `deploy-lxc.sh` installs none of them), four switches each way, 1.3 to 2.7 s
   each with about a second of DNS unanswered, all 19 leases carried every time, and the
-  PowerDNS + Kea stack kept across a CIDRella restart and a reboot. Not yet run: the scenario
-  itself, which installs a candidate release with `install.sh`.
+  PowerDNS + Kea stack kept across a CIDRella restart and a reboot. The scenario itself ran
+  from 0.6.3-pre.9 on 2026-11-10 (installed with `install.sh`, daemon control through the
+  privileged helper): 29 of 29 passed in 48 s. It turned up POLKIT-WRITE-01, a rule reload
+  that read the file half-written, fixed the same day (`install_polkit_rule` in
+  `scripts/lib/systemd-install.sh`).
 - **Verify on hardware** (testerella, both directions, v4 and v6 clients): Renew and Rebind
   across a switch; that dnsmasq loads a handed-over lease file on the restart that makes it
   serve; how long a lease handed out between Kea's SIGHUP and the final lease read could be

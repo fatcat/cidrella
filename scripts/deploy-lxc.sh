@@ -309,11 +309,13 @@ fi
 
 # The privileged helper's account, and the polkit rule that grants it daemon
 # control (update.sh does both on a tarball update).
+# The shared helpers, from the copy just synced: the rule is swapped in whole,
+# so polkitd never reads it half-written.
 ssh "$SSH_TARGET" "
-  id cidrella-helper >/dev/null 2>&1 ||
-    useradd --system --user-group --no-create-home --shell /usr/sbin/nologin cidrella-helper
+  . ${INSTALL_DIR}/scripts/lib/systemd-install.sh
+  ensure_service_user cidrella-helper >/dev/null
   if [ -d /etc/polkit-1/rules.d ] && [ -f ${INSTALL_DIR}/scripts/polkit/49-cidrella.rules ]; then
-    install -m 0644 -o root -g root ${INSTALL_DIR}/scripts/polkit/49-cidrella.rules /etc/polkit-1/rules.d/49-cidrella.rules
+    install_polkit_rule ${INSTALL_DIR}/scripts/polkit/49-cidrella.rules >/dev/null
   fi
 "
 

@@ -208,7 +208,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   match, `run.js`, `protocol.js`; leaf imports only, which
   `tests/unit/helper/closure-guard.test.js` enforces) and `utils/helper-client.js` (its socket
   client, used by `privileged.js` alone), `createLog` in `ipc/log.js` (a process's log lines),
-  `ensure_service_user` in `scripts/lib/systemd-install.sh` (a system account for a unit), `runDbTask` in
+  `ensure_service_user` in `scripts/lib/systemd-install.sh` (a system account for a unit;
+  `install_polkit_rule` beside it swaps a polkit rule in whole, since polkit reloads on the first
+  write), `runDbTask` in
   `utils/db-worker/index.js` (slow SQL in a worker thread with its own connection; a task is a
   function in `db-worker/tasks.js`), `recountBlocklistDomains` and `storedBlocklistDomainCount`
   in `utils/blocklist.js` (the enabled-domain count, recounted in the worker and stored; the

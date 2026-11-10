@@ -113,6 +113,10 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 - **dnsmasq no longer logs "chmod: ... Operation not permitted" every time it starts.** Its unit
   set the log file's mode without the right to change a file another account owns; that step now
   runs with full privileges, so a log file that was readable by everyone is made 0640 again.
+- **Installing or updating no longer leaves the polkit rule unloaded for a moment.** polkit
+  reloads as soon as the rule file changes, and read it while the install or update was still
+  writing it ("Error loading script"), so a daemon start or reload asked for right then was
+  refused. The new rule is now swapped in whole, and an unchanged rule is not rewritten.
 
 ### Upgrading
 
