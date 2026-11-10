@@ -15,6 +15,7 @@ import {
   sortKey,
 } from '../utils/ip.js';
 import { leaseSeconds } from '@shared/lease-time.js';
+import { formatDateTime } from '../utils/dateFormat.js';
 import { allocationSourceLabel, recordSourceLabel } from '../utils/ipTableDisplay.js';
 import { zoneFileName, zoneFileValue } from '../utils/dnsZoneFile.js';
 
@@ -45,6 +46,8 @@ export function formatDuration(seconds) {
   return `${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
+// How long ago `value` was ("5 min ago"), for a time in the past: one ahead
+// reads "Just now". A time ahead, as a lease expiry, takes formatDateTime.
 export function formatTimestamp(value) {
   if (!value) return EMPTY_CELL;
   const timestamp = Date.parse(value);
@@ -315,7 +318,9 @@ function ipRowFields(row, { dns = row.dns_record || null, dhcp = row.dhcp || nul
     // The lease dnsmasq holds: Active, Expired, or nothing. Whether the
     // address is free for DHCP is the status column's job.
     lease: LEASE_LABEL[row.dhcp_lease_state] || null,
-    expires: displayExpiry(row.dhcp_expires_at, formatTimestamp, {
+    // When the lease ends, as a date and time: an expiry is usually ahead, and
+    // formatTimestamp counts back from now ("Just now" for anything ahead).
+    expires: displayExpiry(row.dhcp_expires_at, formatDateTime, {
       reserved: dhcp?.dhcp_assignment_type === 'reserved' || flag(row.has_dhcp_reservation),
     }),
     online: onlineValue(row, { unknownWhenUnaddressed: true }),

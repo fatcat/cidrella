@@ -107,6 +107,9 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
   on disk until some later change reloaded it: a removed reservation kept being served. The
   daemon is now marked for a restart, which happens when the helper answers again, or at the
   next boot.
+- **A lease's Expires column shows when it expires.** The Addresses, DNS and DHCP tables showed
+  "Just now" for every active lease, because an expiry is in the future and the column counted
+  back from it. It now shows the date and time the lease ends, as the classic tables do.
 
 ### Upgrading
 

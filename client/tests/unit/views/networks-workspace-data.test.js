@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
+import { formatDateTime } from '../../../src/utils/dateFormat.js';
 import { EMPTY_CELL } from '../../../src/utils/format.js';
 import {
   buildExplorerFolders,
@@ -42,6 +44,28 @@ describe('networks workspace data adapter', () => {
     expect(row.type).toBe('static DNS');
     expect(row.online).toBe('offline');
     expect(row.scanning).toBe('Off · inherited');
+  });
+
+  it('shows when a lease ends, not how long ago, on the Addresses and DHCP tables', () => {
+    setActivePinia(createPinia());
+    // Just handed out: an hour to run.
+    const ends = new Date(Date.now() + 3_600_000).toISOString();
+    const lease = { dhcp_lease_state: 'active', dhcp_assignment_type: 'dynamic' };
+    const rows = [
+      ...mapAddressRows([
+        { id: 1, ip_address: '10.0.0.40', dhcp_expires_at: ends, ...lease },
+        { id: 2, ip_address: 'fd00:40::40', dhcp_expires_at: ends, ...lease },
+      ]),
+      // The server sends a dynamic lease's expiry in both fields (routes/dhcp.js).
+      ...mapDhcpRows([
+        { id: 3, ip_address: '10.0.0.41', expires_at: ends, dhcp_expires_at: ends, ...lease },
+        { id: 4, ip_address: 'fd00:40::41', expires_at: ends, dhcp_expires_at: ends, ...lease },
+      ]),
+    ];
+    for (const row of rows) {
+      expect(row.expires).toBe(formatDateTime(ends));
+      expect(row.expires).not.toMatch(/just now|ago/i);
+    }
   });
 
   it('uses explicit DHCP assignment and lease fields', () => {
