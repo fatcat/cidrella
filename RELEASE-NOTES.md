@@ -110,6 +110,9 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 - **A lease's Expires column shows when it expires.** The Addresses, DNS and DHCP tables showed
   "Just now" for every active lease, because an expiry is in the future and the column counted
   back from it. It now shows the date and time the lease ends, as the classic tables do.
+- **dnsmasq no longer logs "chmod: ... Operation not permitted" every time it starts.** Its unit
+  set the log file's mode without the right to change a file another account owns; that step now
+  runs with full privileges, so a log file that was readable by everyone is made 0640 again.
 
 ### Upgrading
 

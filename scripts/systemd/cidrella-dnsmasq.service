@@ -13,7 +13,10 @@ Type=simple
 ExecStartPre=-/usr/bin/pkill -x dnsmasq
 ExecStartPre=/usr/bin/touch /var/lib/cidrella/dnsmasq/dnsmasq.log
 ExecStartPre=/usr/bin/chgrp cidrella /var/lib/cidrella/dnsmasq/dnsmasq.log
-ExecStartPre=-/bin/chmod 0640 /var/lib/cidrella/dnsmasq/dnsmasq.log
+# + runs it outside the capability set below: the file is nobody's (dnsmasq
+# writes it), and without CAP_FOWNER root may chgrp it (CAP_CHOWN) but not
+# chmod it, which failed on every start.
+ExecStartPre=-+/bin/chmod 0640 /var/lib/cidrella/dnsmasq/dnsmasq.log
 ExecStart=/usr/sbin/dnsmasq --keep-in-foreground --conf-file=/var/lib/cidrella/dnsmasq/dnsmasq.conf
 # ExecReload added in v0.4.11 so the cidrella server can reload dnsmasq via
 # `systemctl reload cidrella-dnsmasq` (gated by polkit) instead of going
