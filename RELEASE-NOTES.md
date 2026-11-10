@@ -6,7 +6,7 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
-## v0.6.3 — 2026-10-29
+## v0.6.3 — 2026-11-11
 
 ```yaml
 min_from: "0.4.17"
@@ -120,9 +120,10 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 
 ### Upgrading
 
-Upgrades directly from 0.4.17 or later. Three database migrations run on upgrade: 092 replaces
-the per-network address index with one that pages a network's addresses in order, 093 drops
-`dhcp_scopes.gateway`, and 094 deletes the retired `offline_metadata_retention_days` setting,
+Upgrades directly from 0.4.17 or later. 0.6.2 shipped only as pre-releases, so an update from
+0.6.1 also runs its migrations, 090 and 091 (see v0.6.2 below). Three more run on every
+upgrade: 092 replaces the per-network address index with one that pages a network's addresses
+in order, 093 drops `dhcp_scopes.gateway`, and 094 deletes the retired `offline_metadata_retention_days` setting,
 which nothing has read since addresses began retiring after a fixed hour. The gateway column was
 never served: a scope hands out its network's gateway, and what clients get does not change. The
 scope API no longer returns `gateway` and refuses a request that sets one (400); set the gateway
@@ -130,13 +131,14 @@ on the network.
 
 The update installs and starts `cidrella-dns-proxy.service`. The first update to 0.6.3 has the
 same short DNS gap as any update before it; later updates leave the proxy running unless its
-code changed. Rolling back to 0.6.2 with `cidrella-rollback` works: the new proxy exits within a
-second of the 0.6.2 code being in place, and 0.6.2 runs its proxy itself.
+code changed. Rolling back to 0.6.1 or 0.6.2 with `cidrella-rollback` works: the new proxy exits
+within a second of the old code being in place, and the old release runs its proxy itself.
 
 The update also creates the `cidrella-helper` account, installs a new polkit rule granting it
 daemon control, and installs and starts `cidrella-helper.service` before the web app. A rollback
-to 0.6.2 works the same way: the helper exits once its code is gone, and 0.6.2 runs its probes
-and daemon control itself with the rights `cidrella.service` and the polkit rule still give it.
+to 0.6.1 or 0.6.2 works the same way: the helper exits once its code is gone, and the old
+release runs its probes and daemon control itself with the rights `cidrella.service` and the
+polkit rule still give it.
 The next release removes those rights from the web app and requires 0.6.3 or later to upgrade.
 
 Docker: the image adds a `cidrella-helper` user (UID and GID 65531). Only it may run `arping`

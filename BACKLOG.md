@@ -96,9 +96,14 @@ process turned up three pieces of work, in this order.
    forwarder, the web app is the outside watchdog, and an update restarts the proxy only when
    its code changed. docs/ARCHITECTURE.md, DNS proxy process and Proxy bypass, has the design.
    Left out on purpose: an `EADDRINUSE` retry on bind (`dns-proxy-bind-retry.test.js` keeps it
-   final, from DNS-PROXY-BIND-01; the watchdog's restarts cover a busy port). Still to verify
-   on testerella: the first-split update from 0.6.2, an update with unchanged proxy code (no
-   DNS gap), auto-rollback, and `cidrella-rollback` to 0.6.2 with its old script. What the
+   final, from DNS-PROXY-BIND-01; the watchdog's restarts cover a busy port). Verified: the
+   first-split update from 0.6.2-pre.2 and `cidrella-rollback` back to it (testerella,
+   2026-11-06); an update with unchanged proxy code, no failed query (prod, pre.2 to pre.3);
+   and the field path, the harness `upgrade-path` from v0.6.1 to 0.6.3-pre.10, 14 of 14, then
+   0.6.1's own `cidrella-rollback` (testerella, 2026-11-10): 6 queries at 0.2 s failed over
+   about 1.2 s while port 53 moved back, the proxy and helper exited 64, 0.6.1 came up on
+   schema 89 with `cap_net_raw` and its polkit grants, and anomaly detection stayed stopped
+   (0.6.1's tool predates ROLLBACK-ANOMALY-01). Not run: an update's own auto-rollback. What the
    shared process cost before:
    - One event loop: any slow handler delays every DNS answer.
    - Port 53 belongs to the proxy, and the backend sits on an internal port behind it, so every
