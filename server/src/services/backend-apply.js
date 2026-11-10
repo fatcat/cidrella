@@ -12,6 +12,7 @@ import fs from 'fs';
 import { syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { BACKEND_RESTART_MARKER } from '../config/defaults.js';
 import { isPreflightBoot } from '../utils/preflight.js';
+import { switchInProgress } from '../utils/switch-state.js';
 
 // Each apply resolves once the backend has taken the change (the restart or
 // reload done); the after-commit runner waits for it.
@@ -121,6 +122,32 @@ export async function applyAtBoot(db, { preflight = isPreflightBoot() } = {}) {
     }
   }
   if (afterRestore) fs.rmSync(BACKEND_RESTART_MARKER, { force: true });
+  return outcomes;
+}
+
+/**
+ * Restart each backend service of the serving stack whose last restart or
+ * reload failed (its restart-pending marker), as boot would. Run when the
+ * privileged helper answers again: a change made while it was away is on
+ * disk but not loaded. A service without the marker is left alone, and a
+ * stack switch under way is left to finish its own starts. Returns what
+ * happened to each service it restarted, by name.
+ */
+export async function activatePendingBackends() {
+  if (switchInProgress()) return {};
+  const outcomes = {};
+  for (const service of uniqueServices()) {
+    try {
+      if (!(await service.status()).restartPending) continue;
+      outcomes[service.name] = await service.activate();
+      if (outcomes[service.name] === 'restarted') {
+        console.log(`${service.name} restarted to load a change its last reload or restart missed`);
+      }
+    } catch (err) {
+      console.warn(`${service.name} pending restart failed:`, err.message);
+      outcomes[service.name] = 'failed';
+    }
+  }
   return outcomes;
 }
 

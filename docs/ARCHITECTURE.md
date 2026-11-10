@@ -535,10 +535,14 @@ that for it: `server/src/helper/main.js`, run as `cidrella-helper.service`
   connects: the helper serves one web app at a time.
 - **When it is down.** A scan fails ("the privileged helper is not
   answering") rather than recording every address as unanswered, which would
-  mark a network offline and retire its hosts a day later. A daemon change
-  fails as a denied `systemctl` does (the restart-pending marker, the unit
-  events). `/api/health/deep` fails its ping check, which an update's health
-  check rolls back on.
+  mark a network offline and retire its hosts a day later. A daemon restart or
+  reload that reaches the daemon neither through the helper nor by signal
+  leaves the restart-pending marker (`backends/shared/unit-control.js`), and
+  the helper's next hello restarts each service of the serving stack that
+  carries it (`activatePendingBackends` in `services/backend-apply.js`, through
+  `onHelperHello`), as boot would; the change is on disk, only not loaded.
+  `/api/health/deep` fails its ping check, which an update's health check
+  rolls back on.
 - **Rollback, and the rights left behind.** `rollback.sh` reinstalls neither
   units nor polkit rules, so `cidrella.service` keeps `CAP_NET_RAW` and the
   polkit rule keeps the `cidrella` account's old grants for one release, unused,

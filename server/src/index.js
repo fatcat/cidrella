@@ -86,7 +86,7 @@ import { startSystemAudit, systemAuditBooted } from './services/system-audit.js'
 import { recordAudit } from './services/audit.js';
 import { recordVersionChange } from './services/version-audit.js';
 import { APP_VERSION } from './utils/version.js';
-import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
+import { activatePendingBackends, applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
@@ -268,6 +268,14 @@ async function main() {
   // LAN port and keep the proxy out; the proxy is always tried first.
   clearBypassAtBoot(getDb());
   await applyAtBoot(getDb());
+  // A reload or restart that failed while the helper was away (an update
+  // restarting it, a crash) is done once it answers again. Once now as well,
+  // not awaited: the helper may have come back during the boot apply, before
+  // this could listen.
+  if (Privileged.usesHelper() && !isPreflightBoot()) {
+    Privileged.onHelperHello(() => void activatePendingBackends());
+    void activatePendingBackends();
+  }
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,

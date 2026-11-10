@@ -22,8 +22,9 @@ vi.mock('../../../src/models/dhcp-lease.js', async (importOriginal) => ({
 }));
 
 const { createFakeBackend } = await import('../../helpers/fake-backends.js');
-const { applyAtBoot, applyDhcp, HOOK_HANDLERS } =
+const { activatePendingBackends, applyAtBoot, applyDhcp, HOOK_HANDLERS } =
   await import('../../../src/services/backend-apply.js');
+const { setSwitchInProgress } = await import('../../../src/utils/switch-state.js');
 
 let db;
 let tmpDir;
@@ -115,6 +116,50 @@ describe('applyAtBoot', () => {
     } finally {
       vi.unstubAllEnvs();
     }
+  });
+});
+
+describe('activatePendingBackends', () => {
+  // A service whose last reload or restart failed, or not.
+  const service = (name, restartPending) => {
+    const backend = createFakeBackend({ name });
+    backend.status = async () => ({ name, label: name, running: true, restartPending });
+    backend.activate = vi.fn(async () => (restartPending ? 'restarted' : 'unchanged'));
+    return backend;
+  };
+  const quiet = () => {
+    vi.spyOn(console, 'log').mockImplementation(() => {});
+    vi.spyOn(console, 'warn').mockImplementation(() => {});
+  };
+
+  it('restarts only the services with a change they missed', async () => {
+    quiet();
+    fake.current = service('pdns', false);
+    fake.dhcpService = service('kea', true);
+    expect(await activatePendingBackends()).toEqual({ kea: 'restarted' });
+    expect(fake.current.activate).not.toHaveBeenCalled();
+    expect(fake.dhcpService.activate).toHaveBeenCalledTimes(1);
+    vi.restoreAllMocks();
+  });
+
+  it('leaves a stack switch under way to its own starts', async () => {
+    fake.current = service('dnsmasq', true);
+    setSwitchInProgress(true);
+    try {
+      expect(await activatePendingBackends()).toEqual({});
+    } finally {
+      setSwitchInProgress(false);
+    }
+    expect(fake.current.activate).not.toHaveBeenCalled();
+  });
+
+  it('reports a service it could not restart, and still tries the next', async () => {
+    quiet();
+    fake.current = service('pdns', true);
+    fake.current.activate.mockRejectedValue(new Error('the privileged helper is not answering'));
+    fake.dhcpService = service('kea', true);
+    expect(await activatePendingBackends()).toEqual({ pdns: 'failed', kea: 'restarted' });
+    vi.restoreAllMocks();
   });
 });
 

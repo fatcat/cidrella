@@ -131,6 +131,20 @@ describe('with the helper', () => {
     expect(Privileged.probeCapabilities()).toMatchObject({ source: 'helper', fileCaps: true });
   });
 
+  it('tells its listeners on every hello, until one is removed', () => {
+    helperConnected.mockReturnValue(true);
+    helperPeer.mockReturnValue({ fileCaps: true });
+    Privileged.startPrivileged();
+    const { onHello } = startHelperClient.mock.calls[0][0];
+    const heard = [];
+    const off = Privileged.onHelperHello(() => heard.push('a'));
+    Privileged.onHelperHello(() => heard.push('b'));
+    onHello();
+    off();
+    onHello();
+    expect(heard).toEqual(['a', 'b', 'b']);
+  });
+
   it("connects at boot, but never from update.sh's preflight probe", () => {
     Privileged.startPrivileged();
     expect(startHelperClient).toHaveBeenCalledWith(expect.objectContaining({ socketPath: SOCKET }));

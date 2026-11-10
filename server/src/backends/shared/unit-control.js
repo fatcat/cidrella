@@ -5,9 +5,10 @@
  * reads (installed, running) need no right. Docker has no systemctl: s6
  * supervises the daemon, so a signal by process name does the same job.
  *
- * A restart that fails both ways leaves a marker, so the next boot restarts
- * even when change detection sees nothing new: the files on disk may be
- * ahead of what the running daemon loaded.
+ * A restart or reload that fails both ways leaves a marker, so the next boot
+ * (and the helper's next hello) restarts even when change detection sees
+ * nothing new: the files on disk may be ahead of what the running daemon
+ * loaded.
  */
 import fs from 'fs';
 import path from 'path';
@@ -132,7 +133,13 @@ export function createUnitControl({
         await run('pkill', ['-HUP', '-x', processName]);
       }
     } catch {
+      // The files on disk are ahead of what the daemon loaded. A restart
+      // loads them too: the next boot does it, and so does the helper's next
+      // hello when the helper was why (services/backend-apply.js
+      // activatePendingBackends). A later reload that works leaves the marker:
+      // what failed before may have been a restart a reload cannot stand in for.
       console.warn(`Could not send SIGHUP to ${processName} (may not be running)`);
+      setRestartPending(true);
     }
   }
 

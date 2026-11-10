@@ -102,6 +102,11 @@ hosts grouped into devices, next-free suggestions and prefix planning for both f
 - **A probe that cannot run says why.** Probing one or more addresses answered an empty result
   (or "Probe completed but no result recorded") when its scan failed, and left the failed scan in
   the network's scan history. It now answers with the reason and leaves no scan behind.
+- **A DNS or DHCP change made while a daemon could not be reloaded is loaded later.** When the
+  reload reached the daemon neither through the privileged helper nor by signal, the change sat
+  on disk until some later change reloaded it: a removed reservation kept being served. The
+  daemon is now marked for a restart, which happens when the helper answers again, or at the
+  next boot.
 
 ### Upgrading
 

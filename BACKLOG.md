@@ -147,9 +147,20 @@ process turned up three pieces of work, in this order.
    fails a probe with its message and fails deep health, and both recover when it restarts. The
    first deploy found the unit could not start (`ReadWritePaths` named a directory its own
    ExecStartPre creates) and a probe that answered an empty result when its scan failed; both are
-   fixed. Still to verify, with pre.8: a reservation change reloading dnsmasq on the dnsmasq
-   stack, the in-app update starting, and auto-rollback to pre.7 keeping scans and daemon control
-   working on the old web app's own rights.
+   fixed in 8102e83.
+
+   Verified with the published pre.8 (2026-11-09): the harness `upgrade-path` scenario from a
+   pinned pre.7 install passed 14 of 14, and that update created `cidrella-helper`, its polkit
+   grants and its unit, and started it before the web app. `cidrella-rollback` (pre.7's own
+   script) went back to pre.7; the helper exited 64 and stayed down, and pre.7 probed (arping
+   with MAC, ping) and reloaded dnsmasq for a new reservation on its own rights. Updating to pre.8
+   again restarted the helper. On pre.8 a new reservation reloads dnsmasq through the helper; with
+   the helper stopped the reload fails with its message. Nothing retried it then (UNIT-RELOAD-01,
+   fixed after: a failed reload marks the restart pending, and the helper's next hello restarts
+   the service). `cidrella-helper` can start the update worker (`Already up to date` for the
+   running version) but is refused a restart of `ssh`, and `nobody` is refused the update worker.
+   Not exercised: an
+   update's own auto-rollback; the end state matches the manual rollback above.
 
    **Stage B, a later release with `min_from` at or above the one that ships stage A.**
    `rollback.sh` reinstalls neither units nor polkit rules, so stage A left the web process its

@@ -100,6 +100,18 @@ export function probeCapabilities() {
   return { source: 'helper', fileCaps: !!peer?.fileCaps, ...(peer?.capabilities ?? {}) };
 }
 
+const helloListeners = new Set();
+
+/**
+ * Run `listener` on every hello from the helper from now on: it answers
+ * again (a restart, an update that changed its code), so work it could not
+ * do while away can be done. Returns a function that removes it.
+ */
+export function onHelperHello(listener) {
+  helloListeners.add(listener);
+  return () => helloListeners.delete(listener);
+}
+
 /**
  * Connect to the helper, when there is one. Logs a capability warning on its
  * hello. Never from update.sh's preflight probe: the helper serves one web
@@ -117,6 +129,7 @@ export function startPrivileged() {
           `[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`,
         );
       }
+      for (const listener of helloListeners) listener();
     },
   });
 }

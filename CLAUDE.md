@@ -202,7 +202,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   (every arping, ping, `systemctl` start/stop/restart/reload, update start and `set-ntp`: the
   privileged helper runs it where `CIDRELLA_HELPER_SOCKET` is set, the web app itself where not;
   resolves `{ok, code, stdout, stderr}`, `helperDown` when the helper is away; never run these
-  through `runCommand`), the privileged helper process in `helper/` (`main.js` the entry,
+  through `runCommand`; `onHelperHello` for work to redo once the helper answers again, as
+  `activatePendingBackends` in `services/backend-apply.js` restarts what a failed reload missed), the privileged helper process in `helper/` (`main.js` the entry,
   `commands.js` the closed list of operations and `MANAGED_UNITS`, which the polkit rule must
   match, `run.js`, `protocol.js`; leaf imports only, which
   `tests/unit/helper/closure-guard.test.js` enforces) and `utils/helper-client.js` (its socket

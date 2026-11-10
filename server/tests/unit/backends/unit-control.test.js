@@ -325,4 +325,35 @@ describe('createUnitControl with the privileged helper', () => {
     warn.mockRestore();
     expect(unit.restartPending()).toBe(true);
   });
+
+  it('marks a restart pending when a reload reaches the daemon neither way', async () => {
+    vi.stubEnv('CIDRELLA_HELPER_SOCKET', '/run/cidrella-helper/helper.sock');
+    helperRun.mockReset().mockResolvedValue(null);
+    // The web app's account cannot signal a daemon that runs as another.
+    execFileSync.mockImplementation((cmd) => {
+      if (cmd === 'pkill') throw notRunning;
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unit = control();
+    await unit.reload();
+    expect(unit.restartPending()).toBe(true);
+
+    // A reload that works later leaves it: what failed may have been a restart.
+    helperRun.mockResolvedValue({ ok: true, code: 0, stdout: '', stderr: '' });
+    await unit.reload();
+    warn.mockRestore();
+    expect(unit.restartPending()).toBe(true);
+  });
+
+  it('leaves nothing pending when the signal delivers the reload (s6)', async () => {
+    host({ running: true });
+    const unit = control();
+    await unit.reload();
+    expect(execFileSync).toHaveBeenCalledWith(
+      'pkill',
+      ['-HUP', '-x', 'dnsmasq'],
+      expect.any(Object),
+    );
+    expect(unit.restartPending()).toBe(false);
+  });
 });
