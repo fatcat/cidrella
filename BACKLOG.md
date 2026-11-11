@@ -53,6 +53,17 @@ from `ndisc6` would do it, not bundled).
 
 ## Deferred design work
 
+### Controller and members: redundant instances (target 0.7.0)
+
+Design in [docs/REDUNDANCY-PLAN.md](docs/REDUNDANCY-PLAN.md), accepted 2026-11-11, not started.
+Every install is a member; one is also the controller and owns all writes; other members sync a
+read-only copy and keep serving when it is away; promotion is manual. The branch `dev/0.7.0` is
+cut from the released 0.6.4 commit. Rejected and why (all in the doc): scheduled restore,
+whole-table transfer, the SQLite session extension (not compiled into better-sqlite3 13.0.3),
+WAL shipping. Known before starting: `replaceLeases` gives every lease a new id on each sync
+and `syncDhcpDnsRecords` touches unchanged records, both of which would flood a change log;
+`applyDhcp` writes `dns_records`; certificates are never renewed (365 days, `utils/cert.js`).
+
 ### Process isolation and event-loop blocking (target 0.6.3)
 
 Found 2026-10-25, while fixing AUTH-PATH-REDOS-01: a slow request handler stalled DNS, because
