@@ -9,10 +9,21 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 ## v0.6.4 — 2026-11-11
 
 ```yaml
-min_from: "0.4.17"
+min_from: "0.6.3"
 breaking: false
 security: false
 ```
+
+The web app gives up the rights the privileged helper took over in 0.6.3.
+
+### Security
+
+- **The web app can no longer send raw network packets or control daemons.** 0.6.3 moved
+  ARP and ping probes, daemon control, update starts and NTP into the privileged helper, but
+  left the web app its old rights, unused, so a rollback to an earlier release kept working.
+  They are gone now: `cidrella.service` no longer has `CAP_NET_RAW`, and the polkit rule
+  grants the `cidrella` account nothing. The sign-in page and the API run with the right to
+  bind ports under 1024 and no other.
 
 ### Fixed
 
@@ -23,7 +34,9 @@ security: false
 
 ### Upgrading
 
-Upgrades directly from 0.4.17 or later. No database migrations.
+Requires 0.6.3: update to 0.6.3 first from anything older. No database migrations. The update
+replaces `cidrella.service` and the polkit rule; `cidrella-rollback` returns to 0.6.3, which
+uses the helper for all of this. Docker images already ran this way from 0.6.3.
 
 ## v0.6.3 — 2026-11-11
 

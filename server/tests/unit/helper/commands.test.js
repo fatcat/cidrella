@@ -182,15 +182,15 @@ describe('the polkit rule', () => {
     expect(decide('cidrella-helper', 'org.freedesktop.timedate1.set-ntp')).toBe('yes');
   });
 
-  it('keeps the web account its old grants for a rollback, and nothing new', () => {
-    expect(manage('cidrella', 'cidrella-dnsmasq.service', 'reload')).toBe('yes');
-    expect(manage('cidrella', 'cidrella-dns-proxy.service', 'start')).toBe('yes');
-    expect(manage('cidrella', 'cidrella-dns-proxy.service', 'reset-failed')).toBe('not handled');
-    expect(decide('cidrella', 'org.freedesktop.timedate1.set-ntp')).toBe('yes');
-  });
-
-  it('grants no one else anything', () => {
-    expect(manage('nobody', 'cidrella-dnsmasq.service', 'reload')).toBe('not handled');
-    expect(decide('nobody', 'org.freedesktop.timedate1.set-ntp')).toBe('not handled');
+  it('grants no one else anything, the web account included', () => {
+    for (const user of ['cidrella', 'nobody']) {
+      for (const [unit, verbs] of Object.entries(MANAGED_UNITS)) {
+        for (const verb of verbs) {
+          expect(manage(user, unit, verb), `${user}: ${verb} ${unit}`).toBe('not handled');
+        }
+      }
+      expect(manage(user, 'cidrella-update@0.6.4_1.service', 'start')).toBe('not handled');
+      expect(decide(user, 'org.freedesktop.timedate1.set-ntp')).toBe('not handled');
+    }
   });
 });

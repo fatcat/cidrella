@@ -3,13 +3,9 @@
 // (cidrella.service runs with NoNewPrivileges, which sudo cannot get past).
 //
 // The rules are deliberately narrow: only the exact units CIDRella runs,
-// only the verbs it needs, only these accounts.
-//
-//   cidrella-helper  the privileged helper (cidrella-helper.service), which
-//                    runs every one of these for the web app.
-//   cidrella         the web app. It no longer uses these grants; they stay
-//                    for one release so a rollback to a release that ran
-//                    systemctl itself still works, and go in the next one.
+// only the verbs it needs, only one account: cidrella-helper, the privileged
+// helper (cidrella-helper.service), which runs every one of these for the web
+// app. The web app's own account (cidrella) has none of them since 0.6.4.
 
 // Each unit, and the verbs on it. server/src/helper/commands.js holds the
 // same table (MANAGED_UNITS), and a test holds the two together.
@@ -28,11 +24,8 @@ var CIDRELLA_UNITS = {
     "cidrella-dns-proxy.service": ["start", "stop", "restart", "reset-failed"]
 };
 
-// Verbs only the helper has: the web app never had them.
-var HELPER_ONLY_VERBS = ["reset-failed"];
-
 function cidrellaAccount(user) {
-    return user === "cidrella-helper" || user === "cidrella";
+    return user === "cidrella-helper";
 }
 
 polkit.addRule(function(action, subject) {
@@ -56,9 +49,6 @@ polkit.addRule(function(action, subject) {
 
     if (Object.prototype.hasOwnProperty.call(CIDRELLA_UNITS, unit) &&
         CIDRELLA_UNITS[unit].indexOf(verb) !== -1) {
-        if (subject.user === "cidrella" && HELPER_ONLY_VERBS.indexOf(verb) !== -1) {
-            return polkit.Result.NOT_HANDLED;
-        }
         return polkit.Result.YES;
     }
 

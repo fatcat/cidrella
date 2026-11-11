@@ -264,9 +264,9 @@ info "Fixing code permissions..."
 ssh "$SSH_TARGET" "chown -R cidrella:cidrella ${SYNC_DIR} && { [ ! -L ${INSTALL_DIR} ] || chown -h root:root ${INSTALL_DIR}; }"
 ok "Permissions set."
 
-# Native/LXC systemd deployments use cidrella.service AmbientCapabilities.
-# Remove stale Node file caps; file-cap exec clears ambient capabilities and
-# prevents child arping probes from inheriting CAP_NET_RAW.
+# Native/LXC systemd deployments use the units' AmbientCapabilities.
+# Remove stale Node file caps; file-cap exec clears ambient capabilities, so
+# the web app would lose CAP_NET_BIND_SERVICE and the helper CAP_NET_RAW.
 ssh "$SSH_TARGET" "if [ -x ${INSTALL_DIR}/runtime/node/bin/node ]; then setcap -r ${INSTALL_DIR}/runtime/node/bin/node 2>/dev/null || true; fi"
 
 ssh "$SSH_TARGET" "

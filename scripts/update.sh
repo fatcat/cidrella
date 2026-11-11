@@ -1326,10 +1326,12 @@ if [ -f "$TARGET_SLOT/scripts/lib/dnsmasq-perms.sh" ]; then
   ok "Repaired dnsmasq log permissions"
 fi
 
-# Native systemd installs use AmbientCapabilities from cidrella.service.
-# Do NOT set file capabilities on Node: executing a file-capability binary
-# clears the ambient set, so child arping probes do not inherit CAP_NET_RAW.
-# Remove stale caps from target-slot binaries that older releases set.
+# Native systemd installs use AmbientCapabilities from the units
+# (cidrella.service: CAP_NET_BIND_SERVICE; cidrella-helper.service:
+# CAP_NET_RAW). Do NOT set file capabilities on Node: executing a
+# file-capability binary clears the ambient set, so the process and its
+# children lose what the unit gave them. Remove stale caps from target-slot
+# binaries that older releases set.
 TARGET_NODE_BIN="$TARGET_SLOT/runtime/node/bin/node"
 if [ -x "$TARGET_NODE_BIN" ]; then
   setcap -r "$TARGET_NODE_BIN" 2>/dev/null || true
@@ -1733,8 +1735,10 @@ done
 
 if [ "$VERIFY_OK" = true ]; then
   ok "New version healthy."
+  # The deep health check reports the capabilities of the process that runs
+  # the probes: the privileged helper.
   if grep -q '"cap_net_raw_ambient":false' "$TMPDIR/verify.json" 2>/dev/null; then
-    warn "cidrella.service is running without ambient CAP_NET_RAW; active ARP scans will fail. Check whether this host/container supports AmbientCapabilities."
+    warn "cidrella-helper.service is running without ambient CAP_NET_RAW; active ARP scans will fail. Check whether this host/container supports AmbientCapabilities."
     emit_event health warn reason=ambient-cap-net-raw-missing
   fi
   emit_event health pass "version=$NEW_VERSION"

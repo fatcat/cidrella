@@ -845,10 +845,12 @@ cp "$INSTALL_DIR/scripts/sudoers/cidrella" /etc/sudoers.d/cidrella
 chmod 440 /etc/sudoers.d/cidrella
 ok "Installed sudoers rules."
 
-# Native systemd installs use AmbientCapabilities from cidrella.service.
-# Do NOT set file capabilities on Node: executing a file-capability binary
-# clears the ambient set, so child arping probes do not inherit CAP_NET_RAW.
-# Remove stale caps from older installs/releases that used setcap.
+# Native systemd installs use AmbientCapabilities from the units
+# (cidrella.service: CAP_NET_BIND_SERVICE; cidrella-helper.service:
+# CAP_NET_RAW). Do NOT set file capabilities on Node: executing a
+# file-capability binary clears the ambient set, so the process and its
+# children lose what the unit gave them. Remove stale caps from older
+# installs/releases that used setcap.
 BUNDLED_NODE_BIN="$INSTALL_DIR/runtime/node/bin/node"
 if [ -x "$BUNDLED_NODE_BIN" ]; then
   setcap -r "$BUNDLED_NODE_BIN" 2>/dev/null || true
@@ -916,26 +918,25 @@ sleep 3
 
 if systemctl is-active --quiet cidrella; then
   ok "CIDRella is running!"
-  CIDRELLA_PID=$(systemctl show cidrella -p MainPID --value 2>/dev/null || true)
-  if [ -n "${CIDRELLA_PID:-}" ] && [ "$CIDRELLA_PID" != "0" ] && [ -r "/proc/$CIDRELLA_PID/status" ]; then
-    CAP_AMB=$(awk '/^CapAmb:/ {print $2}' "/proc/$CIDRELLA_PID/status")
-    CAP_AMB_NET_BIND=0
-    CAP_AMB_NET_RAW=0
-    if [[ "$CAP_AMB" =~ ^[0-9a-fA-F]+$ ]]; then
-      CAP_AMB_NET_BIND=$((16#$CAP_AMB & 0x400))
-      CAP_AMB_NET_RAW=$((16#$CAP_AMB & 0x2000))
+  # Each capability where it is used: CAP_NET_BIND_SERVICE in the web app
+  # (ports under 1024, the DHCP probes), CAP_NET_RAW in the privileged helper
+  # (arping, ping). The web app has no CAP_NET_RAW since 0.6.4.
+  CAP_MISSING=false
+  for check in "cidrella 0x400 CAP_NET_BIND_SERVICE privileged web ports and the DHCP probes may fail" \
+               "cidrella-helper 0x2000 CAP_NET_RAW active ARP and ICMP scans will fail"; do
+    read -r unit mask cap effect <<<"$check"
+    pid=$(systemctl show "$unit" -p MainPID --value 2>/dev/null || true)
+    [ -n "${pid:-}" ] && [ "$pid" != "0" ] && [ -r "/proc/$pid/status" ] || continue
+    amb=$(awk '/^CapAmb:/ {print $2}' "/proc/$pid/status")
+    [[ "$amb" =~ ^[0-9a-fA-F]+$ ]] || amb=0
+    if [ $((16#$amb & mask)) -eq 0 ]; then
+      warn "$unit.service is running without ambient $cap; $effect."
+      emit_event install warn reason=ambient-cap-missing "capability=$cap" "unit=$unit" "pid=$pid"
+      CAP_MISSING=true
     fi
-    if [ "$CAP_AMB_NET_RAW" -eq 0 ] || [ "$CAP_AMB_NET_BIND" -eq 0 ]; then
-      if [ "$CAP_AMB_NET_RAW" -eq 0 ]; then
-        warn "cidrella.service is running without ambient CAP_NET_RAW; active ARP and ICMP scans may fail."
-        emit_event install warn reason=ambient-cap-missing capability=CAP_NET_RAW "pid=$CIDRELLA_PID"
-      fi
-      if [ "$CAP_AMB_NET_BIND" -eq 0 ]; then
-        warn "cidrella.service is running without ambient CAP_NET_BIND_SERVICE; privileged web/DNS ports may fail."
-        emit_event install warn reason=ambient-cap-missing capability=CAP_NET_BIND_SERVICE "pid=$CIDRELLA_PID"
-      fi
-      warn "Check whether this host/container supports AmbientCapabilities."
-    fi
+  done
+  if [ "$CAP_MISSING" = true ]; then
+    warn "Check whether this host/container supports AmbientCapabilities."
   fi
   emit_event install end result=success "version=$VERSION"
 else
