@@ -6,6 +6,25 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.6.4 — 2026-11-11
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+
+### Fixed
+
+- **The update screen offers Install again after updates from the command line.** It kept
+  showing the last update made from the screen itself (for some installs, the one to 0.6.0)
+  and hid Install while it did, because `cidrella-update` does not replace that record. A
+  completed update to a version other than the one running is now treated as history.
+
+### Upgrading
+
+Upgrades directly from 0.4.17 or later. No database migrations.
+
 ## v0.6.3 — 2026-11-11
 
 ```yaml

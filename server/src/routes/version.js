@@ -112,9 +112,18 @@ function reapStaleStatus(status) {
   return reaped;
 }
 
+// A completed record names the update that wrote it. Once the running version
+// is another one (a later update from the command line, which does not write
+// this file, or a rollback), the record is history: the panel hides Install
+// while it shows a completed update, so reading it as current would hide every
+// later update until someone dismissed it.
+function isPastCompletion(status) {
+  return status.state === 'completed' && status.to_version !== APP_VERSION;
+}
+
 function readStatusFile() {
   const status = rawReadStatusFile();
-  if (!status) return { state: 'idle' };
+  if (!status || isPastCompletion(status)) return { state: 'idle' };
   if (isStaleInProgress(status)) return reapStaleStatus(status);
   return status;
 }
