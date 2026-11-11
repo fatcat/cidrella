@@ -172,7 +172,7 @@
           @change="onRestoreFile"
         />
         <span class="fr-help">
-          A cidrella-backup-*.tar.gz. Compatibility is checked before anything is touched.
+          A CIDRella backup (.tar.gz). Compatibility is checked before anything is touched.
         </span>
       </div>
       <div class="fr-note warn">

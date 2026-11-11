@@ -14,7 +14,17 @@ breaking: false
 security: false
 ```
 
-The web app gives up the rights the privileged helper took over in 0.6.3.
+The web app gives up the rights the privileged helper took over in 0.6.3, and backup files can be
+named from a template.
+
+### New
+
+- **Backup file names from a template.** Settings, Maintenance, Backup & Restore has a File
+  name field built from `{{hostname}}`, `{{version}}`, `{{schema}}`, `{{stack}}`,
+  `{{trigger}}` (manual or scheduled), `{{date}}` and `{{time}}`, with a preview of the next
+  name. The default keeps today's names. A template without both the date and the time gets a
+  counter, `-00` to `-FF`. Backups are recognized by the manifest inside them rather than by
+  their names, so a renamed archive in the backups folder is still listed.
 
 ### Security
 

@@ -4,6 +4,7 @@
 // either the DB-backed getter or the constant directly, never both.
 
 import path from 'path';
+import { DEFAULT_BACKUP_NAME_TEMPLATE } from '../utils/backup-name.js';
 import {
   GEOIP_CACHE_MAX,
   GEOIP_CACHE_TTL_MS,
@@ -76,6 +77,9 @@ export const DEFAULTS = {
   blocklist_max_feed_mb: '128',
   backup_schedule: 'off',
   backup_retention_count: '7',
+  // What a backup's file is called (utils/backup-name.js). The default is the
+  // name every backup had before templates.
+  backup_name_template: DEFAULT_BACKUP_NAME_TEMPLATE,
   installation_complete: 'false',
   setup_wizard_completed: '0',
   setup_state: '{"done":false}',

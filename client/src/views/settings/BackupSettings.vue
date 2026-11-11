@@ -45,6 +45,63 @@
           />
         </div>
         <div class="field">
+          <label for="backup-name-template">File name</label>
+          <div class="input-with-action name-template-input">
+            <InputText
+              id="backup-name-template"
+              ref="nameTemplateInput"
+              v-model="nameTemplate"
+              class="mono"
+              :invalid="!!nameTemplateError"
+              aria-describedby="backup-name-preview backup-name-help"
+              data-track="backup-name-template"
+              @keydown.enter="saveNameTemplate"
+            />
+            <Button
+              label="Save"
+              size="small"
+              :disabled="!!nameTemplateError || nameTemplate === savedNameTemplate"
+              :loading="savingNameTemplate"
+              data-track="backup-name-template-save"
+              @click="saveNameTemplate"
+            />
+          </div>
+          <div class="name-variables" role="group" aria-label="Insert a variable">
+            <Button
+              v-for="variable in BACKUP_NAME_VARIABLES"
+              :key="variable.key"
+              :label="`{{${variable.key}}}`"
+              :title="variable.description"
+              size="small"
+              text
+              severity="secondary"
+              class="mono"
+              :data-track="`backup-name-insert-${variable.key}`"
+              @click="insertVariable(variable.key)"
+            />
+            <Button
+              label="Reset to default"
+              size="small"
+              text
+              :disabled="nameTemplate === DEFAULT_BACKUP_NAME_TEMPLATE"
+              data-track="backup-name-template-reset"
+              @click="nameTemplate = DEFAULT_BACKUP_NAME_TEMPLATE"
+            />
+          </div>
+          <small v-if="nameTemplateError" class="field-error">{{ nameTemplateError }}</small>
+          <small v-else id="backup-name-preview" class="field-help">
+            Next backup: <span class="mono">{{ nameTemplatePreview }}</span>
+          </small>
+          <small id="backup-name-help" class="field-help">
+            Dates and times are UTC.
+            <template v-if="!nameTemplateError && !nameTemplateUnique">
+              Without both <span class="mono" v-pre>{{date}}</span> and
+              <span class="mono" v-pre>{{time}}</span>, a counter (-00 to -FF) is added, so up to
+              256 backups can share this name.
+            </template>
+          </small>
+        </div>
+        <div class="field">
           <label>Next Backup</label>
           <span class="next-backup-value">{{ nextBackupLabel }}</span>
         </div>
@@ -244,6 +301,16 @@ import { apiError } from '../../utils/format.js';
 import { formatDateTime } from '../../utils/dateFormat.js';
 import api from '../../api/client.js';
 import { formatBytes as formatSize } from '../../utils/format.js';
+import {
+  BACKUP_EXTENSION,
+  BACKUP_NAME_VARIABLES,
+  DEFAULT_BACKUP_NAME_TEMPLATE,
+  counterSuffix,
+  exampleValues,
+  renderBackupName,
+  templateIsUnique,
+  validateBackupNameTemplate,
+} from '@shared/backup-name.js';
 
 const store = useSubnetStore();
 const opsStore = useOperationsStore();
@@ -265,6 +332,56 @@ const restoring = ref(false);
 const backupSchedule = ref('off');
 const backupRetention = ref(7);
 const backupLastRun = ref(null);
+
+// The backup file name template (server/src/utils/backup-name.js).
+const nameTemplate = ref(DEFAULT_BACKUP_NAME_TEMPLATE);
+const savedNameTemplate = ref(DEFAULT_BACKUP_NAME_TEMPLATE);
+const savingNameTemplate = ref(false);
+const nameTemplateInput = ref(null);
+// This appliance's own hostname, version, schema and stack, for the preview.
+const nameValues = ref({});
+const nameTemplateError = computed(() => validateBackupNameTemplate(nameTemplate.value));
+const nameTemplateUnique = computed(() => templateIsUnique(nameTemplate.value));
+const nameTemplatePreview = computed(() => {
+  const values = { ...exampleValues(), ...nameValues.value, trigger: 'manual' };
+  const counter = nameTemplateUnique.value ? '' : counterSuffix(0);
+  return renderBackupName(nameTemplate.value, values) + counter + BACKUP_EXTENSION;
+});
+
+function insertVariable(key) {
+  const token = `{{${key}}}`;
+  const input = nameTemplateInput.value?.$el;
+  const text = nameTemplate.value;
+  const start = input?.selectionStart ?? text.length;
+  const end = input?.selectionEnd ?? text.length;
+  nameTemplate.value = text.slice(0, start) + token + text.slice(end);
+  requestAnimationFrame(() => {
+    input?.focus();
+    input?.setSelectionRange(start + token.length, start + token.length);
+  });
+}
+
+async function saveNameTemplate() {
+  if (nameTemplateError.value || nameTemplate.value === savedNameTemplate.value) return;
+  savingNameTemplate.value = true;
+  try {
+    await api.put('/settings/bulk', { settings: { backup_name_template: nameTemplate.value } });
+    savedNameTemplate.value = nameTemplate.value;
+    toast.add({ severity: 'success', summary: 'Backup file name saved', life: 3000 });
+  } catch (err) {
+    toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
+  } finally {
+    savingNameTemplate.value = false;
+  }
+}
+
+async function loadNameValues() {
+  try {
+    nameValues.value = (await api.get('/operations/backups/name-values')).data;
+  } catch {
+    // The preview falls back to example values.
+  }
+}
 
 const scheduleOptions = [
   { label: 'Off', value: 'off' },
@@ -296,6 +413,8 @@ async function loadBackupSettings() {
     backupSchedule.value = data.backup_schedule || 'off';
     backupRetention.value = parseInt(data.backup_retention_count || '7', 10);
     backupLastRun.value = data.backup_last_run || null;
+    savedNameTemplate.value = data.backup_name_template || DEFAULT_BACKUP_NAME_TEMPLATE;
+    nameTemplate.value = savedNameTemplate.value;
   } catch {}
 }
 
@@ -435,7 +554,7 @@ async function doResetDatabase() {
 }
 
 onMounted(async () => {
-  await Promise.all([opsStore.fetchBackups(), loadBackupSettings()]);
+  await Promise.all([opsStore.fetchBackups(), loadBackupSettings(), loadNameValues()]);
 });
 </script>
 
@@ -487,6 +606,15 @@ onMounted(async () => {
 }
 .field {
   margin-bottom: 1rem;
+}
+.name-template-input {
+  max-width: 36rem;
+}
+.name-variables {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+  margin-top: 0.4rem;
 }
 .field label {
   display: block;

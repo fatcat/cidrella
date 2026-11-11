@@ -264,6 +264,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   and `disableFile` for one that runs unless told not to, dnsmasq),
   `utils/preflight.js` (`isPreflightBoot`: update.sh's probe, which must not touch a host service),
   `utils/ntp-status.js` (`getNtpStatus`: is the clock synchronized),
+  `utils/backup-name.js` (backup file name templates: the variables, validation and rendering,
+  client through `@shared`; `chooseBackupName` in `utils/backup.js` adds the counter, and
+  `readLeadingManifest` there is how an archive is recognized as a backup, never by its name),
   `utils/lease-time.js` (`leaseSeconds`, `isValidLeaseTime`: every read of a stored lease
   time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and
   `activeLeaseSql` in `utils/lease-sql.js` (which lease to believe for an address, and is a

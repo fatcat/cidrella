@@ -12,6 +12,7 @@ import { clearJwtSecretCache } from '../auth/middleware.js';
 import {
   createBackup,
   listBackups,
+  backupNameValues,
   deleteBackup,
   getBackupPath,
   restoreBackup,
@@ -177,7 +178,7 @@ function clearPendingCsrFiles(dir) {
 router.post('/backup', async (req, res) => {
   try {
     const db = getDb();
-    const backup = await createBackup(db);
+    const backup = await createBackup(db, { trigger: 'manual' });
     recordAudit({
       action: 'backup_created',
       entityType: 'backup',
@@ -195,6 +196,12 @@ router.post('/backup', async (req, res) => {
 router.get('/backups', (req, res) => {
   const db = getDb();
   res.json(listBackups(db));
+});
+
+// GET /api/operations/backups/name-values: what a backup name template would
+// be filled with now, for the preview in Backup settings.
+router.get('/backups/name-values', (req, res) => {
+  res.json(backupNameValues(getDb()));
 });
 
 // GET /api/operations/backups/:id/download: download a backup file

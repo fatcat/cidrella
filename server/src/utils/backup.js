@@ -1,11 +1,14 @@
 import fs from 'fs';
+import os from 'os';
 import path from 'path';
+import zlib from 'zlib';
 import { spawn } from 'child_process';
 import Database from 'better-sqlite3';
 import { insertAuditRow } from '../models/audit-log.js';
 import { recordAudit } from '../services/audit.js';
 import { LAST_VERSION_KEY } from '../services/version-audit.js';
 import {
+  readSetting,
   upsertSettingWithConflict,
   deleteSetting,
   updateStoredSetting,
@@ -20,6 +23,17 @@ import { compareSemver } from './semver.js';
 import { runCommand } from './run-command.js';
 import { runDbTask } from './db-worker/index.js';
 import { releaseProxyDatabase } from './dns-proxy.js';
+import { stackName } from '../backends/index.js';
+import {
+  BACKUP_EXTENSION,
+  COUNTER_LIMIT,
+  DEFAULT_BACKUP_NAME_TEMPLATE,
+  counterSuffix,
+  renderBackupName,
+  templateIsUnique,
+  timeValues,
+  validateBackupNameTemplate,
+} from './backup-name.js';
 const BACKUP_DIR = path.join(DATA_DIR, 'backups');
 const PRE_RESTORE_DIR = path.join(DATA_DIR, 'snapshots', 'pre-restore');
 const MANIFEST_NAME = 'cidrella-backup-manifest.json';
@@ -62,6 +76,8 @@ const KEPT_ON_RESTORE = ['kea/secret'];
 // Where createBackup stages its database copy; a crash leaves it for
 // sweepStaleRestoreArtifacts.
 const BACKUP_DB_STAGE_PREFIX = '.backup-db-';
+// An archive tar is still writing: `.<name>.partial` in BACKUP_DIR.
+const PARTIAL_SUFFIX = '.partial';
 
 // Backups and restores never overlap one another: a restore swaps the files
 // a backup is reading, and two backups would race for one archive name.
@@ -95,32 +111,80 @@ function isRuntimeArtifact(name) {
  * main thread: the database copy is made in the database worker and tar
  * runs as a child process the loop does not wait on.
  */
-export function createBackup(db) {
-  return exclusive('backup', () => writeBackup(db));
+export function createBackup(db, { trigger = 'manual' } = {}) {
+  return exclusive('backup', () => writeBackup(db, trigger));
 }
 
-async function writeBackup(db) {
+// The stored template, or the default when it is absent or not valid (a
+// database edited by hand): a backup is never refused over its name.
+function backupNameTemplate(db) {
+  const stored = readSetting(db, 'backup_name_template');
+  if (stored === null) return DEFAULT_BACKUP_NAME_TEMPLATE;
+  const problem = validateBackupNameTemplate(stored);
+  if (!problem) return stored;
+  console.warn(`[backup] backup_name_template "${stored}" is not valid (${problem}); using the default`);
+  return DEFAULT_BACKUP_NAME_TEMPLATE;
+}
+
+/**
+ * The archive's file name: the template rendered, and a counter (-00 to -FF)
+ * when the template cannot tell backups apart, or when two backups land in
+ * the same second. The counter is the one after the highest in use; past FF,
+ * the lowest that retention has freed.
+ */
+export function chooseBackupName(template, values, taken) {
+  const base = renderBackupName(template, values);
+  const plain = base + BACKUP_EXTENSION;
+  if (templateIsUnique(template) && !taken(plain)) return plain;
+  const named = (n) => base + counterSuffix(n) + BACKUP_EXTENSION;
+  let highest = -1;
+  for (let n = 0; n < COUNTER_LIMIT; n += 1) if (taken(named(n))) highest = n;
+  if (highest < COUNTER_LIMIT - 1) return named(highest + 1);
+  for (let n = 0; n < COUNTER_LIMIT; n += 1) if (!taken(named(n))) return named(n);
+  throw new Error(
+    `Every name the backup file name template "${template}" gives is in use (${base}-00 to -FF). Add {{date}} and {{time}} to it, or keep fewer backups.`,
+  );
+}
+
+/**
+ * What this appliance fills a backup name template with now: every variable
+ * but the trigger, which only a backup has. Backup settings shows its preview
+ * from these (GET /api/operations/backups/name-values).
+ */
+export function backupNameValues(db, now = new Date()) {
+  return {
+    hostname: os.hostname(),
+    version: APP_VERSION,
+    schema: db.prepare('SELECT MAX(version) AS v FROM schema_version').get()?.v ?? 0,
+    stack: stackName(),
+    ...timeValues(now),
+  };
+}
+
+async function writeBackup(db, trigger) {
   fs.mkdirSync(BACKUP_DIR, { recursive: true });
 
-  const timestamp = new Date().toISOString().replace(/[:.]/g, '-').replace('T', '_').slice(0, 19);
-  // Two backups in one second (a scheduled one and a click, a double click)
-  // would share the name: tar overwrote the first archive, then the insert
-  // below failed on the unique filename. The later one takes a suffix.
-  let filename = `cidrella-backup-${timestamp}.tar.gz`;
+  const now = new Date();
+  const values = { ...backupNameValues(db, now), trigger };
+  const schemaVersion = values.schema;
   const taken = (name) =>
     fs.existsSync(path.join(BACKUP_DIR, name)) ||
     db.prepare('SELECT 1 FROM backups WHERE filename = ?').get(name);
-  for (let n = 2; taken(filename); n += 1) filename = `cidrella-backup-${timestamp}-${n}.tar.gz`;
+  const filename = chooseBackupName(backupNameTemplate(db), values, taken);
   const archivePath = path.join(BACKUP_DIR, filename);
+  // tar writes here and the finished archive is renamed into place, so a
+  // backup list taken meanwhile (adoptUnlistedArchives) never finds a
+  // half-written one under the final name.
+  const partialPath = path.join(BACKUP_DIR, `.${filename}${PARTIAL_SUFFIX}`);
 
-  // Write a manifest so restore can verify compatibility.
+  // Write a manifest so restore can verify compatibility, and so a backup is
+  // recognized by its contents rather than its name (readLeadingManifest).
   // Captures version, schema version, creation time, and included files.
-  const schemaVersion = db.prepare('SELECT MAX(version) AS v FROM schema_version').get()?.v ?? 0;
   const manifest = {
     type: MANIFEST_TYPE,
     cidrella_version: APP_VERSION,
     schema_version: schemaVersion,
-    created_at: new Date().toISOString(),
+    created_at: now.toISOString(),
     includes: [],
   };
 
@@ -196,7 +260,8 @@ async function writeBackup(db) {
           // the v0.4.15-pre.1 hot-patch (the --exclude above was a no-op
           // anyway because tar never got the action flag).
           '-czf',
-          archivePath,
+          partialPath,
+          // First, always: readLeadingManifest reads only the first member.
           MANIFEST_NAME,
           ...includes,
           '-C',
@@ -215,7 +280,9 @@ async function writeBackup(db) {
         '[backup] tar exited 1 (file changed during archive, expected for dnsmasq.leases); archive is valid',
       );
     }
+    fs.renameSync(partialPath, archivePath);
   } finally {
+    fs.rmSync(partialPath, { force: true });
     try {
       fs.unlinkSync(manifestPath);
     } catch {
@@ -236,7 +303,7 @@ async function writeBackup(db) {
     id: result.lastInsertRowid,
     filename,
     size_bytes: stat.size,
-    created_at: new Date().toISOString(),
+    created_at: manifest.created_at,
     cidrella_version: APP_VERSION,
     schema_version: schemaVersion,
   };
@@ -1062,6 +1129,74 @@ async function applyRestore(
   };
 }
 
+// How much of an archive readLeadingManifest reads. A manifest is a few
+// hundred bytes and the first member, so this covers it with room to spare.
+const LEADING_BYTES = 64 * 1024;
+const TAR_BLOCK = 512;
+// Headers that describe the next member rather than being one: pax extended
+// and global headers, and GNU long names and link names.
+const TAR_META_TYPES = new Set(['x', 'g', 'L', 'K']);
+
+function tarField(block, start, length) {
+  const raw = block.subarray(start, start + length);
+  const end = raw.indexOf(0);
+  return raw.subarray(0, end === -1 ? raw.length : end).toString('utf8');
+}
+
+/**
+ * The manifest of a backup CIDRella wrote, read from the archive's first
+ * member without tar: the first 64 KiB of the file, gunzipped as far as they
+ * go (zlib decodes a truncated stream with Z_SYNC_FLUSH), then the tar header.
+ * This is how a backup is recognized whatever it is called. Null for anything
+ * else: not gzip, not tar, a different first member, a manifest of another
+ * type. It never throws. Restore reads manifests with tar instead
+ * (readBackupManifest), since a hand-made archive may carry one anywhere.
+ */
+export function readLeadingManifest(archivePath) {
+  let fd;
+  try {
+    fd = fs.openSync(archivePath, 'r');
+    const head = Buffer.alloc(LEADING_BYTES);
+    const read = fs.readSync(fd, head, 0, LEADING_BYTES, 0);
+    const tar = zlib.gunzipSync(head.subarray(0, read), {
+      finishFlush: zlib.constants.Z_SYNC_FLUSH,
+    });
+    let offset = 0;
+    let longName = null;
+    for (let headers = 0; headers < 4 && offset + TAR_BLOCK <= tar.length; headers += 1) {
+      const block = tar.subarray(offset, offset + TAR_BLOCK);
+      const size = parseInt(tarField(block, 124, 12).trim() || '0', 8);
+      if (!Number.isFinite(size) || size < 0) return null;
+      const type = tarField(block, 156, 1);
+      const dataStart = offset + TAR_BLOCK;
+      const data = tar.subarray(dataStart, dataStart + size);
+      if (data.length < size) return null;
+      offset = dataStart + Math.ceil(size / TAR_BLOCK) * TAR_BLOCK;
+      if (TAR_META_TYPES.has(type)) {
+        if (type === 'L') longName = tarField(data, 0, data.length);
+        continue;
+      }
+      const name = (longName ?? tarField(block, 0, 100)).replace(/^\.\//, '');
+      if (name !== MANIFEST_NAME) return null;
+      const manifest = JSON.parse(data.toString('utf8'));
+      return manifest?.type === MANIFEST_TYPE ? manifest : null;
+    }
+    return null;
+  } catch {
+    return null;
+  } finally {
+    if (fd !== undefined) fs.closeSync(fd);
+  }
+}
+
+// Backups named before templates and before manifests existed: recognized by
+// this name alone, the one place the old name still counts.
+const LEGACY_ARCHIVE_NAME = /^cidrella-backup-.+\.tar\.gz$/;
+
+function sqliteTimestamp(date) {
+  return date.toISOString().slice(0, 19).replace('T', ' ');
+}
+
 /**
  * List all backups, verifying files exist on disk
  */
@@ -1069,8 +1204,9 @@ async function applyRestore(
 // the list as it was when that backup was taken: the backup just restored,
 // and every one taken after it, are on disk but not in the table. Unlisted,
 // they could be neither downloaded nor deleted, and retention never counted
-// them. Take up any archive the table does not know, dated by its file.
-const ARCHIVE_NAME = /^cidrella-backup-.+\.tar\.gz$/;
+// them. Take up any file the table does not know that is a CIDRella backup
+// by its manifest, whatever it is called, dated by the manifest. Dotfiles are
+// never backups: an archive tar is still writing is one (PARTIAL_SUFFIX).
 function adoptUnlistedArchives(db) {
   if (!fs.existsSync(BACKUP_DIR)) return 0;
   const known = new Set(
@@ -1084,10 +1220,14 @@ function adoptUnlistedArchives(db) {
   );
   let adopted = 0;
   for (const name of fs.readdirSync(BACKUP_DIR)) {
-    if (!ARCHIVE_NAME.test(name) || known.has(name)) continue;
-    const stat = fs.statSync(path.join(BACKUP_DIR, name));
+    if (name.startsWith('.') || known.has(name)) continue;
+    const filePath = path.join(BACKUP_DIR, name);
+    const stat = fs.statSync(filePath);
     if (!stat.isFile()) continue;
-    const createdAt = stat.mtime.toISOString().slice(0, 19).replace('T', ' ');
+    const manifest = readLeadingManifest(filePath);
+    if (!manifest && !LEGACY_ARCHIVE_NAME.test(name)) continue;
+    const taken = new Date(manifest?.created_at ?? Number.NaN);
+    const createdAt = sqliteTimestamp(Number.isNaN(taken.getTime()) ? stat.mtime : taken);
     adopted += insert.run(name, stat.size, createdAt).changes;
   }
   return adopted;
@@ -1161,6 +1301,8 @@ function enforceRetention(db) {
  * Names swept:
  *   DATA_DIR/snapshots/.restore-upload-*.tar.gz   (operations.js upload stash)
  *   DATA_DIR/.restore-staging-*                    (backup.js extract dir)
+ *   DATA_DIR/.backup-db-*                          (createBackup's database copy)
+ *   DATA_DIR/backups/.*.partial                    (an archive tar was writing)
  *
  * Only entries older than MAX_AGE_MS are removed to avoid racing a restore
  * started by a sibling request on boot.
@@ -1172,6 +1314,7 @@ export function sweepStaleRestoreArtifacts() {
     { dir: path.join(DATA_DIR, 'snapshots'), match: /^\.restore-upload-/ },
     { dir: DATA_DIR, match: /^\.restore-staging-/ },
     { dir: DATA_DIR, match: /^\.backup-db-/ },
+    { dir: BACKUP_DIR, match: /^\..*\.partial$/ },
   ];
   let swept = 0;
   for (const { dir, match } of targets) {
@@ -1231,7 +1374,7 @@ export function startBackupScheduler() {
 
         if (now - lastRunTime >= interval) {
           console.log(`Scheduled backup (${scheduleValue})...`);
-          const backup = await createBackup(db);
+          const backup = await createBackup(db, { trigger: 'scheduled' });
           recordAudit({
             action: 'backup_created',
             entityType: 'backup',
