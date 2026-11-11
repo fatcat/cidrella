@@ -185,7 +185,7 @@ deciding setting written last, recovery at boot.
 
 ## Phases
 
-Each leaves the tree shippable with single-box behavior unchanged. 
+Each leaves the tree shippable with single-box behavior unchanged.
 
 0. **Contract and groundwork.** `docs/REDUNDANCY-PLAN.md` (this design, tracked), ARCHITECTURE
    section and an ADR; registry and classification guard; lease diff-upsert; facts sink with

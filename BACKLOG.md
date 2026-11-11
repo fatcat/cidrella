@@ -57,7 +57,7 @@ from `ndisc6` would do it, not bundled).
 
 Design in [docs/REDUNDANCY-PLAN.md](docs/REDUNDANCY-PLAN.md), accepted 2026-11-11, not started.
 Every install is a member; one is also the controller and owns all writes; other members sync a
-read-only copy and keep serving when it is away; promotion is manual. The branch `dev/0.7.0` is
+read-only copy and keep serving when it is away; promotion is manual. The branch `dev/0.7.0` will be
 cut from the released 0.6.4 commit. Rejected and why (all in the doc): scheduled restore,
 whole-table transfer, the SQLite session extension (not compiled into better-sqlite3 13.0.3),
 WAL shipping. Known before starting: `replaceLeases` gives every lease a new id on each sync

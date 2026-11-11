@@ -19,7 +19,7 @@ import {
   inspectBackup,
   collectRestoreCarryover,
 } from '../utils/backup.js';
-import { certSummary, reloadTlsCerts } from '../utils/cert.js';
+import { certSummary, generateSelfSignedCert, reloadTlsCerts } from '../utils/cert.js';
 import * as RangeType from '../models/range-type.js';
 import * as Folder from '../models/folder.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
@@ -679,26 +679,8 @@ router.post('/certs/reset', (req, res) => {
     if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
     if (fs.existsSync(certPath)) fs.unlinkSync(certPath);
 
-    // Regenerate self-signed
-    execFileSync(
-      'openssl',
-      [
-        'req',
-        '-x509',
-        '-newkey',
-        'rsa:2048',
-        '-keyout',
-        keyPath,
-        '-out',
-        certPath,
-        '-days',
-        '365',
-        '-nodes',
-        '-subj',
-        '/CN=cidrella/O=CIDRella/C=US',
-      ],
-      { stdio: 'pipe', timeout: 10000 },
-    );
+    // Regenerate self-signed, named for this host (subjectAltName included)
+    generateSelfSignedCert();
     clearPendingCsrFiles(certsDir);
 
     recordAudit({

@@ -55,7 +55,8 @@ All persistent state is stored in the `./data/` volume mount:
 
 ### TLS Certificates
 
-A self-signed certificate is auto-generated on first run. To use your own:
+A self-signed certificate is auto-generated on first run. It lasts a year and is renewed by
+itself 30 days before it ends; a certificate you upload is never replaced. To use your own:
 
 ```bash
 cp cert.pem key.pem data/certs/

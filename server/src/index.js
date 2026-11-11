@@ -65,7 +65,7 @@ import logRoutes from './routes/logs.js';
 import piholeRoutes from './routes/pihole.js';
 import interfaceRoutes from './routes/interfaces.js';
 import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js';
-import { ensureCerts, setHttpsServer } from './utils/cert.js';
+import { ensureCerts, renewCertIfDue, setHttpsServer } from './utils/cert.js';
 import { startLeaseSync } from './services/dhcp-lease-sync.js';
 import { syncServerDnsDefault } from './models/dhcp-option.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
@@ -351,6 +351,29 @@ async function main() {
 
   // Generate or load TLS certs
   const { keyPath, certPath } = ensureCerts(DATA_DIR);
+
+  // ensureCerts renews a generated certificate that is near its end at boot;
+  // this covers an appliance that stays up past that day. The new certificate
+  // is served at once.
+  setInterval(
+    () => {
+      try {
+        const renewed = renewCertIfDue();
+        if (!renewed) return;
+        recordAudit({
+          action: 'tls_certificate_updated',
+          entityType: 'tls_certificate',
+          source: 'renewal',
+          before: { certificate: renewed.before },
+          after: { certificate: renewed.after },
+          details: { source: 'self_signed' },
+        });
+      } catch (err) {
+        console.error('TLS certificate renewal failed:', err.message);
+      }
+    },
+    24 * 60 * 60 * 1000,
+  ).unref();
 
   // Create Express app
   const app = express();

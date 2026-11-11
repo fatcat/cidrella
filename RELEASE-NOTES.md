@@ -37,6 +37,11 @@ named from a template.
 
 ### Fixed
 
+- **The generated TLS certificate renews itself.** It lasts a year and was left to run out, so
+  browsers went from "not trusted" to "expired" on day 366. It is now replaced 30 days before it
+  ends, at start and once a day, and served without a restart. A certificate you uploaded is
+  never replaced; the log warns when it is within 30 days of ending. Reset certificate now names
+  the host in the new certificate straight away, where it used to take a restart.
 - **The update screen offers Install again after updates from the command line.** It kept
   showing the last update made from the screen itself (for some installs, the one to 0.6.0)
   and hid Install while it did, because `cidrella-update` does not replace that record. A

@@ -87,6 +87,27 @@ export function isSelfGeneratedCert(certPath) {
   }
 }
 
+/** A generated certificate is replaced this long before it ends. */
+export const RENEW_BEFORE_DAYS = 30;
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+// Days until a certificate ends (negative once it has); null when it cannot be read.
+export function certDaysLeft(certPath, now = Date.now()) {
+  try {
+    const ends = new X509Certificate(fs.readFileSync(certPath)).validToDate.getTime();
+    return Math.floor((ends - now) / DAY_MS);
+  } catch {
+    return null;
+  }
+}
+
+// True for a certificate CIDRella generated that is within RENEW_BEFORE_DAYS of
+// its end, or past it. An operator's certificate is never renewed for them.
+export function certNeedsRenewal(certPath, now = Date.now()) {
+  const left = certDaysLeft(certPath, now);
+  return left !== null && left <= RENEW_BEFORE_DAYS && isSelfGeneratedCert(certPath);
+}
+
 function generateCert(san) {
   const args = [
     'req',
@@ -125,8 +146,14 @@ export function ensureCerts(dataDir) {
   certFilePath = path.join(certsDir, 'server.crt');
 
   if (fs.existsSync(keyFilePath) && fs.existsSync(certFilePath)) {
-    if (certHasSan(certFilePath)) {
+    if (certHasSan(certFilePath) && !certNeedsRenewal(certFilePath)) {
+      warnIfEnding(certFilePath);
       console.log('Using existing TLS certificates');
+      return { keyPath: keyFilePath, certPath: certFilePath };
+    }
+    if (certHasSan(certFilePath)) {
+      console.log('The generated TLS certificate is near its end, generating a new one');
+      generateSelfSignedCert();
       return { keyPath: keyFilePath, certPath: certFilePath };
     }
     if (!isSelfGeneratedCert(certFilePath)) {
@@ -148,6 +175,14 @@ export function ensureCerts(dataDir) {
     console.log('Generating self-signed TLS certificate...');
   }
 
+  generateSelfSignedCert();
+  return { keyPath: keyFilePath, certPath: certFilePath };
+}
+
+// A new self-signed certificate and key at the paths ensureCerts set, named for
+// this host as it is now. Every path that makes one (first boot, renewal, the
+// reset action) comes through here.
+export function generateSelfSignedCert() {
   generateCert(
     buildSanList({
       hostname: os.hostname(),
@@ -155,7 +190,34 @@ export function ensureCerts(dataDir) {
       interfaces: os.networkInterfaces(),
     }),
   );
-  return { keyPath: keyFilePath, certPath: certFilePath };
+}
+
+// An operator's certificate is theirs to replace; say when it is running out.
+function warnIfEnding(certPath) {
+  const left = certDaysLeft(certPath);
+  if (left === null || left > RENEW_BEFORE_DAYS || isSelfGeneratedCert(certPath)) return;
+  console.warn(
+    left < 0
+      ? `The installed TLS certificate ended ${-left} day(s) ago. Upload a new one in Settings, or reset to a generated certificate.`
+      : `The installed TLS certificate ends in ${left} day(s). Upload a new one in Settings before then.`,
+  );
+}
+
+/**
+ * Renew a generated certificate that is near its end and serve it at once, no
+ * restart. Returns `{ before, after }` (certSummary) when it renewed, else null.
+ * Run daily: an appliance stays up for longer than a certificate lasts.
+ */
+export function renewCertIfDue(now = Date.now()) {
+  if (!certFilePath || !fs.existsSync(certFilePath)) return null;
+  if (!certNeedsRenewal(certFilePath, now)) {
+    warnIfEnding(certFilePath);
+    return null;
+  }
+  const before = certSummary(certFilePath);
+  generateSelfSignedCert();
+  reloadTlsCerts();
+  return { before, after: certSummary(certFilePath) };
 }
 
 export function setHttpsServer(server) {
