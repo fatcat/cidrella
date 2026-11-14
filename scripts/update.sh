@@ -701,7 +701,7 @@ else
   fi
 
   info "Checking for updates..."
-  RELEASE_JSON=$(curl -fsSL "$RELEASE_URL" 2>/dev/null || true)
+  RELEASE_JSON=$(curl --proto '=https' --proto-redir '=https' -fsSL "$RELEASE_URL" 2>/dev/null || true)
   if [ -z "$RELEASE_JSON" ]; then
     err "Failed to fetch release info from GitHub."
     write_progress "failed" 5 "Update failed" "Failed to fetch release info from GitHub"
@@ -796,13 +796,13 @@ else
   # Download
   info "Downloading: $TARBALL_URL"
   TMPDIR=$(mktemp -d)
-  curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
+  curl --proto '=https' --proto-redir '=https' -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
   TARBALL_SIZE=$(du -h "$TMPDIR/cidrella.tar.gz" | cut -f1)
   ok "Downloaded $TARBALL_SIZE"
   emit_event download pass "tag=$TAG_NAME" "size=$TARBALL_SIZE"
   track_progress "downloading" 25 "Download complete ($TARBALL_SIZE)"
 
-  curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
+  curl --proto '=https' --proto-redir '=https' -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" 2>/dev/null || true
 fi
 
 # ─── Fetch + apply rotation announcements (v0.4.9+) ─────
@@ -1399,11 +1399,12 @@ if [ -f "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" ]; then
   fi
 
   # Install / refresh the rule file. A mismatched rule file is a common
-  # drift mode (e.g. admin edited it), so always refresh from the shipped copy.
-  mkdir -p /etc/polkit-1/rules.d
-  install -m 0644 -o root -g root \
-    "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" \
-    /etc/polkit-1/rules.d/49-cidrella.rules
+  # drift mode (e.g. admin edited it), so always refresh from the shipped copy,
+  # swapped in whole so polkitd never reads it half-written.
+  if ! install_polkit_rule "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" >/dev/null; then
+    err "Could not install the polkit rule at /etc/polkit-1/rules.d/49-cidrella.rules."
+    exit 1
+  fi
   ok "polkit rule installed at /etc/polkit-1/rules.d/49-cidrella.rules"
 
   # Ensure the daemon is active. Polkit's unit name has drifted across
@@ -1412,13 +1413,17 @@ if [ -f "$TARGET_SLOT/scripts/polkit/49-cidrella.rules" ]; then
   # race where the freshly-created polkitd user isn't visible to systemd's
   # first start attempt (exit code 217/USER); `systemctl daemon-reload` +
   # `reset-failed` clears that path.
+  #
+  # grep reads the whole list, not `grep -q`: under pipefail, `grep -q`
+  # stopping at its match kills systemctl on the closed pipe, the test fails,
+  # and the daemon is never started (19 of 20 tries on a stock host).
   systemctl daemon-reload 2>/dev/null || true
   POLKIT_UNIT=""
   if systemctl list-unit-files polkit.service >/dev/null 2>&1 && \
-     systemctl list-unit-files 2>/dev/null | grep -q '^polkit\.service'; then
+     systemctl list-unit-files 2>/dev/null | grep '^polkit\.service' >/dev/null; then
     POLKIT_UNIT="polkit.service"
   elif systemctl list-unit-files polkitd.service >/dev/null 2>&1 && \
-       systemctl list-unit-files 2>/dev/null | grep -q '^polkitd\.service'; then
+       systemctl list-unit-files 2>/dev/null | grep '^polkitd\.service' >/dev/null; then
     POLKIT_UNIT="polkitd.service"
   fi
 
@@ -1467,6 +1472,30 @@ if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" ] && [ -f /etc/s
   if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-anomaly.service" /etc/systemd/system/cidrella-anomaly.service)" = "changed" ]; then
     emit_event switchover pass unit=cidrella-anomaly.service
   fi
+fi
+# The DNS proxy's own unit (0.6.3). Installed and enabled whether or not an
+# earlier release had it: the update that brings it is the one that adds it.
+# Started after the swap below, since its start condition looks for the
+# proxy's entry point through /opt/cidrella.
+if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-dns-proxy.service" ]; then
+  if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-dns-proxy.service" /etc/systemd/system/cidrella-dns-proxy.service)" = "changed" ]; then
+    emit_event switchover pass unit=cidrella-dns-proxy.service
+  fi
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable cidrella-dns-proxy 2>/dev/null || warn "Could not enable cidrella-dns-proxy (non-fatal)"
+fi
+# The privileged helper (0.6.3), under an account of its own: polkit grants
+# by account. Like the proxy, the update that brings it adds it, and it is
+# started after the swap below.
+if [ -f "$TARGET_SLOT/scripts/systemd/cidrella-helper.service" ]; then
+  if [ "$(ensure_service_user cidrella-helper)" = "created" ]; then
+    ok "Created the cidrella-helper account"
+  fi
+  if [ "$(install_systemd_unit "$TARGET_SLOT/scripts/systemd/cidrella-helper.service" /etc/systemd/system/cidrella-helper.service)" = "changed" ]; then
+    emit_event switchover pass unit=cidrella-helper.service
+  fi
+  systemctl daemon-reload 2>/dev/null || true
+  systemctl enable cidrella-helper 2>/dev/null || warn "Could not enable cidrella-helper (non-fatal)"
 fi
 # cidrella-dnsmasq.service is refreshed (v0.5.3 added its start condition,
 # which keeps it down while the PowerDNS + Kea stack serves) but never
@@ -1561,6 +1590,22 @@ emit_event switchover pass "active_slot=$TARGET_SLOT"
 # through the symlink, but daemon-reload is cheap insurance).
 systemctl daemon-reload
 
+# The DNS proxy, before the web app. It binds nothing until a web app gives
+# it a config, so on the first update that brings it the old web app still
+# holds port 53 here without a conflict. One already running keeps running:
+# the new web app restarts it only when its code changed.
+if systemctl is-enabled --quiet cidrella-dns-proxy 2>/dev/null; then
+  systemctl reset-failed cidrella-dns-proxy 2>/dev/null || true
+  systemctl start cidrella-dns-proxy || warn "Failed to start cidrella-dns-proxy (non-fatal, the web app retries)"
+fi
+# The privileged helper, before the web app too: the new web app asks it for
+# every probe and daemon change from its first boot. A failure shows in the
+# health check below, which rolls the update back.
+if systemctl is-enabled --quiet cidrella-helper 2>/dev/null; then
+  systemctl reset-failed cidrella-helper 2>/dev/null || true
+  systemctl start cidrella-helper || warn "Failed to start cidrella-helper"
+fi
+
 track_progress "switching" 90 "Restarting CIDRella..."
 info "Restarting cidrella service (DNS and DHCP daemons stay running)..."
 # Deliberately NOT fatal. This script runs under `set -euo pipefail` with
@@ -1587,15 +1632,20 @@ fi
 # anomaly detection was silently dead. Explicitly check each auxiliary unit
 # that ships with CIDRella: if the unit is enabled but not active, start it.
 # Missing units (e.g. dnsmasq mode=include) are silently skipped.
-for _aux in cidrella-anomaly; do
-  if systemctl list-unit-files "${_aux}.service" >/dev/null 2>&1 \
-     && systemctl is-enabled --quiet "$_aux" 2>/dev/null \
-     && ! systemctl is-active --quiet "$_aux" 2>/dev/null; then
-    info "Starting $_aux (was enabled but inactive)..."
-    systemctl start "$_aux" || warn "Failed to start $_aux (non-fatal)"
-    emit_event switchover pass "unit=${_aux}.service" action=started
-  fi
-done
+start_stopped_units() {
+  local phase="$1" unit
+  shift
+  for unit in "$@"; do
+    if systemctl list-unit-files "${unit}.service" >/dev/null 2>&1 \
+       && systemctl is-enabled --quiet "$unit" 2>/dev/null \
+       && ! systemctl is-active --quiet "$unit" 2>/dev/null; then
+      info "Starting $unit (was enabled but inactive)..."
+      systemctl start "$unit" || warn "Failed to start $unit (non-fatal)"
+      emit_event "$phase" pass "unit=${unit}.service" action=started
+    fi
+  done
+}
+start_stopped_units switchover cidrella-anomaly cidrella-dns-proxy cidrella-helper
 
 # ═══════════════════════════════════════════════════════════
 # PHASE 7: VERIFY HEALTH (auto-rollback on failure)
@@ -1791,6 +1841,31 @@ write_progress "rolling_back" 95 "New version failed, auto-rolling back..." "$RO
 # Swap symlink back
 ln -sfn "$ACTIVE_SLOT" "$INSTALL_LINK"
 
+# The DNS proxy reads the database the snapshot is about to be copied over.
+# A release without its own proxy process runs the proxy in the web app:
+# stop this one so the two do not fight over port 53. Otherwise have it
+# close the database (SIGUSR2) until the restored web app says hello.
+if systemctl is-active --quiet cidrella-dns-proxy 2>/dev/null; then
+  if [ -f "$ACTIVE_SLOT/server/src/dns-proxy/main.js" ]; then
+    systemctl kill -s SIGUSR2 cidrella-dns-proxy 2>/dev/null || true
+    sleep 1
+  else
+    systemctl stop cidrella-dns-proxy 2>/dev/null || true
+  fi
+fi
+# The privileged helper: started again for a release that has it (the
+# restored web app restarts it if its code differs), stopped for one from
+# before it, which runs its probes and daemon control itself with the rights
+# cidrella.service and the polkit rule still grant it.
+if systemctl list-unit-files cidrella-helper.service >/dev/null 2>&1; then
+  if [ -f "$ACTIVE_SLOT/server/src/helper/main.js" ]; then
+    systemctl reset-failed cidrella-helper 2>/dev/null || true
+    systemctl start cidrella-helper 2>/dev/null || warn "cidrella-helper did not start; see journalctl -u cidrella-helper"
+  else
+    systemctl stop cidrella-helper 2>/dev/null || true
+  fi
+fi
+
 # Restore DB snapshots
 if [ -f "$SNAPSHOT_DIR/cidrella.db" ]; then
   cp -a "$SNAPSHOT_DIR/cidrella.db" "$DATA_DIR/cidrella.db"
@@ -1838,6 +1913,10 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 done
 
 if [ "$ROLLBACK_OK" = true ]; then
+  # A new version that failed to start took the anomaly unit down with it
+  # (Requires=), and the restart above only restarts units still running. The
+  # proxy's fate was decided above, so it is not named here.
+  start_stopped_units rollback cidrella-anomaly
   err "Update FAILED, automatically rolled back to v${CURRENT_VERSION}."
   err "Check logs: journalctl -u cidrella -n 100"
   emit_event rollback pass "restored_version=$CURRENT_VERSION"

@@ -291,7 +291,7 @@ const chips = computed(() => {
         ? `${st.enabled_categories} ${st.enabled_categories === 1 ? 'category' : 'categories'}`
         : 'On',
       tone: 'ok',
-      title: st ? `${formatNumber(st.total_domains)} domains listed` : undefined,
+      title: st ? domainsListed(st) : undefined,
     });
   const g = intel.geoip;
   if (!g) list.push({ key: 'geoip', label: 'GeoIP', value: 'unknown', tone: 'muted' });
@@ -407,11 +407,18 @@ const countryRows = (items) =>
     };
   });
 
+// The server counts the domains when the blocklist changes; until the first
+// count finishes it reports none.
+function domainsListed(st) {
+  return st.total_domains == null
+    ? 'domains still being counted'
+    : `${formatNumber(st.total_domains)} domains listed`;
+}
 const blocklistNote = computed(() => {
   const st = intel.blocklistStats;
   if (blocklistOff.value) return 'off';
   return st
-    ? `${st.enabled_categories} ${st.enabled_categories === 1 ? 'category' : 'categories'} · ${formatNumber(st.total_domains)} domains listed`
+    ? `${st.enabled_categories} ${st.enabled_categories === 1 ? 'category' : 'categories'} · ${domainsListed(st)}`
     : rangeLabel.value;
 });
 const geoipNote = computed(() => {

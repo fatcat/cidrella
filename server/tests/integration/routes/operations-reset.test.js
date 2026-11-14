@@ -34,13 +34,13 @@ describe('POST /api/operations/reset-database', () => {
     expect(res.status).toBe(200);
 
     const enabled = new Set(res.body.enabledDefaults);
-    for (const code of [1, 3, 6, 15, 42, 119]) {
+    for (const code of [1, 3, 6, 15, 42, 51, 119]) {
       expect(enabled.has(code), `option ${code} should be enabled by default`).toBe(true);
     }
-    expect(enabled.has(51)).toBe(false);
 
     expect(res.body.defaults[42]).toBe(DHCP_DEFAULT_NTP_SERVERS);
-    expect(res.body.defaults[51]).toBeUndefined();
+    // The lease time a new scope starts with, shipped as an hour.
+    expect(res.body.defaults[51]).toBe('3600');
     // CIDRella's own address alone, no outside fallback.
     expect(res.body.defaults[6]).toMatch(/^(\d{1,3}\.){3}\d{1,3}$/);
   });

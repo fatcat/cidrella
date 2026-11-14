@@ -1,5 +1,5 @@
 import { getDb } from '../db/init.js';
-import { startScan } from './scanner.js';
+import { startScanInBackground } from './scanner.js';
 import {
   intervalToMs,
   isAutomaticScanAllowed,
@@ -58,7 +58,7 @@ function checkScheduledScans() {
       console.log(
         `[scan-scheduler] Starting scheduled scan for ${subnet.cidr} (interval: ${subnet.effective_scan_interval})`,
       );
-      startScan(db, pending.scanId, subnet.id);
+      startScanInBackground(db, pending.scanId, subnet.id);
     } catch (err) {
       console.error(`[scan-scheduler] Failed to start scan for ${subnet.cidr}:`, err.message);
     }

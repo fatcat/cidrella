@@ -16,6 +16,7 @@ import {
   normalizeNetwork,
   isValidNetwork,
   splitNetwork,
+  childNetwork,
   mergeNetworks,
   subtractNetwork,
   isNetworkWithin,
@@ -39,20 +40,26 @@ import {
   DHCP_V6_MODES,
   dhcpV6ModesFor,
   dhcpV6ModeError,
+  parseAddressQuery,
+  sortKeyRange,
 } from '../utils/ip.js';
-import { canonicalizeIp, sortKey } from '../utils/address.js';
+import { canonicalizeIp, expandIpv6, sortKey } from '../utils/address.js';
 import { refuseIpv6Unless } from '../utils/ipv6-support.js';
 import {
   lifecycleRepository as IpAddress,
   setManualReservation,
 } from '../services/ip-lifecycle-service.js';
 import {
+  countPersistedSubnetIps,
   getCanonicalSubnetIpRow,
   getSubnetIpReadContext,
   projectPersistedSubnetIpRows,
   projectVirtualSubnetIpRow,
   summarizeCanonicalSubnetIps,
 } from '../models/subnet-ip-read.js';
+import { suggestAddress } from '../models/address-suggest.js';
+import { dhcpPoolUse } from '../models/dhcp-pool-use.js';
+import { subnetHosts } from '../models/ip-hosts.js';
 import { enrichIpViewRows } from '../models/ip-view.js';
 import { invalidateSubnetCache } from '../utils/ip-sync.js';
 import { sanitizeForLog, vlanIdError } from '../utils/validation.js';
@@ -348,6 +355,13 @@ router.get(
       )
       .all();
     sortSubnetsNumerically(rows);
+    // Pool use on every network with a pool: an IPv6 network's fullness.
+    const poolUse = dhcpPoolUse(db);
+    for (const row of rows) {
+      const pool = poolUse.get(row.id);
+      row.pool_size = pool?.pool_size ?? null;
+      row.pool_in_use = pool?.pool_in_use ?? null;
+    }
 
     const tree = buildTree(rows);
 
@@ -2051,6 +2065,15 @@ router.delete(
   }),
 );
 
+// A network as the calculator shows it: its exact address counts as decimal
+// strings, which JSON carries at any size (`size` and `usable` are null past
+// 2^53, a /64 among them).
+const withExactCounts = (net) => ({
+  ...net,
+  size_text: net.sizeBig.toString(),
+  usable_text: net.usableBig.toString(),
+});
+
 // POST /api/subnets/calculate: standalone calculator.
 // v0.4.15: refuse divides that would return more than MAX_CALCULATE_CHILDREN
 // subnets. In v0.4.14 the endpoint would happily emit 1M+ rows (~60 MB JSON)
@@ -2092,12 +2115,31 @@ router.post(
       });
     }
 
-    try {
-      const results = splitNetwork(cidr, new_prefix, MAX_CALCULATE_CHILDREN);
-      res.json({ parent, subnets: results });
-    } catch (err) {
-      res.status(400).json({ error: err.message });
+    // One page of children, built by index, so a /48 into /64s never holds
+    // 65,536 networks at once (docs/IPV6-HANDLING.md).
+    const pageSize = body.page_size === undefined ? 256 : body.page_size;
+    const page = body.page === undefined ? 1 : body.page;
+    if (!Number.isInteger(pageSize) || pageSize < 1 || pageSize > 4096) {
+      return res.status(400).json({ error: 'page_size must be an integer 1-4096' });
     }
+    if (!Number.isInteger(page) || page < 1) {
+      return res.status(400).json({ error: 'page must be a positive integer' });
+    }
+    const start = BigInt((page - 1) * pageSize);
+    const end = start + BigInt(pageSize) < childCount ? start + BigInt(pageSize) : childCount;
+    const subnets = [];
+    for (let index = start; index < end; index++) {
+      subnets.push(withExactCounts(childNetwork(parent, new_prefix, index)));
+    }
+    res.json({
+      parent: withExactCounts(parent),
+      count: childCount.toString(),
+      first: childNetwork(parent, new_prefix, 0n).cidr,
+      last: childNetwork(parent, new_prefix, childCount - 1n).cidr,
+      page,
+      page_size: pageSize,
+      subnets,
+    });
   }),
 );
 
@@ -2221,14 +2263,54 @@ router.get(
         .sort((a, b) => a.startLong - b.startLong);
     }
 
+    // One page of an IPv6 network in address order, read from SQL: the
+    // persisted rows, with the topology addresses nothing stores placed where
+    // they sort. A placed row's position is the persisted rows below it plus
+    // the placed rows before it.
+    function sqlPagedIpv6Rows(protectedAddresses, pageSize) {
+      const placed = protectedAddresses
+        .filter((ip) => countPersistedSubnetIps(db, subnet, { ipAddress: ip }) === 0)
+        .map((ip) => ({ ip, key: sortKey(ip) }))
+        .sort((left, right) => (left.key < right.key ? -1 : left.key > right.key ? 1 : 0))
+        .map((entry, index) => ({
+          ...entry,
+          position: countPersistedSubnetIps(db, subnet, { belowKey: entry.key }) + index,
+        }));
+      const filteredTotal = countPersistedSubnetIps(db, subnet) + placed.length;
+      const totalPages = Math.ceil(filteredTotal / pageSize) || 1;
+      const page = Math.min(Math.max(parseInt(req.query.page) || 1, 1), totalPages);
+      const start = (page - 1) * pageSize;
+      const end = Math.min(start + pageSize, filteredTotal);
+      const placedBefore = placed.filter((entry) => entry.position < start).length;
+      const placedOnPage = new Map(
+        placed
+          .filter((entry) => entry.position >= start && entry.position < end)
+          .map((entry) => [entry.position, entry.ip]),
+      );
+      const persisted = loadPersistedRows({
+        limit: end - start - placedOnPage.size,
+        offset: start - placedBefore,
+      });
+      const ips = [];
+      for (let position = start, next = 0; position < end; position += 1) {
+        ips.push(
+          placedOnPage.has(position)
+            ? makeVirtualIpRow(placedOnPage.get(position))
+            : persisted[next++],
+        );
+      }
+      return { ips, filteredTotal, page, totalPages };
+    }
+
     function isAvailableIpRow(row) {
       return (row.ip_display_status || 'available') === 'available';
     }
 
     // Any column any IP table has: the DNS record and DHCP reservation or
     // lease behind each address, and the network it is in.
-    function loadPersistedRows() {
-      const rows = projectPersistedSubnetIpRows(db, subnet, { context: readContext });
+    // `options` narrows or pages the read (projectPersistedSubnetIpRows).
+    function loadPersistedRows(options = {}) {
+      const rows = projectPersistedSubnetIpRows(db, subnet, { context: readContext, ...options });
       for (const row of rows) row.subnet_name = subnet.name || subnet.cidr;
       attachDnsFacts(db, rows);
       attachDhcpFacts(db, rows);
@@ -2293,43 +2375,56 @@ router.get(
     }
 
     // A query that is one address matches that address in any spelling
-    // ('fd00:1:0:0::1' is the row 'fd00:1::1'); any other text is a
-    // substring search over the row's fields.
-    function matchesSearch(row, query) {
-      if (!query) return true;
-      const exact = canonicalizeIp(query);
-      if (exact && row.ip_address === exact) return true;
-      return [
-        row.ip_address,
-        row.hostname,
-        row.mac_address,
-        row.last_seen_mac,
-        row.vendor,
-        row.ip_display_status,
-        row.address_type,
-        row.allocation_state,
-        row.allocation_source_type,
-        row.network_range_type,
-        row.os_family,
-        row.device_type,
-        row.device_confidence,
-        row.dhcp_fingerprint,
-        row.dhcp_vendor_class,
-        row.dhcp_fingerprint_hostname,
-        row.device_fingerprint_source,
-        row.scanning_enabled,
-      ].some((value) =>
-        String(value ?? '')
-          .toLowerCase()
-          .includes(query),
-      );
+    // ('fd00:1:0:0::1' is the row 'fd00:1::1'), a CIDR matches the addresses
+    // inside it, and any other text is a substring search over the row's
+    // fields and an IPv6 address's expanded form ('2001:0db8').
+    function searchMatcher(query) {
+      if (!query) return () => true;
+      const parsedQuery = parseAddressQuery(query);
+      if (parsedQuery.kind === 'cidr') {
+        return (row) => networkContains(parsedQuery.cidr, row.ip_address);
+      }
+      return (row) => {
+        if (parsedQuery.kind === 'address' && row.ip_address === parsedQuery.ip) return true;
+        if (expandIpv6(row.ip_address)?.includes(query)) return true;
+        return [
+          row.ip_address,
+          row.hostname,
+          row.mac_address,
+          row.last_seen_mac,
+          row.vendor,
+          row.ip_display_status,
+          row.address_type,
+          row.allocation_state,
+          row.allocation_source_type,
+          row.network_range_type,
+          row.os_family,
+          row.device_type,
+          row.device_confidence,
+          row.dhcp_fingerprint,
+          row.dhcp_vendor_class,
+          row.dhcp_fingerprint_hostname,
+          row.device_fingerprint_source,
+          row.scanning_enabled,
+        ].some((value) =>
+          String(value ?? '')
+            .toLowerCase()
+            .includes(query),
+        );
+      };
     }
+    const matchesExplorerSearch = searchMatcher(search);
+    const matchesTableSearch = searchMatcher(tableSearch);
+    // An IPv6 network is an inventory, not an address space: Show available
+    // has nothing to list there, so it is ignored rather than hiding the few
+    // available rows (the network address, an address searched for).
+    const hideAvailable = !showAvailable && parsed.family === 4;
 
     const displayStatusFilter = String(req.query.display_status || '').toLowerCase();
     const addressTypeFilter = String(req.query.address_type || '').toLowerCase();
     const rowMatches = (row) => {
-      if (!showAvailable && isAvailableIpRow(row)) return false;
-      if (!matchesSearch(row, search) || !matchesSearch(row, tableSearch)) return false;
+      if (hideAvailable && isAvailableIpRow(row)) return false;
+      if (!matchesExplorerSearch(row) || !matchesTableSearch(row)) return false;
       if (
         displayStatusFilter &&
         String(row.ip_display_status || '').toLowerCase() !== displayStatusFilter
@@ -2357,15 +2452,43 @@ router.get(
     };
 
     // IPv6 networks never materialize rows and are never walked. The listing
-    // is the persisted rows plus the protected topology addresses, filtered,
-    // sorted and paged in memory.
+    // is the persisted rows plus the protected topology addresses. The plain
+    // view (no search, no filters, address order) pages in SQL; anything else
+    // filters, sorts and pages in memory, since those read fields only
+    // ip-view computes.
     if (parsed.family === 6) {
       const pageSize = clampPageSize(req.query.pageSize);
-      const rowsByAddress = new Map(loadPersistedRows().map((row) => [row.ip_address, row]));
       const protectedAddresses = [parsed.network];
       if (subnet.gateway_address && parsedNetworkContains(parsed, subnet.gateway_address)) {
         protectedAddresses.push(subnet.gateway_address);
       }
+      const plainView =
+        !search &&
+        !tableSearch &&
+        !hasExplicitFilters &&
+        (!reqSortField || (reqSortField === 'ip_address' && reqSortOrder === 1));
+      if (plainView) {
+        return res.json({
+          subnet,
+          ...sqlPagedIpv6Rows(protectedAddresses, pageSize),
+          ranges,
+          totalIps,
+          pageSize,
+          search,
+          table_search: tableSearch,
+          sorted: Boolean(reqSortField),
+          sparse: true,
+        });
+      }
+      // A CIDR search can only match addresses inside it, so only those load.
+      const cidrTerm = [search, tableSearch]
+        .map((term) => parseAddressQuery(term))
+        .find((term) => term.kind === 'cidr');
+      const rowsByAddress = new Map(
+        loadPersistedRows(cidrTerm ? { sortKeyRange: sortKeyRange(cidrTerm.cidr) } : {}).map(
+          (row) => [row.ip_address, row],
+        ),
+      );
       // An exact address searched for is listed even when nothing is stored
       // for it, as the IPv4 listing does: an available address is a row.
       for (const term of [search, tableSearch]) {
@@ -2795,6 +2918,89 @@ router.get(
     if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
 
     res.json(summarizeCanonicalSubnetIps(db, subnet));
+  }),
+);
+
+// GET /api/subnets/:id/suggest-address: one free address, never a list
+// (models/address-suggest.js). Advisory: nothing is held.
+router.get(
+  '/:id/suggest-address',
+  requirePerm('subnets:read'),
+  asyncHandler((req, res) => {
+    const db = getDb();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
+    let result;
+    try {
+      result = suggestAddress(db, subnet, {
+        strategy: req.query.strategy || 'sequential',
+        within: req.query.within,
+        from: req.query.from,
+      });
+    } catch (err) {
+      if (err.status === 400) return res.status(400).json({ error: err.message });
+      throw err;
+    }
+    if (!result.ip_address)
+      return res.status(404).json({ error: `No free address in ${result.bounds}` });
+    res.json(result);
+  }),
+);
+
+const HOSTS_PAGE_SIZE = 50;
+const HOSTS_PAGE_SIZE_MAX = 512;
+
+// A positive whole number from the query string, the fallback when absent,
+// or null when it is anything else.
+function queryCount(value, fallback) {
+  if (value === undefined) return fallback;
+  if (typeof value !== 'string' || !/^[1-9]\d{0,6}$/.test(value)) return null;
+  return Number(value);
+}
+
+// GET /api/subnets/:id/hosts: the network's addresses grouped into devices
+// (models/ip-hosts.js), paged by host. `address` returns the one host
+// holding that address. A projection: nothing is written.
+router.get(
+  '/:id/hosts',
+  requirePerm('subnets:read'),
+  asyncHandler((req, res) => {
+    const db = getDb();
+    const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(req.params.id);
+    if (!subnet) return res.status(404).json({ error: 'Subnet not found' });
+    if (subnet.address_family === 6 && refuseIpv6Unless(res)) return;
+    const page = queryCount(req.query.page, 1);
+    const pageSize = queryCount(req.query.page_size, HOSTS_PAGE_SIZE);
+    if (page === null || pageSize === null || pageSize > HOSTS_PAGE_SIZE_MAX) {
+      return res.status(400).json({
+        error: `page and page_size must be whole numbers, page_size at most ${HOSTS_PAGE_SIZE_MAX}`,
+      });
+    }
+    const { q, search, address: rawAddress } = req.query;
+    if ([q, search, rawAddress].some((value) => value !== undefined && typeof value !== 'string')) {
+      return res.status(400).json({ error: 'q, search and address must be single values' });
+    }
+    let address = null;
+    let interfaceId = null;
+    if (rawAddress !== undefined) {
+      const [bare, zone] = rawAddress.split('%');
+      address = subnetAddress(subnet, bare);
+      if (!address) {
+        return res.status(400).json({ error: `address must be an address in ${subnet.cidr}` });
+      }
+      interfaceId = zone || null;
+    }
+    res.json(
+      subnetHosts(db, subnet, {
+        page,
+        pageSize,
+        q: q || '',
+        search: search || '',
+        address,
+        interfaceId,
+      }),
+    );
   }),
 );
 

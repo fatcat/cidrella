@@ -11,7 +11,7 @@
  * Linux-only, like the ARP reader. Elsewhere it returns nothing.
  */
 
-import { execFileSync } from 'child_process';
+import { runCommand } from './run-command.js';
 import { MAC_RE, NULL_MAC } from './mac.js';
 import { canonicalizeIp } from './address.js';
 
@@ -22,6 +22,8 @@ const SEEN_STATES = new Set(['REACHABLE', 'STALE', 'DELAY', 'PROBE', 'PERMANENT'
 
 let cached = null;
 let cachedAt = 0;
+// The read under way, which a second caller joins rather than starting one.
+let reading = null;
 
 const LINK_LOCAL_RE = /^fe[89ab]/i;
 
@@ -86,29 +88,35 @@ export function parseNeighTable(text) {
  * Read the kernel's IPv6 neighbor table. Cached briefly; pass `force` right
  * after a probe, when the point is to see entries it just created.
  */
-export function readNdCache({ force = false } = {}) {
-  const now = Date.now();
-  if (!force && cached && now - cachedAt < CACHE_TTL_MS) return cached;
-
-  let table;
-  try {
-    table = parseNeighTable(
-      execFileSync('ip', ['-6', 'neigh', 'show'], {
-        encoding: 'utf8',
-        stdio: ['ignore', 'pipe', 'pipe'],
-        timeout: 3000,
-      }),
-    );
-  } catch {
-    // No iproute2, or not Linux.
-    table = new Map();
+export async function readNdCache({ force = false } = {}) {
+  if (!force && cached && Date.now() - cachedAt < CACHE_TTL_MS) return cached;
+  if (!reading) {
+    reading = (async () => {
+      let table;
+      try {
+        const { stdout } = await runCommand('ip', ['-6', 'neigh', 'show'], { timeout: 3000 });
+        table = parseNeighTable(stdout);
+      } catch {
+        // No iproute2, or not Linux.
+        table = new Map();
+      }
+      cached = table;
+      cachedAt = Date.now();
+      return table;
+    })().finally(() => {
+      reading = null;
+    });
   }
-  cached = table;
-  cachedAt = now;
-  return table;
+  return reading;
 }
 
-/** The neighbor entry the kernel has for `ip`, or null. */
+/**
+ * The neighbor entry the kernel had for `ip` at the last read, or null.
+ * Synchronous, for the passive liveness path that runs per DNS query: a
+ * stale table starts a read in the background and this answers from the
+ * one before it.
+ */
 export function lookupNdEntry(ip, iface = null) {
-  return findNeighbor(readNdCache(), ip, iface);
+  if (!reading && (!cached || Date.now() - cachedAt >= CACHE_TTL_MS)) void readNdCache();
+  return cached ? findNeighbor(cached, ip, iface) : null;
 }

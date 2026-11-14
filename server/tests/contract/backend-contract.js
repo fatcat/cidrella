@@ -8,6 +8,7 @@
  *     seedLeases(leases),      make the backend report these BackendLeases
  *     readOptions,             passed to readLeases (timing for tests)
  *     tearLeases?(),           make the next read see a half-written lease set
+ *     splitWildcardChains?,    what a DNS adapter must say it wants (contract.js)
  *   }
  */
 import { describe, it, expect, beforeAll } from 'vitest';
@@ -53,9 +54,12 @@ export function runBackendContract(label, makeHarness) {
       return result;
     };
 
-    it('has every operation and reports status and capabilities', () => {
+    it('has every operation and reports status and capabilities', async () => {
       expect(() => assertBackendShape(h.backend)).not.toThrow();
-      const status = h.backend.status();
+      // Asynchronous, as all daemon control is: never a process on the loop.
+      const pending = h.backend.status();
+      expect(pending).toBeInstanceOf(Promise);
+      const status = await pending;
       expect(status.name).toBe(h.backend.name);
       expect(typeof status.running).toBe('boolean');
       expect(typeof status.restartPending).toBe('boolean');
@@ -71,6 +75,7 @@ export function runBackendContract(label, makeHarness) {
         expect(typeof note, id).toBe('string');
       }
       if (h.backend.roles.includes('dns')) {
+        expect(h.backend.dns.splitWildcardChains).toBe(h.splitWildcardChains);
         for (const record of [
           { type: 'A', ttl: null },
           { type: 'AAAA', ttl: 900 },
@@ -84,7 +89,7 @@ export function runBackendContract(label, makeHarness) {
       if (log !== null) {
         // null until the backend has written a log (Kea's legal log).
         expect(log.path === null || typeof log.path === 'string').toBe(true);
-        for (const fn of ['querySourceIp', 'dhcpDirection', 'isDhcpLine']) {
+        for (const fn of ['querySourceIp', 'dhcpMessage', 'isDhcpLine']) {
           expect(typeof log[fn]).toBe('function');
         }
         // Only a backend that serves DHCP has DHCP lines to reassemble.

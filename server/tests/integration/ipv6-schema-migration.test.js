@@ -7,49 +7,22 @@
  * was lost. It also demonstrates the hazard the runner guards against.
  */
 import { afterEach, describe, expect, it } from 'vitest';
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { initDb, getDb } from '../../src/db/init.js';
+import { LATEST_MIGRATION, databaseThrough } from '../helpers/migrations.js';
 
 const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
 
-function migrationFiles() {
-  return fs
-    .readdirSync(migrationsDir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort();
-}
-
-function versionOf(file) {
-  return Number.parseInt(file.split('_')[0], 10);
-}
-
-function databaseThrough(targetVersion) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-test-ipv6-schema-'));
-  tmpDirs.push(tmpDir);
+// initDb expects these under the data directory.
+function databaseWithDirs(target) {
+  const made = databaseThrough(target, { tmpDirs });
   for (const dir of ['dnsmasq/hosts.d', 'dnsmasq/dhcp-hosts.d', 'dnsmasq/conf.d', 'certs']) {
-    fs.mkdirSync(path.join(tmpDir, dir), { recursive: true });
+    fs.mkdirSync(path.join(made.tmpDir, dir), { recursive: true });
   }
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.pragma('foreign_keys = ON');
-  db.exec(`CREATE TABLE schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  const apply = db.transaction((sql, version) => {
-    db.exec(sql);
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-  });
-  for (const file of migrationFiles()) {
-    const version = versionOf(file);
-    if (version > targetVersion) continue;
-    apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
-  }
-  return { db, tmpDir };
+  return made;
 }
 
 function seedTopology(db) {
@@ -163,7 +136,7 @@ afterEach(() => {
 
 describe('IPv6 schema migrations 070-073', () => {
   it('upgrades a seeded 069 database through initDb without losing any child rows', async () => {
-    const { db, tmpDir } = databaseThrough(69);
+    const { db, tmpDir } = databaseWithDirs(69);
     seedTopology(db);
     const before = counts(db);
     db.close();
@@ -174,22 +147,24 @@ describe('IPv6 schema migrations 070-073', () => {
 
     const after = counts(upgraded);
     // Startup seeds the three IPv6 option defaults (DNS servers 23, search
-    // list 24, NTP 56); every other table keeps exactly its rows.
-    // 086 links the scope to the defaults it was served (DHCP-01): the seeded
-    // 66 and the NTP pool (42) the migrations ship.
+    // list 24, NTP 56) and the IPv4 Lease Time (51); every other table keeps
+    // exactly its rows. 086 linked the scope to the defaults it was served
+    // (the seeded 66 and the NTP pool 42) and 091 made those its own rows.
     expect(after).toEqual({
       ...before,
-      dhcp_option_defaults: before.dhcp_option_defaults + 3,
+      dhcp_option_defaults: before.dhcp_option_defaults + 4,
       dhcp_scope_options: before.dhcp_scope_options + 2,
     });
     expect(
       upgraded
         .prepare(
-          'SELECT option_code FROM dhcp_scope_options WHERE value IS NULL ORDER BY option_code',
+          'SELECT option_code, value IS NOT NULL AS own FROM dhcp_scope_options WHERE option_code IN (42, 66) ORDER BY option_code',
         )
-        .all()
-        .map((row) => row.option_code),
-    ).toEqual([42, 66]);
+        .all(),
+    ).toEqual([
+      { option_code: 42, own: 1 },
+      { option_code: 66, own: 1 },
+    ]);
     expect(
       upgraded
         .prepare(
@@ -200,7 +175,9 @@ describe('IPv6 schema migrations 070-073', () => {
     ).toEqual([23, 24, 56]);
     expect(upgraded.pragma('foreign_keys', { simple: true })).toBe(1);
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
-    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(89);
+    expect(upgraded.prepare('SELECT MAX(version) AS v FROM schema_version').get().v).toBe(
+      LATEST_MIGRATION,
+    );
 
     const child = upgraded.prepare("SELECT * FROM subnets WHERE cidr = '10.70.0.0/24'").get();
     expect(child.address_family).toBe(4);
@@ -303,7 +280,7 @@ describe('IPv6 schema migrations 070-073', () => {
   });
 
   it('would have emptied every child table under the old foreign-keys-on procedure', () => {
-    const { db } = databaseThrough(69);
+    const { db } = databaseWithDirs(69);
     seedTopology(db);
     const before = counts(db);
     const sql = fs.readFileSync(path.join(migrationsDir, '070_subnets_ipv6.sql'), 'utf8');

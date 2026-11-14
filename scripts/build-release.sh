@@ -195,7 +195,7 @@ export NPM_CONFIG_CACHE
 # cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
 # through to /usr/bin/node. Bumping this version requires a release + testerella
 # validation, not a hot swap.
-BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-24.22.1}"
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-26.13.0}"
 NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
@@ -1071,7 +1071,7 @@ if [ "$DRY_RUN" = false ]; then
 
   if [ ! -f "$NODE_CACHED_TARBALL" ]; then
     echo "  Downloading $NODE_TARBALL..."
-    curl -fsSL "$NODE_DOWNLOAD_URL" -o "$NODE_CACHED_TARBALL"
+    curl --proto '=https' --proto-redir '=https' -fsSL "$NODE_DOWNLOAD_URL" -o "$NODE_CACHED_TARBALL"
   else
     echo "  Using cached $NODE_TARBALL"
   fi
@@ -1083,7 +1083,7 @@ if [ "$DRY_RUN" = false ]; then
   # which is the threat model here. A stronger defense (GPG sig check against
   # pinned keys) is tracked in PLAN.md.
   echo "  Verifying SHA-256 against nodejs.org SHASUMS256.txt..."
-  EXPECTED_SHA=$(curl -fsSL "$NODE_SHASUMS_URL" | awk -v f="$NODE_TARBALL" '$2 == f {print $1}')
+  EXPECTED_SHA=$(curl --proto '=https' --proto-redir '=https' -fsSL "$NODE_SHASUMS_URL" | awk -v f="$NODE_TARBALL" '$2 == f {print $1}')
   if [ -z "$EXPECTED_SHA" ]; then
     echo "  ERROR: $NODE_TARBALL not found in $NODE_SHASUMS_URL"
     echo "  (Is BUNDLED_NODE_VERSION=$BUNDLED_NODE_VERSION still published?)"

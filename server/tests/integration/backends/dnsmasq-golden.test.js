@@ -32,6 +32,13 @@ vi.mock('child_process', () => ({
   }),
   execFile: vi.fn(),
 }));
+// Daemon control runs through runCommand: recorded by the same mock, so the
+// command list reads as it did when every call was synchronous.
+vi.mock('../../../src/utils/run-command.js', async () =>
+  (await import('../../helpers/fake-run-command.js')).fakeRunCommandModule(
+    (await import('child_process')).execFileSync,
+  ),
+);
 
 const DNSMASQ_DIR = path.join(DATA_DIR, 'dnsmasq');
 const REPO_DEFAULT_CONF = path.resolve(__dirname, '../../../../dnsmasq/dnsmasq.conf.default');
@@ -55,7 +62,7 @@ const applyPaths = {
   bypass(on) {
     if (on) setSetting('dns_proxy_bypass', 'true');
     else db.prepare("DELETE FROM settings WHERE key = 'dns_proxy_bypass'").run();
-    applyListenNow(db);
+    return applyListenNow(db);
   },
   syncLeases: () => syncLeasesNow(db, { settleMs: 0 }),
 };
@@ -136,12 +143,12 @@ describe('dnsmasq backend golden output', () => {
       'interface_config',
       JSON.stringify({ eth0: { dns: true, dhcp: true }, eth1: { dns: true, dhcp: false } }),
     );
-    applyPaths.boot();
+    await applyPaths.boot();
     await expect(snapshot()).toMatchFileSnapshot(golden('04-boot'));
   });
 
   it('05 reboots with nothing changed', async () => {
-    applyPaths.boot();
+    await applyPaths.boot();
     await expect(snapshot()).toMatchFileSnapshot(golden('05-boot-unchanged'));
   });
 
@@ -156,10 +163,46 @@ describe('dnsmasq backend golden output', () => {
   });
 
   it('06 enters and leaves proxy bypass', async () => {
-    applyPaths.bypass(true);
+    await applyPaths.bypass(true);
     const on = snapshot();
-    applyPaths.bypass(false);
+    await applyPaths.bypass(false);
     await expect(`${on}\n%%%%% bypass off\n${snapshot()}`).toMatchFileSnapshot(golden('06-bypass'));
+  });
+
+  // The DNS proxy process down in bypass takes the forwarder with it: in
+  // plaintext mode dnsmasq asks the plain servers itself, either family;
+  // encrypted, it keeps the forwarder.
+  it('06b forwards around a forwarder that is down, only in plaintext', async () => {
+    const keys = ['forwarder_encryption', 'dns_upstream_servers', 'dns_upstream_backup_servers'];
+    const saved = keys.map((key) =>
+      db.prepare('SELECT key, value FROM settings WHERE key = ?').get(key),
+    );
+    const serverLines = () =>
+      fs
+        .readFileSync(path.join(DNSMASQ_DIR, 'dnsmasq.conf'), 'utf-8')
+        .split('\n')
+        .filter((line) => line.startsWith('server='))
+        .join('\n');
+    const states = [];
+    setSetting('dns_forwarder_down', 'true');
+    await applyPaths.bypass(true);
+    states.push(`%%%%% forwarder down, encrypted\n${serverLines()}`);
+    setSetting('forwarder_encryption', 'off');
+    setSetting('dns_upstream_servers', JSON.stringify(['9.9.9.9', '2620:fe::fe']));
+    setSetting('dns_upstream_backup_servers', JSON.stringify(['149.112.112.112']));
+    await applyPaths.bypass(true);
+    states.push(`%%%%% forwarder down, plaintext\n${serverLines()}`);
+    db.prepare("DELETE FROM settings WHERE key = 'dns_forwarder_down'").run();
+    await applyPaths.bypass(false);
+    states.push(`%%%%% forwarder back\n${serverLines()}`);
+    await expect(`${states.join('\n')}\n`).toMatchFileSnapshot(golden('06b-forwarder-down'));
+
+    for (const [i, key] of keys.entries()) {
+      if (saved[i]) setSetting(key, saved[i].value);
+      else db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+    }
+    await applyPaths.bypass(false);
+    snapshot(); // the commands so far belong to this step
   });
 
   it('07 turns recursion off and DNSSEC off', async () => {
@@ -207,7 +250,7 @@ describe('dnsmasq backend golden output', () => {
 
   it('10 boots on a fresh install with no interface config', async () => {
     db.prepare("DELETE FROM settings WHERE key = 'interface_config'").run();
-    applyPaths.boot();
+    await applyPaths.boot();
     await expect(snapshot()).toMatchFileSnapshot(golden('10-boot-fresh'));
   });
 });

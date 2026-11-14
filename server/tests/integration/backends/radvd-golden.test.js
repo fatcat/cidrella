@@ -15,6 +15,10 @@ const exec = vi.fn((cmd, args = []) => {
   commands.push([cmd, ...args.map((a) => a.replace(DATA_DIR, '$DATA_DIR'))].join(' '));
   return '';
 });
+// systemctl answers without running.
+vi.mock('../../../src/utils/run-command.js', async () =>
+  (await import('../../helpers/fake-run-command.js')).fakeRunCommandModule(() => ''),
+);
 
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../../helpers/test-db.js');
 const { ESTATE_INTERFACES, seedBackendEstate } = await import('../../helpers/backend-estate.js');
@@ -96,7 +100,7 @@ describe('radvd backend golden output', () => {
     ifaces = estateInterfaces();
   });
 
-  it('writes an idle file, never checked, when nothing is left to advertise', () => {
+  it('writes an idle file, never checked, when nothing is left to advertise', async () => {
     ifaces = ESTATE_INTERFACES;
     commands.length = 0;
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
@@ -105,7 +109,7 @@ describe('radvd backend golden output', () => {
     warn.mockRestore();
     expect(fs.readFileSync(RADVD_CONF, 'utf8')).toMatch(/^# No DHCPv6 scope to advertise/);
     expect(commands).toEqual([]);
-    expect(radvd.status().idle).toBe(true);
+    expect((await radvd.status()).idle).toBe(true);
     ifaces = estateInterfaces();
   });
 });

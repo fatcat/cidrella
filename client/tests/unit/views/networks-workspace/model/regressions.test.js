@@ -30,6 +30,18 @@ describe('Networks workspace regressions', () => {
     expect([...FILTERING_OFF]).toEqual([]);
   });
 
+  // Not a bug found, a guard on rule 1 of docs/IPV6-HANDLING.md: Show
+  // available turned off on an IPv4 network does not hide the available row
+  // of an address searched for on an IPv6 one, which has no switch.
+  it('an IPv6 network lists a searched address whatever Show available says', () =>
+    walk(['network 11', 'available', 'network 16', 'search "fd00:5::abcd"']));
+
+  // Not a bug found, a guard on rules 3 and 4: each container reads its
+  // allocated share (invariant 2c), both families, and its menu offers
+  // Allocate next free prefix and nothing else.
+  it('a container reads its coverage and offers next free prefix', () =>
+    walk(['unallocated', 'container-menu 30', 'container-menu 20']));
+
   it('a network with only a reverse zone opens the DNS view on it', () =>
     walk(['tab dns', 'network 14']));
 
@@ -92,5 +104,19 @@ describe('Networks workspace regressions', () => {
       'tab dhcp',
       'table-search "lease"',
       'estate',
+    ]));
+
+  // An IPv6 network opens on its hosts (docs/IPV6-HANDLING.md rule 5); a
+  // host lists its addresses, one opens the details panel, and the choice of
+  // Addresses or Hosts survives a reload.
+  it('an IPv6 network shows hosts, and an address of one opens', () =>
+    walk([
+      'network 16',
+      'row 2',
+      'host-address fd00:5::7f2e:91c4:aa01:3b6d',
+      'table-search "nas"',
+      'grouping addresses',
+      'network 13',
+      'grouping hosts',
     ]));
 });

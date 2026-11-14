@@ -8,16 +8,33 @@
 //   zone <id> · pick-zone <id> · pick-network <id> · scope <id>
 //   search "<text>" · table-search "<text>"
 //   row <n> [ctrl|shift] · check <n> · check-all · row-menu <n> · close-details
+//   container-menu <id> · grouping hosts|addresses · host-address <address>
 //   filtering <n>
 //   filter <column> <n> · filter-text <column> "<text>" · clear-filter <column>
 //   sort <column> · page next|prev · page-size <n>
 //
 // `candidates()` lists the ones the screen offers right now, so a random walk
-// only does what a person could.
+// only does what a person could. In the Hosts view `row <n>` opens or closes
+// a host, and `host-address` opens one of its addresses.
 import { mountWorkspace, settle } from './harness.js';
 import { NETWORKS, ZONES } from './fake-estate.js';
 
-export const SEARCH_TERMS = ['', 'trust', 'lab', '10.0.1', 'laptop', '172.16', 'zzz'];
+// The IPv6 terms: a compressed fragment, an expanded one, a CIDR inside the
+// /64, and an address nothing stores, listed as available (docs/
+// IPV6-HANDLING.md, rules 1 and 6).
+export const SEARCH_TERMS = [
+  '',
+  'trust',
+  'lab',
+  '10.0.1',
+  'laptop',
+  '172.16',
+  'zzz',
+  'fd00:5',
+  '0005:0000:0000',
+  'fd00:5::/120',
+  'fd00:5::abcd',
+];
 // Filter values are picked by their place in the menu's list; a pick past the
 // end opens and closes the menu, as a person finding nothing there would.
 const FILTER_PICKS = [0, 1];
@@ -55,10 +72,12 @@ export function candidates() {
   for (const row of all('.folder-row[data-folder-id]')) {
     out.push(`folder ${row.dataset.folderId}`, `toggle-folder ${row.dataset.folderId}`);
   }
-  for (const row of all('.network-row[data-network-id]:not([disabled])')) {
+  for (const row of all('.network-row[data-network-id]:not([aria-disabled="true"])')) {
     const id = row.dataset.networkId;
     out.push(`network ${id}`, `network ${id} ctrl`, `network ${id} shift`);
   }
+  for (const row of all('.resource-node.container > .network-row[data-network-id]'))
+    out.push(`container-menu ${row.dataset.networkId}`);
   for (const tab of all('.view-tabs button')) out.push(`tab ${tab.dataset.track.slice(14)}`);
   for (const stat of all('.health-stat.interactive'))
     out.push(`stat ${stat.dataset.track.slice('workspace-stat-'.length)}`);
@@ -85,6 +104,9 @@ export function candidates() {
       out.push(`filtering ${index}`);
   }
   if (one('thead .check-cell input')) out.push('check-all');
+  if (one('.grouping-switcher')) out.push('grouping hosts', 'grouping addresses');
+  for (const button of all('[data-track="workspace-host-address"]').slice(0, 4))
+    out.push(`host-address ${button.dataset.address}`);
   if (one('.available-switch input')) out.push('available');
   if (one('.domain-names-switch input')) out.push('domain-names');
   if (one('[data-track="workspace-unallocated-hierarchy"]')) out.push('hierarchy');
@@ -99,7 +121,8 @@ export function candidates() {
   }
   for (const chip of all('.filter-chips button[data-filter-key]'))
     out.push(`clear-filter ${chip.dataset.filterKey}`);
-  for (const key of columns) out.push(`sort ${key}`);
+  for (const header of all('th[data-column]'))
+    if (header.querySelector('button')) out.push(`sort ${header.dataset.column}`);
   if (one('.paginator-stub [aria-label="Next Page"]:not([disabled])')) out.push('page next');
   if (one('.paginator-stub [aria-label="Previous Page"]:not([disabled])')) out.push('page prev');
   if (one('.paginator-stub select')) for (const size of PAGE_SIZES) out.push(`page-size ${size}`);
@@ -219,6 +242,22 @@ export async function perform(session, label) {
       document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
       break;
     }
+    case 'container-menu': {
+      const row = one(`.resource-node.container > .network-row[data-network-id="${arg}"]`);
+      row.dispatchEvent(new MouseEvent('contextmenu', { bubbles: true, cancelable: true }));
+      await settle();
+      const offered = all('.row-menu button strong').map((label) => label.textContent.trim());
+      if (offered.join() !== 'Allocate next free prefix…')
+        throw new Error(`container ${arg} menu offers [${offered}]`);
+      document.dispatchEvent(new KeyboardEvent('keydown', { key: 'Escape', bubbles: true }));
+      break;
+    }
+    case 'grouping':
+      click(one(`.grouping-switcher button[data-grouping="${arg}"]`));
+      break;
+    case 'host-address':
+      click(one(`[data-track="workspace-host-address"][data-address="${arg}"]`));
+      break;
     case 'available':
       click(one('.available-switch input'));
       break;

@@ -187,6 +187,14 @@ describe('anomaly triage page', () => {
     w.unmount();
   });
 
+  it('lists the rows as list items that stay buttons', async () => {
+    const w = await mountPage();
+    const rows = w.findAll('ul.queue > li > button.queue-row');
+    expect(rows).toHaveLength(2);
+    expect(rows.every((row) => row.attributes('role') === undefined)).toBe(true);
+    w.unmount();
+  });
+
   it('opens the drawer from a map dot and asks the evidence endpoint for that identity', async () => {
     const w = await mountPage();
     await dotFor(w, 'worst-host').trigger('click');

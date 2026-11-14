@@ -6,6 +6,7 @@ import { fileURLToPath } from 'url';
 import crypto from 'crypto';
 import bcrypt from 'bcryptjs';
 import { DEFAULTS } from '../config/defaults.js';
+import { settingValue } from '../models/setting-value.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
 import { backfillCanonicalIpIdentity } from './ip-identity.js';
 import {
@@ -29,37 +30,10 @@ export function getDb() {
   return db;
 }
 
-/**
- * Read a setting from the database, falling back to DEFAULTS.
- * For JSON-stored settings (dns_upstream_servers, dns_soa_defaults),
- * the value is automatically parsed.
- */
+/** Read a setting from the database, falling back to DEFAULTS (models/setting-value.js). */
 export function getSetting(key) {
   const row = getDb().prepare('SELECT value FROM settings WHERE key = ?').get(key);
-  const raw = row?.value;
-
-  // JSON-stored keys
-  if (
-    key === 'dns_upstream_servers' ||
-    key === 'dns_upstream_backup_servers' ||
-    key === 'dns_soa_defaults' ||
-    key === 'forwarder_encrypted_upstreams'
-  ) {
-    try {
-      return raw ? JSON.parse(raw) : DEFAULTS[key];
-    } catch {
-      return DEFAULTS[key];
-    }
-  }
-
-  // Numeric keys
-  if (key === 'audit_log_retention_days') {
-    return raw != null ? parseInt(raw, 10) : DEFAULTS[key];
-  }
-
-  // String keys, return DB value or default
-  if (raw != null) return raw;
-  return DEFAULTS[key] ?? null;
+  return settingValue(key, row?.value, DEFAULTS);
 }
 
 export async function initDb(dataDir) {

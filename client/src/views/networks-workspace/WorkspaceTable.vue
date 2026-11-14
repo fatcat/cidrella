@@ -1,5 +1,5 @@
 <template>
-  <div class="table-scroll">
+  <div class="table-scroll workspace-table">
     <table>
       <thead>
         <tr>
@@ -149,6 +149,7 @@ import StatusDot from '../../components/StatusDot.vue';
 import ToggleSwitch from '../../ui/ToggleSwitch.js';
 import { EMPTY_CELL } from '../../utils/format.js';
 import { ipLifecycleDisplay } from '../../utils/ipLifecycleDisplay.js';
+import './workspace-table.css';
 
 // Row rendering, sort headers and selection checkboxes. The pager stays in
 // NetworksWorkspace.vue because it drives the grid presentations too. Rows are
@@ -320,62 +321,10 @@ input {
 button {
   color: inherit;
 }
-.table-scroll {
-  min-height: 0;
-  flex: 1;
-  overflow: auto;
-}
-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.67rem;
-}
-thead {
-  position: sticky;
-  top: 0;
-  z-index: 1;
-  background: color-mix(in srgb, var(--cid-surface-ground) 78%, var(--cid-surface-card));
-}
-th {
-  height: 2rem;
-  padding: 0 0.6rem;
-  border-bottom: 1px solid var(--preview-line);
-  color: var(--preview-muted);
-  text-align: left;
-  white-space: nowrap;
-}
-th button {
-  padding: 0;
-  border: 0;
-  background: none;
-  color: inherit;
-  font-size: 0.59rem;
-  font-weight: 800;
-  letter-spacing: 0.055em;
-  text-transform: uppercase;
-  cursor: pointer;
-}
-td {
-  height: 2.35rem;
-  padding: 0 0.6rem;
-  border-bottom: 1px solid color-mix(in srgb, var(--preview-line) 65%, transparent);
-  white-space: nowrap;
-}
-tbody tr {
-  cursor: pointer;
-}
-tbody tr:hover,
-tbody tr.selected {
-  background: var(--preview-accent-soft);
-}
 /* A disabled record, zone or scope is kept but not served: the whole row
    recedes so it cannot be read as live, while the Enabled cell says why. */
 tbody tr.disabled td:not(.check-cell) {
   opacity: 0.55;
-}
-tbody tr:focus-visible {
-  outline: 2px solid var(--cid-primary-color);
-  outline-offset: -2px;
 }
 .check-cell {
   width: 1.5rem;
@@ -383,9 +332,6 @@ tbody tr:focus-visible {
 }
 .check-cell input {
   accent-color: var(--preview-accent);
-}
-.muted {
-  color: var(--preview-muted);
 }
 /* Status pills share the current interface's capsule shape (.address-type-pill,
    App.vue). "in use" is neutral: text on a gray capsule. */
@@ -443,26 +389,7 @@ tbody tr:focus-visible {
 .enabled-value {
   text-transform: capitalize;
 }
-.no-results {
-  display: flex;
-  min-height: 180px;
-  align-items: center;
-  justify-content: center;
-  flex-direction: column;
-  gap: 0.4rem;
-  color: var(--preview-muted);
-}
-.no-results i {
-  font-size: 1.4rem;
-}
-.no-results strong {
-  color: var(--cid-text-color);
-}
 .address-type-pill {
   font-size: var(--workspace-font-small);
-}
-table,
-th button {
-  font-size: var(--workspace-font-body);
 }
 </style>

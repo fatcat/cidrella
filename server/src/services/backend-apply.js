@@ -11,15 +11,17 @@ import { getDnsBackend, getRaBackend, getService, uniqueServices } from '../back
 import fs from 'fs';
 import { syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { BACKEND_RESTART_MARKER } from '../config/defaults.js';
+import { isPreflightBoot } from '../utils/preflight.js';
+import { switchInProgress } from '../utils/switch-state.js';
 
-// A Promise when the backend writes zones over HTTP (PowerDNS); the
-// after-commit runner waits for it.
+// Each apply resolves once the backend has taken the change (the restart or
+// reload done); the after-commit runner waits for it.
 export function applyDns(db) {
   return getDnsBackend().applyZones(db);
 }
 
-export function applyResolver(db) {
-  getDnsBackend().applyResolver(db);
+export async function applyResolver(db) {
+  await getDnsBackend().applyResolver(db);
 }
 
 // The DHCP config and, from another backend, the RAs: written and checked,
@@ -38,7 +40,7 @@ function renderDhcp(db) {
 // their effective names (ADR 005), the vendor fallback included. When another
 // backend sends the Router Advertisements (radvd beside Kea), the DHCPv6
 // scopes go to it too.
-export function applyDhcp(db) {
+export async function applyDhcp(db) {
   const { dhcp, result, ra, raResult } = renderDhcp(db);
   const leases = db
     .prepare(
@@ -46,8 +48,8 @@ export function applyDhcp(db) {
     )
     .all();
   syncDhcpDnsRecords(db, leases);
-  dhcp.applyActivation(result.activation);
-  if (raResult) ra.applyActivation(raResult.activation);
+  await dhcp.applyActivation(result.activation);
+  if (raResult) await ra.applyActivation(raResult.activation);
   for (const listener of dhcpAppliedListeners) listener();
 }
 
@@ -73,7 +75,7 @@ export function onDhcpApplied(listener) {
  * 'skipped' in an update preflight). After a restore every service restarts
  * (BACKEND_RESTART_MARKER), so each loads the restored leases.
  */
-export function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT === '1' } = {}) {
+export async function applyAtBoot(db, { preflight = isPreflightBoot() } = {}) {
   const dns = getService('dns');
   let dnsChanged = false;
   try {
@@ -109,7 +111,7 @@ export function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT ===
       // Restart when the config changed, when OUR unit is down (the specific
       // unit, not any daemon of that name on the host), or when a previous
       // restart failed and the running process may hold a stale config.
-      const outcome = service.activate({ force: afterRestore || changed.has(service) });
+      const outcome = await service.activate({ force: afterRestore || changed.has(service) });
       if (outcome === 'unchanged') {
         console.log(`${service.name} config unchanged and service running, skipping boot restart`);
       }
@@ -124,13 +126,43 @@ export function applyAtBoot(db, { preflight = process.env.CIDRELLA_PREFLIGHT ===
 }
 
 /**
- * Write the listen config and restart the backend right away, not through
- * the after-commit hooks: proxy bypass must have the backend on port 53
- * before it returns.
+ * Restart each backend service of the serving stack whose last restart or
+ * reload failed (its restart-pending marker), as boot would. Run when the
+ * privileged helper answers again: a change made while it was away is on
+ * disk but not loaded. A service without the marker is left alone, and a
+ * stack switch under way is left to finish its own starts. Returns what
+ * happened to each service it restarted, by name.
  */
-export function applyListenNow(db) {
-  getDnsBackend().applyListen(db, { activate: false });
-  getService('dns').restart();
+export async function activatePendingBackends() {
+  if (switchInProgress()) return {};
+  const outcomes = {};
+  for (const service of uniqueServices()) {
+    try {
+      if (!(await service.status()).restartPending) continue;
+      outcomes[service.name] = await service.activate();
+      if (outcomes[service.name] === 'restarted') {
+        console.log(`${service.name} restarted to load a change its last reload or restart missed`);
+      }
+    } catch (err) {
+      console.warn(`${service.name} pending restart failed:`, err.message);
+      outcomes[service.name] = 'failed';
+    }
+  }
+  return outcomes;
+}
+
+/**
+ * Write the listen and forward config and restart the backend right away,
+ * not through the after-commit hooks: proxy bypass must have the backend on
+ * port 53 before it returns. Bypass can move where recursion goes too (the
+ * forwarder down with the proxy process, utils/forwarding-settings.js
+ * recursionTargets), so both are written before the one restart.
+ */
+export async function applyListenNow(db) {
+  const dns = getDnsBackend();
+  dns.applyListen(db, { activate: false });
+  dns.applyResolver(db, { activate: false });
+  await getService('dns').restart();
 }
 
 // Hook names are stored in configuration_generations (a CHECK in migration

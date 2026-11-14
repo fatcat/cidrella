@@ -91,6 +91,25 @@ describe('eventDetail', () => {
     expect(eventDetail({})).toBe('');
   });
 
+  it('shows a change that sets or clears a value as a transition from or to none', () => {
+    // A lease expiring clears the hostname: old daniels-mbp, no new value.
+    expect(eventDetail({ event_type: 'hostname_changed', old_value: 'daniels-mbp' })).toBe(
+      'daniels-mbp → (none)',
+    );
+    expect(
+      eventDetail({
+        event_type: 'hostname_changed',
+        new_value: 'daniels-mbp',
+        source: 'dhcp_lease',
+      }),
+    ).toBe('(none) → daniels-mbp · via DHCP Lease');
+    // A lease event is a value, not a transition: the MAC the lease was for.
+    expect(eventDetail({ event_type: 'lease_expired', old_value: 'c8:e0:eb:16:e1:0d' })).toBe(
+      'c8:e0:eb:16:e1:0d',
+    );
+    expect(eventDetail({ event_type: 'hostname_changed' })).toBe('');
+  });
+
   it('renders a scope-membership retirement as metadata cleanup', () => {
     // The row the A-06 test cares about: retired, source retirement, no
     // values. The panel prints the label and this detail side by side.

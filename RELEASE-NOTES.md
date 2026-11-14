@@ -6,6 +6,262 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.6.3 — 2026-11-11
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: false
+```
+
+DNS no longer stops while the web app is busy or restarting. The DNS proxy and the encrypted
+forwarder run as a service of their own, so an update, a web app restart, a backup or a slow
+page keeps answering names. IPv6 networks are treated as an inventory of what is known, with
+hosts grouped into devices, next-free suggestions and prefix planning for both families.
+
+### New
+
+- **The DNS proxy runs as its own service.** `cidrella-dns-proxy` (the `dns-proxy` service in
+  Docker) carries the proxy and the encrypted forwarder, and keeps answering while the web app
+  restarts, updates or stalls. An update restarts it only when its own code changed. If it
+  stops answering or its process dies, CIDRella restarts it, and after three failed restarts
+  hands port 53 to the DNS backend (bypass) as before. With the proxy down, recursion goes to
+  the plain upstreams in plaintext mode; with DNS over TLS or HTTPS it fails rather than leave
+  unencrypted.
+- **Hosts.** A network's Addresses view has a Hosts / Addresses switch. Hosts groups addresses
+  into devices by MAC and DUID (MACs read from EUI-64 addresses and DUID-LL included), and is
+  the default on IPv6. A host opens to its addresses, temporary ones folded, and names its
+  addresses in the other family. The address details panel has a Host section linking the
+  device's other addresses, IPv4 and IPv6.
+- **Suggest an address.** Next free and Random sit beside the address field in the
+  reservation, DHCP reservation and DNS A/AAAA dialogs, and a network's actions have "Reserve
+  next free address". Both families.
+- **Allocate next free prefix.** A subdivided container says how much of it is allocated, and
+  "Allocate next free prefix…" (in the create menu and the container's own menu) finds the
+  lowest free /N and carves or configures it.
+- **DHCPv6 pool use.** An IPv6 network with a DHCPv6 pool shows how full the pool is (the
+  explorer meter, utilization, "X of Y in use"), and the IPv6 Known tile breaks its count down
+  by address type.
+- **A privileged helper does the work that needs privileges.** `cidrella-helper` (the `helper`
+  service in Docker) is now the one process that sends ARP and ping probes, starts, stops and
+  reloads the DNS and DHCP daemons, starts an update and turns NTP on, from a fixed list and
+  under an account of its own. The web app, which serves the sign-in page and every API route,
+  asks it instead of doing these itself, so a flaw in a page can no longer send raw packets or
+  control daemons. In Docker the web app has already lost both. On a native install it keeps
+  them, unused, for one more release so a rollback still works.
+
+### Changed
+
+- **A scan fails while the privileged helper is down** ("the privileged helper is not
+  answering") instead of recording every address as unanswered, and the deep health check fails
+  with it.
+- **A host that goes offline keeps its name, MAC and DNS record for a day, not an hour.** A
+  laptop that slept longer than its lease plus an hour was forgotten at every wake and learned
+  again: its name stopped resolving while it slept, and its history filled with retirements.
+  Dynamic and rogue addresses, and SLAAC addresses past their lifetime, now retire after 24
+  hours offline.
+- **IPv6 networks list only what is known.** Show available is gone there, and the count reads
+  "N known addresses". Large IPv6 networks page and count in the database instead of loading
+  every address.
+- **Search finds addresses by their expanded IPv6 spelling and by CIDR,** in both families, in
+  the address table and the network search.
+- **The subnet calculator pages large splits from the server** instead of building every child.
+
+### Fixed
+
+- **An update no longer stops PowerDNS and Kea while it checks the new release.** On the
+  PowerDNS + Kea stack, the update's preflight check stopped both, taking DNS down for about 15 s
+  and DHCP for about 12 s (measured on a production appliance), and an update that then failed
+  could have left them stopped. The check now leaves every service on the host alone.
+- **Sites behind a CNAME to a wildcard resolve on PowerDNS with DNSSEC on.** `www.nasa.gov` and
+  names like it answered SERVFAIL on every query, though their signatures are valid. PowerDNS
+  Recursor rejects that answer from a forwarder, so it now gets the chain one step at a time.
+- **An update no longer stops at "polkit daemon is not running" after a reboot.** It checked for
+  polkit in a way that failed whenever polkit had not been started since boot, and then refused.
+- **DNSSEC failures are counted for every client.** A client that asks without EDNS, as many
+  appliances and older tools do, had its DNSSEC failures logged as "other", so the DNSSEC
+  failures series on Performance stayed empty while they happened.
+- **The Process panel on Performance shows the DNS proxy.** Since the proxy became its own
+  service the panel showed the web app's CPU and memory beside the proxy's latency.
+- **A rollback no longer leaves anomaly detection stopped.** `cidrella-rollback` and an update's
+  automatic rollback start it again; it used to stay down, with no error, until the next reboot
+  or update. An update installs the rollback tool of the release it replaces, so
+  `cidrella-rollback` has this from the update after 0.6.3.
+- **DNS keeps answering while a backup runs.** A backup stopped every DNS answer until it
+  finished (13 s measured on a production appliance).
+- **Opening the blocklist stats no longer stops DNS for up to 3 s.** The domain count is
+  counted when the blocklist changes, and the page shows "Counting…" until the first count is
+  in.
+- **Restarting, reloading or stopping a DNS or DHCP daemon no longer holds up DNS answers,**
+  and neither do the health and metrics status reads, while systemctl runs.
+- **A second backup, or a restore, started while one runs is refused** with a message instead
+  of racing it.
+- **The carve row's network and prefix inputs no longer overflow the divide dialog.**
+- **The subnet calculator gives exact sizes for large IPv6 networks.** A /64 read "more than
+  2^53" addresses; it now reads 2^64, and its usable count is given in full.
+- **A probe that cannot run says why.** Probing one or more addresses answered an empty result
+  (or "Probe completed but no result recorded") when its scan failed, and left the failed scan in
+  the network's scan history. It now answers with the reason and leaves no scan behind.
+- **A DNS or DHCP change made while a daemon could not be reloaded is loaded later.** When the
+  reload reached the daemon neither through the privileged helper nor by signal, the change sat
+  on disk until some later change reloaded it: a removed reservation kept being served. The
+  daemon is now marked for a restart, which happens when the helper answers again, or at the
+  next boot.
+- **A lease's Expires column shows when it expires.** The Addresses, DNS and DHCP tables showed
+  "Just now" for every active lease, because an expiry is in the future and the column counted
+  back from it. It now shows the date and time the lease ends, as the classic tables do.
+- **dnsmasq no longer logs "chmod: ... Operation not permitted" every time it starts.** Its unit
+  set the log file's mode without the right to change a file another account owns; that step now
+  runs with full privileges, so a log file that was readable by everyone is made 0640 again.
+- **Installing or updating no longer leaves the polkit rule unloaded for a moment.** polkit
+  reloads as soon as the rule file changes, and read it while the install or update was still
+  writing it ("Error loading script"), so a daemon start or reload asked for right then was
+  refused. The new rule is now swapped in whole, and an unchanged rule is not rewritten.
+
+### Upgrading
+
+Upgrades directly from 0.4.17 or later. 0.6.2 shipped only as pre-releases, so an update from
+0.6.1 also runs its migrations, 090 and 091 (see v0.6.2 below). Three more run on every
+upgrade: 092 replaces the per-network address index with one that pages a network's addresses
+in order, 093 drops `dhcp_scopes.gateway`, and 094 deletes the retired `offline_metadata_retention_days` setting,
+which nothing has read since addresses began retiring after a fixed hour. The gateway column was
+never served: a scope hands out its network's gateway, and what clients get does not change. The
+scope API no longer returns `gateway` and refuses a request that sets one (400); set the gateway
+on the network.
+
+The update installs and starts `cidrella-dns-proxy.service`. The first update to 0.6.3 has the
+same short DNS gap as any update before it; later updates leave the proxy running unless its
+code changed. Rolling back to 0.6.1 or 0.6.2 with `cidrella-rollback` works: the new proxy exits
+within a second of the old code being in place, and the old release runs its proxy itself.
+
+The update also creates the `cidrella-helper` account, installs a new polkit rule granting it
+daemon control, and installs and starts `cidrella-helper.service` before the web app. A rollback
+to 0.6.1 or 0.6.2 works the same way: the helper exits once its code is gone, and the old
+release runs its probes and daemon control itself with the rights `cidrella.service` and the
+polkit rule still give it.
+The next release removes those rights from the web app and requires 0.6.3 or later to upgrade.
+
+Docker: the image adds a `cidrella-helper` user (UID and GID 65531). Only it may run `arping`
+and `ping`, and the `cidrella` sudoers rule for `arping` is gone.
+
+## v0.6.2 — 2026-10-26
+
+```yaml
+min_from: "0.4.17"
+breaking: false
+security: true
+```
+
+Bug fix release, with one security fix. The rogue DHCP probe sees Kea servers, the DNS proxy
+comes back from bypass on its own, a client whose lease ran out no longer shows as a rogue, and
+the DHCP lease time and defaults are set in one place. Four DHCP options that could never be
+saved now can be.
+
+### Security
+
+- **A request path ending in many slashes no longer stalls DNS.** Before sign-in, every request
+  path had its trailing slashes trimmed by a pattern that slows down sharply on a long run of
+  them: one path of 16,000 slashes, well inside Node's header limit, held the event loop for
+  146 ms, and the DNS proxy shares that loop. Anyone who could reach the web port could do it
+  without an account. The trim is linear now. Found by the first SonarQube Cloud scan, which
+  also led to new lint checks for slow regexes, dropped promises and plain-HTTP redirects.
+
+### Fixed
+
+- **The rogue DHCP probe finds Kea servers.** The IPv4 probe sent its DISCOVER to the subnet's
+  broadcast address (10.0.3.255, say). Kea takes a DHCPv4 packet only when it is sent to
+  255.255.255.255 or to Kea's own address, so a rogue Kea server went unseen: one served a LAN
+  for four days while the probe reported nothing. dnsmasq answers either form. The probe now
+  sends to 255.255.255.255 from each interface, as a client does, and finds both.
+- **DNS proxy bypass ends on its own.** When the health monitor moved the DNS backend onto the
+  LAN port because the proxy had failed, nothing moved it back: filtering, GeoIP blocking and
+  the query log stayed off until the setting was deleted by hand, and a restart kept the
+  bypass. The monitor now retries the proxy while bypassed (after 5 minutes, doubling to an
+  hour) and ends the bypass when the proxy binds, with an audit row. A restart tries the proxy
+  first.
+- **A client whose lease ran out is no longer shown as a rogue.** When a lease expired, the
+  address lost its owner but could keep its online flag for up to two scan intervals, and an
+  online address with no owner is a rogue. The address now goes offline when its lease ends,
+  unless the host was heard from after that. A host that keeps using the address answers the
+  next scan and is flagged then. An expired lease that dnsmasq or Kea still lists no longer
+  counts as activity or as a new lease in the address history.
+- **CIDRella no longer flags its own addresses as rogue.** The scanner probes every address
+  on the networks CIDRella is attached to, including its own, and its own always answer. An
+  address of the appliance with nothing allocated to it was shown as a rogue device.
+  Scans, Neighbor Discovery and DNS queries now never make one of its interface addresses a
+  rogue, in either family, and the next scan clears a flag already set.
+- **Backups no longer carry the database's free space or the blocklist feeds.** A backup copied
+  the database file as it was, with every free page in it: SQLite keeps the space a blocklist
+  refresh once used, so 140 MB of data was a 322 MB file, and each of seven backups carried it. A backup now
+  writes a compact copy and leaves out the blocklist feeds' domains, the largest table, which
+  are downloads. Each category's settings are kept, and after a restore the first refresh
+  fetches every enabled feed again.
+- **Switching server stacks removes the old stack's logs.** After a switch, the stack that
+  stopped serving left its logs behind, and since logrotate rotates on size, a log nothing wrote
+  any more was never rotated or compressed again: 127 MB of dnsmasq logs on one install. The
+  switch now deletes them, and boot removes any an earlier switch left. Kea's legal log is kept
+  for the audit retention either way.
+- **The DNS proxy answers a query it cannot read.** A malformed query was dropped, so the
+  client waited out its timeout and tried again, and the log line did not say who sent it. The
+  proxy now answers FORMERR and logs the client's address and the start of the message.
+- **Under Kea, lease names no longer end in a dot.** Kea stores a client's name as a fully
+  qualified one, `laptop.` when no suffix is configured, and CIDRella read that trailing dot as
+  "at the root of DNS": the address showed `laptop.`, and a dynamic lease's DNS record would
+  have been made outside its zone. The dot is dropped when the lease is read.
+- **The lease time can be changed from Bulk Change, and new scopes use its default.** Ticking
+  Lease Time (51) in Bulk Change changed only the defaults table, never a scope, and a new scope
+  ignored the Lease Time default and took a hidden setting instead. Both now use the Lease Time
+  default, and the scope dialog has a Lease time field.
+- **Classless Static Route (121), Static Route (33), Policy Filter (21) and Path MTU Plateau
+  Table (25) can be saved.** Each value is a comma-separated list, and these options refused a
+  comma, so none of them could be set or served by either DHCP server.
+- **dnsmasq sends the DHCP options it does not know at the right size.** For an option outside
+  its own table, dnsmasq guesses the type from the value, so Path MTU Aging Timeout (24) went
+  out as two bytes instead of four, and a text option whose value looked like a number or an
+  address went out as one (a value such as `1.2` was a configuration error). CIDRella now tells
+  dnsmasq the width of each number and keeps text as text. Options entered in dnsmasq's own
+  syntax (hex bytes, route pairs) are unchanged.
+- **A scan that fails while starting is marked failed.** It used to stay pending, which blocked
+  every later scan of that network, including after a restart.
+- **Toasts appear once.** Six pages showed every message twice.
+- **The address history shows a cleared value as cleared.** A hostname that was removed read as
+  if the old name had been set.
+- **Docker installs rotate their DNS logs.** In the container, `dnsmasq.log` and `pdns.log`
+  grew until they were cleared by hand. They now rotate at 50 MB and keep seven copies, as on a
+  native install.
+- **PowerDNS Recursor no longer logs about 31 warnings at every start and zone change.** It
+  stopped adding its built-in private reverse zones, which CIDRella already serves.
+- **The Resolution Map's location can be set from the keyboard.** While setting the location,
+  the arrow keys move a marker (Shift for larger steps) and Enter sets it; on the globe the
+  arrow keys turn it. The anomaly triage rows are announced as buttons again.
+
+### Changed
+
+- **DHCP defaults are copied when a scope is created and not followed after.** Use default is
+  gone, and so is the Used by column. An existing scope changes through its dialog or Bulk
+  Change. On upgrade every option that followed a default becomes the scope's own copy of the
+  value it was serving, so nothing served changes. Through the API, a scope option sent with
+  `use_default` writes nothing.
+- **The lease time is the first row of every option list.** For DHCPv4 it is option 51, shipped
+  as 3600 seconds and always added to new scopes. DHCPv6 has no lease-time option, so it gets an
+  Address lifetime row: the lifetimes of a stateful lease, or the prefix lifetimes advertised
+  for SLAAC and stateless networks. A new DHCPv6 scope starts from that default rather than a
+  fixed 86400 seconds.
+- **The Dashboard draws DHCPv4 and DHCPv6 traffic on separate charts.** Kea's counts for the two
+  are no longer added together. History from before the upgrade appears on the DHCPv4 chart.
+- **Add DHCP scope opens on the network you are viewing,** with its pool suggested, instead of
+  on a network picker.
+- **Under PowerDNS, the reverse zone for unique local IPv6 addresses (`d.f.ip6.arpa`) follows
+  CIDRella's site-local rule.** Recursor used to answer it locally every time. It is now answered
+  locally only while every upstream DNS server is a public address, and forwarded to a private
+  resolver otherwise, as under dnsmasq.
+
+### Upgrading
+
+Upgrades directly from 0.4.17 or later. Two database migrations run on upgrade: 090 adds the
+per-family DHCP traffic columns and 091 turns options that followed a default into the scope's
+own values.
+
 ## v0.6.1 — 2026-10-23
 
 ```yaml
@@ -50,6 +306,13 @@ three showed up with Kea DHCP.
   remote code execution (CVE-2026-111497) and two TLS certificate hostname check bypasses
   (CVE-2026-105483, CVE-2026-106069). The bundled runtime (native installs) and the Docker
   image's base are both 24.22.1 now; the Docker image was on 24.21.0.
+
+  **Versions before 0.6.1 are exposed to the Brotli flaw without signing in.** The API
+  decodes a request body sent with `Content-Encoding: br` before it checks who is asking, so
+  anyone who can reach the web port can hand the vulnerable decoder a crafted stream. Upgrade
+  from 0.6.0 or earlier to 0.6.1. On a native install, also update the system Brotli library
+  (`apt update && apt upgrade`; on Debian 13 the fixed `libbrotli1` is `1.1.0-2+deb13u1`):
+  CIDRella does not use it, but PowerDNS and curl link it.
 - A GitHub release page now opens with that version's section of these notes.
 
 ## v0.6.0 — 2026-10-18

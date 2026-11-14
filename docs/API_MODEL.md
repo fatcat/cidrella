@@ -244,13 +244,88 @@ an unallocated-space browser; its allocated leaves are the operating networks.
 
 Network rows carry `address_family` (`4` or `6`) and `last_address`.
 `broadcast_address` is null for IPv6 and `total_addresses` is null when the
-prefix holds more addresses than a JavaScript number represents exactly. The
-per-network IP listing for an IPv6 network returns persisted rows only, sorted
-by the canonical sort key, with no synthesized available rows; its summary
-reports `assigned_count` and leaves `unassigned_count` null when
-`total_addresses` is null. Split and calculate previews report child counts as
-decimal strings when they exceed that limit. Divide and merge use the same
-rules for both families with the prefix bound at the family's width.
+prefix holds more addresses than a JavaScript number represents exactly. Split
+and calculate previews report child counts as decimal strings when they exceed
+that limit. Divide and merge use the same rules for both families with the
+prefix bound at the family's width.
+
+An IPv6 network is an inventory, never an address space
+(`docs/IPV6-HANDLING.md`). `GET /api/subnets/:id/ips` for one returns its
+persisted rows plus the network address and the gateway when nothing is stored
+for them, and an exact address searched for (an `available` row when nothing
+is stored), sorted by address, with `sparse: true`. `showAvailable` is ignored
+for IPv6: there is no free space to list, and the few available rows stay. With
+no search, no filters and the address sort, the page and `filteredTotal` are
+read in SQL on `(subnet_id, address_sort_key, interface_id)`; any other search,
+filter or sort runs over the network's rows in memory, since it reads fields
+only `ip-view.js` computes.
+
+Search, in the address list (`search`, `table_search`) and in
+`GET /api/workspace/networks` (`q`, `table_q`), in both families:
+
+- One address in any spelling matches that address; in the network search, the
+  network that contains it.
+- A CIDR (`2001:db8:5::/48`, `10.0.0.0/25`) matches the stored addresses inside
+  it, and in the network search every network inside it or containing it. A
+  different family matches nothing.
+- Other text matches as a substring, including an IPv6 address's expanded
+  spelling, so `2001:0db8` finds `2001:db8::1`.
+
+`GET /api/subnets/:id/summary` counts in SQL. `known_count` is the rows the
+address list can show: the stored addresses (each address once, whatever its
+interfaces) plus the topology addresses nothing stores. `assigned_count`,
+`online_count` and `rogue_count` count the same rows; `rogue_count` runs the
+unassigned ones through `ip-view.js`. `unassigned_count` is null when
+`total_addresses` is null. An IPv6 network's count is `known_count`, never a
+share of its size.
+
+The summary also carries `by_state`: how many addresses hold each claimed
+`allocation_state`, plus `seen` for addresses with no claim that are online or
+rogue. An address counts once per state; one held in two states on two
+interfaces counts under both, since picking one would be a second precedence
+rule.
+`pool_size` (a decimal string, since an IPv6 pool can exceed a JavaScript
+number) and `pool_in_use` (active leases inside the pools) describe the
+network's address-pool scope (`isAddressPoolScope`: every DHCPv4 scope, a
+stateful DHCPv6 one); both are null without one. `GET /api/subnets` carries the
+same two fields on each allocated network, so an IPv6 network's fullness is its
+pool use, never a share of its address space. A parent's fullness is prefix
+coverage, computed by the client from that tree: the sizes of its allocated
+leaves over its own size.
+
+`GET /api/subnets/:id/suggest-address` answers with one free address, never a
+list: `{ ip_address, strategy }`, or 404 when there is none in bounds. Query:
+`strategy` is `sequential` (default: the lowest free address at or above
+`from`, else `::10` on IPv6 or the first usable address on IPv4) or `random` (a
+random address in bounds, falling back to sequential from there after 64
+misses); `within` narrows the bounds to a CIDR inside the network or the id of
+one of its ranges; `from` must be inside the network. What counts as free is in
+ARCHITECTURE.md (Canonical IP Model). The answer reserves nothing.
+
+`POST /api/subnets/calculate` takes `page` and `page_size` (default 256, at
+most 4096) beside `cidr` and `new_prefix`, and returns `count` (a decimal
+string), `first` and `last` (the first and last child) and that page of
+children. The parent and every child carry `size_text` and `usable_text`, their
+exact address counts as decimal strings: `size` and `usable` are null past 2^53,
+a /64 among them. The cap of 65,536 children stays.
+
+`GET /api/subnets/:id/hosts` returns the network's addresses grouped into
+devices (ARCHITECTURE.md, Canonical IP Model, host association), paged by host:
+`{ hosts, total, page, page_size, total_pages }`. Query: `page`, `page_size`
+(default 50, at most 512, the workspace's largest page), `q` and `search` (the
+table's and the explorer's search boxes, both applied: an address in any
+spelling, a CIDR, or text in an address, hostname, MAC or DUID), and `address` (an address of the network,
+with `%interface` for a link-local one), which returns only the host holding
+it. A host is `{ key, key_kind, mac, duid, name, hostnames, online,
+last_seen_at, stable_count, temporary_count, other_count, vendor, device_type,
+os_family, addresses, other_family }`. `key_kind` is `mac`, `duid` or
+`address`. Each address is `{ ip_address, interface_id, kind, allocation_state,
+address_type, hostname, online, first_seen_at, last_seen_at }`, `kind` one of
+`link-local`, `reservation`, `static`, `dhcp`, `eui64`, `slaac`, `temporary`,
+`other`; `other_count` counts every address that is not stable. `other_family`
+lists the host's addresses in the other family as `{ ip_address, interface_id,
+subnet_id, cidr, network_name, source }`, `source` being `address`, `lease` or
+`reservation`. An IPv6 network is refused while IPv6 is switched off.
 
 ## Cross-Table Facts
 

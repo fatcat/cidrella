@@ -1,6 +1,7 @@
 /**
  * What dnsmasq's log says, for the readers that tail it: passive liveness
- * (who queried), the metrics aggregator (query and DHCP message counts) and
+ * (who queried), the metrics aggregator (query and DHCP message counts, per
+ * family) and
  * the log viewer's DHCP filter.
  */
 import { LOG_FILE } from './paths.js';
@@ -22,16 +23,40 @@ export function querySourceIp(line) {
 // SOLICIT, REQUEST, RENEW, REBIND, CONFIRM, RELEASE, DECLINE and
 // INFORMATION-REQUEST, and the server answers with ADVERTISE and REPLY.
 // dnsmasq logs one line per message with the type as the first word after the
-// tag.
-const DHCP_CLIENT_RE =
-  /\bDHCP(?:DISCOVER|REQUEST|RELEASE|INFORM|DECLINE|SOLICIT|RENEW|REBIND|CONFIRM|INFORMATION-REQUEST)\b/;
-const DHCP_SERVER_RE = /\bDHCP(?:OFFER|ACK|NAK|ADVERTISE|REPLY)\b/;
+// tag, then the address when there is one, then the client's MAC (DHCPv4) or
+// DUID (DHCPv6).
+const DHCP_MESSAGE_RE =
+  /\bDHCP(DISCOVER|REQUEST|RELEASE|INFORM|DECLINE|SOLICIT|RENEW|REBIND|CONFIRM|INFORMATION-REQUEST|OFFER|ACK|NAK|ADVERTISE|REPLY)\((?:[^)]*)\)\s*(\S*)/;
+const SERVER_TYPES = new Set(['OFFER', 'ACK', 'NAK', 'ADVERTISE', 'REPLY']);
+const V4_TYPES = new Set(['DISCOVER', 'INFORM', 'OFFER', 'ACK', 'NAK']);
+const V6_TYPES = new Set([
+  'SOLICIT',
+  'RENEW',
+  'REBIND',
+  'CONFIRM',
+  'INFORMATION-REQUEST',
+  'ADVERTISE',
+  'REPLY',
+]);
+// REQUEST, RELEASE and DECLINE exist in both families: the token after the
+// type tells them apart, an IPv4 address or a six-octet MAC for DHCPv4, an
+// IPv6 address or a longer DUID for DHCPv6.
+const V4_TOKEN_RE = /^(?:\d{1,3}(?:\.\d{1,3}){3}|[0-9a-f]{2}(?::[0-9a-f]{2}){5})$/i;
 
-/** 'client' or 'server' for a DHCP message line, null for any other line. */
-export function dhcpDirection(line) {
-  if (DHCP_CLIENT_RE.test(line)) return 'client';
-  if (DHCP_SERVER_RE.test(line)) return 'server';
-  return null;
+/**
+ * { direction: 'client' | 'server', family: 4 | 6 } for a DHCP message line,
+ * null for any other line.
+ */
+export function dhcpMessage(line) {
+  const m = line.match(DHCP_MESSAGE_RE);
+  if (!m) return null;
+  const type = m[1];
+  const direction = SERVER_TYPES.has(type) ? 'server' : 'client';
+  let family;
+  if (V4_TYPES.has(type)) family = 4;
+  else if (V6_TYPES.has(type)) family = 6;
+  else family = V4_TOKEN_RE.test(m[2]) ? 4 : 6;
+  return { direction, family };
 }
 
 const DHCP_RE =

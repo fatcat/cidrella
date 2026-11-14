@@ -6,6 +6,8 @@
 #   - reload_systemd:                      daemon-reload wrapper
 #   - install_logrotate_configs <dir>:     every file in <dir> into
 #                                          /etc/logrotate.d
+#   - ensure_service_user <name>:          a system account for a unit
+#   - install_polkit_rule <src> [dir]:     a polkit rule, swapped in whole
 #
 # Depends on log.sh. Caller must source log.sh first.
 
@@ -60,4 +62,46 @@ install_logrotate_configs() {
     install -m 0644 -o root -g root "$conf" "/etc/logrotate.d/$(basename "$conf")"
     ok "Installed logrotate config (/etc/logrotate.d/$(basename "$conf"))"
   done
+}
+
+# ensure_service_user <name>
+#   A system account with a group of its own, no home and no login shell, for
+#   a unit to run as (cidrella-helper). Nothing when it exists. Echoes
+#   "created" when it made one; returns 1 when useradd failed.
+ensure_service_user() {
+  local name="${1:?user name required}"
+  if id "$name" >/dev/null 2>&1; then
+    return 0
+  fi
+  useradd --system --user-group --no-create-home --shell /usr/sbin/nologin "$name" || return 1
+  printf 'created\n'
+}
+
+# install_polkit_rule <src> [rules_dir]
+#   Installs the polkit rule <src> as <rules_dir>/<its name> (rules_dir is
+#   /etc/polkit-1/rules.d unless given), mode 0644, root's when run as root.
+#   polkitd watches the directory and reloads on the first change, so a rule
+#   written in place is read half-written: "Error loading script", and for a
+#   moment the rule grants nothing. The new copy goes to a dotfile polkitd
+#   ignores (it loads *.rules only) beside the target, then a rename swaps it
+#   in whole. Nothing is written when the installed rule already matches.
+#   Echoes "changed" when it wrote one; returns 1 on failure.
+install_polkit_rule() {
+  local src="${1:?source rule path required}"
+  local dir="${2:-/etc/polkit-1/rules.d}"
+  local dst="$dir/$(basename "$src")"
+  local tmp="$dir/.$(basename "$src").new"
+  local owner=()
+  [ -f "$src" ] || return 1
+  if [ -f "$dst" ] && cmp -s "$src" "$dst"; then
+    return 0
+  fi
+  [ "$(id -u)" = 0 ] && owner=(-o root -g root)
+  mkdir -p "$dir" || return 1
+  if install -m 0644 "${owner[@]}" "$src" "$tmp" && mv -f "$tmp" "$dst"; then
+    printf 'changed\n'
+    return 0
+  fi
+  rm -f "$tmp"
+  return 1
 }

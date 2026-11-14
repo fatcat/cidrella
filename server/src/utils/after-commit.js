@@ -87,9 +87,9 @@ function fireHook(name) {
   }
   st.running = true;
   st.pending = false;
-  // Do the work synchronously, hooks are synchronous SQLite + dnsmasq calls,
-  // except one that writes over the network (PowerDNS zones), which returns
-  // a Promise: the hook stays running until it settles, so two never overlap.
+  // A hook renders synchronously and returns a Promise of the activation
+  // (the daemon restart or reload, PowerDNS's zone writes over HTTP): the
+  // hook stays running until it settles, so two never overlap.
   // queueMicrotask lets the res.on('finish') handler return before we start,
   // so the hook never delays flushing the HTTP response.
   queueMicrotask(() => {

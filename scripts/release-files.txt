@@ -59,4 +59,6 @@ systemd/cidrella-pdns-auth.service
 systemd/cidrella-pdns-recursor.service
 systemd/cidrella-radvd.service
 systemd/cidrella-anomaly.service
+systemd/cidrella-dns-proxy.service
+systemd/cidrella-helper.service
 systemd/cidrella-update@.service

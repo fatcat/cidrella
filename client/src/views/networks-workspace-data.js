@@ -7,8 +7,15 @@ import {
   formatNumber,
   isOnlineFlag,
 } from '../utils/format.js';
-import { addressToBig, sortKey } from '../utils/ip.js';
+import {
+  addressToBig,
+  networksOverlap,
+  parseAddressQuery,
+  parseNetwork,
+  sortKey,
+} from '../utils/ip.js';
 import { leaseSeconds } from '@shared/lease-time.js';
+import { formatDateTime } from '../utils/dateFormat.js';
 import { allocationSourceLabel, recordSourceLabel } from '../utils/ipTableDisplay.js';
 import { zoneFileName, zoneFileValue } from '../utils/dnsZoneFile.js';
 
@@ -39,6 +46,8 @@ export function formatDuration(seconds) {
   return `${days} ${days === 1 ? 'day' : 'days'}`;
 }
 
+// How long ago `value` was ("5 min ago"), for a time in the past: one ahead
+// reads "Just now". A time ahead, as a lease expiry, takes formatDateTime.
 export function formatTimestamp(value) {
   if (!value) return EMPTY_CELL;
   const timestamp = Date.parse(value);
@@ -54,11 +63,91 @@ export function formatTimestamp(value) {
 // Percent of a countable network in use. Null when the server sends no total,
 // which it does for a prefix larger than a JavaScript number holds (an IPv6 /64
 // and wider); a small IPv6 prefix such as a /120 has a total like any IPv4 one.
+// How full a network is, as a whole percent, or null when that means nothing.
+// An IPv4 network counts its used addresses; an IPv6 one, whose address count
+// is no measure, counts its DHCP pool in use (docs/IPV6-HANDLING.md, rule 3)
+// and has no figure without a pool.
 export function networkUtilization(network) {
   const total = network.total_addresses == null ? null : Number(network.total_addresses);
-  if (!Number.isFinite(total)) return null;
-  const used = Number(network.used_count) || 0;
-  return total ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  if (Number.isFinite(total)) {
+    const used = Number(network.used_count) || 0;
+    return total ? Math.min(100, Math.round((used / total) * 100)) : 0;
+  }
+  if (network.pool_size == null) return null;
+  const size = BigInt(network.pool_size);
+  if (size === 0n) return null;
+  const inUse = BigInt(network.pool_in_use || 0);
+  return Math.min(100, Number((inUse * 100n + size / 2n) / size));
+}
+
+// The allocated leaves under a network, and the unallocated leaves (the free
+// space a carve leaves behind), in address order.
+function collectLeaves(node, output = { allocated: [], free: [] }) {
+  const children = node.children || [];
+  if (node.status === 'allocated') output.allocated.push(node);
+  else if (!children.length) output.free.push(node);
+  else for (const child of children) collectLeaves(child, output);
+  return output;
+}
+
+/**
+ * How much of a container its allocated networks hold (docs/IPV6-HANDLING.md,
+ * rule 3): `percent` of its addresses, and `byPrefix`, how many allocated
+ * networks of each prefix length, shortest first. Sizes are BigInt, so a /32
+ * of IPv6 sums exactly.
+ */
+export function prefixCoverage(node) {
+  const size = parseNetwork(node.cidr).sizeBig;
+  const counts = new Map();
+  let allocated = 0n;
+  for (const leaf of collectLeaves(node).allocated) {
+    const parsed = parseNetwork(leaf.cidr);
+    allocated += parsed.sizeBig;
+    counts.set(parsed.prefix, (counts.get(parsed.prefix) || 0) + 1);
+  }
+  return {
+    allocated,
+    size,
+    percent: Number((allocated * 1000000n) / size) / 10000,
+    byPrefix: [...counts].sort((a, b) => a[0] - b[0]).map(([prefix, count]) => ({ prefix, count })),
+  };
+}
+
+/** A coverage percent for a label: '0%', '<0.01%', '0.42%', '8.3%', '62%'. */
+export function formatCoveragePercent(percent) {
+  if (percent === 0) return '0%';
+  if (percent < 0.01) return '<0.01%';
+  if (percent < 1) return `${percent.toFixed(2)}%`;
+  if (percent < 10) return `${percent.toFixed(1)}%`;
+  return `${Math.floor(percent)}%`;
+}
+
+/** The allocated networks of a coverage by prefix: '2 /56, 12 /64'. */
+export function formatCoverageCounts(coverage) {
+  if (!coverage.byPrefix.length) return 'No allocated networks';
+  return coverage.byPrefix.map(({ prefix, count }) => `${count} /${prefix}`).join(', ');
+}
+
+/**
+ * The lowest free /prefix inside a network (docs/IPV6-HANDLING.md, rule 4):
+ * the lowest unallocated leaf no smaller than it, whose own address starts
+ * one, aligned. `exact` when the leaf is that size already, so it is allocated
+ * as it stands; otherwise the /prefix is carved from it. Null when nothing
+ * fits or the prefix is not inside the network.
+ */
+export function nextFreePrefix(node, prefix) {
+  const parent = parseNetwork(node.cidr);
+  if (!Number.isInteger(prefix) || prefix < parent.prefix || prefix > parent.bits) return null;
+  const leaf = collectLeaves(node)
+    .free.map((entry) => ({ entry, parsed: parseNetwork(entry.cidr) }))
+    .filter(({ parsed }) => parsed.prefix <= prefix)
+    .sort((a, b) => (a.parsed.networkBig < b.parsed.networkBig ? -1 : 1))[0];
+  if (!leaf) return null;
+  return {
+    leaf: leaf.entry,
+    cidr: `${leaf.parsed.network}/${prefix}`,
+    exact: leaf.parsed.prefix === prefix,
+  };
 }
 
 /** Addresses from startIp to endIp inclusive, as a BigInt; null when unreadable. */
@@ -229,7 +318,9 @@ function ipRowFields(row, { dns = row.dns_record || null, dhcp = row.dhcp || nul
     // The lease dnsmasq holds: Active, Expired, or nothing. Whether the
     // address is free for DHCP is the status column's job.
     lease: LEASE_LABEL[row.dhcp_lease_state] || null,
-    expires: displayExpiry(row.dhcp_expires_at, formatTimestamp, {
+    // When the lease ends, as a date and time: an expiry is usually ahead, and
+    // formatTimestamp counts back from now ("Just now" for anything ahead).
+    expires: displayExpiry(row.dhcp_expires_at, formatDateTime, {
       reserved: dhcp?.dhcp_assignment_type === 'reserved' || flag(row.has_dhcp_reservation),
     }),
     online: onlineValue(row, { unknownWhenUnaddressed: true }),
@@ -364,8 +455,24 @@ export function dnsRecordSummary(rows) {
   return { total, disabled, note };
 }
 
+// What the explorer and the unallocated table match a search against (the
+// query lowercased). The server's network search covers allocated networks
+// only. A CIDR query matches every network inside it or containing it, as
+// the server's does.
+export function networkSearchMatches(network, query) {
+  const parsedQuery = parseAddressQuery(query);
+  if (
+    parsedQuery.kind === 'cidr' &&
+    network.cidr &&
+    networksOverlap(network.cidr, parsedQuery.cidr)
+  )
+    return true;
+  return `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query);
+}
+
 export function addressCountLabel({ shown, matching, total, sparse = false, paged = true }) {
-  const tail = sparse ? `${total} assigned addresses` : `${total} addresses in network`;
+  // An IPv6 network is an inventory: its count is what is known, never "of M".
+  const tail = sparse ? `${total} known addresses` : `${total} addresses in network`;
   // The grid shows the whole network, so "on this page" would be noise.
   return `Showing ${shown}${paged ? ' on this page' : ''} · ${matching} matching · ${tail}`;
 }
@@ -421,9 +528,11 @@ export function countOnline(rows) {
 // The order key of a cell that holds an address, a network ('2001:db8::/64')
 // or an address range ('10.0.0.5 – 10.0.0.9'), or null for anything else.
 function addressOrderKey(value) {
-  const head = String(value ?? '')
-    .trim()
-    .split(/\s+[–-]\s+/)[0];
+  const text = String(value ?? '').trim();
+  // The part before a spaced dash. Found with a fixed-width match, not by
+  // splitting on /\s+[–-]\s+/, which is quadratic on a long run of spaces.
+  const dash = /\s[–-]\s/.exec(text);
+  const head = dash ? text.slice(0, dash.index).trimEnd() : text;
   const [address, prefix] = head.split('/');
   const key = sortKey(address);
   if (!key) return null;

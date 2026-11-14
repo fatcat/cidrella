@@ -8,14 +8,16 @@ import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
-const { restoreBackup, inspectBackup } = vi.hoisted(() => ({
+const { restoreBackup, inspectBackup, createBackup } = vi.hoisted(() => ({
   restoreBackup: vi.fn(),
   inspectBackup: vi.fn(),
+  createBackup: vi.fn(),
 }));
 vi.mock('../../../src/utils/backup.js', async (importOriginal) => ({
   ...(await importOriginal()),
   restoreBackup,
   inspectBackup,
+  createBackup,
 }));
 
 const { default: request } = await import('supertest');
@@ -106,5 +108,26 @@ describe('POST /api/operations/restore ?dhcp=', () => {
     expect(res.status).toBe(200);
     expect(res.body).toMatchObject({ compatible: true });
     expect(restoreBackup).not.toHaveBeenCalled();
+  });
+});
+
+describe('a backup or restore while another runs', () => {
+  const inProgress = () =>
+    Object.assign(new Error('A backup is already running; try again when it finishes'), {
+      code: 'BACKUP_IN_PROGRESS',
+    });
+
+  it('answers 409 to a second backup', async () => {
+    createBackup.mockRejectedValueOnce(inProgress());
+    const res = await request(app).post('/api/operations/backup');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already running/);
+  });
+
+  it('answers 409 to a restore', async () => {
+    restoreBackup.mockRejectedValueOnce(inProgress());
+    const res = await send('');
+    expect(res.status).toBe(409);
+    expect(res.body.error).toMatch(/already running/);
   });
 });

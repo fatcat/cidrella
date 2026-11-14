@@ -1,13 +1,13 @@
 import os from 'os';
-import { execFile } from 'child_process';
 import { parseNetwork, longToIp, parsedNetworkContains } from './ip.js';
 import { addressFamily, canonicalizeIp } from './address.js';
 import { parseArpingMac, readArpCache } from './arp-cache.js';
 import { findNeighbor, readNdCache } from './nd-cache.js';
 import { observeIpv6Presence } from '../services/ip-lifecycle-service.js';
 import { ipv6DiscoveryPolicy } from '../models/dhcp-scope.js';
+import * as Privileged from './privileged.js';
+import { RefusedError } from '../helper/commands.js';
 import {
-  ARPING_TIMEOUT_MS,
   OFFLINE_CONFIRM_PINGS,
   PING_TIMEOUT_MS,
   SCAN_BATCH_SIZE,
@@ -16,47 +16,43 @@ import {
 import { getSetting } from '../db/init.js';
 import { ipv6Enabled, IPV6_DISABLED_ERROR } from './ipv6-support.js';
 import { observeScanResult, reconcileScanRogues } from '../services/ip-lifecycle-service.js';
+import { isLocalAddress } from './local-addresses.js';
 import * as ScanRun from '../models/scan-run.js';
 import { macIsAuthoritative } from '../models/ip-lifecycle.js';
+
+// A probe the privileged helper could not run says nothing about the host.
+// The scan stops instead of recording every address as not responding.
+function probeFailed(result) {
+  if (result.helperDown) {
+    throw new Error(`Scan stopped: ${Privileged.HELPER_DOWN_MESSAGE}`);
+  }
+  return result;
+}
 
 /**
  * Run arping on a single IP. It only responds for directly-reachable peers;
  * off-link targets fall through to ICMP.
  * Returns { responded, mac } or { responded: false, mac: null }.
  */
-function arpingIp(ip) {
-  return new Promise((resolve) => {
-    execFile(
-      '/usr/sbin/arping',
-      ['-c', '1', '-w', '1', ip],
-      { timeout: ARPING_TIMEOUT_MS },
-      (error, stdout) => {
-        if (error) {
-          resolve({ responded: false, mac: null });
-          return;
-        }
-        resolve({
-          responded: true,
-          mac: parseArpingMac(stdout),
-        });
-      },
-    );
-  });
+async function arpingIp(ip) {
+  const result = probeFailed(await Privileged.arping(ip));
+  return result.ok
+    ? { responded: true, mac: parseArpingMac(result.stdout) }
+    : { responded: false, mac: null };
 }
 
-function pingIp(ip, { count = 1 } = {}) {
-  return new Promise((resolve) => {
-    const timeoutSeconds = Math.max(1, Math.ceil(PING_TIMEOUT_MS / 1000));
-    const family = addressFamily(ip) === 6 ? ['-6'] : [];
-    execFile(
-      'ping',
-      [...family, '-c', String(count), '-W', String(timeoutSeconds), ip],
-      { timeout: PING_TIMEOUT_MS * count + 500 },
-      (error) => {
-        resolve({ responded: !error, mac: null });
-      },
-    );
-  });
+// `iface` zones an IPv6 target (a link-local address, or ff02::1). An
+// interface that went away since the scan read it gets no answer.
+async function pingIp(ip, { count = 1, iface = null } = {}) {
+  const timeoutSec = Math.max(1, Math.ceil(PING_TIMEOUT_MS / 1000));
+  let result;
+  try {
+    result = await Privileged.ping(ip, { count, timeoutSec, iface });
+  } catch (err) {
+    if (iface && err instanceof RefusedError) return { responded: false, mac: null };
+    throw err;
+  }
+  return { responded: probeFailed(result).ok, mac: null };
 }
 
 /**
@@ -71,18 +67,18 @@ function pingIp(ip, { count = 1 } = {}) {
  */
 async function probeIp(ip, iface = null, { wasOnline = false } = {}) {
   const v6 = addressFamily(ip) === 6;
-  const target = v6 && iface ? `${ip}%${iface}` : ip;
+  const zone = v6 && iface ? iface : null;
   const method = v6 ? 'icmpv6' : 'icmp';
   if (!v6) {
     const arp = await arpingIp(ip);
     if (arp.responded) return { ...arp, method: 'arp' };
   }
-  const icmp = await pingIp(target);
+  const icmp = await pingIp(ip, { iface: zone });
   if (icmp.responded || !wasOnline) return { ...icmp, method };
   // A host that was online gets a few more echoes before it is called
   // offline. Unicast frames are retried over WiFi and broadcast ARP is not,
   // so a WiFi host can miss one probe of each while it is up.
-  const confirm = await pingIp(target, { count: OFFLINE_CONFIRM_PINGS });
+  const confirm = await pingIp(ip, { count: OFFLINE_CONFIRM_PINGS, iface: zone });
   return { ...confirm, method };
 }
 
@@ -107,7 +103,7 @@ export async function confirmByNeighborDiscovery(
 ) {
   let pending = results.filter((r) => !r.responded);
   for (let poll = 0; pending.length > 0; poll++) {
-    const table = read({ force: true });
+    const table = await read({ force: true });
     const settling = [];
     for (const result of pending) {
       const entry = findNeighbor(table, result.ip, result.iface);
@@ -154,10 +150,10 @@ function interfacesOnNetwork(parsed) {
 export async function discoverIpv6Hosts(parsed, { neighbors = readNdCache } = {}) {
   const interfaces = interfacesOnNetwork(parsed);
   for (const name of interfaces) {
-    await pingIp(`ff02::1%${name}`, { count: 2 });
+    await pingIp('ff02::1', { count: 2, iface: name });
   }
   const found = [];
-  for (const [key, entry] of neighbors({ force: true })) {
+  for (const [key, entry] of await neighbors({ force: true })) {
     const ip = entry.ip ?? key;
     const onLink = /^fe[89ab]/i.test(ip) && interfaces.includes(entry.interface);
     if (!onLink && !parsedNetworkContains(parsed, ip)) continue;
@@ -188,7 +184,7 @@ export function resumeInterruptedScans(db) {
     console.log(
       `[scanner] Resuming interrupted scan #${scan.id} for subnet ${scan.subnet_id} (${scan.scanned_ips}/${scan.total_ips} done)`,
     );
-    startScan(db, scan.id, scan.subnet_id);
+    startScanInBackground(db, scan.id, scan.subnet_id);
   }
 }
 
@@ -205,6 +201,30 @@ export function resumeInterruptedScans(db) {
  * @returns {Promise<{ method: 'arp+icmp', results?: Object }>}
  */
 export async function startScan(db, scanId, subnetId, options = {}) {
+  try {
+    return await runScan(db, scanId, subnetId, options);
+  } catch (err) {
+    // Any throw (the setup, IPv6 refused, a probe the helper could not run,
+    // the topology changing under the scan) must end the row: a scan left
+    // pending or running makes createPendingIfIdle refuse every later scan of
+    // the subnet. It still rejects, so a caller waiting on the scan (a probe)
+    // reports why instead of an empty result.
+    ScanRun.markFailed(db, scanId, err.message);
+    throw err;
+  }
+}
+
+/**
+ * Start a scan nobody waits for (a manual full scan, the scheduler, the resume
+ * at boot). A failure is already recorded on the scan row; this logs it.
+ */
+export function startScanInBackground(db, scanId, subnetId) {
+  startScan(db, scanId, subnetId).catch((err) => {
+    console.error(`[scanner] Scan #${scanId} of subnet ${subnetId} failed: ${err.message}`);
+  });
+}
+
+async function runScan(db, scanId, subnetId, options) {
   const { targetIps = null, updateModel = true } = options;
   const isTargeted = Array.isArray(targetIps) && targetIps.length > 0;
   const subnet = db.prepare('SELECT * FROM subnets WHERE id = ?').get(subnetId);
@@ -363,144 +383,142 @@ export async function startScan(db, scanId, subnetId, options = {}) {
       .map((row) => row.ip_address),
   );
 
-  try {
-    // Scan in batches for reasonable speed
-    for (let i = 0; i < ipsToScan.length; i += SCAN_BATCH_SIZE) {
-      const batch = ipsToScan.slice(i, i + SCAN_BATCH_SIZE);
-      const promises = [];
+  // Scan in batches for reasonable speed
+  for (let i = 0; i < ipsToScan.length; i += SCAN_BATCH_SIZE) {
+    const batch = ipsToScan.slice(i, i + SCAN_BATCH_SIZE);
+    const promises = [];
 
-      for (const ip of batch) {
-        // Skip IPs already scanned in a previous partial run
-        if (alreadyScanned.has(ip)) continue;
+    for (const ip of batch) {
+      // Skip IPs already scanned in a previous partial run
+      if (alreadyScanned.has(ip)) continue;
 
-        // Check scan_enabled for this IP (skip for targeted probes)
-        if (!isTargeted) {
-          const override = overrideMap.get(ip);
-          if (!shouldScanIp(override !== undefined ? override : null, subnetDefault)) {
-            continue; // skip, scanning disabled for this IP
-          }
-        }
-
-        const iface = probeInterfaces.get(ip) || null;
-        promises.push(
-          probeIp(ip, iface, { wasOnline: onlineIps.has(ip) }).then((result) => ({
-            ip,
-            iface,
-            ...result,
-          })),
-        );
-      }
-
-      if (promises.length === 0) continue;
-
-      const results = await Promise.all(promises);
-      if (parsed.family === 6) await confirmByNeighborDiscovery(results);
-
-      // Read the neighbor tables to capture MACs the kernel learned from ping
-      // responses. Forced, because the point is to see entries these probes
-      // just created. IPv6 answers come from the ND table, IPv4 from ARP.
-      let arpCache = null;
-      let ndCache = null;
-      if (results.some((r) => r.responded && !r.mac)) {
-        if (parsed.family === 6) ndCache = readNdCache({ force: true });
-        else arpCache = readArpCache({ force: true });
-      }
-
-      for (const result of results) {
-        // Enrich results with the neighbor-table MAC when the probe didn't return one
-        if (result.responded && !result.mac && arpCache) {
-          result.mac = arpCache.get(result.ip) || null;
-        }
-        if (result.responded && !result.mac && ndCache) {
-          result.mac = findNeighbor(ndCache, result.ip, result.iface)?.mac || null;
-        }
-
-        let isConflict = 0;
-        let conflictReason = null;
-        const assignment = assignmentMap.get(result.ip);
-
-        if (result.responded) {
-          // An unassigned address answering is a rogue on IPv4 and on a
-          // stateful DHCPv6 network. Where hosts assign themselves (SLAAC
-          // modes) or nothing hands out addresses, it is simply a host.
-          // A link-local address is never handed out, so it is never a rogue.
-          const rogueMeaningful =
-            parsed.family === 4 || (policy?.mode === 'stateful' && !/^fe[89ab]/i.test(result.ip));
-          if (!assignment && rogueMeaningful) {
-            isConflict = 1;
-            conflictReason = 'Rogue device (IP not assigned)';
-          } else if (
-            assignment?.mac_address &&
-            result.mac &&
-            macIsAuthoritative(assignment.allocation_state) &&
-            assignment.mac_address.toLowerCase() !== result.mac
-          ) {
-            // MAC mismatch, only where DHCP sets the MAC. Anywhere else the
-            // stored MAC is just the last one seen, and updateFromScan takes
-            // the new one.
-            isConflict = 1;
-            conflictReason = `MAC mismatch (expected ${assignment.mac_address}, got ${result.mac})`;
-          }
-        }
-
-        if (isConflict) conflictsFound++;
-
-        probeMethods.set(result.ip, result.method);
-
-        ScanRun.insertResult(db, scanId, {
-          ip: result.ip,
-          mac: result.mac,
-          responded: result.responded,
-          isConflict,
-          conflictReason,
-        });
-      }
-
-      scannedCount += results.length;
-
-      // Update progress
-      ScanRun.updateProgress(db, scanId, { scannedIps: scannedCount, conflictsFound });
-    }
-
-    // Update ip_addresses via model, liveness, MAC, rogue state, lifecycle fields
-    if (updateModel) {
-      if (!ScanRun.targetIsCurrent(db, scanId)) {
-        throw new Error('Network topology changed during scan; results discarded');
-      }
-      const scanResults = ScanRun.getMaterializedResults(db, scanId);
-
-      const conflictIps = new Set();
-      for (const sr of scanResults) {
-        observeScanResult(db, subnetId, sr.ip_address, {
-          responded: sr.responded,
-          mac: sr.mac_address,
-          isConflict: sr.is_conflict,
-          conflictReason: sr.conflict_reason,
-        });
-        if (sr.is_conflict) conflictIps.add(sr.ip_address);
-      }
-
-      // Clear rogue on the addresses this scan re-checked and did not flag
-      // (only for full subnet scans, targeted probes shouldn't clear other
-      // IPs). Only those: an IPv6 scan probes a sparse set, and a rogue it
-      // never looked at is still a rogue.
+      // Check scan_enabled for this IP (skip for targeted probes)
       if (!isTargeted) {
-        const probed = new Set(scanResults.map((sr) => sr.ip_address));
-        reconcileScanRogues(db, subnetId, conflictIps, probed);
+        const override = overrideMap.get(ip);
+        if (!shouldScanIp(override !== undefined ? override : null, subnetDefault)) {
+          continue; // skip, scanning disabled for this IP
+        }
       }
+
+      const iface = probeInterfaces.get(ip) || null;
+      promises.push(
+        probeIp(ip, iface, { wasOnline: onlineIps.has(ip) }).then((result) => ({
+          ip,
+          iface,
+          ...result,
+        })),
+      );
     }
 
-    // Mark completed
-    ScanRun.markCompleted(db, scanId, { scannedIps: scannedCount, conflictsFound });
+    if (promises.length === 0) continue;
 
-    // Prune old scan_results, keep only this scan, and old scan runs past
-    // SCAN_HISTORY_KEEP (skip for targeted probes)
+    const results = await Promise.all(promises);
+    if (parsed.family === 6) await confirmByNeighborDiscovery(results);
+
+    // Read the neighbor tables to capture MACs the kernel learned from ping
+    // responses. Forced, because the point is to see entries these probes
+    // just created. IPv6 answers come from the ND table, IPv4 from ARP.
+    let arpCache = null;
+    let ndCache = null;
+    if (results.some((r) => r.responded && !r.mac)) {
+      if (parsed.family === 6) ndCache = await readNdCache({ force: true });
+      else arpCache = readArpCache({ force: true });
+    }
+
+    for (const result of results) {
+      // Enrich results with the neighbor-table MAC when the probe didn't return one
+      if (result.responded && !result.mac && arpCache) {
+        result.mac = arpCache.get(result.ip) || null;
+      }
+      if (result.responded && !result.mac && ndCache) {
+        result.mac = findNeighbor(ndCache, result.ip, result.iface)?.mac || null;
+      }
+
+      let isConflict = 0;
+      let conflictReason = null;
+      const assignment = assignmentMap.get(result.ip);
+
+      // The appliance's own interface addresses always answer, and they
+      // are not an unknown host, so they are never a conflict.
+      if (result.responded && !isLocalAddress(result.ip)) {
+        // An unassigned address answering is a rogue on IPv4 and on a
+        // stateful DHCPv6 network. Where hosts assign themselves (SLAAC
+        // modes) or nothing hands out addresses, it is simply a host.
+        // A link-local address is never handed out, so it is never a rogue.
+        const rogueMeaningful =
+          parsed.family === 4 || (policy?.mode === 'stateful' && !/^fe[89ab]/i.test(result.ip));
+        if (!assignment && rogueMeaningful) {
+          isConflict = 1;
+          conflictReason = 'Rogue device (IP not assigned)';
+        } else if (
+          assignment?.mac_address &&
+          result.mac &&
+          macIsAuthoritative(assignment.allocation_state) &&
+          assignment.mac_address.toLowerCase() !== result.mac
+        ) {
+          // MAC mismatch, only where DHCP sets the MAC. Anywhere else the
+          // stored MAC is just the last one seen, and updateFromScan takes
+          // the new one.
+          isConflict = 1;
+          conflictReason = `MAC mismatch (expected ${assignment.mac_address}, got ${result.mac})`;
+        }
+      }
+
+      if (isConflict) conflictsFound++;
+
+      probeMethods.set(result.ip, result.method);
+
+      ScanRun.insertResult(db, scanId, {
+        ip: result.ip,
+        mac: result.mac,
+        responded: result.responded,
+        isConflict,
+        conflictReason,
+      });
+    }
+
+    scannedCount += results.length;
+
+    // Update progress
+    ScanRun.updateProgress(db, scanId, { scannedIps: scannedCount, conflictsFound });
+  }
+
+  // Update ip_addresses via model, liveness, MAC, rogue state, lifecycle fields
+  if (updateModel) {
+    if (!ScanRun.targetIsCurrent(db, scanId)) {
+      throw new Error('Network topology changed during scan; results discarded');
+    }
+    const scanResults = ScanRun.getMaterializedResults(db, scanId);
+
+    const conflictIps = new Set();
+    for (const sr of scanResults) {
+      observeScanResult(db, subnetId, sr.ip_address, {
+        responded: sr.responded,
+        mac: sr.mac_address,
+        isConflict: sr.is_conflict,
+        conflictReason: sr.conflict_reason,
+      });
+      if (sr.is_conflict) conflictIps.add(sr.ip_address);
+    }
+
+    // Clear rogue on the addresses this scan re-checked and did not flag
+    // (only for full subnet scans, targeted probes shouldn't clear other
+    // IPs). Only those: an IPv6 scan probes a sparse set, and a rogue it
+    // never looked at is still a rogue.
     if (!isTargeted) {
-      ScanRun.pruneOldResults(db, subnetId, scanId);
-      ScanRun.pruneOldScans(db, subnetId, SCAN_HISTORY_KEEP);
+      const probed = new Set(scanResults.map((sr) => sr.ip_address));
+      reconcileScanRogues(db, subnetId, conflictIps, probed);
     }
-  } catch (err) {
-    ScanRun.markFailed(db, scanId, err.message);
+  }
+
+  // Mark completed
+  ScanRun.markCompleted(db, scanId, { scannedIps: scannedCount, conflictsFound });
+
+  // Prune old scan_results, keep only this scan, and old scan runs past
+  // SCAN_HISTORY_KEEP (skip for targeted probes)
+  if (!isTargeted) {
+    ScanRun.pruneOldResults(db, subnetId, scanId);
+    ScanRun.pruneOldScans(db, subnetId, SCAN_HISTORY_KEEP);
   }
 
   return { method: 'arp+icmp', results: Object.fromEntries(probeMethods) };

@@ -271,13 +271,11 @@ function computeInheritedOptions(subnet) {
   return inherited;
 }
 
-/** A scope option row that follows the default (Use default) rather than holding a value. */
-export const isLinkedOption = (row) => row.value == null;
-
 /**
  * What a scope serves, option by option, with where each value came from.
- * IPv4 layers default (linked rows) < scope < legacy columns (only when the
- * scope holds no value of its own) < network; IPv6 layers default < legacy <
+ * The defaults (dhcp_option_defaults) play no part: a scope copies them when
+ * it is created and stands alone after that. IPv4 layers scope < legacy
+ * columns (only when the scope holds no rows) < network; IPv6 layers legacy <
  * scope < network.
  */
 export function resolveEffectiveScopeOptions(db, scope) {
@@ -294,24 +292,9 @@ export function resolveEffectiveScopeOptions(db, scope) {
     db
       .prepare('SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ?')
       .all(scope.id);
-  // A default reaches a scope only through a linked row (Use default), and
-  // then with the default's current value; an empty default serves nothing.
-  const defaults = new Map(
-    db
-      .prepare(
-        'SELECT option_code, value FROM dhcp_option_defaults WHERE value IS NOT NULL AND address_family = ?',
-      )
-      .all(family)
-      .map((row) => [Number(row.option_code), row.value]),
-  );
-  for (const row of rows.filter(isLinkedOption)) {
-    const code = Number(row.option_code);
-    // IPv4 51 is the scope's lease_time, never a default. DHCPv6 codes are a
-    // separate namespace, so an IPv6 51 is an ordinary option.
-    if (family === 4 && code === 51) continue;
-    set(code, defaults.get(code), 'default');
-  }
-  const explicit = rows.filter((row) => !isLinkedOption(row));
+  // A row without a value is nothing (migration 091 gave every linked row of
+  // the retired Use default model its value).
+  const explicit = rows.filter((row) => row.value != null && row.value !== '');
 
   if (family === 6) {
     // DHCPv6: the scope columns (dns_servers, domain_search, ntp_servers) are
@@ -344,7 +327,6 @@ export function resolveEffectiveScopeOptions(db, scope) {
   }
 
   if (explicit.length === 0) {
-    set(3, scope.gateway, 'legacy_scope');
     set(15, scope.domain_name, 'legacy_scope');
     set(42, legacyListValue(scope.ntp_servers), 'legacy_scope');
     set(119, scope.domain_search, 'legacy_scope');
@@ -392,14 +374,9 @@ function saveScopeOptions(db, scopeId, subnet, options, { replace = false } = {}
     'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, ?)',
   );
   for (const opt of options) {
-    const linked = opt.use_default === true;
-    if (!opt.code || (!linked && (opt.value == null || opt.value === ''))) continue;
+    if (!opt.code || opt.value == null || opt.value === '') continue;
     if (family === 4 && Number(opt.code) === 51) {
       throw new Error('DHCP option 51 is represented by the scope lease_time field');
-    }
-    if (linked) {
-      insertOpt.run(scopeId, opt.code, null, family);
-      continue;
     }
     if (inherited[opt.code] && String(opt.value) === inherited[opt.code]) continue;
     insertOpt.run(scopeId, opt.code, String(opt.value), family);
@@ -442,9 +419,9 @@ export function createScope(db, fields, { subnet, defaultLeaseTime }) {
     const result = db
       .prepare(
         `
-      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name, gateway,
+      INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name,
         ntp_servers, domain_search, description, address_family, v6_mode)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `,
       )
       .run(
@@ -453,7 +430,6 @@ export function createScope(db, fields, { subnet, defaultLeaseTime }) {
         fields.lease_time || defaultLeaseTime,
         fields.dns_servers || null,
         fields.domain_name || null,
-        fields.gateway || null,
         fields.ntp_servers || null,
         fields.domain_search || null,
         fields.description || null,
@@ -482,7 +458,7 @@ export function updateScope(db, scope, fields, { subnet }) {
     db.prepare(
       `
       UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
-        gateway = ?, ntp_servers = ?, domain_search = ?, enabled = ?, description = ?,
+        ntp_servers = ?, domain_search = ?, enabled = ?, description = ?,
         v6_mode = ?, updated_at = datetime('now')
       WHERE id = ?
     `,
@@ -490,7 +466,6 @@ export function updateScope(db, scope, fields, { subnet }) {
       fields.lease_time ?? scope.lease_time,
       fields.dns_servers !== undefined ? fields.dns_servers : scope.dns_servers,
       fields.domain_name !== undefined ? fields.domain_name : scope.domain_name,
-      fields.gateway !== undefined ? fields.gateway || null : scope.gateway,
       fields.ntp_servers !== undefined ? fields.ntp_servers || null : scope.ntp_servers,
       fields.domain_search !== undefined ? fields.domain_search || null : scope.domain_search,
       fields.enabled !== undefined ? (fields.enabled ? 1 : 0) : scope.enabled,

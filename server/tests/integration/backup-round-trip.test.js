@@ -14,6 +14,7 @@ import { DATA_DIR } from '../helpers/isolated-data-dir.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
 import Database from 'better-sqlite3';
 import crypto from 'crypto';
+import { execFileSync } from 'child_process';
 import fs from 'fs';
 import path from 'path';
 import { fileURLToPath } from 'url';
@@ -102,19 +103,14 @@ function writeFile(relative, content) {
 }
 
 // restoreBackup schedules the process exit that has systemd restart it.
-// Run that timer here, against the stubbed exit, and check it asked for a
+// Wait out that timer, against the stubbed exit, and check it asked for a
 // clean restart.
-function restoreAndExit(archive, options) {
-  vi.useFakeTimers({ toFake: ['setTimeout'] });
-  try {
-    const result = restoreBackup(archive, options);
-    process.exit.mockClear();
-    vi.runOnlyPendingTimers();
-    expect(process.exit).toHaveBeenCalledWith(0);
-    return result;
-  } finally {
-    vi.useRealTimers();
-  }
+async function restoreAndExit(archive, options) {
+  process.exit.mockClear();
+  const result = await restoreBackup(archive, options);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  expect(process.exit).toHaveBeenCalledWith(0);
+  return result;
 }
 
 // The restore swaps files and closes the database; the process then exits
@@ -190,6 +186,21 @@ function seed(db) {
     `INSERT INTO sessions (id, user_id, username, expires_at) VALUES ('live-at-backup', ?, 'round-admin', '2999-01-01 00:00:00')`,
   ).run(adminId);
 
+  // A blocklist feed: its settings are the operator's, its domains a download.
+  db.prepare(
+    `INSERT INTO blocklist_categories
+       (slug, enabled, source_url, domain_count, last_fetched_at, etag, last_modified)
+     VALUES ('round-ads', 1, 'https://feeds.round.test/ads.txt', 2,
+             '2026-10-01 00:00:00', 'W/"v1"', 'Thu, 01 Oct 2026')
+     ON CONFLICT(slug) DO UPDATE SET enabled = 1, source_url = excluded.source_url,
+       domain_count = 2, last_fetched_at = excluded.last_fetched_at,
+       etag = excluded.etag, last_modified = excluded.last_modified`,
+  ).run();
+  db.prepare(
+    `INSERT INTO blocklist_domains (domain, category_slug)
+     VALUES ('ads.round.test', 'round-ads'), ('track.round.test', 'round-ads')`,
+  ).run();
+
   writeFile('certs/server.crt', 'CERT v1');
   writeFile('certs/server.key', 'KEY v1');
   writeFile('dnsmasq/conf.d/cidrella.conf', 'domain=round.test\n');
@@ -256,17 +267,26 @@ describe('backup round trip', () => {
     before = dumpTables(db);
     beforeFiles = hashFiles(dataDir);
 
-    backup = createBackup(db);
+    // A refresh stages a whole feed and sweeps it: the pages stay on the
+    // live file's freelist.
+    const stage = db.prepare('INSERT INTO blocklist_stage (domain) VALUES (?)');
+    db.transaction(() => {
+      for (let i = 0; i < 5000; i++) stage.run(`staged-${i}.round.test`);
+    })();
+    db.prepare('DELETE FROM blocklist_stage').run();
+    expect(db.pragma('freelist_count', { simple: true })).toBeGreaterThan(0);
+
+    backup = await createBackup(db);
 
     change(db, adminId);
     // A second backup, taken after the changes: it must still be listed, and
     // counted for retention, once the older one is restored.
-    const later = createBackup(db);
+    const later = await createBackup(db);
     backup.later = later.filename;
 
     // As POST /api/operations/restore calls it.
     const carryover = collectRestoreCarryover(db, adminId);
-    restoreAndExit(getBackupPath(backup.filename), {
+    await restoreAndExit(getBackupPath(backup.filename), {
       dhcpAfterRestore: false,
       restoredBy: { username: 'round-admin' },
       carryover,
@@ -283,6 +303,8 @@ describe('backup round trip', () => {
       'user_backup_codes',
       'backups',
       'sessions',
+      'blocklist_categories',
+      'blocklist_domains',
     ]);
     for (const name of Object.keys(before)) {
       if (promised.has(name)) continue;
@@ -305,6 +327,42 @@ describe('backup round trip', () => {
       ended: true,
       end_reason: 'restore',
     });
+  });
+
+  it('keeps the blocklist settings and leaves the feeds to be downloaded again', () => {
+    const rows = (dump) => dump.blocklist_categories.map((row) => JSON.parse(row));
+    const fetchState = ['domain_count', 'last_fetched_at', 'etag', 'last_modified'];
+    const settingsOf = (row) =>
+      Object.fromEntries(Object.entries(row).filter(([key]) => !fetchState.includes(key)));
+    expect(rows(after).map(settingsOf)).toEqual(rows(before).map(settingsOf));
+    const fed = rows(after).find((row) => row.source_url === 'https://feeds.round.test/ads.txt');
+    expect(fed).toMatchObject({
+      enabled: 1,
+      domain_count: 0,
+      last_fetched_at: null,
+      etag: null,
+      last_modified: null,
+    });
+    expect(before.blocklist_domains).toHaveLength(2);
+    expect(after.blocklist_domains).toEqual([]);
+  });
+
+  it('carries a compact database without its free pages', () => {
+    const archive = getBackupPath(backup.filename);
+    const listed = execFileSync('tar', ['-tvzf', archive], { encoding: 'utf8' });
+    const db = listed.split('\n').find((line) => / cidrella\.db$/.test(line));
+    expect(db).toBeTruthy();
+    const extracted = fs.mkdtempSync(path.join(dataDir, 'extract-'));
+    try {
+      execFileSync('tar', ['-xzf', archive, '-C', extracted, 'cidrella.db']);
+      const copy = new Database(path.join(extracted, 'cidrella.db'), { readonly: true });
+      expect(copy.pragma('freelist_count', { simple: true })).toBe(0);
+      expect(copy.pragma('integrity_check', { simple: true })).toBe('ok');
+      copy.close();
+    } finally {
+      fs.rmSync(extracted, { recursive: true, force: true });
+    }
+    expect(fs.readdirSync(dataDir).filter((name) => name.startsWith('.backup-db-'))).toEqual([]);
   });
 
   it('changes the settings only by the DHCP choice', () => {
@@ -432,13 +490,13 @@ describe('restoring a backup from schema 54', () => {
       )
       .run();
 
-    archive = createBackup(legacy);
+    archive = await createBackup(legacy);
     legacy.close();
     expect(archive.schema_version).toBe(54);
 
     for (const suffix of ['', '-wal', '-shm']) fs.rmSync(livePath + suffix, { force: true });
     await initDb(dataDir);
-    restoreAndExit(getBackupPath(archive.filename), {
+    await restoreAndExit(getBackupPath(archive.filename), {
       restoredBy: { username: 'legacy-admin' },
     });
     await restart();
@@ -498,14 +556,14 @@ describe('restoring a backup from schema 54', () => {
 // ─── Two backups in one second ────────────────────────────────────────
 
 describe('two backups in the same second', () => {
-  it('keeps both archives, listed under their own names', () => {
+  it('keeps both archives, listed under their own names', async () => {
     vi.useFakeTimers({ toFake: ['Date'] });
     vi.setSystemTime(new Date('2026-09-29T08:00:00.250Z'));
     try {
       const db = getDb();
-      const first = createBackup(db);
+      const first = await createBackup(db);
       vi.setSystemTime(new Date('2026-09-29T08:00:00.750Z'));
-      const second = createBackup(db);
+      const second = await createBackup(db);
       expect(second.filename).not.toBe(first.filename);
       for (const { filename } of [first, second]) {
         expect(fs.existsSync(getBackupPath(filename))).toBe(true);

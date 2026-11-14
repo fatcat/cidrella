@@ -12,6 +12,11 @@
  *   number  , integer
  *   select  , pick from choices[]
  *
+ * A DHCPv4 number or select entry carries `width`: its size on the wire in
+ * bytes (RFC 2132), for a backend that cannot look the option up itself.
+ * A `list: true` entry is typed text but its value is comma-separated (route
+ * pairs, an MTU table); a list of numbers also carries the width of each.
+ *
  * Groups (display order):
  *   Common, Network, DNS, Time, Boot/PXE, NetBIOS, Ancient History
  */
@@ -74,6 +79,7 @@ export const DHCP_OPTIONS = [
     name: 'mtu',
     label: 'Interface MTU',
     type: 'number',
+    width: 2,
     group: 'Common',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.1',
@@ -94,6 +100,7 @@ export const DHCP_OPTIONS = [
     name: 'lease-time',
     label: 'Lease Time',
     type: 'number',
+    width: 4,
     group: 'Common',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-9.2',
@@ -106,6 +113,7 @@ export const DHCP_OPTIONS = [
     name: 'time-offset',
     label: 'Time Offset',
     type: 'number',
+    width: 4,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-3.4',
@@ -136,6 +144,7 @@ export const DHCP_OPTIONS = [
     name: 'policy-filter',
     label: 'Policy Filter',
     type: 'text',
+    list: true,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-4.4',
@@ -146,6 +155,7 @@ export const DHCP_OPTIONS = [
     name: 'router-discovery',
     label: 'Router Discovery',
     type: 'select',
+    width: 1,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.6',
@@ -167,6 +177,7 @@ export const DHCP_OPTIONS = [
     name: 'static-route',
     label: 'Static Routes',
     type: 'text',
+    list: true,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.8',
@@ -178,6 +189,7 @@ export const DHCP_OPTIONS = [
     name: 'trailer-encap',
     label: 'Trailer Encapsulation',
     type: 'select',
+    width: 1,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.9',
@@ -189,6 +201,7 @@ export const DHCP_OPTIONS = [
     name: 'arp-timeout',
     label: 'ARP Cache Timeout',
     type: 'number',
+    width: 4,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.10',
@@ -199,6 +212,7 @@ export const DHCP_OPTIONS = [
     name: 'ethernet-encap',
     label: 'Ethernet Encapsulation',
     type: 'select',
+    width: 1,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.11',
@@ -210,6 +224,7 @@ export const DHCP_OPTIONS = [
     name: 'tcp-default-ttl',
     label: 'TCP Default TTL',
     type: 'number',
+    width: 1,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.12',
@@ -220,6 +235,7 @@ export const DHCP_OPTIONS = [
     name: 'tcp-keepalive-interval',
     label: 'TCP Keepalive Interval',
     type: 'number',
+    width: 4,
     group: 'Network',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.13',
@@ -240,6 +256,7 @@ export const DHCP_OPTIONS = [
     name: 'classless-static-route',
     label: 'Classless Static Routes',
     type: 'text',
+    list: true,
     group: 'Network',
     rfc: 'RFC 3442',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc3442',
@@ -307,6 +324,7 @@ export const DHCP_OPTIONS = [
     name: 'boot-file-size',
     label: 'Boot File Size',
     type: 'number',
+    width: 2,
     group: 'Boot/PXE',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-3.15',
@@ -399,6 +417,7 @@ export const DHCP_OPTIONS = [
     name: 'netbios-nodetype',
     label: 'NetBIOS Node Type',
     type: 'select',
+    width: 1,
     group: 'NetBIOS',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-8.7',
@@ -512,6 +531,7 @@ export const DHCP_OPTIONS = [
     name: 'ip-forwarding',
     label: 'IP Forwarding',
     type: 'select',
+    width: 1,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-4.1',
@@ -523,6 +543,7 @@ export const DHCP_OPTIONS = [
     name: 'non-local-source-route',
     label: 'Non-Local Source Routing',
     type: 'select',
+    width: 1,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-4.2',
@@ -534,6 +555,7 @@ export const DHCP_OPTIONS = [
     name: 'max-dgram-reassembly',
     label: 'Max Datagram Reassembly',
     type: 'number',
+    width: 2,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-4.5',
@@ -544,6 +566,7 @@ export const DHCP_OPTIONS = [
     name: 'default-ip-ttl',
     label: 'Default IP TTL',
     type: 'number',
+    width: 1,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-4.6',
@@ -554,6 +577,7 @@ export const DHCP_OPTIONS = [
     name: 'mtu-aging-timeout',
     label: 'Path MTU Aging Timeout',
     type: 'number',
+    width: 4,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-4.7',
@@ -564,6 +588,8 @@ export const DHCP_OPTIONS = [
     name: 'mtu-plateau-table',
     label: 'Path MTU Plateau Table',
     type: 'text',
+    list: true,
+    width: 2,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-4.8',
@@ -574,6 +600,7 @@ export const DHCP_OPTIONS = [
     name: 'all-subnets-local',
     label: 'All Subnets Local',
     type: 'select',
+    width: 1,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.2',
@@ -585,6 +612,7 @@ export const DHCP_OPTIONS = [
     name: 'mask-discovery',
     label: 'Mask Discovery',
     type: 'select',
+    width: 1,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.4',
@@ -596,6 +624,7 @@ export const DHCP_OPTIONS = [
     name: 'mask-supplier',
     label: 'Mask Supplier',
     type: 'select',
+    width: 1,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.5',
@@ -607,6 +636,7 @@ export const DHCP_OPTIONS = [
     name: 'tcp-keepalive-garbage',
     label: 'TCP Keepalive Garbage',
     type: 'select',
+    width: 1,
     group: 'Ancient History',
     rfc: 'RFC 2132',
     rfcUrl: 'https://datatracker.ietf.org/doc/html/rfc2132#section-5.14',
@@ -1028,6 +1058,15 @@ const CATALOGS = {
  * The catalog for one address family. Anything else than 6 is IPv4 so the
  * many callers that never learned about families keep their behavior.
  */
+/**
+ * Whether an option's value may contain commas: the list types, and a text
+ * entry marked `list`. `entry` is the catalog entry (absent for a custom
+ * option), `type` its type.
+ */
+export function optionAllowsComma(entry, type = entry?.type) {
+  return type === 'ip-list' || type === 'text-list' || Boolean(entry?.list);
+}
+
 export function optionCatalogFor(family) {
   return Number(family) === 6 ? CATALOGS[6] : CATALOGS[4];
 }

@@ -44,14 +44,19 @@ export function replaceLeases(db, leases, { lifecycleValidated = false, now = Da
       // A new lease is one the address did not hold a moment ago: no lease,
       // another client's, or one that had expired. A renewal (same client,
       // new expiry) is activity but not a new lease, so it writes no history.
+      // A lease that has already run out is neither: the backend lists it
+      // until it prunes (dnsmasq) or reclaims (Kea) it, and nothing has been
+      // heard from the client.
       const newLease =
-        !old ||
-        clientOf(old.mac_address, old.duid) !== clientOf(lease.mac, lease.duid) ||
-        !isLeaseActive(old.expires_at);
+        isLeaseActive(lease.expiresAt, now) &&
+        (!old ||
+          clientOf(old.mac_address, old.duid) !== clientOf(lease.mac, lease.duid) ||
+          !isLeaseActive(old.expires_at, now));
       return {
         ...lease,
         newLease,
-        observedActivity: newLease || old.expires_at !== lease.expiresAt,
+        observedActivity:
+          newLease || (isLeaseActive(lease.expiresAt, now) && old.expires_at !== lease.expiresAt),
       };
     });
     for (const l of observedLeases) {
@@ -475,7 +480,7 @@ export function syncDhcpDnsRecords(db, leases) {
       if (!activeRecordIds.has(r.id)) {
         // A vanished dynamic lease loses allocation authority immediately, but
         // its generated name remains with the learned host metadata until the
-        // one-hour continuous-offline retirement boundary. A replacement name
+        // continuous-offline retirement boundary (OFFLINE_RETIREMENT_MS). A replacement name
         // for the same active IP still removes this stale row immediately, and
         // so does an active lease now answering the same name (its client came
         // back on a new address, ADR 005), so the name never answers with both.

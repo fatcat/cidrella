@@ -10,7 +10,9 @@ import NetworksWorkspace from '../../../../../src/views/networks-workspace/Netwo
 import { UiPlugin } from '../../../../../src/ui/plugin.js';
 import {
   buildExplorerFolders,
+  formatCoveragePercent,
   mapNetworkRows,
+  prefixCoverage,
 } from '../../../../../src/views/networks-workspace-data.js';
 import { zoneFileName, zoneFileValue } from '../../../../../src/utils/dnsZoneFile.js';
 import {
@@ -19,6 +21,7 @@ import {
   allocatedLeaves,
   applyColumnFilters,
   queryAddresses,
+  queryHosts,
   queryDhcpRows,
   queryDnsRecords,
   queryNetworks,
@@ -28,6 +31,7 @@ import {
   subnetTree,
   unallocatedLeaves,
   filteringOn,
+  networkById,
 } from './fake-estate.js';
 
 export const STORAGE_KEY = 'cidrella_workspace_v1_admin';
@@ -120,6 +124,7 @@ export function observe() {
   const explorerSearch = one('[data-track="workspace-global-search"]');
   const tableSearch = one('.table-search input');
   const available = one('.available-switch input');
+  const grouping = one('.grouping-switcher button.active');
   const domainNames = one('.domain-names-switch input');
   return {
     title: one('.context-title-row h2')?.textContent.trim() ?? null,
@@ -151,6 +156,15 @@ export function observe() {
     q: explorerSearch?.value.trim() ?? '',
     tableQ: tableSearch?.value.trim() ?? '',
     showAvailable: available ? available.checked : null,
+    grouping: grouping ? grouping.dataset.grouping : null,
+    savedGrouping: savedGrouping(),
+    // Each open host's address list, by its row id.
+    hostAddresses: all('tbody tr.host-addresses').map((row) => ({
+      id: row.previousElementSibling?.dataset.rowId ?? null,
+      addresses: [...row.querySelectorAll('[data-track="workspace-host-address"]')].map(
+        (button) => button.dataset.address,
+      ),
+    })),
     showDomainNames: domainNames ? domainNames.checked : null,
     dnsCells: dnsCells(),
     rows: all('tbody tr[data-row-id]').map((row) => row.dataset.rowId),
@@ -167,6 +181,10 @@ export function observe() {
       Number(row.dataset.networkId),
     ),
     explorerChecked: all('.network-row.checked').map((row) => Number(row.dataset.networkId)),
+    containers: all('.resource-node.container > .network-row').map((row) => ({
+      id: Number(row.dataset.networkId),
+      label: row.querySelector('.network-copy small').textContent.trim(),
+    })),
     pager: pagerOf(one('.paginator-stub')),
     chips: all('.filter-chips button[data-filter-key]').map((chip) => chip.dataset.filterKey),
     filters: savedFilters(),
@@ -196,6 +214,15 @@ function pagerOf(element) {
 
 // The column filters in force, from the saved workspace state (the route):
 // the chips on screen are checked against these.
+// The Hosts / Addresses choice the workspace saved, null when none was made.
+function savedGrouping() {
+  try {
+    return JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}').grouping ?? null;
+  } catch {
+    return null;
+  }
+}
+
 function savedFilters() {
   try {
     const saved = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
@@ -264,6 +291,10 @@ function expectedDhcp(state, context) {
     ...search,
   });
   return applyColumnFilters(rows, state.filters, 'dhcp').map((row) => row.ip_address);
+}
+
+function expectedHosts(state, context) {
+  return queryHosts(context.networkId, { q: state.tableQ, search: state.q });
 }
 
 function expectedAddresses(state, context) {
@@ -365,6 +396,19 @@ function checkPage(out, label, shown, expected, pager) {
 
 // ─── Invariants ───────────────────────────────────────────────────────
 
+// One network of GET /subnets, with its whole subtree.
+function treeNode(id) {
+  const find = (nodes) => {
+    for (const node of nodes) {
+      if (node.id === id) return node;
+      const found = find(node.children || []);
+      if (found) return found;
+    }
+    return null;
+  };
+  return find(subnetTree().folders.flatMap((folder) => folder.subnets));
+}
+
 export function violations(state, { unexpected = [], errors = [] } = {}) {
   const out = [];
   const context = contextOf(state);
@@ -412,6 +456,20 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
     out.push(`tabs [${state.tabs}] in ${context.kind}, expected [${tabs}]`);
   if (tabs?.length && !tabs.includes(state.view))
     out.push(`open tab "${state.view}" not one of [${tabs}]`);
+
+  // 2b. An IPv6 network is an inventory: it offers no Show available.
+  if (context.kind === 'network' && networkById(context.networkId)?.address_family === 6) {
+    if (state.showAvailable !== null) out.push('Show available offered on an IPv6 network');
+  }
+
+  // 2c. A container reads how much of it is allocated, from the whole
+  // subtree, allocated networks the explorer does not list included.
+  for (const container of state.containers || []) {
+    const node = treeNode(container.id);
+    const want = `${formatCoveragePercent(prefixCoverage(node).percent)} allocated`;
+    if (!node || !container.label.endsWith(want))
+      out.push(`container ${container.id} reads "${container.label}", expected "… · ${want}"`);
+  }
 
   // 3. The DNS view always has one zone or one network's reverse zones chosen.
   const view = context.kind === 'unallocated' ? 'networks' : state.view;
@@ -464,9 +522,37 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
       const stray = shown.filter((id) => !expected.includes(id));
       if (stray.length) out.push(`unallocated rows [${stray}] outside the search`);
     } else checkPage(out, 'network', shown, expected, state.pager);
+  } else if (view === 'addresses' && context.kind === 'network' && state.grouping === 'hosts') {
+    const shown = state.rows.map((id) => id.slice('host:'.length));
+    const hosts = expectedHosts(state, context);
+    checkPage(
+      out,
+      'host',
+      shown,
+      hosts.map((host) => host.key),
+      state.pager,
+    );
+    // 4c. An open host lists its addresses, temporaries left folded.
+    for (const open of state.hostAddresses) {
+      const host = hosts.find((entry) => `host:${entry.key}` === open.id);
+      const want = (host?.addresses || [])
+        .filter((a) => a.kind !== 'temporary')
+        .map((a) => (a.interface_id ? `${a.ip_address}%${a.interface_id}` : a.ip_address));
+      if (open.addresses.join() !== want.join())
+        out.push(`host ${open.id} lists [${open.addresses}], expected [${want}]`);
+    }
   } else if (view === 'addresses' && context.kind === 'network') {
     const shown = state.rows.map((id) => id.slice('address:'.length));
     checkPage(out, 'address', shown, expectedAddresses(state, context), state.pager);
+  }
+
+  // 2d. A network's Addresses view offers Hosts and Addresses, one of them on:
+  // the one chosen, else hosts on IPv6 and addresses on IPv4.
+  if (view === 'addresses' && context.kind === 'network') {
+    const family = networkById(context.networkId)?.address_family === 6 ? 6 : 4;
+    const want = state.savedGrouping ?? (family === 6 ? 'hosts' : 'addresses');
+    if (state.grouping !== want)
+      out.push(`Addresses view shows ${state.grouping ?? 'no switch'}, expected ${want}`);
   }
 
   // 4a. DNS names read as the switch says: in full, or as the zone's file
@@ -489,8 +575,10 @@ export function violations(state, { unexpected = [], errors = [] } = {}) {
     }
   }
 
-  // 4b. The chips are the filters in force.
-  if (!sameSet(state.chips, Object.keys(state.filters)))
+  // 4b. The chips are the filters in force; the Hosts view has none to show.
+  const hostsShown = view === 'addresses' && state.grouping === 'hosts';
+  if (hostsShown && state.chips.length) out.push(`filter chips [${state.chips}] in the Hosts view`);
+  else if (!hostsShown && !sameSet(state.chips, Object.keys(state.filters)))
     out.push(`filter chips [${state.chips}] for filters [${Object.keys(state.filters)}]`);
 
   // 5. A network checked in the table is checked in the explorer and back.
@@ -537,6 +625,7 @@ export function restorable(state) {
     scopeId: state.scopeId,
     q: state.q,
     showAvailable: state.showAvailable,
+    grouping: state.grouping,
     filters: state.filters,
     chips: [...state.chips].sort(),
     pager: state.pager,

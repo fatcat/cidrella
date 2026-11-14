@@ -317,4 +317,63 @@ describe('workspace address details panel', () => {
       note: null,
     });
   });
+
+  describe('Host section', () => {
+    const v6Row = {
+      ...availableRow,
+      id: 'address:fd00:5::21a:2bff:fe3c:4d5e',
+      address: 'fd00:5::21a:2bff:fe3c:4d5e',
+      raw: { ...availableRow.raw, ip_address: 'fd00:5::21a:2bff:fe3c:4d5e', address_family: 6 },
+    };
+    const host = {
+      key: 'mac:00:1a:2b:3c:4d:5e',
+      name: 'laptop',
+      mac: '00:1a:2b:3c:4d:5e',
+      duid: null,
+      temporary_count: 2,
+      addresses: [
+        { ip_address: 'fd00:5::21a:2bff:fe3c:4d5e', interface_id: null, kind: 'eui64' },
+        { ip_address: 'fd00:5::7f2e', interface_id: null, kind: 'slaac' },
+        { ip_address: 'fd00:5::9999', interface_id: null, kind: 'temporary' },
+      ],
+      other_family: [
+        {
+          ip_address: '10.0.0.5',
+          subnet_id: 3,
+          cidr: '10.0.0.0/24',
+          network_name: 'Lab',
+          source: 'lease',
+        },
+      ],
+    };
+    const answer = (hosts) => (url) =>
+      response(url.endsWith('/hosts') ? { hosts } : { events: [] });
+
+    it('lists the host’s other addresses, its IPv4 side included, and opens them', async () => {
+      api.get.mockImplementation(answer([host]));
+      const wrapper = mountPanel(v6Row);
+      await flushPromises();
+      expect(api.get).toHaveBeenCalledWith('/subnets/7/hosts', {
+        params: { address: 'fd00:5::21a:2bff:fe3c:4d5e' },
+      });
+      const section = wrapper.find('[data-track="workspace-address-host"]');
+      expect(section.text()).toContain('laptop');
+      expect(section.text()).toContain('2 temporary addresses');
+      const links = section.findAll('[data-track="workspace-address-host-link"]');
+      expect(links.map((link) => link.find('strong').text())).toEqual(['fd00:5::7f2e', '10.0.0.5']);
+      await links[1].trigger('click');
+      expect(wrapper.emitted('navigate').at(-1)).toEqual([
+        { view: 'addresses', subnetId: 3, address: '10.0.0.5' },
+      ]);
+    });
+
+    it('is left out for a host of one address, as on most IPv4 networks', async () => {
+      api.get.mockImplementation(
+        answer([{ ...host, temporary_count: 0, addresses: [host.addresses[0]], other_family: [] }]),
+      );
+      const wrapper = mountPanel(v6Row);
+      await flushPromises();
+      expect(wrapper.find('[data-track="workspace-address-host"]').exists()).toBe(false);
+    });
+  });
 });

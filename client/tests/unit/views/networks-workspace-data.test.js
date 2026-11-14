@@ -1,4 +1,6 @@
 import { describe, expect, it } from 'vitest';
+import { createPinia, setActivePinia } from 'pinia';
+import { formatDateTime } from '../../../src/utils/dateFormat.js';
 import { EMPTY_CELL } from '../../../src/utils/format.js';
 import {
   buildExplorerFolders,
@@ -9,6 +11,7 @@ import {
   mapDnsZoneRows,
   mapNetworkRows,
   addressCountLabel,
+  networkSearchMatches,
   dnsRecordSummary,
   formatDuration,
   formatAddressCount,
@@ -16,7 +19,12 @@ import {
   networkUtilization,
   compareCellValues,
   mapRangeRows,
+  prefixCoverage,
+  formatCoveragePercent,
+  formatCoverageCounts,
+  nextFreePrefix,
 } from '../../../src/views/networks-workspace-data.js';
+import { byStateLine } from '../../../src/utils/ipLifecycleDisplay.js';
 
 describe('networks workspace data adapter', () => {
   it('renders server-owned IP status and type without reconstructing allocation precedence', () => {
@@ -36,6 +44,28 @@ describe('networks workspace data adapter', () => {
     expect(row.type).toBe('static DNS');
     expect(row.online).toBe('offline');
     expect(row.scanning).toBe('Off · inherited');
+  });
+
+  it('shows when a lease ends, not how long ago, on the Addresses and DHCP tables', () => {
+    setActivePinia(createPinia());
+    // Just handed out: an hour to run.
+    const ends = new Date(Date.now() + 3_600_000).toISOString();
+    const lease = { dhcp_lease_state: 'active', dhcp_assignment_type: 'dynamic' };
+    const rows = [
+      ...mapAddressRows([
+        { id: 1, ip_address: '10.0.0.40', dhcp_expires_at: ends, ...lease },
+        { id: 2, ip_address: 'fd00:40::40', dhcp_expires_at: ends, ...lease },
+      ]),
+      // The server sends a dynamic lease's expiry in both fields (routes/dhcp.js).
+      ...mapDhcpRows([
+        { id: 3, ip_address: '10.0.0.41', expires_at: ends, dhcp_expires_at: ends, ...lease },
+        { id: 4, ip_address: 'fd00:40::41', expires_at: ends, dhcp_expires_at: ends, ...lease },
+      ]),
+    ];
+    for (const row of rows) {
+      expect(row.expires).toBe(formatDateTime(ends));
+      expect(row.expires).not.toMatch(/just now|ago/i);
+    }
   });
 
   it('uses explicit DHCP assignment and lease fields', () => {
@@ -269,13 +299,34 @@ describe('addressCountLabel', () => {
     );
   });
 
-  it('names assigned addresses for a sparse IPv6 network, which has no total', () => {
+  it('names known addresses for a sparse IPv6 network, which has no total', () => {
     expect(addressCountLabel({ shown: 256, matching: 256, total: 256, paged: false })).toBe(
       'Showing 256 · 256 matching · 256 addresses in network',
     );
     expect(addressCountLabel({ shown: 3, matching: 3, total: 3, sparse: true })).toBe(
-      'Showing 3 on this page · 3 matching · 3 assigned addresses',
+      'Showing 3 on this page · 3 matching · 3 known addresses',
     );
+  });
+});
+
+describe('networkSearchMatches', () => {
+  const v6 = { name: 'Lab v6', cidr: 'fd00:5::/64', vlan: null };
+  const v4 = { name: 'Trust', cidr: '10.0.0.0/23', vlan: 'trust' };
+
+  it('matches the name, CIDR and VLAN as text', () => {
+    expect(networkSearchMatches(v4, 'trust')).toBe(true);
+    expect(networkSearchMatches(v6, 'fd00:5')).toBe(true);
+    expect(networkSearchMatches(v6, 'lab v4')).toBe(false);
+  });
+
+  it('matches a network inside a CIDR query or containing it, in its own family only', () => {
+    expect(networkSearchMatches(v6, 'fd00::/16')).toBe(true);
+    expect(networkSearchMatches(v6, 'fd00:5::/120')).toBe(true);
+    expect(networkSearchMatches(v6, 'fd00:6::/64')).toBe(false);
+    expect(networkSearchMatches(v4, '10.0.0.0/8')).toBe(true);
+    expect(networkSearchMatches(v4, '10.0.1.128/25')).toBe(true);
+    expect(networkSearchMatches(v4, '10.0.2.0/24')).toBe(false);
+    expect(networkSearchMatches(v4, '::/0')).toBe(false);
   });
 });
 
@@ -449,5 +500,120 @@ describe('IPv6 in the workspace aggregate tables', () => {
       '10.0.0.0/25',
     ]);
     expect(['Lab 10', 'Lab 9'].sort(compareCellValues)).toEqual(['Lab 9', 'Lab 10']);
+  });
+});
+
+// docs/IPV6-HANDLING.md, rules 3 and 4: fullness in prefixes and the next
+// free one, over the tree GET /subnets returns.
+const net = (cidr, status, children = []) => ({ cidr, status, children });
+// A /48 carved into an allocated /64, its free remainder (the /64s and
+// /63 ... /49 a carve leaves), and an allocated /56 further up.
+const V6_CONTAINER = net('fd00:aa::/48', 'unallocated', [
+  net('fd00:aa::/56', 'unallocated', [
+    net('fd00:aa::/64', 'allocated'),
+    net('fd00:aa:0:1::/64', 'unallocated'),
+    net('fd00:aa:0:2::/63', 'unallocated'),
+    net('fd00:aa:0:4::/62', 'unallocated'),
+  ]),
+  net('fd00:aa:0:100::/56', 'allocated'),
+  net('fd00:aa:0:200::/55', 'unallocated'),
+]);
+const V4_CONTAINER = net('10.80.0.0/16', 'unallocated', [
+  net('10.80.0.0/24', 'allocated'),
+  net('10.80.1.0/24', 'allocated'),
+  net('10.80.2.0/23', 'unallocated'),
+  net('10.80.4.0/22', 'unallocated'),
+]);
+
+describe('prefix coverage', () => {
+  it('sums the allocated networks of an IPv6 container exactly, by prefix', () => {
+    const coverage = prefixCoverage(V6_CONTAINER);
+    expect(coverage.allocated).toBe((1n << 64n) + (1n << 72n));
+    expect(coverage.byPrefix).toEqual([
+      { prefix: 56, count: 1 },
+      { prefix: 64, count: 1 },
+    ]);
+    expect(formatCoveragePercent(coverage.percent)).toBe('0.39%');
+    expect(formatCoverageCounts(coverage)).toBe('1 /56, 1 /64');
+  });
+
+  it('does the same for an IPv4 container', () => {
+    const coverage = prefixCoverage(V4_CONTAINER);
+    expect(coverage.percent).toBeCloseTo(0.78125, 4);
+    expect(formatCoverageCounts(coverage)).toBe('2 /24');
+    expect(formatCoverageCounts(prefixCoverage(net('10.81.0.0/16', 'unallocated')))).toBe(
+      'No allocated networks',
+    );
+  });
+
+  it('formats small and large percents', () => {
+    expect(formatCoveragePercent(0)).toBe('0%');
+    expect(formatCoveragePercent(0.0015)).toBe('<0.01%');
+    expect(formatCoveragePercent(8.34)).toBe('8.3%');
+    expect(formatCoveragePercent(62.9)).toBe('62%');
+  });
+});
+
+describe('next free prefix', () => {
+  it('IPv6: the lowest free /64, as it stands, and a /56 carved from a /55', () => {
+    expect(nextFreePrefix(V6_CONTAINER, 64)).toMatchObject({
+      cidr: 'fd00:aa:0:1::/64',
+      exact: true,
+    });
+    expect(nextFreePrefix(V6_CONTAINER, 63)).toMatchObject({
+      cidr: 'fd00:aa:0:2::/63',
+      exact: true,
+    });
+    const wide = nextFreePrefix(V6_CONTAINER, 56);
+    expect(wide).toMatchObject({ cidr: 'fd00:aa:0:200::/56', exact: false });
+    expect(wide.leaf.cidr).toBe('fd00:aa:0:200::/55');
+  });
+
+  it('IPv4: carves a /24 from the lowest free block, and finds nothing too big', () => {
+    expect(nextFreePrefix(V4_CONTAINER, 24)).toMatchObject({ cidr: '10.80.2.0/24', exact: false });
+    expect(nextFreePrefix(V4_CONTAINER, 22)).toMatchObject({ cidr: '10.80.4.0/22', exact: true });
+    expect(nextFreePrefix(V4_CONTAINER, 21)).toBeNull();
+  });
+
+  it('refuses a prefix outside the parent', () => {
+    expect(nextFreePrefix(V4_CONTAINER, 15)).toBeNull();
+    expect(nextFreePrefix(V4_CONTAINER, 33)).toBeNull();
+    expect(nextFreePrefix(V6_CONTAINER, 129)).toBeNull();
+  });
+});
+
+describe('utilization from pool use', () => {
+  it('an IPv6 leaf with a pool is as full as its pool', () => {
+    expect(
+      networkUtilization({ total_addresses: null, pool_size: '4096', pool_in_use: 1024 }),
+    ).toBe(25);
+    expect(
+      networkUtilization({
+        total_addresses: null,
+        pool_size: '18446744073709486080',
+        pool_in_use: 9,
+      }),
+    ).toBe(0);
+  });
+
+  it('an IPv6 leaf without a pool has no figure; IPv4 keeps its address count', () => {
+    expect(networkUtilization({ total_addresses: null, pool_size: null })).toBeNull();
+    expect(
+      networkUtilization({
+        total_addresses: 256,
+        used_count: 64,
+        pool_size: '100',
+        pool_in_use: 99,
+      }),
+    ).toBe(25);
+  });
+});
+
+describe('byStateLine', () => {
+  it('names what is known, by kind, in the address-type wording', () => {
+    expect(byStateLine({ slaac: 12, static_dns: 3, seen: 1, reserved: 0 })).toBe(
+      '3 static DNS · 12 SLAAC · 1 seen',
+    );
+    expect(byStateLine({})).toBe('nothing stored yet');
   });
 });

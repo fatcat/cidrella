@@ -31,8 +31,8 @@ function createSubnetAndScope() {
   return db
     .prepare(
       `
-    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, dns_servers, domain_name)
-    VALUES (?, ?, '24h', '10.70.0.1', '["10.70.0.8"]', 'legacy.test')
+    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, dns_servers, domain_name)
+    VALUES (?, ?, '24h', '["10.70.0.8"]', 'legacy.test')
   `,
     )
     .run(rangeId, subnetId).lastInsertRowid;
@@ -94,7 +94,8 @@ describe('DHCP option ownership', () => {
     );
 
     expect(result.defaults).toEqual({ 6: '10.70.0.8' });
-    expect(result.enabledDefaults.sort((a, b) => a - b)).toEqual([6, 119]);
+    // Lease Time (51) is always added to new scopes: every scope has one.
+    expect(result.enabledDefaults.sort((a, b) => a - b)).toEqual([6, 51, 119]);
   });
 
   it('migrates legacy scope columns and removes inherited gateway duplicates', () => {
@@ -106,11 +107,13 @@ describe('DHCP option ownership', () => {
         'SELECT option_code, value FROM dhcp_scope_options WHERE scope_id = ? ORDER BY option_code',
       )
       .all(scopeId);
+    db.prepare(
+      "INSERT INTO dhcp_scope_options (scope_id, option_code, value) VALUES (?, 3, '10.70.0.1')",
+    ).run(scopeId);
     const cleaned = DhcpOption.cleanupRedundantGatewayOptions(db);
 
     expect(migrated).toBe(1);
     expect(migratedRows).toEqual([
-      { option_code: 3, value: '10.70.0.1' },
       { option_code: 6, value: '10.70.0.8' },
       { option_code: 15, value: 'legacy.test' },
     ]);
@@ -128,7 +131,7 @@ describe('DHCP option ownership', () => {
 
     expect(DhcpOption.getDefaultOptions(db)).toEqual({
       defaults: { 6: '10.70.0.8' },
-      enabledDefaults: [1, 3, 6],
+      enabledDefaults: [1, 3, 6, 51],
     });
     expect(DhcpOption.getDefaultOptions(db, 6)).toEqual({
       defaults: { 56: 'fd00::123' },
@@ -139,7 +142,7 @@ describe('DHCP option ownership', () => {
     DhcpOption.replaceDefaultOptions(db, [], [24], 6);
     expect(DhcpOption.getDefaultOptions(db)).toEqual({
       defaults: { 6: '10.70.0.8' },
-      enabledDefaults: [1, 3, 6],
+      enabledDefaults: [1, 3, 6, 51],
     });
     expect(DhcpOption.getDefaultOptions(db, 6)).toEqual({ defaults: {}, enabledDefaults: [24] });
   });
@@ -164,7 +167,7 @@ describe('DHCP option ownership', () => {
     DhcpOption.seedDefaultOptions(db);
     expect(v6()[0]).toEqual({ option_code: 23, value: 'fd00::53', enabled_by_default: 1 });
     // The IPv4 seed is unchanged by the IPv6 rows sharing the table.
-    expect(DhcpOption.getDefaultOptions(db).enabledDefaults).toEqual([1, 3, 6, 15, 42, 119]);
+    expect(DhcpOption.getDefaultOptions(db).enabledDefaults).toEqual([1, 3, 6, 15, 42, 51, 119]);
   });
 
   it('deletes a custom option within its own family only', () => {

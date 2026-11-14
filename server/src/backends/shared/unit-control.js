@@ -1,20 +1,36 @@
 /**
  * Starting, reloading and checking a backend daemon. Native installs run it
- * as its own systemd unit, which the cidrella account may restart and reload
- * (polkit, /etc/polkit-1/rules.d/49-cidrella.rules; no sudo, since
- * cidrella.service runs with NoNewPrivileges). Docker has no systemctl: s6
+ * as its own systemd unit; the privileged helper restarts, reloads and stops
+ * it (utils/privileged.js, with polkit's grant in 49-cidrella.rules), and the
+ * reads (installed, running) need no right. Docker has no systemctl: s6
  * supervises the daemon, so a signal by process name does the same job.
  *
- * A restart that fails both ways leaves a marker, so the next boot restarts
- * even when change detection sees nothing new: the files on disk may be
- * ahead of what the running daemon loaded.
+ * A restart or reload that fails both ways leaves a marker, so the next boot
+ * (and the helper's next hello) restarts even when change detection sees
+ * nothing new: the files on disk may be ahead of what the running daemon
+ * loaded.
  */
 import fs from 'fs';
 import path from 'path';
-import { execFileSync } from 'child_process';
+import { runCommand } from '../../utils/run-command.js';
+import { resultError, unitCommand } from '../../utils/privileged.js';
+import { isPreflightBoot } from '../../utils/preflight.js';
 import { emitUnitEvent } from './unit-events.js';
 
 const stderrOf = (err) => err?.stderr?.toString?.().trim();
+
+// A command that hangs past this is a failure, never a wait. The changes
+// (systemctl restart, reload, stop) carry their own timeouts in
+// helper/commands.js.
+const COMMAND_TIMEOUT_MS = 15_000;
+const run = (cmd, args) => runCommand(cmd, args, { timeout: COMMAND_TIMEOUT_MS });
+
+// systemctl `verb` on `unit` through the privileged helper; throws as
+// runCommand would, with `code` 'ENOENT' where there is no systemctl.
+async function systemctl(verb, unit) {
+  const result = await unitCommand(verb, unit);
+  if (!result.ok) throw resultError(result, `systemctl ${verb} ${unit}`);
+}
 
 /**
  * `unit` is the systemd unit, `processName` the executable s6 runs, and
@@ -72,12 +88,10 @@ export function createUnitControl({
   // (install.sh's include or skip mode) has no cidrella-dnsmasq.service, and
   // CIDRella cannot stop a daemon it does not run. Without systemctl, s6
   // runs every daemon in the container.
-  function installed() {
+  async function installed() {
     try {
-      const state = execFileSync('systemctl', ['show', '-p', 'LoadState', '--value', unit], {
-        stdio: ['ignore', 'pipe', 'ignore'],
-      });
-      return state.toString().trim() === 'loaded';
+      const { stdout } = await run('systemctl', ['show', '-p', 'LoadState', '--value', unit]);
+      return stdout.trim() === 'loaded';
     } catch (err) {
       return err?.code === 'ENOENT';
     }
@@ -86,15 +100,15 @@ export function createUnitControl({
   // Under systemd, ask about the exact unit: another process of the same
   // name on the host (libvirt's dnsmasq, a distribution Kea) must not count.
   // Without systemctl the only one in the container is ours.
-  function isRunning() {
+  async function isRunning() {
     try {
-      execFileSync('systemctl', ['is-active', '--quiet', unit], { stdio: 'ignore' });
+      await run('systemctl', ['is-active', '--quiet', unit]);
       return true;
     } catch (err) {
       if (err?.code !== 'ENOENT') return false;
     }
     try {
-      execFileSync('pidof', [processName], { stdio: 'ignore' });
+      await run('pidof', [processName]);
       return true;
     } catch {
       return false;
@@ -103,9 +117,9 @@ export function createUnitControl({
 
   const restartPending = () => fs.existsSync(restartPendingFile);
 
-  function reload() {
+  async function reload() {
     try {
-      execFileSync('systemctl', ['reload', unit], { stdio: 'pipe' });
+      await systemctl('reload', unit);
       return;
     } catch (err) {
       const stderr = stderrOf(err);
@@ -116,14 +130,20 @@ export function createUnitControl({
         const pid = parseInt(fs.readFileSync(pidFile, 'utf-8').trim(), 10);
         if (pid) process.kill(pid, 'SIGHUP');
       } else {
-        execFileSync('pkill', ['-HUP', '-x', processName], { stdio: 'pipe' });
+        await run('pkill', ['-HUP', '-x', processName]);
       }
     } catch {
+      // The files on disk are ahead of what the daemon loaded. A restart
+      // loads them too: the next boot does it, and so does the helper's next
+      // hello when the helper was why (services/backend-apply.js
+      // activatePendingBackends). A later reload that works leaves the marker:
+      // what failed before may have been a restart a reload cannot stand in for.
       console.warn(`Could not send SIGHUP to ${processName} (may not be running)`);
+      setRestartPending(true);
     }
   }
 
-  function restart() {
+  async function restart() {
     try {
       // Before systemctl: the unit's start condition reads it.
       if (disableFile) fs.rmSync(disableFile, { force: true });
@@ -134,7 +154,7 @@ export function createUnitControl({
       return;
     }
     try {
-      execFileSync('systemctl', ['restart', unit], { stdio: 'pipe' });
+      await systemctl('restart', unit);
       console.log(`${processName} restarted via systemctl`);
       setRestartPending(false);
       tell('restarted');
@@ -153,7 +173,7 @@ export function createUnitControl({
       return;
     }
     try {
-      execFileSync('pkill', ['-TERM', '-x', processName], { stdio: 'pipe' });
+      await run('pkill', ['-TERM', '-x', processName]);
       console.log(`${processName} terminated (supervisor will restart)`);
       setRestartPending(false);
       tell('restarted');
@@ -172,16 +192,16 @@ export function createUnitControl({
 
   // Stop the daemon: a backend that no longer fills any role. Without
   // systemctl a TERM stops it until the supervisor starts it again, which
-  // s6 does unless the service waits on its flag. Returns once asked, not
+  // s6 does unless the service waits on its flag. Resolves once asked, not
   // once stopped: awaitStopped() waits for that.
-  function stop() {
+  async function stop() {
     try {
       setEnabled(false);
     } catch {
       /* gone already */
     }
     try {
-      execFileSync('systemctl', ['stop', unit], { stdio: 'pipe' });
+      await systemctl('stop', unit);
       tell('stopped');
       return;
     } catch (err) {
@@ -194,7 +214,7 @@ export function createUnitControl({
       }
     }
     try {
-      execFileSync('pkill', ['-TERM', '-x', processName], { stdio: 'pipe' });
+      await run('pkill', ['-TERM', '-x', processName]);
       tell('stopped');
     } catch {
       /* not running */
@@ -204,7 +224,7 @@ export function createUnitControl({
   // Wait until the daemon has exited, so another one can take its ports.
   async function awaitStopped({ timeoutMs = 10000, intervalMs = 200 } = {}) {
     const deadline = Date.now() + timeoutMs;
-    while (isRunning()) {
+    while (await isRunning()) {
       if (Date.now() >= deadline) {
         throw new Error(
           `${processName} is still running ${timeoutMs / 1000} s after it was stopped`,
@@ -214,5 +234,27 @@ export function createUnitControl({
     }
   }
 
-  return { isRunning, installed, restartPending, reload, restart, stop, awaitStopped };
+  // One change to the daemon at a time, in the order asked: a reload sent
+  // while a restart is under way would reach systemd as a second job on the
+  // same unit. Two apply hooks can each ask for one back to back. A preflight
+  // boot changes nothing: the units on the host belong to the running release.
+  let queue = Promise.resolve();
+  const inTurn =
+    (fn) =>
+    (...args) => {
+      if (isPreflightBoot()) return Promise.resolve();
+      const turn = queue.then(() => fn(...args));
+      queue = turn.catch(() => {});
+      return turn;
+    };
+
+  return {
+    isRunning,
+    installed,
+    restartPending,
+    reload: inTurn(reload),
+    restart: inTurn(restart),
+    stop: inTurn(stop),
+    awaitStopped,
+  };
 }

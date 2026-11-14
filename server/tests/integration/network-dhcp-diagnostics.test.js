@@ -45,7 +45,7 @@ describe('network/DHCP migration inventory and safe repair', () => {
     const scopeId = db
       .prepare(
         `
-      INSERT INTO dhcp_scopes (range_id, subnet_id, gateway) VALUES (?, ?, '10.210.0.1')
+      INSERT INTO dhcp_scopes (range_id, subnet_id) VALUES (?, ?)
     `,
       )
       .run(rangeId, subnetId).lastInsertRowid;

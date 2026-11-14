@@ -357,6 +357,16 @@ export const useSubnetStore = defineStore('subnets', () => {
     return res.data;
   }
 
+  // One free address in a network (GET /subnets/:id/suggest-address).
+  // Advisory: nothing is held until the write that uses it.
+  async function suggestAddress(subnetId, { strategy = 'sequential', within, from } = {}) {
+    const params = { strategy };
+    if (within !== undefined && within !== null && within !== '') params.within = within;
+    if (from) params.from = from;
+    const res = await api.get(`/subnets/${subnetId}/suggest-address`, { params });
+    return res.data;
+  }
+
   async function setIpAllocation(subnetId, ipAddress, allocationState, note) {
     const res = await api.put(`/subnets/${subnetId}/ips/${ipAddress}/allocation`, {
       allocation_state: allocationState,
@@ -426,8 +436,14 @@ export const useSubnetStore = defineStore('subnets', () => {
     await api.delete(`/scans/${scanId}`);
   }
 
-  async function calculateSubnets(cidr, newPrefix) {
-    const res = await api.post('/subnets/calculate', { cidr, new_prefix: newPrefix });
+  // One page of a split: { parent, count, first, last, subnets }.
+  async function calculateSubnets(cidr, newPrefix, { page = 1, pageSize = 256 } = {}) {
+    const res = await api.post('/subnets/calculate', {
+      cidr,
+      new_prefix: newPrefix,
+      page,
+      page_size: pageSize,
+    });
     return res.data;
   }
 
@@ -464,6 +480,7 @@ export const useSubnetStore = defineStore('subnets', () => {
     updateRange,
     deleteRange,
     setNetworkRangeType,
+    suggestAddress,
     setIpAllocation,
     bulkSetIpAllocation,
     getRangeTypes,

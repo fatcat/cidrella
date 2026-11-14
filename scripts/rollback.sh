@@ -232,6 +232,14 @@ emit_event rollback start "from=$ACTIVE_VERSION" "to=$INACTIVE_VERSION" "has_sna
 info "Stopping CIDRella..."
 systemctl stop cidrella || warn "cidrella service was not running"
 
+# The DNS proxy keeps answering through the rollback, but it reads the
+# database the snapshot is copied over: have it close it (SIGUSR2) until the
+# restored web app says hello.
+if [ "$HAS_SNAPSHOT" = true ] && systemctl is-active --quiet cidrella-dns-proxy 2>/dev/null; then
+  systemctl kill -s SIGUSR2 cidrella-dns-proxy 2>/dev/null || true
+  sleep 1
+fi
+
 # Restore DB snapshot first (while service is down)
 if [ "$HAS_SNAPSHOT" = true ]; then
   info "Restoring database snapshot..."
@@ -251,6 +259,22 @@ emit_event rollback pass phase=symlink-swap "active_slot=$INACTIVE_SLOT"
 
 info "Reloading systemd..."
 systemctl daemon-reload
+
+# The processes of their own a release may or may not have: the DNS proxy
+# and the privileged helper. A release from before one does its job in the
+# web app (and the proxy would fight it over port 53), so it is stopped. One
+# that has it keeps it running; the restored web app restarts it if its code
+# differs.
+for _process in dns-proxy helper; do
+  if systemctl list-unit-files "cidrella-${_process}.service" >/dev/null 2>&1; then
+    if [ -f "$INACTIVE_SLOT/server/src/${_process}/main.js" ]; then
+      systemctl reset-failed "cidrella-${_process}" 2>/dev/null || true
+      systemctl start "cidrella-${_process}" 2>/dev/null || warn "cidrella-${_process} did not start; see journalctl -u cidrella-${_process}"
+    else
+      systemctl stop "cidrella-${_process}" 2>/dev/null || true
+    fi
+  fi
+done
 
 if [ "$STACK_HANDBACK" = true ]; then
   info "Handing DNS and DHCP back to dnsmasq..."
@@ -291,6 +315,12 @@ for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do
 done
 
 if systemctl is-active --quiet cidrella; then
+  # PartOf= stopped it along with cidrella, and starting cidrella does not bring
+  # it back. Not fatal: DNS, DHCP and the web app are up without it.
+  if systemctl is-enabled --quiet cidrella-anomaly 2>/dev/null; then
+    systemctl reset-failed cidrella-anomaly 2>/dev/null || true
+    systemctl start cidrella-anomaly 2>/dev/null || warn "cidrella-anomaly did not start; see journalctl -u cidrella-anomaly"
+  fi
   echo ""
   ok "Rollback complete. CIDRella v${INACTIVE_VERSION} is running."
   echo ""

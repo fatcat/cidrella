@@ -10,7 +10,11 @@ import { parseNetwork, isValidAddress, getServerIpForSubnet } from '../../utils/
 import { addressFamily, isValidIpv6 } from '../../utils/address.js';
 import { generateFallbackHostname } from '../../utils/mac-vendor.js';
 import { macFromDuid } from '../../utils/duid.js';
-import { DHCP_OPTIONS_BY_CODE, optionCatalogFor } from '../../utils/dhcp-options.js';
+import {
+  DHCP_OPTIONS_BY_CODE,
+  optionAllowsComma,
+  optionCatalogFor,
+} from '../../utils/dhcp-options.js';
 import { validateConfigSafeValue } from '../../utils/config-value-validation.js';
 import { resolveEffectiveScopeOptions } from '../../models/dhcp-scope.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
@@ -45,7 +49,7 @@ function createResolver() {
  * types become `addresses` (hostnames resolved in the family), everything
  * else `text`. Every value passes the config-safety guard.
  */
-function optionValue(value, type, family, resolve) {
+function optionValue(value, type, family, resolve, entry) {
   if (type === 'ip' || type === 'ip-list') {
     const addresses = value
       .split(',')
@@ -56,35 +60,17 @@ function optionValue(value, type, family, resolve) {
       ? { addresses }
       : null;
   }
-  const guard = type === 'text-list' ? { allowComma: true } : undefined;
+  const guard = { allowComma: optionAllowsComma(entry, type) };
   return validateConfigSafeValue(value, guard) == null ? { text: value } : null;
 }
 
-// A legacy JSON server-list column, as a comma list under `code`.
-function setServerList(merged, code, column) {
-  if (!column || merged.has(code)) return;
-  try {
-    const servers = JSON.parse(column);
-    if (Array.isArray(servers) && servers.length > 0) merged.set(code, servers.join(','));
-  } catch {
-    /* skip */
-  }
-}
-
-// DHCPv4: the scope's effective options, then the legacy columns of a scope
-// with none, then the network's gateway and domain. Option 51 moves into the
-// lease time; 1 and 28 come from the pool's mask, never an option row.
+// DHCPv4: the scope's effective options (the legacy scope columns are
+// resolveEffectiveScopeOptions' job), then the network's gateway and domain.
+// Option 51 moves into the lease time; 1 and 28 come from the pool's mask,
+// never an option row.
 function v4Options(scope, effective) {
   const merged = new Map();
   for (const opt of effective.options) merged.set(opt.option_code, opt.value);
-  if (effective.options.length === 0) {
-    const gw = scope.gateway || scope.subnet_gateway;
-    if (gw && !merged.has(3)) merged.set(3, gw);
-    setServerList(merged, 6, scope.dns_servers);
-    if (scope.domain_name && !merged.has(15)) merged.set(15, scope.domain_name);
-    setServerList(merged, 42, scope.ntp_servers);
-    if (scope.domain_search && !merged.has(119)) merged.set(119, scope.domain_search);
-  }
   if (!merged.has(3) && scope.subnet_gateway) merged.set(3, scope.subnet_gateway);
   if (!merged.has(15) && scope.subnet_domain_name) merged.set(15, scope.subnet_domain_name);
   if (!merged.has(119) && scope.subnet_domain_name) merged.set(119, scope.subnet_domain_name);
@@ -121,7 +107,7 @@ function v6Options(scope, effective) {
  * IPv6 support is on) as:
  *   { scope, family, network, prefix, netmask, mode, leaseTime, pools,
  *     excludedIps, suppressRouter,
- *     options: [{ code, type, custom, addresses | text }] }
+ *     options: [{ code, type, custom, width?, addresses | text }] }
  * `scope` is the row with subnet fields joined. `mode` is the DHCPv6 mode
  * (stateful, stateless, slaac), null for DHCPv4. DHCPv4 options are in the
  * order they were merged, DHCPv6 options by code. `custom` marks a code
@@ -178,12 +164,14 @@ export function loadDhcpScopes(db) {
         : v4Options(scope, effective);
     const options = [];
     for (const [code, value] of merged) {
-      const catalogType =
-        family === 6 ? optionCatalogFor(6).byCode[code]?.type : DHCP_OPTIONS_BY_CODE[code]?.type;
+      const entry = family === 6 ? optionCatalogFor(6).byCode[code] : DHCP_OPTIONS_BY_CODE[code];
+      const catalogType = entry?.type;
       const type = catalogType || customTypes[family].get(Number(code));
       if (!type || !value) continue;
-      const rendered = optionValue(String(value), type, family, resolve);
-      if (rendered) options.push({ code: Number(code), type, custom: !catalogType, ...rendered });
+      const rendered = optionValue(String(value), type, family, resolve, entry);
+      if (!rendered) continue;
+      const width = entry?.width ? { width: entry.width } : {};
+      options.push({ code: Number(code), type, custom: !catalogType, ...width, ...rendered });
     }
     live.push({
       scope,

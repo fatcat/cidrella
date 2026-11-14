@@ -173,11 +173,11 @@ export function startUpdateScheduler() {
 
   if (UPDATE_CHECK_DELAY_MS > 0) {
     setTimeout(() => {
-      checkForUpdates();
+      void checkForUpdates();
       timer = setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
     }, UPDATE_CHECK_DELAY_MS);
   } else {
-    checkForUpdates();
+    void checkForUpdates();
     timer = setInterval(checkForUpdates, UPDATE_CHECK_INTERVAL_MS);
   }
 }

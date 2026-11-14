@@ -67,7 +67,7 @@
         <div class="field">
           <label>Offline Host Detail Retention</label>
           <small class="field-help"
-            >Dynamic and rogue host details are retired after one continuous hour offline. Static
+            >Dynamic and rogue host details are retired after 24 continuous hours offline. Static
             DNS and DHCP assignments keep their observations until the assignment is changed or
             removed.</small
           >

@@ -1,0 +1,77 @@
+/* The workspace's table chrome: the Addresses, DNS, DHCP and list tables
+   (WorkspaceTable) and the Hosts table share it. Rooted at .workspace-table so
+   it reaches nothing else. */
+.table-scroll.workspace-table {
+  min-height: 0;
+  flex: 1;
+  overflow: auto;
+}
+.workspace-table table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.67rem;
+}
+.workspace-table thead {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: color-mix(in srgb, var(--cid-surface-ground) 78%, var(--cid-surface-card));
+}
+.workspace-table th {
+  height: 2rem;
+  padding: 0 0.6rem;
+  border-bottom: 1px solid var(--preview-line);
+  color: var(--preview-muted);
+  text-align: left;
+  white-space: nowrap;
+}
+.workspace-table th button {
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font-size: 0.59rem;
+  font-weight: 800;
+  letter-spacing: 0.055em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+.workspace-table td {
+  height: 2.35rem;
+  padding: 0 0.6rem;
+  border-bottom: 1px solid color-mix(in srgb, var(--preview-line) 65%, transparent);
+  white-space: nowrap;
+}
+.workspace-table tbody tr {
+  cursor: pointer;
+}
+.workspace-table tbody tr:hover,
+.workspace-table tbody tr.selected {
+  background: var(--preview-accent-soft);
+}
+.workspace-table tbody tr:focus-visible {
+  outline: 2px solid var(--cid-primary-color);
+  outline-offset: -2px;
+}
+.workspace-table .muted {
+  color: var(--preview-muted);
+}
+.workspace-table .no-results {
+  display: flex;
+  min-height: 180px;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 0.4rem;
+  color: var(--preview-muted);
+}
+.workspace-table .no-results i {
+  font-size: 1.4rem;
+}
+.workspace-table .no-results strong {
+  color: var(--cid-text-color);
+}
+.workspace-table table,
+.workspace-table th button {
+  font-size: var(--workspace-font-body);
+}

@@ -33,10 +33,16 @@ import {
 import { activeLeaseSql, leaseExpiryMs } from '../utils/lease-sql.js';
 import { leaseDurationMs } from '../utils/lease-time.js';
 import { parseIp } from '../utils/address.js';
+import { isLocalAddress } from '../utils/local-addresses.js';
 import { recordAudit, sample } from './audit.js';
 import { queueRegen } from '../utils/after-commit.js';
 
-export const OFFLINE_RETIREMENT_MS = 60 * 60 * 1000;
+// How long a dynamic, rogue or expired SLAAC address stays offline before its
+// learned details (hostname, MAC, DNS record) are retired. A day, so a host
+// that sleeps overnight or for hours between uses keeps them; at one hour a
+// laptop that slept past its lease was forgotten at every wake
+// (RETIRE-SLEEP-01).
+export const OFFLINE_RETIREMENT_MS = 24 * 60 * 60 * 1000;
 
 let lastRetirementDiagnostics = null;
 
@@ -666,11 +672,31 @@ export function dhcpLeaseRejectionReason(db, lease) {
   return null;
 }
 
+// When the claim ended: the newest lease's expiry, for DHCPv6 the valid
+// lifetime when it is later, or now when neither is known (the lease row is
+// gone and no lifetime was stored).
+function leaseEndedMs(row) {
+  const ends = [leaseExpiryMs(row.lease_expires_at)];
+  if (Number(row.dhcp_version) === 6) ends.push(leaseExpiryMs(row.valid_until));
+  const known = ends.filter(Number.isFinite);
+  return known.length ? Math.max(...known) : Date.now();
+}
+
+// Was the holder heard (a probe reply, a renewal, passive traffic) after its
+// lease ended?
+function heardAfterLeaseEnded(row) {
+  const lastSeen = leaseExpiryMs(row.last_seen_at);
+  return Number.isFinite(lastSeen) && lastSeen > leaseEndedMs(row);
+}
+
 export function reconcileExpiredDhcpAllocations(db) {
   const expired = db
     .prepare(
       `
-    SELECT ip.subnet_id, ip.ip_address, ip.is_online, ip.mac_address
+    SELECT ip.subnet_id, ip.ip_address, ip.is_online, ip.mac_address, ip.last_seen_at,
+      ip.dhcp_version, ip.valid_until,
+      (SELECT MAX(dl.expires_at) FROM dhcp_leases dl
+        WHERE dl.subnet_id = ip.subnet_id AND dl.ip_address = ip.ip_address) AS lease_expires_at
     FROM ip_addresses ip
     WHERE ip.allocation_state = ?
       AND NOT EXISTS (
@@ -717,6 +743,20 @@ export function reconcileExpiredDhcpAllocations(db) {
         },
       },
     );
+    // The online flag outlives the last signal by up to two scan intervals
+    // (a miss is forgiven when anything was heard since the previous scan),
+    // so on its own it does not say the holder is still there. A client still
+    // there renews at half its lease time; one whose lease ran out has
+    // stopped. Unless something heard it after the lease ended, it is offline
+    // now, not an online unassigned address, which would read as a rogue. A
+    // host that goes on using the address answers the next probe and is one
+    // then.
+    const stillOnline = Boolean(row.is_online) && heardAfterLeaseEnded(row);
+    if (row.is_online && !stillOnline) {
+      IpAddress.markOffline(db, row.subnet_id, row.ip_address, {
+        source: LIFECYCLE_SOURCE.DHCP_LEASE,
+      });
+    }
     // The lease name survives only inside the offline retention window. A
     // holder that is still online has simply stopped being ours (a static
     // address by hand, another DHCP server, a reset lease file), so the
@@ -724,7 +764,7 @@ export function reconcileExpiredDhcpAllocations(db) {
     // now rather than an hour after it finally goes quiet. The DNS record and
     // PTR the lease made go now too: clearing the source below takes the
     // address out of the retirement sweep, which would otherwise remove them.
-    if (row.is_online) {
+    if (stillOnline) {
       IpSync.syncCanonicalHostname(db, row.subnet_id, row.ip_address, { clearSource: true });
       if (deleteDynamicDhcpRecordsByIps(db, [row]) > 0) queueRegen('regenerate_dns');
     }
@@ -732,8 +772,11 @@ export function reconcileExpiredDhcpAllocations(db) {
   return expired.length;
 }
 
-export function observePassiveActivity(db, subnetId, ip, options) {
-  return IpAddress.recordPassiveActivity(db, subnetId, ip, options);
+// The appliance's own addresses are not unknown hosts: traffic from one never
+// creates a rogue.
+export function observePassiveActivity(db, subnetId, ip, options = {}) {
+  const createRogue = Boolean(options.createRogue) && !isLocalAddress(ip);
+  return IpAddress.recordPassiveActivity(db, subnetId, ip, { ...options, createRogue });
 }
 
 export function observeScanResult(db, subnetId, ip, result) {
@@ -1180,7 +1223,11 @@ export function observeIpv6Presence(
       observeSlaac(db, subnetId, ip, { validUntil, preferredUntil: null });
     }
   }
-  return observeNeighbor(db, subnetId, ip, { mac, rogueAllowed: mode === 'stateful', source });
+  return observeNeighbor(db, subnetId, ip, {
+    mac,
+    rogueAllowed: mode === 'stateful' && !isLocalAddress(ip),
+    source,
+  });
 }
 
 export function observeRouterAdvertisement(

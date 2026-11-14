@@ -16,7 +16,10 @@ import {
   networkNameFromTemplate,
   validateNetworkBounds,
   RESERVED_RANGES,
+  sortKeyRange,
+  parseAddressQuery,
 } from '../../../src/utils/cidr.js';
+import { sortKey } from '../../../src/utils/address.js';
 
 /**
  * The family-generic CIDR layer: 128-bit arithmetic in BigInt, the base the
@@ -252,5 +255,46 @@ describe('names and bounds', () => {
     // IPv4 entries never judge an IPv6 network and vice versa.
     expect(validateNetworkBounds('10.0.0.0/7').error).toMatch(/RFC1918 Class A/);
     expect(RESERVED_RANGES.filter((r) => r.cidr.includes(':'))).toHaveLength(5);
+  });
+});
+
+describe('sortKeyRange', () => {
+  it('spans the first and last address of a network, both families', () => {
+    expect(sortKeyRange('10.0.0.0/24')).toEqual([sortKey('10.0.0.0'), sortKey('10.0.0.255')]);
+    expect(sortKeyRange('10.0.0.7/32')).toEqual([sortKey('10.0.0.7'), sortKey('10.0.0.7')]);
+    expect(sortKeyRange('2001:db8::/32')).toEqual([
+      sortKey('2001:db8::'),
+      sortKey('2001:db8:ffff:ffff:ffff:ffff:ffff:ffff'),
+    ]);
+    expect(sortKeyRange('::1/128')).toEqual([sortKey('::1'), sortKey('::1')]);
+  });
+
+  it('keeps the families apart at /0', () => {
+    const [v4Low, v4High] = sortKeyRange('0.0.0.0/0');
+    const [v6Low, v6High] = sortKeyRange('::/0');
+    expect(v4Low.startsWith('4') && v4High.startsWith('4')).toBe(true);
+    expect(v6Low).toBe(`6${'0'.repeat(32)}`);
+    expect(v6High).toBe(`6${'f'.repeat(32)}`);
+  });
+});
+
+describe('parseAddressQuery', () => {
+  it('reads one address in any spelling', () => {
+    expect(parseAddressQuery(' 2001:0DB8::0001 ')).toEqual({ kind: 'address', ip: '2001:db8::1' });
+    expect(parseAddressQuery('10.0.0.5')).toEqual({ kind: 'address', ip: '10.0.0.5' });
+  });
+
+  it('reads a network, normalized to its network address', () => {
+    expect(parseAddressQuery('2001:db8:5::9/48')).toEqual({
+      kind: 'cidr',
+      cidr: '2001:db8:5::/48',
+    });
+    expect(parseAddressQuery('10.0.0.130/25')).toEqual({ kind: 'cidr', cidr: '10.0.0.128/25' });
+  });
+
+  it('treats anything else as text', () => {
+    for (const text of ['', 'db8:5', 'printer', '10.0.0.0/33', 'a/b', '2001:db8::/']) {
+      expect(parseAddressQuery(text)).toEqual({ kind: 'text' });
+    }
   });
 });

@@ -81,10 +81,13 @@ export function logDnsQuery({
   dnssecSupported,
   ede,
   failure,
+  // When the query was answered, for a row that waited in the DNS proxy's
+  // outbox; now otherwise.
+  ts,
 }) {
   if (!connection) return;
   buffer.push({
-    ts: new Date().toISOString(),
+    ts: ts || new Date().toISOString(),
     clientIp: clientIp || '',
     domain: domain || '',
     queryType: queryType || 'A',

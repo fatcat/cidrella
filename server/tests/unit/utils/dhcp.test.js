@@ -14,12 +14,15 @@ let zoneId;
 let reverseZoneId;
 let syncDhcpDnsRecords;
 let replaceLeases;
+// The offline window (OFFLINE_RETIREMENT_MS), loaded after the test database.
+let WINDOW;
 
 beforeAll(async () => {
   const setup = await setupTestDb();
   db = setup.db;
   tmpDir = setup.tmpDir;
   ({ syncDhcpDnsRecords, replaceLeases } = await import('../../../src/models/dhcp-lease.js'));
+  ({ OFFLINE_RETIREMENT_MS: WINDOW } = await import('../../../src/services/ip-lifecycle-service.js'));
 
   db.prepare(
     `
@@ -146,7 +149,6 @@ describe('replaceLeases, a lease the backend dropped', () => {
   });
 
   const kept = (ip) => db.prepare('SELECT * FROM dhcp_leases WHERE ip_address = ?').get(ip);
-  const HOUR = 3600_000;
 
   it.each([
     ['10.0.1.70', { mac: 'aa:bb:cc:00:00:70', dhcpVersion: 4 }],
@@ -165,9 +167,9 @@ describe('replaceLeases, a lease the backend dropped', () => {
     replaceLeases(db, [lease], { now });
     replaceLeases(db, [], { now });
     expect(kept(ip)).toMatchObject({ hostname: 'gone' });
-    replaceLeases(db, [], { now: now + 30 * 60_000 });
+    replaceLeases(db, [], { now: now + WINDOW / 2 });
     expect(kept(ip)).toBeTruthy();
-    replaceLeases(db, [], { now: now + HOUR });
+    replaceLeases(db, [], { now: now + WINDOW });
     expect(kept(ip)).toBeUndefined();
   });
 
@@ -177,9 +179,9 @@ describe('replaceLeases, a lease the backend dropped', () => {
       { ip: '10.0.1.71', mac: 'aa:bb:cc:00:00:71', hostname: 'h', expiresAt: 'infinite', subnetId },
     ]);
     replaceLeases(db, [], { now });
-    replaceLeases(db, [], { now: now + 50 * 60_000 });
+    replaceLeases(db, [], { now: now + WINDOW - 10 * 60_000 });
     expect(kept('10.0.1.71')).toBeTruthy();
-    replaceLeases(db, [], { now: now + 2 * HOUR });
+    replaceLeases(db, [], { now: now + WINDOW + 60_000 });
     expect(kept('10.0.1.71')).toBeUndefined();
   });
 });

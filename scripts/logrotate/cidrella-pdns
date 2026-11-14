@@ -1,7 +1,7 @@
 # CIDRella PowerDNS log rotation
 #
 # Installed to /etc/logrotate.d/cidrella-pdns by scripts/install.sh and
-# scripts/update.sh.
+# scripts/update.sh. The Docker image carries a copy with /data paths (Dockerfile).
 #
 # pdns.log holds both PowerDNS daemons' output and a line per DNS query from
 # CIDRella's DNS proxy: as busy as dnsmasq.log with log-queries. copytruncate,

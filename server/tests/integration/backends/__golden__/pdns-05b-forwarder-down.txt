@@ -1,0 +1,17 @@
+%%%%% forwarder down, encrypted
+  forward_zones_recurse:
+    - zone: "."
+      forwarders:
+        - "127.0.0.1:5356"
+%%%%% forwarder down, plaintext
+  forward_zones_recurse:
+    - zone: "."
+      forwarders:
+        - "9.9.9.9:53"
+        - "[2620:fe::fe]:53"
+        - "149.112.112.112:53"
+%%%%% forwarder back
+  forward_zones_recurse:
+    - zone: "."
+      forwarders:
+        - "127.0.0.1:5356"

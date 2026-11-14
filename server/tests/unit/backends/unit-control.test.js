@@ -8,7 +8,17 @@ import os from 'os';
 import path from 'path';
 
 const { execFileSync } = vi.hoisted(() => ({ execFileSync: vi.fn() }));
-vi.mock('child_process', () => ({ execFileSync }));
+vi.mock('../../../src/utils/run-command.js', async () =>
+  (await import('../../helpers/fake-run-command.js')).fakeRunCommandModule(execFileSync),
+);
+// The helper, for the case where the privileged helper runs the changes.
+const { helperRun } = vi.hoisted(() => ({ helperRun: vi.fn() }));
+vi.mock('../../../src/utils/helper-client.js', () => ({
+  helperRun,
+  helperPeer: () => null,
+  helperConnected: () => false,
+  startHelperClient: vi.fn(),
+}));
 
 const { createUnitControl } = await import('../../../src/backends/shared/unit-control.js');
 const { unitEvents } = await import('../../../src/backends/shared/unit-events.js');
@@ -43,48 +53,52 @@ describe('createUnitControl under s6', () => {
       enableFile,
     });
 
-  it('enables a daemon that is waiting, with no restart left pending', () => {
+  it('enables a daemon that is waiting, with no restart left pending', async () => {
     host({ running: false });
     const unit = control();
-    unit.restart();
+    await unit.restart();
     expect(fs.existsSync(enableFile)).toBe(true);
     expect(unit.restartPending()).toBe(false);
   });
 
-  it('restarts a running daemon by TERM and keeps it enabled', () => {
+  it('restarts a running daemon by TERM and keeps it enabled', async () => {
     host({ running: true });
-    control().restart();
-    expect(execFileSync).toHaveBeenCalledWith('pkill', ['-TERM', '-x', 'kea-dhcp4'], {
-      stdio: 'pipe',
-    });
+    await control().restart();
+    expect(execFileSync).toHaveBeenCalledWith(
+      'pkill',
+      ['-TERM', '-x', 'kea-dhcp4'],
+      expect.any(Object),
+    );
     expect(fs.existsSync(enableFile)).toBe(true);
   });
 
-  it('stops by removing the file first, so s6 does not start it again', () => {
+  it('stops by removing the file first, so s6 does not start it again', async () => {
     host({ running: true });
     const unit = control();
-    unit.restart();
-    unit.stop();
+    await unit.restart();
+    await unit.stop();
     expect(fs.existsSync(enableFile)).toBe(false);
-    expect(execFileSync).toHaveBeenLastCalledWith('pkill', ['-TERM', '-x', 'kea-dhcp4'], {
-      stdio: 'pipe',
-    });
+    expect(execFileSync).toHaveBeenLastCalledWith(
+      'pkill',
+      ['-TERM', '-x', 'kea-dhcp4'],
+      expect.any(Object),
+    );
   });
 
-  it('marks a restart pending for a daemon with no enable file that is not running', () => {
+  it('marks a restart pending for a daemon with no enable file that is not running', async () => {
     host({ running: false });
     const unit = createUnitControl({
       unit: 'cidrella-dnsmasq',
       processName: 'dnsmasq',
       restartPendingFile,
     });
-    unit.restart();
+    await unit.restart();
     expect(unit.restartPending()).toBe(true);
   });
 
-  it('touches no file under systemd', () => {
+  it('touches no file under systemd', async () => {
     execFileSync.mockImplementation(() => {});
-    control().restart();
+    await control().restart();
     expect(fs.existsSync(enableFile)).toBe(false);
   });
 });
@@ -99,32 +113,34 @@ describe('createUnitControl with a disable flag (dnsmasq)', () => {
       disableFile,
     });
 
-  it('stop sets the flag under systemd too, so the unit stays down at boot', () => {
+  it('stop sets the flag under systemd too, so the unit stays down at boot', async () => {
     execFileSync.mockImplementation(() => {});
-    control().stop();
+    await control().stop();
     expect(fs.existsSync(disableFile)).toBe(true);
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['stop', 'cidrella-dnsmasq'], {
-      stdio: 'pipe',
-    });
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['stop', 'cidrella-dnsmasq'],
+      expect.any(Object),
+    );
   });
 
-  it('restart clears the flag before asking systemctl, whose start condition reads it', () => {
+  it('restart clears the flag before asking systemctl, whose start condition reads it', async () => {
     let flagAtRestart;
     execFileSync.mockImplementation((cmd, args) => {
       if (cmd === 'systemctl' && args[0] === 'restart') flagAtRestart = fs.existsSync(disableFile);
     });
     const unit = control();
-    unit.stop();
-    unit.restart();
+    await unit.stop();
+    await unit.restart();
     expect(flagAtRestart).toBe(false);
     expect(unit.restartPending()).toBe(false);
   });
 
-  it('under s6 a stopped daemon waits, with no restart left pending', () => {
+  it('under s6 a stopped daemon waits, with no restart left pending', async () => {
     host({ running: false });
     const unit = control();
-    unit.stop();
-    unit.restart();
+    await unit.stop();
+    await unit.restart();
     expect(fs.existsSync(disableFile)).toBe(false);
     expect(unit.restartPending()).toBe(false);
   });
@@ -156,7 +172,7 @@ describe('createUnitControl under systemd', () => {
   const control = () =>
     createUnitControl({ unit: 'cidrella-dnsmasq', processName: 'dnsmasq', restartPendingFile });
 
-  it('never sends a TERM by name when systemctl refuses a stop', () => {
+  it('never sends a TERM by name when systemctl refuses a stop', async () => {
     execFileSync.mockImplementation((cmd) => {
       if (cmd === 'systemctl') {
         throw Object.assign(new Error('Unit cidrella-dnsmasq.service not loaded.'), {
@@ -166,26 +182,26 @@ describe('createUnitControl under systemd', () => {
       }
     });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    control().stop();
+    await control().stop();
     warn.mockRestore();
     expect(execFileSync.mock.calls.map(([cmd]) => cmd)).toEqual(['systemctl']);
   });
 
-  it('says whether the unit is installed here', () => {
+  it('says whether the unit is installed here', async () => {
     execFileSync.mockReturnValueOnce(Buffer.from('loaded\n'));
-    expect(control().installed()).toBe(true);
+    expect(await control().installed()).toBe(true);
     expect(execFileSync).toHaveBeenCalledWith(
       'systemctl',
       ['show', '-p', 'LoadState', '--value', 'cidrella-dnsmasq'],
       expect.anything(),
     );
     execFileSync.mockReturnValueOnce(Buffer.from('not-found\n'));
-    expect(control().installed()).toBe(false);
+    expect(await control().installed()).toBe(false);
   });
 
-  it('counts the daemon as installed where s6 runs it', () => {
+  it('counts the daemon as installed where s6 runs it', async () => {
     host({ running: false });
-    expect(control().installed()).toBe(true);
+    expect(await control().installed()).toBe(true);
   });
 });
 
@@ -200,24 +216,144 @@ describe('the events a daemon change emits', () => {
   });
   afterEach(() => unitEvents.off('unit', listen));
 
-  it('says restarted after systemctl restarts it, and stopped after it stops', () => {
+  it('says restarted after systemctl restarts it, and stopped after it stops', async () => {
     execFileSync.mockImplementation(() => Buffer.from(''));
-    control().restart();
-    control().stop();
+    await control().restart();
+    await control().stop();
     expect(seen).toEqual(['restarted', 'stopped']);
   });
 
-  it('says restart_failed when neither systemctl nor a signal can restart it', () => {
+  it('says restart_failed when neither systemctl nor a signal can restart it', async () => {
     host({ running: false });
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
-    control().restart();
+    await control().restart();
     warn.mockRestore();
     expect(seen).toEqual(['restart_failed']);
   });
 
-  it('says nothing for a reload', () => {
+  it('says nothing for a reload', async () => {
     execFileSync.mockImplementation(() => Buffer.from(''));
-    control().reload();
+    await control().reload();
     expect(seen).toEqual([]);
+  });
+});
+
+describe('a hung systemctl', () => {
+  it('counts as a failed restart once it times out, never a wait forever', async () => {
+    execFileSync.mockImplementation((cmd, args, options) => {
+      if (cmd === 'systemctl' && args[0] === 'restart') {
+        expect(options.timeout).toBeGreaterThan(0);
+        throw Object.assign(new Error('timed out'), { code: 'ETIMEDOUT', killed: true });
+      }
+      if (cmd === 'pkill') throw notRunning;
+    });
+    const unit = createUnitControl({
+      unit: 'cidrella-dnsmasq',
+      processName: 'dnsmasq',
+      restartPendingFile,
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    await unit.restart();
+    warn.mockRestore();
+    expect(unit.restartPending()).toBe(true);
+  });
+});
+
+describe('createUnitControl in a preflight boot', () => {
+  afterEach(() => vi.unstubAllEnvs());
+
+  it('changes nothing on the host, and may still look', async () => {
+    vi.stubEnv('CIDRELLA_PREFLIGHT', '1');
+    const control = createUnitControl({
+      unit: 'cidrella-kea@dhcp4',
+      processName: 'kea-dhcp4',
+      restartPendingFile,
+      enableFile,
+    });
+    await control.restart();
+    await control.reload();
+    await control.stop();
+    expect(execFileSync).not.toHaveBeenCalled();
+    expect(fs.existsSync(enableFile)).toBe(false);
+
+    await control.isRunning();
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['is-active', '--quiet', 'cidrella-kea@dhcp4'],
+      expect.anything(),
+    );
+  });
+});
+
+describe('createUnitControl with the privileged helper', () => {
+  afterEach(() => vi.unstubAllEnvs());
+  const control = () =>
+    createUnitControl({ unit: 'cidrella-dnsmasq', processName: 'dnsmasq', restartPendingFile });
+
+  it('has the helper restart, reload and stop it, and reads the state itself', async () => {
+    vi.stubEnv('CIDRELLA_HELPER_SOCKET', '/run/cidrella-helper/helper.sock');
+    helperRun.mockReset().mockResolvedValue({ ok: true, code: 0, stdout: '', stderr: '' });
+    const unit = control();
+    await unit.restart();
+    await unit.reload();
+    await unit.stop();
+    expect(helperRun.mock.calls.map(([op, args]) => [op, args.verb, args.unit])).toEqual([
+      ['unit', 'restart', 'cidrella-dnsmasq'],
+      ['unit', 'reload', 'cidrella-dnsmasq'],
+      ['unit', 'stop', 'cidrella-dnsmasq'],
+    ]);
+    expect(execFileSync.mock.calls.filter(([cmd]) => cmd === 'systemctl')).toEqual([]);
+    expect(unit.restartPending()).toBe(false);
+
+    await unit.isRunning();
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['is-active', '--quiet', 'cidrella-dnsmasq'],
+      expect.anything(),
+    );
+  });
+
+  it('marks a restart pending when the helper is not answering', async () => {
+    vi.stubEnv('CIDRELLA_HELPER_SOCKET', '/run/cidrella-helper/helper.sock');
+    helperRun.mockReset().mockResolvedValue(null);
+    execFileSync.mockImplementation((cmd) => {
+      if (cmd === 'pkill') throw notRunning;
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unit = control();
+    await unit.restart();
+    warn.mockRestore();
+    expect(unit.restartPending()).toBe(true);
+  });
+
+  it('marks a restart pending when a reload reaches the daemon neither way', async () => {
+    vi.stubEnv('CIDRELLA_HELPER_SOCKET', '/run/cidrella-helper/helper.sock');
+    helperRun.mockReset().mockResolvedValue(null);
+    // The web app's account cannot signal a daemon that runs as another.
+    execFileSync.mockImplementation((cmd) => {
+      if (cmd === 'pkill') throw notRunning;
+    });
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    const unit = control();
+    await unit.reload();
+    expect(unit.restartPending()).toBe(true);
+
+    // A reload that works later leaves it: what failed may have been a restart.
+    helperRun.mockResolvedValue({ ok: true, code: 0, stdout: '', stderr: '' });
+    await unit.reload();
+    warn.mockRestore();
+    expect(unit.restartPending()).toBe(true);
+  });
+
+  it('leaves nothing pending when the signal delivers the reload (s6)', async () => {
+    host({ running: true });
+    const unit = control();
+    await unit.reload();
+    expect(execFileSync).toHaveBeenCalledWith(
+      'pkill',
+      ['-HUP', '-x', 'dnsmasq'],
+      expect.any(Object),
+    );
+    expect(unit.restartPending()).toBe(false);
   });
 });

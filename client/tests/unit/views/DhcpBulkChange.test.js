@@ -35,7 +35,8 @@ const catalogs = {
     groups: [{ name: 'Common', label: 'Common' }],
     defaults: {},
     enabledDefaults: [24],
-    shipped: { defaults: {}, enabledDefaults: [24] },
+    leaseTime: '7200',
+    shipped: { defaults: {}, enabledDefaults: [24], leaseTime: '1h' },
   },
 };
 
@@ -55,15 +56,11 @@ const previews = {
             code: 6,
             before: '10.0.0.9',
             after: '10.0.0.2',
-            before_default: false,
-            after_default: true,
           },
           {
             code: 15,
             before: 'old.test',
             after: 'lab.test',
-            before_default: false,
-            after_default: false,
           },
         ],
       },
@@ -152,7 +149,7 @@ describe('DHCP Bulk Change', () => {
     });
     const rows = wrapper.findAll('tr[data-scope-id]');
     expect(rows.map((row) => row.text())).toEqual([
-      expect.stringContaining('2 options'),
+      expect.stringContaining('2 changes'),
       expect.stringContaining('Matches'),
     ]);
   });
@@ -180,8 +177,6 @@ describe('DHCP Bulk Change', () => {
     await flushPromises();
     // Ticking a scope opens its changes.
     expect(wrapper.find('.change-list').text()).toContain('10.0.0.9');
-    // The new value is the default's (DHCP-01: linked), and says so.
-    expect(wrapper.find('[data-track="dhcp-bulk-change-default"]').text()).toBe('(default)');
     expect(wrapper.find('.change-list').text()).not.toContain('removed');
     wrapper.vm.toggle(1, false);
     await flushPromises();
@@ -193,7 +188,7 @@ describe('DHCP Bulk Change', () => {
     wrapper.vm.toggle(1, true);
     await flushPromises();
     expect(wrapper.text()).toContain('Apply to 1 scope');
-    expect(wrapper.vm.applySummary).toBe('2 option changes, and your defaults');
+    expect(wrapper.vm.applySummary).toBe('2 changes, and your defaults');
     await wrapper.vm.apply();
     await flushPromises();
     expect(api.post).toHaveBeenCalledWith('/dhcp/scopes/bulk-options', {
@@ -219,5 +214,59 @@ describe('DHCP Bulk Change', () => {
     wrapper.vm.toggleAll(true);
     expect(wrapper.vm.selected).toEqual([]);
     expect(wrapper.text()).toContain('SLAAC only, sends no options');
+  });
+
+  it('sets the DHCPv6 address lifetime only when its row is ticked', async () => {
+    ipv6.value = true;
+    const wrapper = mountView();
+    await settle();
+    wrapper.vm.family = 6;
+    await settle();
+    // The saved lifetime is in the row, unticked, so a preview leaves it alone.
+    expect(wrapper.vm.values).toEqual({ 0: 7200 });
+    expect(wrapper.vm.enabled).toEqual({ 24: true });
+    expect(api.post).toHaveBeenLastCalledWith('/dhcp/scopes/bulk-options/preview', {
+      family: 6,
+      options: [],
+      enabledDefaults: [24],
+      save_defaults: true,
+    });
+    expect(wrapper.vm.changedCodes.size).toBe(0);
+
+    api.post.mockResolvedValueOnce({
+      data: {
+        ...previews[6],
+        scopes: [
+          {
+            ...previews[6].scopes[0],
+            skip_reason: null,
+            changes: [{ code: null, field: 'address_lifetime', before: '7200', after: '1800' }],
+          },
+        ],
+      },
+    });
+    wrapper.vm.enabled[0] = true;
+    wrapper.vm.values[0] = 1800;
+    await settle();
+    expect(api.post).toHaveBeenLastCalledWith('/dhcp/scopes/bulk-options/preview', {
+      family: 6,
+      options: [],
+      enabledDefaults: [24],
+      leaseTime: '1800',
+      save_defaults: true,
+    });
+    expect([...wrapper.vm.changedCodes]).toEqual([0]);
+    wrapper.vm.toggle(7, true);
+    await flushPromises();
+    expect(wrapper.find('.change-list').text()).toContain('Address lifetime');
+    expect(wrapper.find('.change-list').text()).not.toContain('(null)');
+
+    // The shipped lifetime is an hour.
+    await wrapper
+      .findAll('button')
+      .find((b) => b.text() === 'Reset to shipped defaults')
+      .trigger('click');
+    expect(wrapper.vm.values[0]).toBe(3600);
+    expect(wrapper.vm.enabled[0]).toBeUndefined();
   });
 });

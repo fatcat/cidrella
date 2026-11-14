@@ -125,7 +125,7 @@
                     <span v-else-if="!scope.changes.length" class="text-sm muted">Matches</span>
                     <Button
                       v-else
-                      :label="`${scope.changes.length} ${plural(scope.changes.length, 'option')}`"
+                      :label="`${scope.changes.length} ${plural(scope.changes.length, 'change')}`"
                       :icon="expanded.has(scope.id) ? 'pi pi-chevron-up' : 'pi pi-chevron-down'"
                       iconPos="right"
                       size="small"
@@ -139,23 +139,15 @@
                   <td />
                   <td colspan="3">
                     <dl class="change-list">
-                      <template v-for="change in scope.changes" :key="change.code">
-                        <dt>{{ optionLabel(change.code) }} ({{ change.code }})</dt>
+                      <template v-for="change in scope.changes" :key="change.code ?? change.field">
+                        <dt>{{ changeLabel(change) }}</dt>
                         <dd class="mono">
                           <template v-if="change.before != null">
                             <s class="change-before">{{ change.before }}</s>
-                            <span v-if="change.before_default" class="muted"> (default)</span>
                             <span v-if="change.after != null" aria-hidden="true"> → </span>
                           </template>
                           <template v-if="change.after != null">
                             <span class="change-after">{{ change.after }}</span>
-                            <span
-                              v-if="change.after_default"
-                              class="muted"
-                              data-track="dhcp-bulk-change-default"
-                            >
-                              (default)
-                            </span>
                           </template>
                           <span v-else class="muted"> removed</span>
                         </dd>
@@ -178,9 +170,8 @@
             <span>
               Also make these my {{ familyLabel }} defaults
               <span class="text-sm muted save-defaults-help">
-                On: the selected scopes use these defaults and follow later edits of them, and new
-                scopes start with them. Off: the selected scopes get these values as their own, and
-                the defaults stay as they are.
+                On: new scopes start with these values too. Off: the defaults stay as they are.
+                Either way the selected scopes get these values as their own.
               </span>
             </span>
           </label>
@@ -211,12 +202,9 @@
     >
       <p>
         Each selected scope gets exactly the options ticked under Apply; any other option it has is
-        removed. Lease time and pools stay as they are.
+        removed. {{ leaseTimeNote }} Pools stay as they are.
       </p>
-      <p v-if="saveDefaults">
-        Options with a value use the default, so a later edit of your defaults reaches these scopes.
-      </p>
-      <p v-else>
+      <p>
         These scopes keep the values as their own; a later edit of the defaults leaves them alone.
       </p>
       <p>{{ applySummary }}.</p>
@@ -240,8 +228,10 @@ import ConfirmDialog from '../components/ConfirmDialog.vue';
 import DhcpOptionTable from '../components/dhcp/DhcpOptionTable.vue';
 import {
   useDhcpOptionCatalog,
+  editorEntries,
   fillByCode,
   optionEditorPayload,
+  ADDRESS_LIFETIME_ROW,
 } from '../composables/useDhcpOptionCatalog.js';
 import { useFeatures } from '../composables/useFeatures.js';
 import api from '../api/client.js';
@@ -274,12 +264,17 @@ const shipped = ref({ defaults: {}, enabledDefaults: [] });
 
 const plural = (n, word) => (n === 1 ? word : `${word}s`);
 
+// The DHCPv6 Address lifetime row starts unticked: a scope's lifetime
+// changes only when it is ticked.
+const entriesOf = (set) => editorEntries(set, family.value, { lifetimeChecked: false });
+
 function editorState(set) {
+  const entries = entriesOf(set);
   return {
     values: Object.fromEntries(
-      Object.entries(set.defaults || {}).map(([code, value]) => [Number(code), String(value)]),
+      entries.values.map(([code, value]) => [Number(code), String(value)]),
     ),
-    enabled: new Set((set.enabledDefaults || []).map(Number)),
+    enabled: new Set(entries.enabled.map(([code]) => Number(code))),
   };
 }
 
@@ -314,19 +309,20 @@ const sourceLabel = computed(() => {
 });
 
 function loadSource(which) {
-  const set = which === 'shipped' ? shipped.value : saved.value;
-  fillByCode(values, Object.entries(set.defaults || {}));
-  fillByCode(
-    enabled,
-    (set.enabledDefaults || []).map((code) => [code, true]),
-  );
+  const entries = entriesOf(which === 'shipped' ? shipped.value : saved.value);
+  fillByCode(values, entries.values);
+  fillByCode(enabled, entries.enabled);
   source.value = which;
 }
 
 async function loadOptions() {
   try {
     const data = await loadCatalog();
-    saved.value = { defaults: data.defaults || {}, enabledDefaults: data.enabledDefaults || [] };
+    saved.value = {
+      defaults: data.defaults || {},
+      enabledDefaults: data.enabledDefaults || [],
+      leaseTime: data.leaseTime,
+    };
     shipped.value = data.shipped || { defaults: {}, enabledDefaults: [] };
     loadSource('saved');
   } catch (err) {
@@ -372,12 +368,22 @@ function toggleExpanded(id) {
 
 const scopeName = (scope) => scope.subnet_name || scope.description || scope.subnet_cidr;
 const optionLabel = (code) => catalog.value.find((opt) => opt.code === code)?.label || 'Option';
+// A change names its option and code, or the DHCPv6 address lifetime.
+const changeLabel = (change) =>
+  change.field === 'address_lifetime'
+    ? ADDRESS_LIFETIME_ROW.label
+    : `${optionLabel(change.code)} (${change.code})`;
+const leaseTimeNote = computed(() =>
+  family.value === 6
+    ? 'Address lifetime changes only where its row is ticked under Apply. A SLAAC-only scope takes the lifetime alone and keeps its options.'
+    : 'Lease time changes only where Lease Time (51) is ticked with a value.',
+);
 
 const applySummary = computed(() => {
   const changes = scopes.value
     .filter((scope) => isSelected(scope.id))
     .reduce((sum, scope) => sum + scope.changes.length, 0);
-  const parts = [`${changes} option ${plural(changes, 'change')}`];
+  const parts = [`${changes} ${plural(changes, 'change')}`];
   if (saveDefaults.value) parts.push('and your defaults');
   return parts.join(', ');
 });
@@ -438,11 +444,11 @@ async function apply() {
       life: 4000,
     });
     if (saveDefaults.value) {
+      const body = requestBody();
       saved.value = {
-        defaults: Object.fromEntries(
-          requestBody().options.map((option) => [option.code, option.value]),
-        ),
-        enabledDefaults: requestBody().enabledDefaults,
+        defaults: Object.fromEntries(body.options.map((option) => [option.code, option.value])),
+        enabledDefaults: body.enabledDefaults,
+        leaseTime: body.leaseTime ?? saved.value.leaseTime,
       };
       source.value = 'saved';
     }

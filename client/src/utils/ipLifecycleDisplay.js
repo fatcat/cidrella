@@ -67,6 +67,27 @@ const ADDRESS_TYPE_BY_LABEL = {
   [ADDRESS_TYPE_ROGUE.label]: ADDRESS_TYPE_ROGUE,
 };
 
+// The summary's by_state keys, in the address-type wording, in display order.
+const STATE_LABELS = [
+  ['static_dns', ADDRESS_TYPE_STATIC_DNS.label],
+  ['static_dhcp', ADDRESS_TYPE_RESERVED_DHCP.label],
+  ['dynamic_dhcp', ADDRESS_TYPE_DYNAMIC_DHCP.label],
+  ['slaac', ADDRESS_TYPE_SLAAC.label],
+  ['reserved', ADDRESS_TYPE_RESERVED.label],
+  ['gateway', ADDRESS_TYPE_GATEWAY.label],
+  ['system', ADDRESS_TYPE_SYSTEM.label],
+  ['quarantined', ADDRESS_TYPE_QUARANTINED.label],
+  ['seen', 'seen'],
+];
+
+/** A summary's `by_state` as one line: '3 static DNS · 12 SLAAC · 1 seen'. */
+export function byStateLine(byState) {
+  const parts = STATE_LABELS.filter(([key]) => byState?.[key]).map(
+    ([key, label]) => `${byState[key]} ${label}`,
+  );
+  return parts.length ? parts.join(' · ') : 'nothing stored yet';
+}
+
 export function ipLifecycleDisplay(data) {
   return {
     status: data.ip_display_status || 'unknown',

@@ -42,6 +42,16 @@ describe('workspace route codec', () => {
     });
   });
 
+  it('carries the Hosts or Addresses choice, and leaves it to the family when unset', () => {
+    for (const grouping of ['hosts', 'addresses']) {
+      const state = decodeWorkspaceQuery({ view: 'addresses', grouping });
+      expect(state.grouping).toBe(grouping);
+      expect(encodeWorkspaceQuery(state)).toEqual({ view: 'addresses', grouping });
+    }
+    expect(decodeWorkspaceQuery({ grouping: 'devices' }).grouping).toBeNull();
+    expect(encodeWorkspaceQuery(decodeWorkspaceQuery({}))).not.toHaveProperty('grouping');
+  });
+
   it('carries a network-wide reverse zone choice as rzones', () => {
     const state = decodeWorkspaceQuery({ view: 'dns', rzones: '7' });
     expect(state.reverseNetwork).toBe(7);

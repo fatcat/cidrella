@@ -30,7 +30,7 @@ npm test               # full suite: server then client
 npm run test:server    # server unit + integration (vitest)
 npm run test:client    # client unit (vitest)
 npm run test:sidecar   # anomaly sidecar rules (python3 unittest, stdlib only, no venv needed)
-npm run lint           # ESLint (flat config, correctness-focused), must exit 0
+npm run lint           # ESLint (flat config, correctness-focused) + import guards, must exit 0
 npm run build:client   # production client build, a build failure is a test failure
 npm run check:reuse    # duplicate helpers, duplicate scoped CSS, hand-built confirm dialogs (baselined)
 npm run hunt:workspace # 300 seeded random walks through the Networks workspace (model test)
@@ -44,8 +44,9 @@ Components carry `data-row-id`, `data-zone-id`, `data-scope-id`, `data-network-i
 `data-folder-id` for it; keep them when refactoring, like `data-track`.
 
 A migration test builds its database with `databaseThrough(n)` in `tests/helpers/migrations.js`
-(every migration up to n, then `migrate(n + 1)`); older tests still carry their own copy
-(REVIEW.md TEST-MIGRATION-HELPER-01).
+(every migration up to n, then `migrate(n + 1)`, or `migrateThrough()` for the rest; pass
+`{ tmpDirs }` to have its directory cleaned up with the test's own). The backup round-trip test
+builds its schema-54 database at the live data path and keeps its own.
 
 Backups have a round-trip test (`server/tests/integration/backup-round-trip.test.js`): export,
 change everything, restore, restart, and every table and carried file must match, but for what a
@@ -71,6 +72,12 @@ repository), ports 5300, 5353, 5356 and 8053 free on loopback, and outbound DNS 
 
 CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.
+SonarQube Cloud (project `fatcat_cidrella`, configured in `sonar-project.properties`) runs in
+its own workflow, `.github/workflows/sonar.yml`: on a pull request to main and on demand (Run
+workflow, any branch), never on a plain push. It runs the suites with `--coverage` (lcov into
+`server/coverage/` and `client/coverage/`; `npm test` does not) and then the scan. It is not a
+required check, and it is skipped where the `SONAR_TOKEN` secret is absent (Dependabot and fork
+pull requests).
 Dependabot delivers grouped weekly dependency PRs. Prefer merging those over manual
 lockfile bumps.
 
@@ -144,7 +151,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   a toggling legend; `dashboard/AllocationBar` wraps it), `TopList` (a ranked list with bars,
   every top-10), `dashboard/FigureCard`; `utils/format.js` (`apiError`,
   `formatNumber`, `displayOnlineStatus`, `EMPTY_CELL`), `utils/chart-config.js` (colors,
-  `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js`, `utils/keyboard.js` (`MOD_LABEL`, `isModShortcut`: Ctrl, or Command on a Mac, for every shortcut and its hint),
+  `RANGE_OPTIONS`, `rangeLabel`, line and doughnut options), `utils/dateFormat.js` (`hasTZ`: does a timestamp already end in a timezone), `utils/keyboard.js` (`MOD_LABEL`, `isModShortcut`: Ctrl, or Command on a Mac, for every shortcut and its hint),
   `utils/proxy-perf.js` (the resolution and process figures from the proxy-perf rows),
   `utils/service-chips.js` (the backend, proxy and forwarder chips), `utils/backend-status.js`
   (`backendUnits`: the DNS/DHCP backends from a health payload, one unit per daemon named by
@@ -164,7 +171,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   checks the keys against the client catalog), and the client control is
   `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
-  `dialog-actions`, `card-header`, `field-error`, `field-help`, `fill-panel`: the root of a
+  `dialog-actions`, `card-header`, `field-error`, `field-help`, `input-with-action` (a field's
+  input with a small action beside it, as Suggest), `fill-panel`: the root of a
   Settings `fill` section or full page, whose inner table or log scrolls instead of the page; a
   `scrollHeight="flex"` DataTable directly inside it takes the height left under its siblings), `assets/analytics-workspace.css` for the
   reworked Analytics sections (head, rail, chip, panel, `.board` with `--board-columns` and
@@ -172,7 +180,13 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   DNS/DHCP panel info bar and sidebar search, `networks-workspace/dialogs/range-dialogs.css`
   for the range dialogs' form grammar, `assets/analytics-layout.css` for
   the sections not yet reworked, `ui/tokens.css` for `--cid-*`. Server: `utils/validation.js`,
-  `utils/ip.js` and `utils/cidr.js`, `utils/dns-names.js` (`fqdnForRecordName`,
+  `utils/ip.js` and `utils/cidr.js` (`parseAddressQuery`: what a search box holds, one
+  address, a CIDR or text; `sortKeyRange`: a network's span of `address_sort_key` for SQL;
+  with `expandIpv6` in `utils/address.js`, the one IPv6-aware search rule, client through
+  `@shared`), `utils/special-ranges.js` (the one table of special-purpose
+  blocks, both families: which ones scans treat as private, which an outbound fetch refuses, and
+  the named reserved ranges a supernet must stay inside), `trimTrailingSlashes` in
+  `utils/validation.js` (never `replace(/\/+$/, '')`, which is quadratic on a run of slashes), `utils/dns-names.js` (`fqdnForRecordName`,
   `normalizeRecordNameForZone`, `normalizeDnsName`: the zone-file rule for record names, a
   trailing dot is absolute and anything else is under the zone; SQL that builds an FQDN must
   agree with it), `utils/reverse-zones.js` (`generateReverseName(s)`,
@@ -182,7 +196,25 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `services/ip-lifecycle-service.js` for every lifecycle
   write, `models/ip-events.js` for address history (`ip_events` and `ip_range_events`; history
   is keyed by address, never by row, so it outlives the row), `utils/executable.js` (`findExecutable`: where a
-  command would run from, searched on PATH as a shell does), `utils/request-actor.js`
+  command would run from, searched on PATH as a shell does), `runCommand` in
+  `utils/run-command.js` (every command the server runs after boot: async, with a timeout; tests
+  mock it with `fakeRunCommandModule` in `tests/helpers/fake-run-command.js`), `utils/privileged.js`
+  (every arping, ping, `systemctl` start/stop/restart/reload, update start and `set-ntp`: the
+  privileged helper runs it where `CIDRELLA_HELPER_SOCKET` is set, the web app itself where not;
+  resolves `{ok, code, stdout, stderr}`, `helperDown` when the helper is away; never run these
+  through `runCommand`; `onHelperHello` for work to redo once the helper answers again, as
+  `activatePendingBackends` in `services/backend-apply.js` restarts what a failed reload missed), the privileged helper process in `helper/` (`main.js` the entry,
+  `commands.js` the closed list of operations and `MANAGED_UNITS`, which the polkit rule must
+  match, `run.js`, `protocol.js`; leaf imports only, which
+  `tests/unit/helper/closure-guard.test.js` enforces) and `utils/helper-client.js` (its socket
+  client, used by `privileged.js` alone), `createLog` in `ipc/log.js` (a process's log lines),
+  `ensure_service_user` in `scripts/lib/systemd-install.sh` (a system account for a unit;
+  `install_polkit_rule` beside it swaps a polkit rule in whole, since polkit reloads on the first
+  write), `runDbTask` in
+  `utils/db-worker/index.js` (slow SQL in a worker thread with its own connection; a task is a
+  function in `db-worker/tasks.js`), `recountBlocklistDomains` and `storedBlocklistDomainCount`
+  in `utils/blocklist.js` (the enabled-domain count, recounted in the worker and stored; the
+  query is `countEnabledBlocklistDomains` in `models/blocklist-store.js`), `utils/request-actor.js`
   (`currentActor`, the signed-in user a write deep in a model should name;
   `currentRequestContext` for the whole request: user, origin, client address),
   `recordAudit` in `services/audit.js` (every audit row: `before`/`after` keep only changed
@@ -225,11 +257,12 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   DHCP adapter serves, options merged and resolved; `loadDnsZones` in `dns-zone-model.js` for
   the zones and records every DNS adapter serves, with `LOCAL_RECORD_TTL` for a record without
   its own TTL, and `servedHostsByAddress` (the one name each address answers a reverse lookup
-  with); `reserved-zones.js` for the reserved and site-local names a resolver keeps local; `ensureSecret` and `readSecret` in `secret.js` for a 0600 key file; `poolSegments` for a pool minus its
+  with); `reserved-zones.js` for the reserved and site-local names a resolver keeps local; `ensureSecret` and `readSecret` in `secret.js` for a 0600 key file; `removeLogFiles` in `log-files.js` for a retired backend's logs (an adapter's `clearLogs`, run for every backend outside the stack after a switch and at boot); `poolSegments` for a pool minus its
   reserved addresses; `atomicWrite` and `createValidatedFiles` for a rendered config written as
   one checked transaction; `createUnitControl` for starting, stopping, reloading and checking
   a daemon (`installed`, `awaitStopped`), with `enableFile` for one s6 keeps down until wanted
   and `disableFile` for one that runs unless told not to, dnsmasq),
+  `utils/preflight.js` (`isPreflightBoot`: update.sh's probe, which must not touch a host service),
   `utils/ntp-status.js` (`getNtpStatus`: is the clock synchronized),
   `utils/lease-time.js` (`leaseSeconds`, `isValidLeaseTime`: every read of a stored lease
   time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and
@@ -243,7 +276,10 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   upstream, DoT or DoH: reused connections, retry, address failover, fail closed),
   `plainUpstreams` and `backupMode` in `utils/forwarding-settings.js` (the plaintext primary
   then backup, and On failure or Load balance; nothing else joins the two lists),
-  `utils/plain-dns.js` (`plainUdpQuery`, `plainTcpQuery`: one plain query, either family),
+  `utils/plain-dns.js` (`plainUdpQuery`, `plainTcpQuery`: one plain query, either family;
+  tests stand up a server with `plainDnsServer` in `tests/helpers/plain-dns-server.js`, and take a
+  port with `freePort` in `tests/helpers/free-port.js`), `utils/dns-wire.js` (TCP framing, and
+  `addEdns`/`removeOpt`: the OPT record the proxy adds for a client without EDNS and strips again),
   `timeQuery` in `utils/upstream-probe.js` (one timed query over plain, DoT or DoH) and
   `services/resolver-benchmark.js` (the one-minute resolver performance test),
   `failureCause` in `utils/dns-ede.js` (the one place a failed DNS answer gets its cause,
@@ -254,21 +290,48 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `createReservoir` / `quantileOfSorted` in `utils/samples.js` (latency samples and their
   percentiles),
   `fillScopeOptions` in `services/subnet-dhcp-topology.js` (the options a scope gets from an
-  enabled set, blanks filled from its network; new scopes and Bulk Change; `USE_DEFAULT` there
-  marks an option linked to its default, written as a NULL row), `networkOptionFills` in
+  enabled set, blanks filled from its network; new scopes and Bulk Change), `networkOptionFills` in
   `utils/dhcp-network-options.js` (what a scope takes from its network, either family; DNS is
   CIDRella's address alone, never an outside fallback; the scope dialog imports it through
   `@shared`),
-  `resolveEffectiveScopeOptions` and `isLinkedOption` in `models/dhcp-scope.js` (what a scope
-  serves: a default only through a linked row, see ARCHITECTURE.md DHCP option layering),
-  `linkedOptionCounts` in `models/dhcp-option.js` (scopes using each default),
+  `resolveEffectiveScopeOptions` in `models/dhcp-scope.js` (what a scope serves; the defaults
+  are copied at creation and never read after, see ARCHITECTURE.md DHCP option layering),
+  `defaultLeaseTime` in `models/dhcp-option.js` (the lease time a new scope starts with: IPv4
+  the Lease Time (51) default, always added to new scopes and shipped as 3600; IPv6 the
+  `default_lease_time` setting, the Address lifetime row; every scope-creating path asks it,
+  and `GET /dhcp/options` reports it as `leaseTime`), client `ADDRESS_LIFETIME_ROW`,
+  `LIFETIME_KEY` and `editorEntries` in `composables/useDhcpOptionCatalog.js` (the DHCPv6
+  lifetime row the option tables show, keyed 0, and sent as `leaseTime`),
   `models/session.js` (every sign-in session rule: idle and 24 hour limits, ending sessions
   with a reason; see ARCHITECTURE.md Sign-in sessions), `models/filtering-exemption.js`
   (every rule for a host with DNS filtering off: keyed by MAC, else address; `exemptAddressSet`
   is what the proxy and the reads both use) and `utils/filtering-pause.js` (the pause periods,
   client through `@shared`), `utils/query-log.js` (the DNS proxy's query lines in the DNS
   backend's log, for a backend whose `logSource()` says `proxyQueries`; the line format and its
-  parser are `utils/query-log-line.js`), `utils/resolution-feed.js` (the Resolution Map's live event
+  parser are `utils/query-log-line.js`; the writer itself, path given, is
+  `utils/query-log-writer.js`), the DNS proxy process in `dns-proxy/` (`main.js` the entry,
+  `runtime.js` its answers to the web app's messages, `server.js` the proxy, `forwarder.js` the
+  encrypted forwarder, `wildcard-chain.js` the one answer it edits (a backend's
+  `splitWildcardChains`), `db.js` its read-only connection and cached `setting`, `protocol.js` its
+  messages, `outbox.js` the bounded outbox, `code-id.js` its code id; the socket is the shared
+  `ipc/`: `framing.js`, `server.js` (`createIpcServer`, `boundedQueue`), `client.js`
+  (`createProcessClient`: reconnect, hello, code-id restart, requests by id), `code-id.js` and
+  `code-gone.js`,
+  `constants.js` the DATA_DIR rule and `proxyRuntimePaths`; it imports leaf helpers only, no
+  database, config, backend, service, route or model module but the two read ones below, which
+  `tests/unit/dns-proxy/closure-guard.test.js` enforces), the web app's side of it: `utils/dns-proxy.js` and
+  `utils/encrypted-forwarder.js` (facades, same names as before), `utils/dns-proxy-client.js`
+  (the socket client: `freshProxyStatus`, `requestDrain`, `sendProxyConfig`, `sendReload`),
+  `services/dns-proxy-sinks.js` (where its reports land), `services/dns-proxy-watchdog.js`
+  (restart and bypass) and `services/dns-proxy-supervisor.js` (`restartProxyProcess`); a test of
+  the proxy's behavior mocks the client with `inProcessProxyClient` from
+  `tests/helpers/proxy-in-process.js`; `models/filtering-exemption-read.js` (`exemptAddressSet`
+  without the model's writes), `models/setting-value.js` (a stored setting's value, decoded, for
+  both processes), `utils/atomic-write.js` (`atomicWrite`, re-exported by
+  `backends/shared/validated-files.js`), `utils/forwarding-modes.js` (`backupModeOf`, the pure
+  rule `backupMode` reads), `recursionTargets` in `utils/forwarding-settings.js` (where the DNS
+  backend sends recursion: the forwarder, or the plaintext upstreams while `dns_forwarder_down`),
+  `formatHostPort` in `utils/address.js` (`host:port`, bracketing IPv6), `utils/resolution-feed.js` (the Resolution Map's live event
   buffer; the map never reads the proxy's `getAndReset*` counters) and `utils/geo-cities.js`
   (the city table: coarsening, file format and lookup, shared with
   `scripts/build-geo-cities.js`), client `components/analytics/ResolutionCanvas.vue` (the map and
@@ -283,17 +346,46 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `utils/ip.js` `dhcpPoolScopeFor` (the pool an address falls in, either family),
   `divideGatewayDefault`, `GATEWAY_POSITION_OPTIONS` and `inferGatewayPosition` (with
   `components/GatewayField.vue`, the one gateway picker: network dialogs and the scope dialog), and in `views/networks-workspace-data.js` `addressCount`,
-  `formatAddressCount` (BigInt-safe sizes) and `compareCellValues` (address-aware table sort), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
+  `formatAddressCount` (BigInt-safe sizes), `compareCellValues` (address-aware table sort) and
+  `networkSearchMatches` (what the explorer matches a network against, CIDR overlap included),
+  `networkUtilization` (how full a network is: used addresses on IPv4, DHCP pool use on IPv6),
+  `prefixCoverage` with `formatCoveragePercent`/`formatCoverageCounts` (how much of a container
+  its allocated networks hold) and `nextFreePrefix` (the lowest free /N in a container, as it
+  stands or to carve), client `components/SuggestAddressButton.vue` (Next free and Random for
+  any address field; the server's `suggestAddress` in `models/address-suggest.js` decides,
+  `GET /subnets/:id/suggest-address`), `byStateLine` in `utils/ipLifecycleDisplay.js` (a
+  summary's `by_state` in the address-type wording), server `dhcpPoolUse` in
+  `models/dhcp-pool-use.js` (`pool_size` and `pool_in_use` of a network's address pools, on the
+  tree and the summary), `childNetwork` in `utils/cidr.js` (one child of a split by index, for
+  paging), `isEui64InterfaceId` and `macFromEui64` in `utils/address.js`, `groupHosts` and
+  `hostMatches` in `utils/ip-hosts.js` (a network's addresses grouped into devices by MAC and
+  DUID, a projection; the model test's fake estate uses it too) with `subnetHosts` in
+  `models/ip-hosts.js` (`GET /subnets/:id/hosts`) and `rowHasFactsSql` in
+  `models/subnet-ip-read.js` (a stored row with real facts, not an IPv4 placeholder), client
+  `networks-workspace/HostTable.vue` (the Hosts view) and `workspace-table.css` (the table
+  chrome it shares with WorkspaceTable), `dialogs/NextPrefixDialog.vue` (Allocate next free
+  prefix), the optional `track` field on a `workspace-actions.js` entry (its button's
+  `data-track`), `reconcileDnsHold` in the lifecycle service for ADR 004 (a disabled
   record holds its address as `reserved` owned by `dns`; call it after any DNS write that can
   change whether a record is served), `utils/scan-coverage.js` for "will the scanner probe
   this" (`scannerCoveredSql` plus `isAutomaticScanAllowed` for the public-network and IPv6
   gates SQL cannot express; the scheduler and the stale sweep both apply both). Add to this list when you
-  make something shared. Five guards enforce what they can detect, each baselined so it fails
+  make something shared. These guards enforce what they can detect, each baselined so it fails
   only on NEW instances (fix one by deleting its baseline entry, never by adding one):
   `npm run lint` refuses an import of a backend adapter (`server/src/backends/<name>/`) from
   outside `server/src/backends/` (ESLint for static imports, `scripts/check-backend-imports.js`
   for `vi.mock` and `import()` strings; tests of the adapters live under `tests/*/backends/`), a vendor import outside `src/ui`, a raw `<select>`/`<input>` outside
-  the baselined files, and a `dot`/`pill`/`badge` class outside the status components;
+  the baselined files, a `dot`/`pill`/`badge` class outside the status components, and an import
+  cycle in `client/src` (`scripts/check-client-cycles.js`, static imports in `.js` and `.vue`,
+  baseline 0; a low module takes a callback the higher one registers, as `configureApi` in
+  `api/client.js` does, instead of importing it), and in shipped code (`server/src`,
+  `client/src`) a regex that backtracks super-linearly or whose alternation binds looser than
+  its anchor (`eslint-plugin-regexp`, `sonarjs/anchor-precedence`), a call statement that drops
+  the promise of an async function (`cidrella/no-floating-async` in
+  `scripts/eslint-rules/no-floating-async.js`; `await` it, `return` it, `.catch()` it, or `void`
+  it when the function handles its own errors; client files with old instances are baselined in
+  `eslint.config.mjs`), and a redirect-following `curl` in `scripts/` without
+  `--proto '=https' --proto-redir '=https'` (`scripts/check-curl-https.js`);
   `npm run check:reuse` runs `check-duplicate-exports.js` (a local copy of an exported helper),
   `check-scoped-css-dupes.js` (an identical rule in two scoped style blocks; `--drift` lists
   same-name-different-body candidates as a report) and `check-confirm-dialogs.js` (a Dialog

@@ -223,11 +223,52 @@ export function formatIp(value, bits) {
   return groups.join(':');
 }
 
+/** `address:port`, an IPv6 address in brackets (`[2620:fe::fe]:53`). */
+export function formatHostPort(address, port) {
+  return addressFamily(address) === 6 ? `[${address}]:${port}` : `${address}:${port}`;
+}
+
 /** Parse then re-render, giving the one canonical spelling. Null if invalid. */
 export function canonicalizeIp(str) {
   const parsed = parseIp(str);
   if (!parsed) return null;
   return formatIp(parsed.value, parsed.bits);
+}
+
+/**
+ * The full eight-group spelling of an IPv6 address ('2001:0db8:0000:...'),
+ * so a search typed in that form finds the compressed one. Null for IPv4 or
+ * anything unparseable.
+ */
+export function expandIpv6(str) {
+  const parsed = parseIp(str);
+  if (!parsed || parsed.bits !== IPV6_BITS) return null;
+  return parsed.value.toString(16).padStart(32, '0').match(/.{4}/g).join(':');
+}
+
+/**
+ * True for an IPv6 address whose interface ID is a modified EUI-64 (RFC 4291
+ * appendix A): ff:fe in its middle bytes, 'xxxx:xxff:fexx:xxxx', the form a
+ * SLAAC host builds from its MAC. False for IPv4 and anything unparseable.
+ */
+export function isEui64InterfaceId(str) {
+  const parsed = parseIp(str);
+  if (!parsed || parsed.bits !== IPV6_BITS) return false;
+  return ((parsed.value >> 24n) & 0xffffn) === 0xfffen;
+}
+
+/**
+ * The MAC a modified EUI-64 interface ID was built from: its outer six bytes
+ * with the universal/local bit flipped back. Null unless the address is IPv6
+ * with an EUI-64 interface ID. A random interface ID holds ff:fe by chance
+ * about once in 65,536, so this is evidence, not proof.
+ */
+export function macFromEui64(str) {
+  if (!isEui64InterfaceId(str)) return null;
+  const id = parseIp(str).value & 0xffffffffffffffffn;
+  const bytes = id.toString(16).padStart(16, '0').match(/.{2}/g);
+  const first = (parseInt(bytes[0], 16) ^ 0x02).toString(16).padStart(2, '0');
+  return [first, bytes[1], bytes[2], bytes[5], bytes[6], bytes[7]].join(':');
 }
 
 /**

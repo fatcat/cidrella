@@ -7,6 +7,9 @@
  *     new scope.
  *   - The preview reports the same change the apply makes and writes nothing.
  *   - save_defaults replaces the family's defaults too.
+ *   - A ticked DHCPv4 Lease Time (51) sets the scope's lease_time; a blank
+ *     one leaves it alone (prod's three scopes kept their 15 and 10 minute
+ *     leases through a bulk change that asked for 3600, 2026-10-25).
  *   - IPv6: a SLAAC-only scope is skipped; 24 fills from the network domain.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
@@ -78,6 +81,7 @@ beforeAll(async () => {
 
 afterAll(() => cleanupTestDb(tmpDir));
 
+const leaseTime = (id) => db.prepare('SELECT lease_time FROM dhcp_scopes WHERE id = ?').get(id);
 const rows = (scopeId) =>
   Object.fromEntries(
     db
@@ -114,18 +118,14 @@ describe('DHCPv4 bulk change', () => {
       code: 66,
       before: null,
       after: 'tftp.test',
-      before_default: false,
-      after_default: false,
     });
     // 42 is not ticked, so the scope's own NTP goes, and the default with a
-    // value does not take its place: a scope serves a default only when it
-    // uses it (DHCP-01).
+    // value does not take its place: a default reaches a scope only when it
+    // is created.
     expect(changes[42]).toEqual({
       code: 42,
       before: '10.61.0.9',
       after: null,
-      before_default: false,
-      after_default: false,
     });
     // Domain and search list follow the network, as for a new scope.
     expect(changes[15]).toBeUndefined();
@@ -176,11 +176,11 @@ describe('DHCPv4 bulk change', () => {
       42: '10.61.0.123',
       66: 'tftp.test',
     });
-    expect([...defaults.body.enabledDefaults].sort((a, b) => a - b)).toEqual([1, 3, 6, 15, 66]);
+    expect([...defaults.body.enabledDefaults].sort((a, b) => a - b)).toEqual([1, 3, 6, 15, 51, 66]);
     expect(rows(scopes.b)[15]).toBe('b.test');
-    // The ticked options with a value now use the defaults, so they follow them.
-    expect(rows(scopes.b)).toMatchObject({ 6: null, 66: null });
-    expect(defaults.body.linkedCounts).toMatchObject({ 6: 1, 66: 1 });
+    // The ticked values are the scope's own, and a later edit of the saved
+    // defaults leaves them alone.
+    expect(rows(scopes.b)).toMatchObject({ 6: '10.61.0.53', 66: 'tftp.test' });
     await request(app)
       .put('/api/dhcp/options/defaults')
       .send({
@@ -194,16 +194,68 @@ describe('DHCPv4 bulk change', () => {
     const scopeB = (await request(app).get('/api/dhcp/scopes')).body.find((s) => s.id === scopes.b);
     expect(scopeB.effective.options.find((o) => o.option_code === 6)).toEqual({
       option_code: 6,
-      value: '10.61.0.54',
-      source: 'default',
+      value: '10.61.0.53',
+      source: 'scope',
     });
+  });
+
+  it('sets the lease time from a ticked 51 and reports it as that option', async () => {
+    const was = leaseTime(scopes.a).lease_time;
+    expect(was).not.toBe('7200');
+    const withLease = {
+      ...body,
+      options: [...body.options, { code: 51, value: '7200' }],
+      enabledDefaults: [...body.enabledDefaults, 51],
+    };
+    const preview = await request(app)
+      .post('/api/dhcp/scopes/bulk-options/preview')
+      .send(withLease);
+    expect(preview.status).toBe(200);
+    const change = preview.body.scopes
+      .find((scope) => scope.id === scopes.a)
+      .changes.find((c) => c.code === 51);
+    expect(change).toEqual({
+      code: 51,
+      before: was,
+      after: '7200',
+    });
+    expect(leaseTime(scopes.a).lease_time).toBe(was);
+
+    // Saving the defaults too writes the lease time on the scope and 7200
+    // into the Lease Time default.
+    const res = await request(app)
+      .post('/api/dhcp/scopes/bulk-options')
+      .send({ ...withLease, scope_ids: [scopes.a], save_defaults: true });
+    expect(res.status).toBe(200);
+    expect(leaseTime(scopes.a).lease_time).toBe('7200');
+    expect(leaseTime(scopes.b).lease_time).toBe(was);
+    expect(rows(scopes.a)[51]).toBeUndefined();
+    const scopeA = (await request(app).get('/api/dhcp/scopes')).body.find((s) => s.id === scopes.a);
+    expect(scopeA.effective.lease_time).toBe('7200');
+    const again = await request(app)
+      .post('/api/dhcp/scopes/bulk-options/preview')
+      .send({ ...withLease, save_defaults: true });
+    expect(again.body.scopes.find((scope) => scope.id === scopes.a).changes).toEqual([]);
+
+    // A blank 51, ticked or not, leaves the lease time alone.
+    const blank = { ...withLease, options: [...body.options, { code: 51, value: '' }] };
+    const blankPreview = await request(app)
+      .post('/api/dhcp/scopes/bulk-options/preview')
+      .send(blank);
+    expect(
+      blankPreview.body.scopes.find((scope) => scope.id === scopes.a).changes.map((c) => c.code),
+    ).not.toContain(51);
+    await request(app)
+      .post('/api/dhcp/scopes/bulk-options')
+      .send({ ...blank, scope_ids: [scopes.a] });
+    expect(leaseTime(scopes.a).lease_time).toBe('7200');
   });
 
   it('answers the shipped defaults for a reset', async () => {
     const res = await request(app).get('/api/dhcp/options?family=4');
     expect(res.body.shipped).toEqual({
-      defaults: { 42: DHCP_DEFAULT_NTP_SERVERS },
-      enabledDefaults: [1, 3, 6, 15, 119, 42],
+      defaults: { 42: DHCP_DEFAULT_NTP_SERVERS, 51: '3600' },
+      enabledDefaults: [1, 3, 6, 15, 119, 42, 51],
     });
   });
 
@@ -243,11 +295,71 @@ describe('DHCPv6 bulk change', () => {
     expect(rows(scopes.v6)).toEqual({ 24: 'v6.test', 56: 'fd61::123' });
   });
 
+  it('sets the address lifetime, on a SLAAC-only scope too, and saves it as the default', async () => {
+    const setting = () =>
+      db.prepare("SELECT value FROM settings WHERE key = 'default_lease_time'").get()?.value;
+    const slaacOptions = rows(scopes.slaac);
+    const withLifetime = { ...body, leaseTime: '1800' };
+    const preview = await request(app)
+      .post('/api/dhcp/scopes/bulk-options/preview')
+      .send(withLifetime);
+    expect(preview.status).toBe(200);
+    const slaac = preview.body.scopes.find((scope) => scope.id === scopes.slaac);
+    // The lifetime is the one thing a SLAAC-only scope takes.
+    expect(slaac.skip_reason).toBeNull();
+    expect(slaac.changes).toEqual([
+      {
+        code: null,
+        field: 'address_lifetime',
+        before: leaseTime(scopes.slaac).lease_time,
+        after: '1800',
+      },
+    ]);
+    const v6 = preview.body.scopes.find((scope) => scope.id === scopes.v6);
+    expect(v6.changes[0]).toMatchObject({ code: null, field: 'address_lifetime', after: '1800' });
+
+    const res = await request(app)
+      .post('/api/dhcp/scopes/bulk-options')
+      .send({ ...withLifetime, scope_ids: [scopes.v6, scopes.slaac], save_defaults: true });
+    expect(res.status).toBe(200);
+    expect(res.body.applied).toEqual([scopes.v6, scopes.slaac]);
+    expect(leaseTime(scopes.v6).lease_time).toBe('1800');
+    expect(leaseTime(scopes.slaac).lease_time).toBe('1800');
+    expect(rows(scopes.slaac)).toEqual(slaacOptions);
+    expect(setting()).toBe('1800');
+    expect((await request(app).get('/api/dhcp/options?family=6')).body.leaseTime).toBe('1800');
+
+    // Without leaseTime the lifetime stays and the SLAAC-only scope is skipped.
+    const plain = await request(app).post('/api/dhcp/scopes/bulk-options/preview').send(body);
+    expect(plain.body.scopes.find((scope) => scope.id === scopes.slaac).skip_reason).toBe(
+      'SLAAC only, sends no options',
+    );
+    expect(
+      plain.body.scopes.find((scope) => scope.id === scopes.v6).changes.map((c) => c.field),
+    ).not.toContain('address_lifetime');
+  });
+
+  it('refuses a bad address lifetime, and one on a DHCPv4 request', async () => {
+    const preview = (extra) =>
+      request(app)
+        .post('/api/dhcp/scopes/bulk-options/preview')
+        .send({ ...body, ...extra });
+    expect((await preview({ leaseTime: '0' })).status).toBe(400);
+    expect((await preview({ leaseTime: 'forever' })).status).toBe(400);
+    expect((await preview({ leaseTime: '30m' })).status).toBe(200);
+    const v4 = await request(app)
+      .post('/api/dhcp/scopes/bulk-options/preview')
+      .send({ family: 4, options: [], enabledDefaults: [], leaseTime: '3600' });
+    expect(v4.status).toBe(400);
+    expect(v4.body.error).toContain('option 51');
+  });
+
   it('answers the IPv6 shipped defaults', async () => {
     const res = await request(app).get('/api/dhcp/options?family=6');
     expect(res.body.shipped).toEqual({
       defaults: { 56: DHCP6_DEFAULT_NTP_SERVERS },
       enabledDefaults: [23, 24, 56],
+      leaseTime: '1h',
     });
   });
 

@@ -7,6 +7,8 @@ const { store, toast, api } = vi.hoisted(() => ({
     updateSubnet: vi.fn(),
     updateFolder: vi.fn(),
     getSettings: vi.fn(),
+    previewDivide: vi.fn(),
+    divideSubnet: vi.fn(),
   },
   toast: { add: vi.fn() },
   api: { get: vi.fn(), post: vi.fn(), put: vi.fn(), delete: vi.fn() },
@@ -217,5 +219,57 @@ describe('NetworkDialogs divide cap', () => {
     wrapper.vm.openDivide(sized('fd00:1234::/124', 124));
     await settle();
     expect(hint(wrapper).exists()).toBe(false);
+  });
+});
+
+// docs/IPV6-HANDLING.md, rule 4: Allocate next free prefix opens the carve
+// form on the block it found, and that is not an edit to discard.
+describe('NetworkDialogs divide with a carve', () => {
+  const sized = (cidr, prefix) => ({
+    data: { ...node.data, cidr, network_address: cidr.split('/')[0], prefix_length: prefix },
+  });
+
+  it('opens in carve mode on the given block, in both families, clean', async () => {
+    const wrapper = mountDialogs();
+    for (const [parent, prefix, cidr] of [
+      ['fd00:aa:0:200::/55', 55, 'fd00:aa:0:200::/56'],
+      ['10.90.2.0/23', 23, '10.90.2.0/24'],
+    ]) {
+      wrapper.vm.openDivide(sized(parent, prefix), { cidr });
+      await settle();
+      expect(wrapper.vm.divideMode).toBe('carve');
+      expect(`${wrapper.vm.carveNetwork}/${wrapper.vm.carvePrefix}`).toBe(cidr);
+      await button(wrapper, 'dialog-network-divide', 'Cancel').trigger('click');
+      // Nothing to discard: Cancel closes it at once.
+      expect(dialog(wrapper, 'dialog-network-divide').exists()).toBe(false);
+    }
+  });
+
+  it('goes on to configure the carved network, IPv6 and IPv4, when asked to', async () => {
+    for (const [parent, prefix, cidr, id] of [
+      ['fd00:aa:0:200::/55', 55, 'fd00:aa:0:200::/56', 41],
+      ['10.90.2.0/23', 23, '10.90.2.0/24', 42],
+    ]) {
+      const wrapper = mountDialogs();
+      store.previewDivide.mockResolvedValue({ plan: { dependency_token: 't', plan_id: 'p' } });
+      store.divideSubnet.mockResolvedValue({
+        children: [
+          {
+            id,
+            cidr,
+            network_address: cidr.split('/')[0],
+            prefix_length: 56,
+            status: 'unallocated',
+          },
+          { id: id + 100, cidr: 'remainder', status: 'unallocated' },
+        ],
+      });
+      wrapper.vm.openDivide(sized(parent, prefix), { cidr, configure: true });
+      await settle();
+      await wrapper.vm.executeCarve();
+      await settle();
+      expect(dialog(wrapper, 'dialog-network-edit').exists()).toBe(true);
+      expect(wrapper.vm.activeNetworkData.id).toBe(id);
+    }
   });
 });

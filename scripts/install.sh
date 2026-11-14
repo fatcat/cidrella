@@ -271,7 +271,9 @@ if command -v timedatectl >/dev/null 2>&1; then
     info "Enabling NTP time synchronization (required for DNSSEC)..."
     # Ensure a client exists: prefer an already-installed timesyncd/chrony/ntp,
     # otherwise install systemd-timesyncd (smallest footprint).
-    if ! systemctl list-unit-files 2>/dev/null | grep -qE '^(systemd-timesyncd|chrony|chronyd|ntp)\.service'; then
+    # grep reads the whole list: `grep -q` under pipefail failed this test now
+    # and then though the client was there (see update.sh, the polkit check).
+    if ! systemctl list-unit-files 2>/dev/null | grep -E '^(systemd-timesyncd|chrony|chronyd|ntp)\.service' >/dev/null; then
       apt-get install -y -qq systemd-timesyncd >/dev/null 2>&1 || \
         warn "Could not install systemd-timesyncd, enable an NTP client manually for DNSSEC."
     fi
@@ -449,7 +451,7 @@ else
 fi
 
 # Fetch release info
-RELEASE_JSON=$(curl -fsSL "$RELEASE_URL" 2>/dev/null || true)
+RELEASE_JSON=$(curl --proto '=https' --proto-redir '=https' -fsSL "$RELEASE_URL" 2>/dev/null || true)
 if [ -z "$RELEASE_JSON" ]; then
   err "Failed to fetch release info from GitHub."
   err "URL: $RELEASE_URL"
@@ -484,7 +486,7 @@ info "Downloading: $TARBALL_URL"
 TMPDIR=$(mktemp -d)
 trap "rm -rf '$TMPDIR'" EXIT
 
-curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
+curl --proto '=https' --proto-redir '=https' -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
 
 # Download and verify signature
 # Derive the signature from the tarball we actually chose, never by an
@@ -492,7 +494,7 @@ curl -fsSL "$TARBALL_URL" -o "$TMPDIR/cidrella.tar.gz"
 MINISIG_URL="${TARBALL_URL}.minisig"
 
 if command -v minisign &>/dev/null; then
-  curl -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" || {
+  curl --proto '=https' --proto-redir '=https' -fsSL "$MINISIG_URL" -o "$TMPDIR/cidrella.tar.gz.minisig" || {
     err "Failed to download signature file. Aborting."
     exit 1
   }
@@ -740,6 +742,24 @@ _install_unit "$INSTALL_DIR/scripts/systemd/cidrella-anomaly.service" /etc/syste
 ok "Installed cidrella-anomaly.service"
 emit_event systemd pass unit=cidrella-anomaly.service
 
+# The DNS proxy and encrypted forwarder, a process of their own so DNS keeps
+# answering while the web app restarts.
+_install_unit "$INSTALL_DIR/scripts/systemd/cidrella-dns-proxy.service" /etc/systemd/system/cidrella-dns-proxy.service
+ok "Installed cidrella-dns-proxy.service"
+emit_event systemd pass unit=cidrella-dns-proxy.service
+
+# The privileged helper: the one process with CAP_NET_RAW and the polkit
+# grants for daemon control, under an account of its own, since polkit
+# grants by account (scripts/polkit/49-cidrella.rules).
+if ! ensure_service_user cidrella-helper >/dev/null; then
+  err "Could not create the cidrella-helper account."
+  emit_event systemd fail reason=helper-user
+  exit 1
+fi
+_install_unit "$INSTALL_DIR/scripts/systemd/cidrella-helper.service" /etc/systemd/system/cidrella-helper.service
+ok "Installed cidrella-helper.service"
+emit_event systemd pass unit=cidrella-helper.service
+
 # v0.4.11+: templated update worker unit. The cidrella server starts an
 # instance of this unit via polkit-gated systemctl when an in-app update is
 # triggered. See scripts/polkit/49-cidrella.rules and the comment block at
@@ -807,10 +827,11 @@ install_logrotate_configs "$INSTALL_DIR/scripts/logrotate"
 # cidrella-update@*.service instances and reload/restart cidrella-dnsmasq
 # via D-Bus, replacing the sudo+setuid path that was broken by the v0.4.8
 # NoNewPrivileges-implied hardening on cidrella.service.
-mkdir -p /etc/polkit-1/rules.d
-install -m 0644 -o root -g root \
-  "$INSTALL_DIR/scripts/polkit/49-cidrella.rules" \
-  /etc/polkit-1/rules.d/49-cidrella.rules
+# Swapped in whole, so polkitd never reads it half-written (lib/systemd-install.sh).
+if ! install_polkit_rule "$INSTALL_DIR/scripts/polkit/49-cidrella.rules" >/dev/null; then
+  err "Could not install the polkit rule at /etc/polkit-1/rules.d/49-cidrella.rules."
+  exit 1
+fi
 ok "Installed polkit rule (/etc/polkit-1/rules.d/49-cidrella.rules)"
 # Polkit picks up new rules on the next D-Bus call to logind/systemd1.
 # Modern polkitd uses inotify on the rules.d directory; older versions need
@@ -871,6 +892,16 @@ if [ "$DNSMASQ_MODE" = "own" ]; then
 elif [ "$DNSMASQ_MODE" = "include" ]; then
   systemctl restart dnsmasq 2>/dev/null || warn "Could not restart system dnsmasq."
 fi
+
+# Before the web app: it binds nothing until the web app gives it a config.
+systemctl enable cidrella-dns-proxy 2>/dev/null
+systemctl start cidrella-dns-proxy
+ok "cidrella-dns-proxy started."
+
+# Before the web app, which asks it for every probe and daemon change.
+systemctl enable cidrella-helper 2>/dev/null
+systemctl start cidrella-helper
+ok "cidrella-helper started."
 
 systemctl enable cidrella 2>/dev/null
 systemctl start cidrella

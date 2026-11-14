@@ -105,7 +105,10 @@
             v-model:show-available="showAvailable"
             v-model:show-domain-names="showDomainNames"
             v-model:presentation="addressPresentation"
-            :allow-grid="!isV6Network"
+            :grouping="effectiveGrouping"
+            :allow-grid="!isV6Network && !hostsMode"
+            :allow-grouping="contextKind === 'network'"
+            :allow-available="!isV6Network"
             :active-view="activeView"
             :context-kind="contextKind"
             :view-meta="viewMeta"
@@ -123,10 +126,17 @@
             @clear-filters="clearFilters"
             @filter-open="loadFilterFacets"
             @add="runViewAdd"
+            @update:grouping="setGrouping"
           />
 
+          <HostTable
+            v-if="hostsMode"
+            :hosts="hostRows"
+            :selected-address="selectedRowView === 'addresses' ? (selectedRow?.address ?? null) : null"
+            @open-address="openCanonicalAddress"
+          />
           <AddressGrid
-            v-if="activeView === 'addresses' && effectivePresentation !== 'table'"
+            v-else-if="activeView === 'addresses' && effectivePresentation !== 'table'"
             :cells="gridCells"
             :density="effectivePresentation === 'compact-grid' ? 'compact' : 'spacious'"
             :selected-rows="selectedRows"
@@ -276,6 +286,7 @@
       v-model:visible="reservationEditorVisible"
       :subnet-id="selectedNetwork.id"
       :address="reservationTarget.address"
+      :initial-address="reservationTarget.initialAddress"
       :mode="reservationEditorMode"
       @saved="handleReservationSaved"
     />
@@ -297,6 +308,12 @@
       :current-override="scanTarget.raw?.scan_enabled"
       :mode="scanDialogMode"
       @changed="refreshAfterMutation('address', $event)"
+    />
+    <NextPrefixDialog
+      v-model:visible="nextPrefixVisible"
+      :folders="unallocatedFolders"
+      :parent-id="nextPrefixParentId"
+      @continue="workspaceActions.continueNextPrefix"
     />
     <FolderManagerDialog
       v-model:visible="folderManagerVisible"
@@ -339,6 +356,7 @@
         v-for="item in createMenuItems"
         :key="item.id"
         role="menuitem"
+        :data-track="item.track"
         @click="runMenuAction(item)"
       >
         <i :class="item.icon" /><span
@@ -359,6 +377,7 @@
         v-for="item in actionMenuItems"
         :key="item.id"
         role="menuitem"
+        :data-track="item.track"
         :class="{ danger: item.danger, unavailable: !item.available }"
         :aria-disabled="item.available ? undefined : 'true'"
         @click="item.available && runMenuAction(item)"
@@ -393,6 +412,7 @@
         <button
           v-else
           role="menuitem"
+          :data-track="item.track"
           :class="{ danger: item.danger, unavailable: !item.available }"
           :aria-disabled="item.available ? undefined : 'true'"
           :title="item.available ? undefined : item.reason"
@@ -425,6 +445,7 @@ import DnsPanel from '../../components/DnsPanel.vue';
 import DhcpPanel from '../../components/DhcpPanel.vue';
 import Paginator from '../../ui/Paginator.js';
 import { apiError, countOf, formatNumber } from '../../utils/format.js';
+import { byStateLine } from '../../utils/ipLifecycleDisplay.js';
 import { loadJson, saveJson } from '../../utils/storage.js';
 import { reverseZoneSortKey } from '../../utils/reverseZone.js';
 import AddressGrid from './AddressGrid.vue';
@@ -432,6 +453,7 @@ import ApplyStatusBanner from './ApplyStatusBanner.vue';
 import ResourceExplorer from './ResourceExplorer.vue';
 import WorkspaceContextHeader from './WorkspaceContextHeader.vue';
 import WorkspaceDetailsHost from './WorkspaceDetailsHost.vue';
+import HostTable from './HostTable.vue';
 import WorkspaceTable from './WorkspaceTable.vue';
 import WorkspaceToolbar from './WorkspaceToolbar.vue';
 import ConfirmDialog from '../../components/ConfirmDialog.vue';
@@ -441,6 +463,7 @@ import IpReservationEditor from './dialogs/IpReservationEditor.vue';
 import RangeEditor from './dialogs/RangeEditor.vue';
 import AddressScanDialog from './dialogs/AddressScanDialog.vue';
 import FolderManagerDialog from './dialogs/FolderManagerDialog.vue';
+import NextPrefixDialog from './dialogs/NextPrefixDialog.vue';
 import { UNGROUPED_FOLDER, useWorkspaceContext } from './composables/useWorkspaceContext.js';
 import { useWorkspaceResources } from './composables/useWorkspaceResources.js';
 import { contiguousAddressRuns, identityAddress } from './composables/useWorkspaceSelection.js';
@@ -476,6 +499,8 @@ import {
   formatAddressCount,
   compareCellValues,
   flattenAllocatable,
+  networkSearchMatches,
+  prefixCoverage,
 } from '../networks-workspace-data.js';
 import { DHCP_V6_MODE_LABELS } from '../../utils/ip.js';
 import { ZONE_WIDE_NETWORK } from '@shared/ip-columns.js';
@@ -543,8 +568,23 @@ const isV6Network = computed(
       selectedNetwork.value?.address_family ?? selectedNetwork.value?.raw?.address_family ?? 4,
     ) === 6,
 );
+// Hosts or addresses on a network's Addresses view (docs/IPV6-HANDLING.md
+// rule 5). Null follows the family: hosts on IPv6, where one device holds
+// several addresses, and addresses on IPv4.
+const addressGrouping = ref(null);
+const effectiveGrouping = computed(
+  () => addressGrouping.value ?? (isV6Network.value ? 'hosts' : 'addresses'),
+);
+const hostsMode = computed(
+  () =>
+    contextKind.value === 'network' &&
+    activeView.value === 'addresses' &&
+    effectiveGrouping.value === 'hosts',
+);
+const hostRows = ref([]);
+const hostTotal = ref(0);
 const effectivePresentation = computed(() =>
-  isV6Network.value ? 'table' : addressPresentation.value,
+  isV6Network.value || hostsMode.value ? 'table' : addressPresentation.value,
 );
 // The grid draws the whole network at once, up to a /20; the table keeps
 // its 32 to 512 rows a page. A /19 or larger pages the grid in /20 chunks.
@@ -560,6 +600,9 @@ const addressSparse = ref(false);
 // Show available is a preference, kept per browser like the zone side below.
 const SHOW_AVAILABLE_KEY = 'cidrella_workspace_show_available';
 const showAvailable = ref(loadJson(SHOW_AVAILABLE_KEY, true) !== false);
+// An IPv6 network has no switch and hides nothing: its available rows are the
+// network address and an address searched for (docs/IPV6-HANDLING.md, rule 1).
+const effectiveShowAvailable = computed(() => isV6Network.value || showAvailable.value);
 // Off, the DNS table writes names as a zone file does: @, relative names, and
 // absolute ones with a trailing dot.
 const SHOW_DOMAIN_NAMES_KEY = 'cidrella_workspace_show_domain_names';
@@ -599,6 +642,8 @@ const dnsDialogs = ref(null);
 const dhcpDialogs = ref(null);
 const applyStatus = ref(null);
 const folderManagerVisible = ref(false);
+const nextPrefixVisible = ref(false);
+const nextPrefixParentId = ref(null);
 const selectedZoneFilter = ref(null);
 // Every reverse zone of one network at once, the heading of that network in
 // the reverse zone picker. Excludes selectedZoneFilter: one or the other.
@@ -714,10 +759,6 @@ const columnTableName = computed(() => {
 const canAnyCreate = computed(() => createMenuItems.value.length > 0);
 const canCreateCurrent = computed(() => viewAddAction.value?.available === true);
 
-// What the explorer and the unallocated table match a search against. The
-// server's network search covers allocated networks only.
-const networkTextMatches = (network, query) =>
-  `${network.name} ${network.cidr} ${network.vlan}`.toLowerCase().includes(query);
 const filteredFolders = computed(() => {
   const query = resourceQuery.value.trim().toLowerCase();
   const source = contextKind.value === 'unallocated' ? unallocatedFolders.value : folders.value;
@@ -727,7 +768,7 @@ const filteredFolders = computed(() => {
       const children = filterNodes(network.children || []);
       const matches =
         searchMatches.value?.networks?.has(Number(network.id)) ||
-        networkTextMatches(network, query);
+        networkSearchMatches(network, query);
       return matches || children.length ? [{ ...network, children }] : [];
     });
   return source
@@ -1017,6 +1058,7 @@ function workspaceQueryState() {
         : null,
     presentation:
       addressPresentation.value === 'compact-grid' ? 'compact' : addressPresentation.value,
+    grouping: addressGrouping.value,
     q: resourceQuery.value,
     tableQ: tableQuery.value,
     page: currentPage.value,
@@ -1062,6 +1104,7 @@ function restoreContextFromRoute(availableNetworks) {
   sortOrder.value = state.order === 'desc' ? -1 : 1;
   addressPresentation.value =
     state.presentation === 'compact' ? 'compact-grid' : state.presentation;
+  addressGrouping.value = state.grouping;
   if (state.context === 'network') {
     const network = availableNetworks.find((item) => Number(item.id) === Number(state.network));
     if (network) {
@@ -1155,7 +1198,10 @@ const viewMeta = computed(() => {
       };
   }
   if (activeView.value === 'addresses')
-    return { ...base, title: `${formatNumber(addressTotal.value)} managed addresses` };
+    return {
+      ...base,
+      title: `${formatNumber(addressTotal.value)} ${addressSparse.value ? 'known' : 'managed'} addresses`,
+    };
   if (activeView.value === 'dns')
     return {
       ...base,
@@ -1184,6 +1230,7 @@ const columns = computed(() => {
 });
 const serverPagedView = computed(() => ['addresses', 'dns', 'dhcp'].includes(activeView.value));
 const visibleResourceError = computed(() => {
+  if (hostsMode.value) return workspaceResources.resources.hosts.error;
   if (activeView.value === 'addresses') return workspaceResources.resources.addresses.error;
   if (activeView.value === 'dns') return workspaceResources.resources.dns.error;
   if (activeView.value === 'dhcp') return workspaceResources.resources.dhcp.error;
@@ -1310,7 +1357,7 @@ const rowMenuTitle = computed(() => {
   }
   return kind === 'folder'
     ? 'FOLDER ACTIONS'
-    : kind === 'network'
+    : kind === 'network' || kind === 'network-container'
       ? 'NETWORK ACTIONS'
       : `${activeView.value.toUpperCase()} ACTIONS`;
 });
@@ -1332,6 +1379,9 @@ function buildUnallocatedFolders(sourceFolders) {
       used: 0,
       state: allocatable ? 'unallocated' : 'container',
       allocatable,
+      // Read from the whole subtree: the allocated networks are not listed
+      // here, but they are what the container holds.
+      coverage: allocatable ? null : prefixCoverage(network),
       children,
     };
   };
@@ -1357,17 +1407,27 @@ function preserveEmptyFolders(allocated, sourceFolders) {
   );
 }
 
+// The DHCP tile's note: pool use where the network has a pool, which is how
+// full an IPv6 network is, else the scope count.
+const poolUseNote = computed(() => {
+  const summary = workspaceResources.resources.summary.data;
+  if (isV6Network.value && summary?.pool_size != null) {
+    return `${formatNumber(summary.pool_in_use || 0)} of ${formatAddressCount(summary.pool_size)} in use`;
+  }
+  return `${networkScopes.value.filter((scope) => scope.enabled).length} active scopes`;
+});
 const contextStats = computed(() =>
   contextKind.value === 'network'
     ? [
         // A percent needs a total, which the server sends whenever the prefix
         // fits a JavaScript number: every IPv4 network and an IPv6 one
-        // longer than about /75. A /64 gets the count instead.
+        // longer than about /75. A /64 is an inventory: what is known, by
+        // kind (docs/IPV6-HANDLING.md, rule 3).
         !Number.isFinite(workspaceResources.resources.summary.data?.total_addresses ?? NaN)
           ? {
-              label: 'ASSIGNED',
-              value: formatNumber(workspaceResources.resources.summary.data?.assigned_count || 0),
-              note: 'addresses with an allocation',
+              label: 'KNOWN',
+              value: formatNumber(workspaceResources.resources.summary.data?.known_count || 0),
+              note: byStateLine(workspaceResources.resources.summary.data?.by_state),
               tone: 'neutral',
             }
           : {
@@ -1395,7 +1455,7 @@ const contextStats = computed(() =>
           value: isV6Network.value
             ? dhcpV6ModeLabel(networkScopes.value)
             : formatAddressCount(sumScopeAddresses(networkScopes.value)),
-          note: `${networkScopes.value.filter((scope) => scope.enabled).length} active scopes`,
+          note: poolUseNote.value,
           tone: 'good',
           dot: true,
           view: 'dhcp',
@@ -1619,7 +1679,10 @@ const filteredRows = computed(() => {
       ? [globalQuery, tableQuery.value.trim().toLowerCase()].filter(Boolean)
       : [];
   return currentRows.value.filter((row) => {
-    if (!showAvailable.value && (row.status === 'available' || row.leaseStatus === 'available'))
+    if (
+      !effectiveShowAvailable.value &&
+      (row.status === 'available' || row.leaseStatus === 'available')
+    )
       return false;
     // The IP tables arrive filtered by the server; the whole lists filter here.
     if (
@@ -1633,7 +1696,7 @@ const filteredRows = computed(() => {
         contextKind.value === 'unallocated'
           ? [globalQuery, tableText]
               .filter(Boolean)
-              .every((query) => networkTextMatches(row.raw, query))
+              .every((query) => networkSearchMatches(row.raw, query))
           : matchedNetworkIds.value?.has(Number(row.raw.id));
       if (!matches) return false;
     }
@@ -2002,6 +2065,7 @@ async function onPaginatorPage({ page, rows }) {
   else clientPage.value = page + 1;
 }
 const rowTotal = computed(() => {
+  if (hostsMode.value) return hostTotal.value;
   if (activeView.value === 'addresses') return addressFilteredTotal.value;
   if (activeView.value === 'dns') return dnsTotal.value;
   if (activeView.value === 'dhcp') return dhcpTotal.value;
@@ -2009,6 +2073,9 @@ const rowTotal = computed(() => {
 });
 
 const resultCountLabel = computed(() => {
+  if (hostsMode.value) {
+    return `Showing ${hostRows.value.length} of ${hostTotal.value} ${hostTotal.value === 1 ? 'host' : 'hosts'}`;
+  }
   if (activeView.value === 'addresses' && contextKind.value === 'network') {
     return addressCountLabel({
       shown: filteredRows.value.length,
@@ -2150,8 +2217,18 @@ async function openRelatedResource(resource, identity = null) {
     await updateWorkspaceRoute();
     return;
   }
-  const address = identity?.ip_address || pinnedAddress.value;
+  const address = target.address || identity?.ip_address || pinnedAddress.value;
   if (target.view === 'addresses') {
+    // A host's address in another network (the details panel's Host
+    // section) opens that network first.
+    const elsewhere =
+      target.subnetId && Number(target.subnetId) !== Number(selectedNetwork.value?.id)
+        ? allNetworks.value.find((network) => Number(network.id) === Number(target.subnetId))
+        : null;
+    if (elsewhere) {
+      activeView.value = 'addresses';
+      await selectNetwork(elsewhere);
+    }
     await openCanonicalAddress(address);
     return;
   }
@@ -2275,6 +2352,15 @@ function openFolderMenu(folder, invoker = null, event = null) {
 // Right-clicking one of several checked networks targets them all, as in
 // the table.
 function openNetworkMenu(network, invoker = null, event = null) {
+  // A container is not a place to open, only space to plan in.
+  if (network.state === 'container') {
+    openTargetMenu(
+      { kind: 'network-container', id: network.id, status: network.status, raw: network },
+      invoker,
+      event,
+    );
+    return;
+  }
   const onSelection =
     selectedRows.value.length > 1 && selectedRows.value.includes(`network:${network.id}`);
   openTargetMenu(
@@ -2365,6 +2451,12 @@ function openRowMenu(row, invoker = null, event = null) {
 function selectRow(row) {
   pinDetail(row);
   updateWorkspaceRoute();
+}
+async function setGrouping(grouping) {
+  addressGrouping.value = grouping;
+  currentPage.value = 1;
+  await updateWorkspaceRoute();
+  await loadNetworkContext();
 }
 
 async function openCanonicalAddress(address = selectedRow.value?.address) {
@@ -2476,6 +2568,8 @@ const workspaceActions = useWorkspaceActions({
     dhcpDialogs,
     protocolDialogsMounted,
     folderManagerVisible,
+    nextPrefixVisible,
+    nextPrefixParentId,
     reservationTarget,
     reservationEditorMode,
     reservationEditorVisible,
@@ -2644,21 +2738,32 @@ async function loadNetworkContext({ silent = false } = {}) {
     // Every table of the network loads for the tab badges and the details
     // panel; only the one on screen carries the search, filters and sort.
     const onScreen = (view) => (activeView.value === view ? tableRequestParams() : {});
+    // In the Hosts view the address read is only for the badges and the
+    // details panel; the page, the search and the counts are the hosts'.
+    const hosts = hostsMode.value;
     const params = {
-      page: activeView.value === 'addresses' ? currentPage.value : 1,
+      page: activeView.value === 'addresses' && !hosts ? currentPage.value : 1,
       pageSize: addressPageSize.value,
-      showAvailable: showAvailable.value ? 'true' : 'false',
-      ...onScreen('addresses'),
+      showAvailable: effectiveShowAvailable.value ? 'true' : 'false',
+      ...(hosts ? {} : onScreen('addresses')),
     };
     const protocolParams = {
       subnet_id: selectedNetwork.value.id,
       page: currentPage.value,
       page_size: pageSize.value,
     };
-    const [detail, dns, dhcp] = await Promise.all([
+    const [detail, dns, dhcp, hostPage] = await Promise.all([
       workspaceResources.loadAddresses(selectedNetwork.value.id, params),
       workspaceResources.loadDns({ ...protocolParams, ...onScreen('dns') }),
       workspaceResources.loadDhcp({ ...protocolParams, ...onScreen('dhcp') }),
+      hosts
+        ? workspaceResources.loadHosts(selectedNetwork.value.id, {
+            page: currentPage.value,
+            page_size: pageSize.value,
+            q: tableQuery.value.trim(),
+            search: resourceQuery.value.trim(),
+          })
+        : null,
       workspaceResources.loadSummary(selectedNetwork.value.id),
       workspaceResources.loadDnsTotal({ subnet_id: selectedNetwork.value.id }),
       workspaceResources.loadDhcpTotal({ subnet_id: selectedNetwork.value.id }),
@@ -2670,14 +2775,18 @@ async function loadNetworkContext({ silent = false } = {}) {
     if (detail) rangeRows.value = mapRangeRows(detail.ranges, networkScopes.value);
     addressFilteredTotal.value = detail?.filteredTotal || 0;
     addressSparse.value = detail?.sparse === true;
-    // A sparse network has no total; its count is the addresses it holds
-    // an allocation for, which the summary already knows.
+    // A sparse (IPv6) network has no total; its count is the addresses it
+    // knows of, stored or topology, which the summary already counts.
     addressTotal.value = addressSparse.value
-      ? Number(workspaceResources.resources.summary.data?.assigned_count ?? detail?.total ?? 0)
+      ? Number(workspaceResources.resources.summary.data?.known_count ?? detail?.total ?? 0)
       : Number(workspaceResources.resources.summary.data?.total_addresses ?? detail?.total ?? 0);
+    if (hosts && !hostPage)
+      throw new Error(workspaceResources.resources.hosts.error || 'Host data unavailable');
+    hostRows.value = hostPage?.items || [];
+    hostTotal.value = hostPage?.total || 0;
     if (activeView.value === 'addresses') {
-      totalPages.value = detail?.totalPages || 1;
-      currentPage.value = detail?.page || 1;
+      totalPages.value = (hosts ? hostPage?.totalPages : detail?.totalPages) || 1;
+      currentPage.value = (hosts ? hostPage?.page : detail?.page) || 1;
     }
     if (dns) {
       networkDnsRowsData.value = mapWorkspaceDnsRows(dns.items);

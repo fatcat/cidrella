@@ -4,7 +4,7 @@
  * mocked to record a result per target, so no packets leave the test.
  */
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
-import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
+import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createMultiRouterApp } from '../../helpers/test-app.js';
 
 const scanned = [];
@@ -62,6 +62,31 @@ describe('POST /api/scans/probe', () => {
       ['10.60.0.10', true],
       ['10.60.0.11', false],
     ]);
+    expect(getDb().prepare('SELECT COUNT(*) AS n FROM network_scans').get().n).toBe(0);
+  });
+
+  it('says why a probe could not run, either family, and leaves no scan behind', async () => {
+    const { startScan } = await import('../../../src/utils/scanner.js');
+    const v6 = getDb()
+      .prepare(
+        `INSERT INTO subnets (cidr, name, status, network_address, prefix_length, total_addresses, address_family)
+         VALUES ('fd00:60::/64', 'probe6', 'allocated', 'fd00:60::', 64, 0, 6)`,
+      )
+      .run().lastInsertRowid;
+    enableIpv6(getDb());
+    for (const body of [
+      { subnet_id: subnetId, ips: ['10.60.0.10'] },
+      { subnet_id: v6, ips: ['fd00:60::10'] },
+    ]) {
+      startScan.mockRejectedValueOnce(
+        new Error('Scan stopped: the privileged helper is not answering'),
+      );
+      const res = await request(app).post('/api/scans/probe').send(body);
+      expect(res.status).toBe(500);
+      expect(res.body.error).toBe(
+        'Probe failed: Scan stopped: the privileged helper is not answering',
+      );
+    }
     expect(getDb().prepare('SELECT COUNT(*) AS n FROM network_scans').get().n).toBe(0);
   });
 

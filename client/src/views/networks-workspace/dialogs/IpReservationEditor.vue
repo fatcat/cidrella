@@ -9,7 +9,10 @@
     <form class="reservation-form" @submit.prevent="submit">
       <label v-if="!address">
         IP address
-        <input v-model="targetAddress" required autocomplete="off" />
+        <span class="input-with-action">
+          <input v-model="targetAddress" required autocomplete="off" />
+          <SuggestAddressButton :subnet-id="subnetId" @suggested="targetAddress = $event" />
+        </span>
       </label>
       <p v-else>
         <strong>{{ address }}</strong>
@@ -43,6 +46,7 @@ import { computed, ref, watch } from 'vue';
 import api from '../../../api/client.js';
 import Button from '../../../ui/Button.js';
 import Dialog from '../../../ui/Dialog.js';
+import SuggestAddressButton from '../../../components/SuggestAddressButton.vue';
 import { apiError } from '../../../utils/format.js';
 import { useDiscardGuard } from '../composables/useDiscardGuard.js';
 import DiscardPrompt from './DiscardPrompt.vue';
@@ -51,6 +55,8 @@ const props = defineProps({
   visible: { type: Boolean, default: false },
   subnetId: { type: [Number, String], required: true },
   address: { type: String, required: true },
+  // Prefills the address input when `address` is empty (Reserve next free).
+  initialAddress: { type: String, default: '' },
   mode: {
     type: String,
     required: true,
@@ -63,6 +69,7 @@ const targetAddress = ref('');
 const busy = ref(false);
 const error = ref('');
 const isReserve = computed(() => props.mode === 'reserve');
+const startAddress = () => props.address || props.initialAddress;
 
 // Release has nothing to type, so only the reserve form can be dirty.
 const {
@@ -74,7 +81,7 @@ const {
 } = useDiscardGuard({
   busy,
   isDirty: () =>
-    isReserve.value && (note.value.trim() !== '' || targetAddress.value.trim() !== props.address),
+    isReserve.value && (note.value.trim() !== '' || targetAddress.value.trim() !== startAddress()),
   close: () => emit('update:visible', false),
 });
 
@@ -83,7 +90,7 @@ watch(
   (visible) => {
     if (visible) {
       note.value = '';
-      targetAddress.value = props.address;
+      targetAddress.value = startAddress();
       error.value = '';
       resetGuard();
     }

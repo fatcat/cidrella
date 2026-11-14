@@ -1,4 +1,3 @@
-import { getSetting } from '../db/init.js';
 import { networkOptionFills } from '../utils/dhcp-network-options.js';
 import {
   parseNetwork,
@@ -11,6 +10,7 @@ import {
 } from '../utils/ip.js';
 import { addressFamily } from '../utils/address.js';
 import { dynamicPoolConflict } from '../models/dhcp-scope.js';
+import { defaultLeaseTime } from '../models/dhcp-option.js';
 import { dhcpV6ModesFor } from '../utils/cidr.js';
 
 function nearestPow2(n) {
@@ -118,13 +118,7 @@ export function createAutoScopeV6(db, subnetId, parsed, domainName, { mode, pool
     VALUES (?, ?, ?, ?, 'Auto-created DHCPv6 scope', 6, ?)
   `,
     )
-    .run(
-      rangeResult.lastInsertRowid,
-      subnetId,
-      getSetting('default_lease_time'),
-      domainName || null,
-      mode,
-    );
+    .run(rangeResult.lastInsertRowid, subnetId, defaultLeaseTime(db, 6), domainName || null, mode);
   db.prepare(
     `
     INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
@@ -151,16 +145,9 @@ export function createAutoScopeV6(db, subnetId, parsed, domainName, { mode, pool
 }
 
 /**
- * The value fillScopeOptions and writeScopeOptionRows carry for an option the
- * scope takes from the default (Use default): stored as a linked row, a NULL
- * value that follows the default (see resolveEffectiveScopeOptions).
- */
-export const USE_DEFAULT = Symbol('use-default');
-
-/**
- * Give a new scope the family's add-to-new-scopes options: linked to the
- * default where it has a value, otherwise filled from a network fact (see
- * fillScopeOptions).
+ * Give a new scope the family's add-to-new-scopes options: the default's
+ * value, copied as the scope's own, or where the default has none a network
+ * fact (see fillScopeOptions). The defaults play no part after that.
  */
 export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, domain, cidr) {
   const family = parsed.family === 6 ? 6 : 4;
@@ -170,10 +157,7 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
     )
     .all(family);
   const optionValues = fillScopeOptions(
-    enabledRows.map((row) => ({
-      code: row.option_code,
-      value: row.value != null && row.value !== '' ? USE_DEFAULT : null,
-    })),
+    enabledRows.map((row) => ({ code: row.option_code, value: row.value })),
     { parsed, gateway, domain, serverIp: getServerIpForSubnet(cidr) },
   );
   writeScopeOptionRows(db, scopeId, family, optionValues);
@@ -183,15 +167,15 @@ export function insertScopeOptionsFromDefaults(db, scopeId, parsed, gateway, dom
  * The option set a scope gets from a list of enabled options, the way a new
  * scope gets it: a blank value that defaults to a network fact is filled,
  * and the topology values replace what is set, by networkOptionFills (the
- * rule the scope dialog shares). A value may be USE_DEFAULT, which counts as set. Returns a Map of code to
- * value; a code still blank has a null value.
+ * rule the scope dialog shares). Returns a Map of code to value; a code still
+ * blank has a null value.
  */
 export function fillScopeOptions(enabled, { parsed, gateway, domain, serverIp }) {
   const family = parsed.family === 6 ? 6 : 4;
   const optionValues = new Map();
   for (const { code, value } of enabled) {
     const blank = value == null || value === '';
-    optionValues.set(Number(code), value === USE_DEFAULT ? value : blank ? null : String(value));
+    optionValues.set(Number(code), blank ? null : String(value));
   }
   const fills = networkOptionFills({
     family,
@@ -208,16 +192,17 @@ export function fillScopeOptions(enabled, { parsed, gateway, domain, serverIp })
 }
 
 /**
- * Store a scope's option rows from fillScopeOptions: USE_DEFAULT as a linked
- * row, blank values skipped.
+ * Store a scope's option rows from fillScopeOptions, blank values skipped.
+ * DHCPv4 Lease Time (51) is the scope's lease_time column, never a row
+ * (defaultLeaseTime picks it for a new scope).
  */
 export function writeScopeOptionRows(db, scopeId, family, optionValues) {
   const insertOpt = db.prepare(
     'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, ?)',
   );
   for (const [code, value] of optionValues) {
-    if (value === USE_DEFAULT) insertOpt.run(scopeId, code, null, family);
-    else if (value != null && value !== '') insertOpt.run(scopeId, code, String(value), family);
+    if (family === 4 && Number(code) === 51) continue;
+    if (value != null && value !== '') insertOpt.run(scopeId, code, String(value), family);
   }
 }
 
@@ -245,17 +230,11 @@ export function createAutoScope(db, subnetId, parsed, gateway, domainName, pool)
   const scopeResult = db
     .prepare(
       `
-    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, gateway, domain_name, description)
-    VALUES (?, ?, ?, ?, ?, 'Auto-created DHCP scope')
+    INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, domain_name, description)
+    VALUES (?, ?, ?, ?, 'Auto-created DHCP scope')
   `,
     )
-    .run(
-      rangeResult.lastInsertRowid,
-      subnetId,
-      getSetting('default_lease_time'),
-      gateway,
-      effectiveDomain,
-    );
+    .run(rangeResult.lastInsertRowid, subnetId, defaultLeaseTime(db, 4), effectiveDomain);
   db.prepare(
     `
     INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
@@ -370,7 +349,7 @@ function createDefaultScopeFromSource(db, source, targetId, parsed, gateway) {
   db.prepare(
     `
     UPDATE dhcp_scopes SET lease_time = ?, dns_servers = ?, domain_name = ?,
-      gateway = ?, enabled = ?, description = ?, ntp_servers = ?,
+      enabled = ?, description = ?, ntp_servers = ?,
       domain_search = ?, updated_at = datetime('now')
     WHERE id = ?
   `,
@@ -378,7 +357,6 @@ function createDefaultScopeFromSource(db, source, targetId, parsed, gateway) {
     source.lease_time,
     source.dns_servers,
     source.domain_name,
-    gateway,
     source.enabled,
     source.description,
     source.ntp_servers,
@@ -417,7 +395,6 @@ function createDefaultV6ScopeFromSource(db, source, targetId, parsed, gateway) {
   `,
   ).run(source.lease_time, source.domain_name, source.enabled, source.description, scopeId);
   // The source's DHCPv6 options, in their own namespace, replace the defaults.
-  // A linked row (NULL value) stays linked.
   db.prepare('DELETE FROM dhcp_scope_options WHERE scope_id = ?').run(scopeId);
   const insertOption = db.prepare(
     'INSERT INTO dhcp_scope_options (scope_id, option_code, value, address_family) VALUES (?, ?, ?, 6)',
@@ -571,8 +548,8 @@ export function rebaseScopeTopologyOptions(db, scopeId, parsed, gateway) {
 export function rebaseScopeForNetwork(db, scopeId, parsed, gateway) {
   rebaseScopeTopologyOptions(db, scopeId, parsed, gateway);
   return db
-    .prepare("UPDATE dhcp_scopes SET gateway = ?, updated_at = datetime('now') WHERE id = ?")
-    .run(gateway, scopeId);
+    .prepare("UPDATE dhcp_scopes SET updated_at = datetime('now') WHERE id = ?")
+    .run(scopeId);
 }
 
 export function captureScopeTemplate(db, sourceIds) {

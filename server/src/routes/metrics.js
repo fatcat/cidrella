@@ -34,7 +34,10 @@ router.get('/timeseries', requirePerm('analytics:read'), (req, res) => {
   const cutoff = parseCutoff(req.query.range);
   const rows = db
     .prepare(
-      'SELECT ts, dns_queries, dhcp_requests, dhcp_client_msgs, dhcp_server_msgs, blocklist_blocks, geoip_blocks FROM metrics WHERE ts >= ? ORDER BY ts',
+      `SELECT ts, dns_queries, dhcp_requests, dhcp_client_msgs, dhcp_server_msgs,
+              dhcp4_client_msgs, dhcp4_server_msgs, dhcp6_client_msgs, dhcp6_server_msgs,
+              blocklist_blocks, geoip_blocks
+       FROM metrics WHERE ts >= ? ORDER BY ts`,
     )
     .all(cutoff);
   res.json(rows);
@@ -118,7 +121,7 @@ router.get('/configuration-generation', requirePerm('analytics:read'), (req, res
 
 // GET /api/metrics/services
 router.get('/services', requirePerm('analytics:read'), async (req, res) => {
-  const backends = backendStatuses();
+  const backends = await backendStatuses();
 
   // GeoIP proxy status
   const geoipStatus = getProxyStatus();

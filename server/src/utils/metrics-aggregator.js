@@ -10,14 +10,8 @@
  */
 
 import { createLogFollower } from './log-reader.js';
-import {
-  getBlockedDelta,
-  getAndResetCountryHits,
-  getAndResetPerformanceMetrics,
-  getAndResetBlocklistHits,
-} from './dns-proxy.js';
+import { drainProxyMetrics } from './dns-proxy.js';
 import { getDhcpBackend, getService, onBackendChanged } from '../backends/index.js';
-import { getAndResetForwarderMetrics } from './encrypted-forwarder.js';
 
 const AGGREGATE_INTERVAL_MS = 60_000;
 const RETENTION_DAYS = 30;
@@ -33,9 +27,6 @@ let lastDhcpCounters = null;
 let unsubscribeBackend = null;
 let cycleCount = 0;
 
-// CPU tracking for delta computation
-let lastCpuUsage = process.cpuUsage();
-let lastCpuTs = Date.now();
 let startupRecorded = false;
 
 // Prepared statements (initialized on start)
@@ -50,33 +41,38 @@ let deleteOldGeoipHits = null;
 let deleteOldProxyPerf = null;
 let deleteOldForwarder = null;
 
+/** DHCP message counts per family and conversation half, all zero. */
+export const emptyDhcpCounts = () => ({
+  4: { client: 0, server: 0 },
+  6: { client: 0, server: 0 },
+});
+
 /**
- * Parse new log lines and return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs }.
- * The two DHCP counts are kept apart so the dashboard can show a request the
- * server never answered; dhcp_requests, the column older readers use, stays
- * as the sum. `dns` and `dhcp` say which counts this log is read for.
+ * Parse new log lines and return { dnsQueries, dhcp }, where dhcp is
+ * { 4: { client, server }, 6: { client, server } }. The two halves are kept
+ * apart so the dashboard can show a request the server never answered, and
+ * the families so DHCPv4 and DHCPv6 draw on their own charts; dhcp_requests,
+ * the column older readers use, stays as the sum of all four. `dns` and
+ * `dhcp` say which counts this log is read for.
  */
 export function parseLogLines(
   lines,
   source = getService('dns').logSource(),
   { dns = true, dhcp = true } = {},
 ) {
-  if (!source) return { dnsQueries: 0, dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
-  let dnsQueries = 0;
-  let dhcpClientMsgs = 0;
-  let dhcpServerMsgs = 0;
+  const counts = { dnsQueries: 0, dhcp: emptyDhcpCounts() };
+  if (!source) return counts;
 
   for (const line of lines) {
     if (source.querySourceIp(line)) {
-      if (dns) dnsQueries++;
+      if (dns) counts.dnsQueries++;
     } else if (dhcp) {
-      const direction = source.dhcpDirection(line);
-      if (direction === 'client') dhcpClientMsgs++;
-      else if (direction === 'server') dhcpServerMsgs++;
+      const message = source.dhcpMessage(line);
+      if (message) counts.dhcp[message.family][message.direction]++;
     }
   }
 
-  return { dnsQueries, dhcpClientMsgs, dhcpServerMsgs };
+  return counts;
 }
 
 // The logs to read: the DNS backend's for queries, and the DHCP backend's
@@ -93,14 +89,23 @@ function selectLogTails(dhcpFromLog) {
 }
 
 /**
- * DHCP messages since the last call from the backend's counters, which are
- * totals since the daemon started: a total that went down means a restart,
- * and the new total is all new. The first call sets the baseline.
+ * DHCP messages since the last call from the backend's counters
+ * ({ 4?: { received, sent }, 6?: { received, sent } }), which are totals
+ * since the daemon started: a total that went down means a restart, and the
+ * new total is all new. The first call sets the baseline. Returns the shape
+ * of emptyDhcpCounts; a family the backend does not serve stays zero.
  */
 export function counterDelta(last, current) {
-  if (!last) return { dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
-  const delta = (key) => (current[key] >= last[key] ? current[key] - last[key] : current[key]);
-  return { dhcpClientMsgs: delta('received'), dhcpServerMsgs: delta('sent') };
+  const counts = emptyDhcpCounts();
+  if (!last) return counts;
+  for (const family of [4, 6]) {
+    const now = current[family];
+    const before = last[family];
+    if (!now) continue;
+    const delta = (key) => (before && now[key] >= before[key] ? now[key] - before[key] : now[key]);
+    counts[family] = { client: delta('received'), server: delta('sent') };
+  }
+  return counts;
 }
 
 async function dhcpCounterCounts() {
@@ -109,7 +114,7 @@ async function dhcpCounterCounts() {
     current = await getDhcpBackend().dhcpCounters();
   } catch (err) {
     console.warn('[metrics-aggregator] DHCP counters unavailable:', err.message);
-    return { dhcpClientMsgs: 0, dhcpServerMsgs: 0 };
+    return emptyDhcpCounts();
   }
   const counts = counterDelta(lastDhcpCounters, current);
   lastDhcpCounters = current;
@@ -126,46 +131,28 @@ async function aggregate() {
     const ts = Math.floor(Date.now() / 60_000) * 60; // minute-aligned epoch seconds
 
     let dnsQueries = 0;
-    let dhcpClientMsgs = 0;
-    let dhcpServerMsgs = 0;
+    let dhcp = emptyDhcpCounts();
     for (const tail of logTails) {
       const counts = parseLogLines(tail.log.read(), tail.source, tail);
       dnsQueries += counts.dnsQueries;
-      dhcpClientMsgs += counts.dhcpClientMsgs;
-      dhcpServerMsgs += counts.dhcpServerMsgs;
+      for (const family of [4, 6]) {
+        dhcp[family].client += counts.dhcp[family].client;
+        dhcp[family].server += counts.dhcp[family].server;
+      }
     }
-    if (backendCountsDhcp()) {
-      ({ dhcpClientMsgs, dhcpServerMsgs } = await dhcpCounterCounts());
-    }
+    if (backendCountsDhcp()) dhcp = await dhcpCounterCounts();
+    const dhcpClientMsgs = dhcp[4].client + dhcp[6].client;
+    const dhcpServerMsgs = dhcp[4].server + dhcp[6].server;
 
-    // Blocklist blocks from in-memory proxy counters
-    const blocklistData = getAndResetBlocklistHits();
-    const blocklistBlocks = blocklistData.delta;
-    const categoryCounts = blocklistData.categoryHits;
-
-    // GeoIP blocks from in-memory counters
-    const geoipBlocks = getBlockedDelta();
-    const geoipCountryHits = getAndResetCountryHits();
-
-    // Proxy performance metrics
-    const perf = getAndResetPerformanceMetrics();
-    const forwarderRows = getAndResetForwarderMetrics();
-
-    // Process-level CPU (delta since last cycle)
-    const now = Date.now();
-    const cpu = process.cpuUsage(lastCpuUsage);
-    const wallMs = now - lastCpuTs;
-    const cpuPercent =
-      wallMs > 0 && cpu
-        ? Math.round(((cpu.user + cpu.system) / 1000 / wallMs) * 100 * 100) / 100
-        : 0;
-    lastCpuUsage = process.cpuUsage();
-    lastCpuTs = now;
-
-    // Process-level memory
-    const mem = process.memoryUsage();
-    const rssMb = Math.round((mem.rss / 1048576) * 10) / 10;
-    const heapMb = Math.round((mem.heapUsed / 1048576) * 10) / 10;
+    // What the proxy counted this minute: blocklist and GeoIP blocks, its
+    // performance, and the forwarder's rows.
+    const proxy = await drainProxyMetrics();
+    const blocklistBlocks = proxy.blocklistHits.delta;
+    const categoryCounts = proxy.blocklistHits.categoryHits;
+    const geoipBlocks = proxy.blockedDelta;
+    const geoipCountryHits = proxy.countryHits;
+    const perf = proxy.performance;
+    const forwarderRows = proxy.forwarder;
 
     // Record startup_ms only once
     const startupMs = !startupRecorded && perf.startupMs != null ? perf.startupMs : null;
@@ -179,6 +166,10 @@ async function aggregate() {
         dhcpClientMsgs + dhcpServerMsgs,
         dhcpClientMsgs,
         dhcpServerMsgs,
+        dhcp[4].client,
+        dhcp[4].server,
+        dhcp[6].client,
+        dhcp[6].server,
         blocklistBlocks,
         geoipBlocks,
       );
@@ -199,9 +190,10 @@ async function aggregate() {
         perf.cacheMisses,
         perf.timeouts,
         perf.pendingQueries,
-        cpuPercent,
-        rssMb,
-        heapMb,
+        // The proxy's own CPU and memory, null for a minute it did not answer.
+        perf.cpuPercent ?? null,
+        perf.rssMb ?? null,
+        perf.heapMb ?? null,
         startupMs,
         perf.failures?.dnssec ?? 0,
         perf.failures?.upstream ?? 0,
@@ -239,7 +231,7 @@ function bindSources() {
     log: createLogFollower(tail.source),
   }));
   lastDhcpCounters = null;
-  if (countsItself) dhcpCounterCounts();
+  if (countsItself) void dhcpCounterCounts();
 }
 
 /**
@@ -250,7 +242,11 @@ export function startMetricsAggregator(database) {
 
   // Prepare statements
   insertMetrics = db.prepare(
-    'INSERT INTO metrics (ts, dns_queries, dhcp_requests, dhcp_client_msgs, dhcp_server_msgs, blocklist_blocks, geoip_blocks) VALUES (?, ?, ?, ?, ?, ?, ?)',
+    `INSERT INTO metrics
+     (ts, dns_queries, dhcp_requests, dhcp_client_msgs, dhcp_server_msgs,
+      dhcp4_client_msgs, dhcp4_server_msgs, dhcp6_client_msgs, dhcp6_server_msgs,
+      blocklist_blocks, geoip_blocks)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
   );
   insertBlocklistHit = db.prepare(
     'INSERT INTO metrics_blocklist_hits (ts, category, count) VALUES (?, ?, ?)',

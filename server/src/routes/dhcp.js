@@ -1,5 +1,5 @@
 import { Router } from 'express';
-import { getDb, getSetting } from '../db/init.js';
+import { getDb } from '../db/init.js';
 import { recordAudit, sample } from '../services/audit.js';
 import { requirePerm } from '../auth/require-perm.js';
 import {
@@ -21,6 +21,7 @@ import { sortKey, canonicalizeIp, addressFamily } from '../utils/address.js';
 import { isLeaseActive } from '../utils/lease-sql.js';
 import { syncLeasesNow } from '../services/dhcp-lease-sync.js';
 import {
+  optionAllowsComma,
   DHCP_OPTION_GROUPS,
   optionCatalogFor,
   builtInCodeReason,
@@ -52,21 +53,28 @@ import {
   replaceDefaultOptions,
   getDefaultOptions,
   SHIPPED_DEFAULT_OPTIONS,
-  linkedOptionCounts,
+  defaultLeaseTime,
+  saveDefaultAddressLifetime,
 } from '../models/dhcp-option.js';
 import { bulkChangeScopeOptions } from '../models/dhcp-bulk-options.js';
 import { scopeMatches } from '../models/workspace-view.js';
 import { UNGROUPED } from '../utils/validation.js';
-import { isValidLeaseTime } from '../utils/lease-time.js';
+import { isValidLeaseTime, leaseSeconds } from '../utils/lease-time.js';
+import { DEFAULTS } from '../config/defaults.js';
 
 const router = Router();
+
+// A scope has no router of its own. An API caller that still sends one is told
+// so: storing nothing and answering 200 would say it took effect. DHCPv4 clients
+// get the network's gateway; DHCPv6 clients learn routers from RA.
+const SCOPE_GATEWAY_REFUSED =
+  "A scope has no gateway of its own: DHCPv4 hands out the network's gateway, set it on the network; DHCPv6 routers come from RA";
 
 // What a scope edit can change, for its audit row.
 const SCOPE_AUDIT_FIELDS = [
   'lease_time',
   'dns_servers',
   'domain_name',
-  'gateway',
   'ntp_servers',
   'domain_search',
   'enabled',
@@ -118,7 +126,7 @@ function optionCodeError(code, family) {
   return null;
 }
 
-// No value and no opt-in: the scope leaves the option out, nothing to check.
+// No value: the scope leaves the option out, nothing to check.
 const isBlankOption = (opt) => opt.value == null || opt.value === '';
 
 function validateScopeOption(opt, family = 4) {
@@ -126,15 +134,6 @@ function validateScopeOption(opt, family = 4) {
   const code = Number(opt.code);
   const codeErr = optionCodeError(code, family);
   if (codeErr) return codeErr;
-  // Use default: the scope follows the default's value and sends none itself.
-  if (opt.use_default !== undefined && typeof opt.use_default !== 'boolean')
-    return 'use_default must be true or false';
-  if (opt.use_default === true) {
-    if (opt.value != null && opt.value !== '')
-      return 'an option that uses the default takes no value';
-    if (family === 4 && code === 51) return "lease time is the scope's own, not a default";
-    return null;
-  }
   const value = opt.value;
   if (value == null || value === '') return null; // caller skips empty values
   if (typeof value !== 'string') return 'value must be a string';
@@ -142,8 +141,7 @@ function validateScopeOption(opt, family = 4) {
   const type = optDef?.type || 'text';
   if (family === 4 && code === 51 && !isValidLeaseTime(value))
     return 'lease time must look like 3600, 1h, 30m, or 1d';
-  const allowComma = type === 'ip-list' || type === 'text-list';
-  return validateConfigSafeValue(value, { allowComma });
+  return validateConfigSafeValue(value, { allowComma: optionAllowsComma(optDef, type) });
 }
 
 function validateDefaultOption(opt, family = 4) {
@@ -316,6 +314,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   if (!range_id || !subnet_id) {
     return res.status(400).json({ error: 'range_id and subnet_id are required' });
   }
+  if (gateway) return res.status(400).json({ error: SCOPE_GATEWAY_REFUSED });
 
   // v0.4.15 type guards + injection guards. domain_name / domain_search land
   // in dnsmasq config as dhcp-option=15 / 119 so newlines would inject
@@ -398,15 +397,6 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
     dnsServers = json;
   }
 
-  // Validate gateway. DHCPv6 never carries a router: clients learn it from
-  // the Router Advertisement, so an IPv6 scope refuses one outright.
-  if (gateway && subnet.address_family === 6) {
-    return res.status(400).json({ error: 'DHCPv6 scopes take no gateway; routers come from RA' });
-  }
-  if (gateway && (!isValidAddress(gateway) || addressFamily(gateway) !== 4)) {
-    return res.status(400).json({ error: 'Invalid gateway IP address: an IPv4 scope needs IPv4' });
-  }
-
   // Validate NTP servers
   let ntpServers = ntp_servers;
   if (ntp_servers) {
@@ -421,7 +411,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
   // a half-populated scope behind.
   if (Array.isArray(options)) {
     for (const opt of options) {
-      if (opt == null || (isBlankOption(opt) && opt.use_default === undefined)) continue;
+      if (opt == null || isBlankOption(opt)) continue;
       const err = validateScopeOption(opt, subnet.address_family);
       if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
     }
@@ -437,7 +427,6 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
       lease_time,
       dns_servers: dnsServers,
       domain_name,
-      gateway: gateway ? canonicalizeIp(gateway) : gateway,
       ntp_servers: ntpServers,
       domain_search,
       description,
@@ -445,7 +434,7 @@ router.post('/scopes', requirePerm('dhcp:write'), (req, res) => {
       address_family: subnet.address_family,
       v6_mode: v6.mode,
     },
-    { subnet, defaultLeaseTime: getSetting('default_lease_time') },
+    { subnet, defaultLeaseTime: defaultLeaseTime(db, subnet.address_family) },
   );
 
   recordAudit({
@@ -530,17 +519,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
   const v6 = resolveV6Mode(scopeSubnet, v6_mode, scope.v6_mode);
   if (v6.error) return res.status(400).json({ error: v6.error });
 
-  if (gateway && scopeSubnet.address_family === 6) {
-    return res.status(400).json({ error: 'DHCPv6 scopes take no gateway; routers come from RA' });
-  }
-  if (
-    gateway !== undefined &&
-    gateway !== null &&
-    gateway !== '' &&
-    (!isValidAddress(gateway) || addressFamily(gateway) !== 4)
-  ) {
-    return res.status(400).json({ error: 'Invalid gateway IP address: an IPv4 scope needs IPv4' });
-  }
+  if (gateway) return res.status(400).json({ error: SCOPE_GATEWAY_REFUSED });
 
   let ntpServers = ntp_servers;
   if (ntp_servers !== undefined && ntp_servers !== null) {
@@ -597,7 +576,7 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
 
   if (Array.isArray(options)) {
     for (const opt of options) {
-      if (opt == null || (isBlankOption(opt) && opt.use_default === undefined)) continue;
+      if (opt == null || isBlankOption(opt)) continue;
       const err = validateScopeOption(opt, scopeSubnet.address_family);
       if (err) return res.status(400).json({ error: `Scope option ${opt?.code ?? '?'}: ${err}` });
     }
@@ -616,7 +595,6 @@ router.put('/scopes/:id', requirePerm('dhcp:write'), (req, res) => {
       lease_time,
       dns_servers: dnsServers,
       domain_name,
-      gateway: gateway ? canonicalizeIp(gateway) : gateway,
       ntp_servers: ntpServers,
       domain_search,
       enabled,
@@ -665,10 +643,16 @@ function bulkOptionsRequest(req, res) {
     res.status(400).json({ error: 'save_defaults must be true or false' });
     return null;
   }
+  const lifetime = addressLifetimeParam(body, family);
+  if (lifetime.error) {
+    res.status(400).json({ error: lifetime.error });
+    return null;
+  }
   return {
     family,
     options: body.options,
     enabled,
+    leaseTime: lifetime.leaseTime,
     saveDefaults: body.save_defaults === true,
   };
 }
@@ -716,6 +700,7 @@ router.post('/scopes/bulk-options', requirePerm('dhcp:write'), (req, res) => {
       scopes: sample(result.applied),
       options: request.options,
       enabled: request.enabled,
+      ...(request.leaseTime ? { address_lifetime: request.leaseTime } : {}),
       defaults_saved: request.saveDefaults,
     },
   });
@@ -1423,8 +1408,9 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
     catalog,
     defaults,
     enabledDefaults,
-    // How many scopes use each default, so the editor can say who an edit reaches.
-    linkedCounts: linkedOptionCounts(db, family),
+    // The lease time a new scope of this family starts with: DHCPv4's is also
+    // its 51 default, DHCPv6's is the Address lifetime row.
+    leaseTime: defaultLeaseTime(db, family),
     // What CIDRella ships, for the Bulk Change tab's reset.
     shipped: {
       defaults: Object.fromEntries(
@@ -1433,6 +1419,7 @@ router.get('/options', requirePerm('dhcp:read'), (req, res) => {
           .map((option) => [option.code, option.value]),
       ),
       enabledDefaults: SHIPPED_DEFAULT_OPTIONS[family].map((option) => option.code),
+      ...(family === 6 ? { leaseTime: DEFAULTS.default_lease_time } : {}),
     },
     groups: DHCP_OPTION_GROUPS,
     customRange: catalogFor.customRange,
@@ -1536,7 +1523,25 @@ function defaultsForAudit(db, family) {
       Object.entries(defaults).map(([code, value]) => [`option_${code}`, value]),
     ),
     enabled_by_default: [...enabledDefaults].sort((a, b) => a - b),
+    ...(family === 6 ? { address_lifetime: defaultLeaseTime(db, 6) } : {}),
   };
+}
+
+// The DHCPv6 Address lifetime a defaults or Bulk Change request carries as
+// `leaseTime` (seconds, or with an s/m/h/d unit). DHCPv4's lease time is its
+// option 51, so a DHCPv4 request may not carry one. Returns { leaseTime } or
+// { error }; leaseTime is null when the request leaves it alone.
+function addressLifetimeParam(body, family) {
+  const value = body?.leaseTime;
+  if (value === undefined || value === null || value === '') return { leaseTime: null };
+  if (family !== 6) {
+    return { error: 'leaseTime is for DHCPv6; a DHCPv4 lease time is option 51' };
+  }
+  const text = String(value);
+  if (!isValidLeaseTime(text) || !(leaseSeconds(text) > 0)) {
+    return { error: 'leaseTime must be a whole number of seconds, minutes, hours or days' };
+  }
+  return { leaseTime: text };
 }
 
 // PUT /api/dhcp/options/defaults: set global defaults for one family
@@ -1548,10 +1553,15 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   if (family === 6 && refuseIpv6Unless(res)) return;
   const bodyErr = defaultsBodyError(options, enabledDefaults, family);
   if (bodyErr) return res.status(400).json({ error: bodyErr });
+  const lifetime = addressLifetimeParam(req.body, family);
+  if (lifetime.error) return res.status(400).json({ error: lifetime.error });
 
   const db = getDb();
   const before = defaultsForAudit(db, family);
-  const updated = replaceDefaultOptions(db, options, enabledDefaults, family);
+  const updated = db.transaction(() => {
+    if (lifetime.leaseTime) saveDefaultAddressLifetime(db, lifetime.leaseTime);
+    return replaceDefaultOptions(db, options, enabledDefaults, family);
+  })();
   recordAudit({
     action: 'dhcp_option_defaults_updated',
     entityType: 'dhcp',
@@ -1561,7 +1571,7 @@ router.put('/options/defaults', requirePerm('dhcp:write'), (req, res) => {
   });
   req.afterCommit('regenerate_dhcp');
 
-  res.json({ family, ...updated });
+  res.json({ family, ...updated, leaseTime: defaultLeaseTime(db, family) });
 });
 
 export default router;

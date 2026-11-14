@@ -44,7 +44,8 @@ function parseSystemctlShow(output) {
 function parseJournalLine(line) {
   const trimmed = String(line || '').trim();
   if (!trimmed) return null;
-  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2}T\S+)\s+\S+\s+(.*)$/);
+  // The message starts at a non-space so the match stays linear.
+  const match = trimmed.match(/^(\d{4}-\d{2}-\d{2}T\S+)\s+\S+\s+(\S.*|)$/);
   if (!match) return { timestamp: null, message: trimmed };
   return { timestamp: match[1], message: match[2] };
 }

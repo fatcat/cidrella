@@ -23,6 +23,27 @@ Persistent state is rooted at `DATA_DIR` (`/var/lib/cidrella` native,
 `/data` Docker). Application code is rooted at `/opt/cidrella` on native
 installs.
 
+### Event loop
+
+The web API, the DNS proxy's watchdog and daemon control share one Node event loop. The DNS
+proxy and the encrypted forwarder run in a process of their own (DNS proxy process, below), so
+a slow handler now delays the web UI and the watchdog, not DNS answers. The rules still hold:
+
+- A command runs through `runCommand` (`server/src/utils/run-command.js`): async, always with a
+  timeout, rejecting with the exit code and stderr. `npm run lint` refuses a new `execSync`,
+  `execFileSync` or `spawnSync` in `server/src`; the files still allowed one are listed in
+  `eslint.config.mjs`, and BACKLOG.md (Process isolation, item 1) says why each stays.
+- SQL that scans a large table, or copies the database, runs in the database worker
+  (`runDbTask`, `server/src/utils/db-worker/`): a worker thread with its own read-only
+  connection, one per task. Backups copy the database there, and the blocklist domain count is
+  recounted there when the blocklist changes and read back from a setting.
+- A backend's `applyActivation`, `activate`, `restart`, `stop` and `status` return Promises.
+  A caller that needs the daemon changed before its next step (boot, proxy bypass, the
+  interfaces save, the stack switch) awaits it. `createUnitControl` runs the changes to one unit
+  in the order asked, one at a time, so a reload never reaches systemd while a restart of the
+  same unit is under way.
+- A backup and a restore never overlap: the second is refused with `BACKUP_IN_PROGRESS` (409).
+
 ## Layer Responsibilities
 
 | Layer | Responsibility |
@@ -63,8 +84,11 @@ Terminology:
   static DNS, DHCP Reservation, dynamic DHCP, IP Reservation, or SLAAC. System
   is reserved for topology-defined non-host addresses: the IPv4 network and
   broadcast addresses and the IPv6 subnet-router anycast address. Rogue is a
-  derived classification for an online unassigned address. Available addresses
-  should not have a type.
+  derived classification for an online unassigned address that is not one of
+  the appliance's own interface addresses. When a DHCP lease
+  runs out, its holder stays online only if something heard it after the lease
+  ended; otherwise the expiry takes it offline, so a client that simply left is
+  never shown as a rogue. Available addresses should not have a type.
 - `network_range_type`: an optional custom organizational tag projected from
   a non-system range. It does not affect allocation, DNS, DHCP, scanning, or
   topology. Custom Network Range Type ranges cannot overlap each other.
@@ -165,6 +189,41 @@ An IPv4-mapped address (`::ffff:10.0.0.1`) is the IPv4 address it maps, so
 overlap `::ffff:0:0/96` (`validateNetworkBounds` refuses one): its addresses
 and children would read back as IPv4.
 
+A suggested address (`GET /api/subnets/:id/suggest-address`,
+`models/address-suggest.js`, both families) is advisory. It is an address with
+no stored row that claims it or saw a host there (an IPv4 network's empty
+placeholder row is neither), outside every DHCP pool, not a topology address or the gateway,
+and on IPv6 not an EUI-64 interface ID (`xxxx:xxff:fexx:xxxx`), so it never
+collides with a SLAAC host; the winner is confirmed by reading it through the
+read model, which must show it `available`. Nothing is held: the write that
+uses it goes through the lifecycle service like any other, which refuses it if
+a claim landed in between. A suggestion is not an allocation and adds no
+precedence.
+
+Host association (`utils/ip-hosts.js` `groupHosts`, `models/ip-hosts.js`,
+`GET /api/subnets/:id/hosts`, both families) groups a network's address rows
+into the devices holding them, so an IPv6 network reads as hosts rather than
+as every address each one holds. It is a projection: it never changes
+`allocation_state`, ownership, hostname selection or PTRs, and every address row
+stays its own identity (governance plan rule 17). Two rows are one host when
+they share any identifier: the observed MAC (`mac_address`, else
+`last_seen_mac`), the MAC inside a DUID-LL or DUID-LLT (`macFromDuid`), the MAC
+an EUI-64 interface ID encodes (`macFromEui64`), the DUID, or a DUID and MAC
+pair a DHCP lease or reservation of the network holds. The host key is the MAC
+(observed first, then derived), else the DUID, else the address itself (with
+its interface for a link-local one), a host of one. Only stored rows with real
+facts count (`rowHasFactsSql` in `models/subnet-ip-read.js`); the network
+address is no device, the gateway is. Each address gets a kind: link-local,
+reservation, static, DHCP and EUI-64 are stable; an address the lifecycle
+service recorded as `slaac_privacy` is temporary, and so is a SLAAC address
+first seen under a day ago when the host has an established SLAAC address (seen
+a day or more, or EUI-64) in the same /64, a heuristic since nothing marks an
+RFC 8981 address; anything else is shown as it is. A host's display name is the
+stored hostname of its first stable address, else its most recently seen named
+address; every distinct name is listed, and each address keeps its own. A dual
+stack host's other family is found by its MAC: stored rows in any network, and
+that family's active leases and enabled reservations.
+
 Known limitation: anomaly detection identifies a client by its DHCPv4 lease
 MAC, falling back to its address (`resolveIdentity` in `models/anomaly.js`,
 `resolve_device_key` in `server/anomaly/storage.py`). A DHCPv6 lease carries a
@@ -185,8 +244,8 @@ learned naming metadata during its retirement window; ties resolve as static
 DNS, DHCP Reservation, then DHCP Lease. That window is the offline one: a lease
 name outlives its lease only while the host is absent. An address that is
 online with no owner (a rogue) drops its lease name at once, whether the lease
-lapsed while the host was up or the host reappeared still carrying a retained
-name; what the device calls itself stays available as DHCP fingerprint
+lapsed while the host was still heard or the host reappeared still carrying a
+retained name; what the device calls itself stays available as DHCP fingerprint
 evidence, keyed by MAC. This selection changes naming only and never changes
 `allocation_state`.
 
@@ -361,19 +420,169 @@ generators should read and emit, not invent persistence semantics.
 
 `resolveEffectiveScopeOptions` (`models/dhcp-scope.js`) is the one place a
 scope's served options are worked out; dnsmasq and Kea render its
-`effective.options` and never read the option tables. A default
-(`dhcp_option_defaults`) reaches a scope only through a linked row: a
-`dhcp_scope_options` row with `value IS NULL` (`isLinkedOption`), shown as Use
-default. A linked row serves the default's current value, so an edit of the
-default reaches every scope using it, and an empty default serves nothing.
-`enabled_by_default` (Add to new scopes) only picks the defaults a new scope
-links. Precedence, lowest first: IPv4 linked default, the scope's own rows, the
-legacy scope columns (only when the scope has no rows with its own value), the
-network; IPv6 linked default, legacy columns, own rows, the network. IPv4
-option 51 is the scope's `lease_time`, never a default. Writers mark a link
-with `USE_DEFAULT` (`services/subnet-dhcp-topology.js`), which
-`writeScopeOptionRows` stores as NULL; copies between scopes (divide, merge)
-carry the value as-is, so links survive.
+`effective.options` and never read the option tables. The defaults
+(`dhcp_option_defaults`) are a template for new scopes and nothing more: a
+scope created by the dialog, the configure step or a divide copies the
+defaults marked Add to new scopes (`enabled_by_default`) as its own rows
+(`insertScopeOptionsFromDefaults`), and after that the scope stands alone. An
+existing scope changes through its dialog or Bulk Change; an edit of a default
+reaches no existing scope. (Migration 086 had made a scope follow a default
+through a `value IS NULL` row, Use default; migration 091 turned every such row
+into the scope's own copy and retired the model.) Precedence, lowest first:
+IPv4 the scope's own rows, the legacy scope columns (only when the scope has no
+rows), the network; IPv6 legacy columns, own rows, the network. The router
+(option 3) is always the network's gateway, or none when the network has none: a
+scope has no gateway of its own (migration 093 dropped the column).
+
+Every scope has one lease time, its `lease_time`, never an option row, and
+every option list shows it as its first row. IPv4: option 51, as the defaults
+editor, Bulk Change and the scope dialog show it. The 51 default is always
+added to new scopes (its checkbox is locked, `replaceDefaultOptions` keeps it
+on) and is shipped as 3600. IPv6 has no lease-time option, so the row is
+Address lifetime, with no code: the valid and preferred lifetimes of a stateful
+lease (dnsmasq's `dhcp-range`, Kea's `valid-lifetime` and
+`preferred-lifetime`), and the advertised prefix lifetimes in stateless and
+SLAAC modes (dnsmasq's `ra-only`/`ra-stateless` range, radvd's
+`AdvValidLifetime` and `AdvPreferredLifetime`, which also bound RDNSS and
+DNSSL). Its default is the `default_lease_time` setting, shipped as `1h`; IPv4
+falls back to it only when the 51 default holds no lease time
+(`defaultLeaseTime` in `models/dhcp-option.js`, which every scope-creating path
+and `GET /dhcp/options` as `leaseTime` ask). The API carries the IPv6 one as
+`leaseTime` beside the options, never as an option code: the defaults `PUT`
+saves it, and Bulk Change sets it on the selected scopes when its row is
+ticked, a SLAAC-only scope included (that scope takes the lifetime and no
+options), reporting the change with `field: 'address_lifetime'` and no code.
+
+### DNS proxy process
+
+The DNS proxy (`server/src/dns-proxy/server.js`) and the encrypted forwarder
+(`dns-proxy/forwarder.js`, 127.0.0.1:5356) run as their own process,
+`dns-proxy/main.js`, so DNS keeps answering while the web app restarts,
+updates or stalls. It runs as `cidrella-dns-proxy.service` natively, the
+`dns-proxy` s6 longrun in Docker, and a child of the web app in development.
+`CIDRELLA_DNS_PROXY_SUPERVISOR` tells the web app which (`systemd`, `s6`, or
+unset for the child).
+
+- **Talking to it.** The web app's client (`utils/dns-proxy-client.js`)
+  connects to `DATA_DIR/runtime/dns-proxy.sock` (owner-only; the path must fit
+  in 107 bytes) and sends one JSON object per line (`dns-proxy/protocol.js`).
+  `dns-proxy/runtime.js` answers the messages; the tests drive the same
+  runtime in their own process (`tests/helpers/proxy-in-process.js`).
+  `utils/dns-proxy.js` and `utils/encrypted-forwarder.js` keep their export
+  names as facades over the client.
+- **Config.** Where to listen and forward is computed in the web app
+  (`proxyConfigNow`) and saved to `DATA_DIR/runtime/dns-proxy-config.json`
+  (0600), so a proxy that starts first serves from it.
+- **The database.** The proxy opens it read-only with a zero busy timeout
+  (`dns-proxy/db.js`) and never writes it; a setting reads through a 2 s
+  cache. It sends query rows, the clients it saw and Resolution Map events to
+  the web app (`services/dns-proxy-sinks.js`), which stays the only DuckDB
+  writer and records liveness through the lifecycle rules. While the web app
+  is away those wait in a bounded outbox, the oldest dropped and counted.
+- **Restore and rollback.** Before the database files are swapped the proxy
+  closes its connection (`db-release` from a restore, `systemctl kill -s
+  SIGUSR2 cidrella-dns-proxy` from `update.sh` and `rollback.sh`) until the
+  next web app says hello. It also opens the file again when the database or
+  its `-shm` is replaced under it.
+- **Updates.** `update.sh` restarts only `cidrella`. Both processes compute a
+  code id over the proxy's import closure (`ipc/code-id.js`); when the
+  web app's differs from the running proxy's, it asks the proxy to exit once,
+  and the supervisor starts the new code. A guard test keeps the closure away
+  from the web app's modules.
+- **The forwarder follows the web app's connect.** On a first boot the proxy
+  starts before the database exists, so the forwarder has nothing to forward
+  to. Each connect ends with `refresh-forwarder`, which applies its settings
+  only if they changed, so that start, or a restore, takes effect and a plain
+  web app restart keeps its listeners.
+- **A rollback to a release without it.** The proxy exits when its code is
+  gone from the path through the install symlink (`ipc/code-gone.js`; the
+  slot it started from stays on disk). Its exit status keeps the unit from
+  restarting it and `ConditionPathExists` covers a later start or boot, so the
+  old web app can run the proxy itself.
+
+### Privileged helper
+
+The web app serves the login page and every API route, so it holds no
+raw-socket capability and no right to control daemons. One small process does
+that for it: `server/src/helper/main.js`, run as `cidrella-helper.service`
+(user `cidrella-helper`) natively and the `helper` s6 longrun in Docker.
+
+- **What it runs.** A closed list (`helper/commands.js`): `arping` for one IPv4
+  address, `ping` for one address of either family (zoned to a host interface
+  for a link-local target or `ff02::1`), `systemctl` start, stop, restart,
+  reload and reset-failed on CIDRella's own units (`MANAGED_UNITS`), the update
+  worker's start, and `timedatectl set-ntp true`. Every argument is checked and
+  rewritten to its canonical form; nothing runs through a shell. It keeps no
+  state and reads no database, settings or config, and a guard test
+  (`tests/unit/helper/closure-guard.test.js`) keeps its imports to its own
+  modules, `ipc/` and four leaf utilities.
+- **Its rights.** `CAP_NET_RAW` (ambient, for arping and ping), and the polkit
+  grants in `scripts/polkit/49-cidrella.rules`, which match the account: that
+  is why it runs as its own user. The rule holds the same unit and verb table
+  as `MANAGED_UNITS`, and a test runs the rule file against it. In Docker,
+  arping carries its own file capability and arping and ping are mode 0750,
+  group `cidrella-helper`, so the web app and the DNS proxy cannot run them;
+  s6 has no systemctl, so daemon control stays on its signal path there.
+- **Talking to it.** `/run/cidrella-helper/helper.sock`, mode 0660 in a setgid
+  directory of group `cidrella`: only the web app's account connects. The
+  framing, hello, code-id restart and code-gone exit are the DNS proxy's
+  (`ipc/`), so an update restarts it only when its code changed, and a
+  rollback to a release without it leaves it down (exit 64).
+- **The one door.** `utils/privileged.js` is the only place the web app runs
+  these commands. With `CIDRELLA_HELPER_SOCKET` set it asks the helper;
+  unset (development, tests, update.sh's preflight probe) it runs the same
+  commands itself, built by the same `commands.js`. A preflight probe never
+  connects: the helper serves one web app at a time.
+- **When it is down.** A scan fails ("the privileged helper is not
+  answering") rather than recording every address as unanswered, which would
+  mark a network offline and retire its hosts a day later. A daemon restart or
+  reload that reaches the daemon neither through the helper nor by signal
+  leaves the restart-pending marker (`backends/shared/unit-control.js`), and
+  the helper's next hello restarts each service of the serving stack that
+  carries it (`activatePendingBackends` in `services/backend-apply.js`, through
+  `onHelperHello`), as boot would; the change is on disk, only not loaded.
+  `/api/health/deep` fails its ping check, which an update's health check
+  rolls back on.
+- **Rollback, and the rights left behind.** `rollback.sh` reinstalls neither
+  units nor polkit rules, so `cidrella.service` keeps `CAP_NET_RAW` and the
+  polkit rule keeps the `cidrella` account's old grants for one release, unused,
+  so a rollback to a release that ran these itself still works. The next
+  release, with `min_from` at this one, removes both (BACKLOG.md).
+
+### Proxy bypass
+
+The DNS proxy holds the LAN port and the backend answers it on an internal
+port. The watchdog in the web app (`services/dns-proxy-watchdog.js`) checks
+the proxy every 3 seconds: dead is a process that stopped reporting (gone, or
+its event loop hung) or one bound to nothing while it should serve. After
+three dead checks in a row it restarts it: a rebind for one that reports, a
+SIGKILL and a start by its supervisor for one that does not
+(`services/dns-proxy-supervisor.js`). When three restarts fail, bypass puts
+the backend on the LAN port (`dns_proxy_bypass`, `activateBypass`), so names
+still resolve without filtering, GeoIP blocking or the query log, and the
+proxy's saved config says not to serve, so its own restarts leave the port
+alone.
+
+With the process gone the forwarder is gone too, so the bypass sets
+`dns_forwarder_down` and the backend forwards to the plaintext upstreams
+(`recursionTargets` in `utils/forwarding-settings.js`). Only in plaintext
+mode: with DoT or DoH it keeps pointing at 127.0.0.1:5356, and recursion
+fails rather than go out in the clear. No setting allows a plain backup in
+an encrypted mode.
+
+Bypass ends on its own:
+
+- While bypassed, the health monitor tries the proxy again: the backend back
+  on its internal port, then the proxy on the LAN port. The first try comes
+  after 5 minutes and each failed one doubles the wait, up to an hour, since
+  a try costs a few seconds of DNS while the backend moves. A try waits while
+  no listen address can be bound at all.
+- A restart forgets a stored bypass before the backends are applied
+  (`clearBypassAtBoot`), so the proxy is always tried first.
+
+Entering and leaving bypass each write an audit row; a failed try is only
+logged. An interface change while bypassed leaves the proxy alone, and it
+binds the new addresses when it recovers.
 
 ### Why an answer failed
 
@@ -381,6 +590,12 @@ The DNS proxy sorts every failed answer into one cause with `failureCause` in
 `utils/dns-ede.js`, from the rcode and the Extended DNS Error (RFC 8914, EDNS
 option 15) in the answer. The query log keeps the EDE code and the cause per
 query; the minute rows keep a count per cause.
+
+A backend can only send an EDE in an answer to a query with EDNS, so the proxy
+asks the backend with an OPT record (no DO bit, 512-byte limit) when the client
+sent none, and takes it out of the answer before the client sees it
+(`addEdns` and `removeOpt` in `utils/dns-wire.js`). Without that, a client that
+asks without EDNS had every failure logged as `other`.
 
 | Cause | When |
 | --- | --- |
@@ -403,6 +618,16 @@ Measured on dnsmasq 2.91 (2026-10-08, scratch instances on testerella):
   under 4.5 seconds.
 - Local names answer with no EDE.
 
+**A forwarded CNAME chain ending in a wildcard** goes to PowerDNS one step at a
+time. PowerDNS Recursor (5.3 and 5.4) checks the wildcard's NSEC proof under the
+query name, finds it does not cover that name, and answers SERVFAIL with EDE 12:
+`www.nasa.gov`, a CNAME to a wildcard under `go-vip.net`, failed on every query.
+Full recursion passes, and forwarding straight to Quad9 or Google fails the same
+way. So for a backend with `splitWildcardChains`, the forwarder cuts such an
+answer to the query name's own records (`dns-proxy/wildcard-chain.js`), and the
+recursor asks for the target itself. Every record is still validated. dnsmasq
+validates the whole chain and does not chase a CNAME, so it gets the answer as is.
+
 Each upstream address also gets a minute row in `metrics_forwarder` (queries,
 answers, timeouts, resent drops, refused connections, failovers, p50 and p95
 latency), plaintext included.
@@ -410,8 +635,9 @@ latency), plaintext included.
 ### Upstream forwarding: primary, backup, and the timing chain
 
 With recursion on, dnsmasq has one `server=` line, `127.0.0.1#5356`, in every
-mode. The forwarder there (`utils/encrypted-forwarder.js`, named for where it
-started) sends each query on as plain DNS, DoT or DoH. Plaintext has its own
+mode (but bypass with the proxy process down, Proxy bypass above). The
+forwarder there (`dns-proxy/forwarder.js`, in the DNS proxy process) sends
+each query on as plain DNS, DoT or DoH. Plaintext has its own
 path because dnsmasq left to itself does not take turns: on dnsmasq 2.91 two
 plain servers got 45 queries to 1.
 
@@ -469,9 +695,10 @@ Expected low-level write exceptions:
 - maintenance CLI scripts such as password reset and web port reset
 - metrics/log/cache utilities that are explicitly allowlisted
 
-Native installs should rely on systemd ambient capabilities for privileged
-ports and raw probes. The install path should warn if ambient capabilities are
-not supported.
+Native installs rely on systemd ambient capabilities for privileged ports (the
+web app, the DNS proxy) and raw probes (the privileged helper alone; see
+Privileged helper). The web app warns when the process that runs the probes
+lacks the capability.
 
 Outbound URL fetches must use the guarded/pinned URL helper in
 `utils/url-guard.js` when the URL is operator supplied.
@@ -542,7 +769,7 @@ Rows are kept `audit_log_retention_days` (90).
 ### Filtering pause and hosts with filtering off
 
 Before either filtering check (the blocklist before forwarding, GeoIP on the
-answer), the DNS proxy asks `filteringBypass(clientIp)` in `utils/dns-proxy.js`.
+answer), the DNS proxy asks `filteringBypass(clientIp)` in `dns-proxy/server.js`.
 Filtering is skipped for every client while `filtering_paused_until` is in the
 future, and for one client whose address is in the exempt set. Bypassed
 queries log as `allowed`.

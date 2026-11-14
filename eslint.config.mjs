@@ -4,7 +4,10 @@
 // "Conventions" for the scope and the blame-ignore setup.
 import js from '@eslint/js';
 import pluginVue from 'eslint-plugin-vue';
+import regexp from 'eslint-plugin-regexp';
+import sonarjs from 'eslint-plugin-sonarjs';
 import globals from 'globals';
+import noFloatingAsync from './scripts/eslint-rules/no-floating-async.js';
 
 export default [
   {
@@ -186,6 +189,95 @@ export default [
         'badge',
         'status-badge',
         'indicator',
+      ],
+    },
+  },
+
+  // Shipped code only: what the first SonarQube scan (2026-10-25) found that
+  // a lint rule can decide. Regexes whose backtracking makes them slow on a
+  // crafted input (AUTH-PATH-REDOS-01 was one, on every request), an
+  // alternation that binds looser than its anchor, and an async call whose
+  // promise is dropped (SCAN-SETUP-STRANDED-01). A regex the rule cannot prove
+  // linear but is takes an eslint-disable-next-line with the measurement.
+  {
+    files: ['server/src/**/*.js', 'client/src/**/*.{js,vue}'],
+    plugins: { regexp, sonarjs },
+    rules: {
+      'regexp/no-super-linear-backtracking': 'error',
+      'regexp/no-super-linear-move': 'error',
+      'sonarjs/anchor-precedence': 'error',
+    },
+  },
+  {
+    files: ['server/src/**/*.js', 'client/src/**/*.{js,vue}'],
+    ignores: [
+      // BASELINE, client files with dropped loader promises when the rule went
+      // in (2026-10-25). In the browser such a rejection reaches only the
+      // console, so these were left. Remove a file once its calls are awaited,
+      // caught or marked void after checking that the function handles its errors.
+      'client/src/components/DhcpPanel.vue',
+      'client/src/components/DnsPanel.vue',
+      'client/src/components/FooterBar.vue',
+      'client/src/components/HeaderBar.vue',
+      'client/src/components/IpDetailsDrawer.vue',
+      'client/src/components/LogViewer.vue',
+      'client/src/components/NetworkDialogs.vue',
+      'client/src/components/ScopeDialog.vue',
+      'client/src/components/dns/ResolverPicker.vue',
+      'client/src/views/Anomalies.vue',
+      'client/src/views/AnomaliesWorkspace.vue',
+      'client/src/views/SubnetDetail.vue',
+      'client/src/views/SubnetsLayoutB.vue',
+      'client/src/views/Users.vue',
+      'client/src/views/networks-workspace/AddressDetailsPanel.vue',
+      'client/src/views/networks-workspace/ApplyStatusBanner.vue',
+      'client/src/views/networks-workspace/NetworksWorkspace.vue',
+      'client/src/views/settings/CertificateSettings.vue',
+      'client/src/views/settings/LogsSettings.vue',
+    ],
+    plugins: { cidrella: { rules: { 'no-floating-async': noFloatingAsync } } },
+    rules: { 'cidrella/no-floating-async': 'error' },
+  },
+
+  // A synchronous child process stops the event loop the DNS proxy answers
+  // on (docs/ARCHITECTURE.md, Event loop): shipped server code runs commands
+  // through utils/run-command.js. BASELINE, the files left synchronous on
+  // purpose (BACKLOG.md, Process isolation): the config validators inside
+  // the synchronous validated write (dnsmasq --test, kea -t, pdns_recursor
+  // --config=check, radvd --configtest, getent in scope rendering, dnsmasq
+  // --version, cached), Recursor's DNSSEC mode in ntp-status.js, boot-only
+  // code (cert.js, service-health.js), the operator's certificate routes, and
+  // the update start (--no-block, returns at once). Remove a file once it is
+  // asynchronous; never add one.
+  {
+    files: ['server/src/**/*.js'],
+    ignores: [
+      'server/src/backends/dnsmasq/dnsmasq.js',
+      'server/src/backends/kea/index.js',
+      'server/src/backends/pdns/index.js',
+      'server/src/backends/radvd/index.js',
+      'server/src/backends/shared/dhcp-scope-model.js',
+      'server/src/routes/operations.js',
+      'server/src/routes/version.js',
+      'server/src/utils/cert.js',
+      'server/src/utils/ntp-status.js',
+      'server/src/utils/service-health.js',
+    ],
+    rules: {
+      'no-restricted-syntax': [
+        'error',
+        {
+          selector:
+            "ImportDeclaration[source.value=/^(node:)?child_process$/] > ImportSpecifier[imported.name=/^(execSync|execFileSync|spawnSync)$/]",
+          message:
+            'A synchronous child process blocks the event loop DNS answers on. Use runCommand (utils/run-command.js).',
+        },
+        {
+          selector:
+            "MemberExpression[property.name=/^(execSync|execFileSync|spawnSync)$/][object.name=/^(child_?[pP]rocess|cp)$/]",
+          message:
+            'A synchronous child process blocks the event loop DNS answers on. Use runCommand (utils/run-command.js).',
+        },
       ],
     },
   },

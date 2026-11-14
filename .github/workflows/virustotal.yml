@@ -6,11 +6,17 @@ name: VirusTotal
 # publishes, so they are there when this runs. Run it by hand to scan a
 # release published before this workflow existed.
 #
+# A scan can fail with a 429: on every UTC day with more than one, only the
+# first has passed. A nightly run scans again what that left behind, after
+# VirusTotal's daily quotas reset at 00:00 UTC. It runs from the default branch.
+#
 # Needs the repository secret VT_API_KEY (a free VirusTotal account's API key).
 
 on:
   release:
     types: [published]
+  schedule:
+    - cron: '17 0 * * *'
   workflow_dispatch:
     inputs:
       tag:
@@ -42,18 +48,49 @@ jobs:
           files: |
             \.tar\.gz$
 
-      # A manual run has no release event, so the action cannot edit the
-      # release itself: download the tarball, scan it, then append the link.
-      - name: Download the release tarball
-        if: github.event_name == 'workflow_dispatch'
+      # What a nightly run scans: at most one release, since a second would
+      # likely get a 429 too. A final release of the last week with no scan
+      # link comes first, then the newest release of the last week. An older
+      # pre-release is superseded, so it never comes up.
+      - name: Pick the release to scan
+        id: pick
+        if: github.event_name != 'release'
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          REQUESTED: ${{ inputs.tag }}
+        run: |
+          tag=$REQUESTED
+          if [ -z "$tag" ]; then
+            tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=30" --jq '
+              def unscanned: (.body // "") | test("virustotal\\.com/gui/") | not;
+              (now - 604800) as $since
+              | [.[] | select((.draft | not) and .published_at != null)
+                     | select((.published_at | fromdate) >= $since)]
+              | sort_by(.published_at) | reverse
+              | ([.[] | select((.prerelease | not) and unscanned)][0]
+                 // (.[0] | select(. != null and unscanned)))
+              | .tag_name // empty')
+          fi
+          if [ -z "$tag" ]; then
+            echo 'Nothing to scan.'
+          elif ! [[ $tag =~ ^[A-Za-z0-9._-]+$ ]]; then
+            echo "::error::Not a release tag: $tag"
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+      # Outside a release event the action cannot edit the release itself:
+      # download the tarball, scan it, then append the link.
+      - name: Download the release tarball
+        if: steps.pick.outputs.tag != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.pick.outputs.tag }}
         run: gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern '*.tar.gz' --dir dist
 
       - name: Scan the downloaded tarball
         id: manual
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.pick.outputs.tag != ''
         uses: crazy-max/ghaction-virustotal@936d8c5c00afe97d3d9a1af26d017cfdf26800a2 # v5.0.0
         with:
           vt_api_key: ${{ secrets.VT_API_KEY }}
@@ -62,10 +99,10 @@ jobs:
             dist/*.tar.gz
 
       - name: Append the analysis link to the release notes
-        if: github.event_name == 'workflow_dispatch'
+        if: steps.pick.outputs.tag != ''
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ steps.pick.outputs.tag }}
           ANALYSIS: ${{ steps.manual.outputs.analysis }}
         run: |
           body=$(gh release view "$TAG" --repo "$GITHUB_REPOSITORY" --json body --jq .body)
@@ -78,8 +115,10 @@ jobs:
           printf '%s\n\n🛡 VirusTotal analysis:%s\n' "$body" "$links" > notes.md
           gh release edit "$TAG" --repo "$GITHUB_REPOSITORY" --notes-file notes.md
 
+      # Whether or not the scan passed: the redirect goes by the tarball's
+      # hash, and it should not stay on the last release until a retry.
       - name: Rebuild the site so its VirusTotal link follows this release
-        if: github.event_name == 'release' && !github.event.release.prerelease
+        if: ${{ !cancelled() && github.event_name == 'release' && !github.event.release.prerelease }}
         env:
           GH_TOKEN: ${{ github.token }}
         run: gh workflow run pages.yml --repo "$GITHUB_REPOSITORY" --ref main

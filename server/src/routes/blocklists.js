@@ -9,6 +9,8 @@ import {
   refreshAllEnabled,
   categoryDomainCounts,
   generateBlocklistConfig,
+  recountBlocklistDomains,
+  storedBlocklistDomainCount,
   SCHEDULE_HOURS,
 } from '../utils/blocklist.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
@@ -194,16 +196,10 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
   const enabledCount = db
     .prepare('SELECT COUNT(*) as c FROM blocklist_categories WHERE enabled = 1')
     .get().c;
-  const totalDomains = db
-    .prepare(
-      `
-    SELECT COUNT(DISTINCT bd.domain) as c
-    FROM blocklist_domains bd
-    JOIN blocklist_categories bc ON bd.category_slug = bc.slug
-    WHERE bc.enabled = 1
-  `,
-    )
-    .get().c;
+  // Counted in the database worker when the blocklist changes, never here:
+  // the scan took seconds on a large estate and stopped DNS while it ran.
+  const stored = storedBlocklistDomainCount(db);
+  if (!stored) void recountBlocklistDomains(db);
   const allowlistCount = db.prepare('SELECT COUNT(*) as c FROM blocklist_allowlist').get().c;
   const lastUpdate = db
     .prepare('SELECT MAX(last_fetched_at) as t FROM blocklist_categories WHERE enabled = 1')
@@ -211,7 +207,9 @@ router.get('/stats', requirePerm('dns:read'), (req, res) => {
 
   res.json({
     enabled_categories: enabledCount,
-    total_domains: totalDomains,
+    // null until the first count after an upgrade has finished.
+    total_domains: stored?.count ?? null,
+    domains_counted_at: stored?.counted_at ?? null,
     allowlist_count: allowlistCount,
     last_update: lastUpdate,
   });

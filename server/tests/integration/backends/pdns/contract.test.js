@@ -5,8 +5,13 @@
  * covers what the real daemons accept.
  */
 import { DATA_DIR } from '../../../helpers/isolated-data-dir.js';
-import { afterAll } from 'vitest';
+import { afterAll, vi } from 'vitest';
 import fs from 'fs';
+
+// systemctl, pkill and rec_control succeed without running anything.
+vi.mock('../../../../src/utils/run-command.js', async () =>
+  (await import('../../../helpers/fake-run-command.js')).fakeRunCommandModule(() => ''),
+);
 
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../../../helpers/test-db.js');
 const { startFakePdns } = await import('../../../helpers/fake-pdns.js');
@@ -37,5 +42,6 @@ runBackendContract('pdns', async () => {
       ntpStatus: () => ({ available: true, synchronized: true }),
     }),
     db: setup.db,
+    splitWildcardChains: true,
   };
 });

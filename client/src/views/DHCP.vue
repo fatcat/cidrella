@@ -30,13 +30,13 @@
       />
     </div>
     <p class="field-help dhcp-defaults-note">
-      A default reaches a {{ familyLabel }} scope only when the scope uses it (Use default in the
-      scope's options), and an edit here reaches every scope that does. Add to new scopes picks the
-      defaults a newly created scope uses. To change the options of existing scopes, use Bulk
-      Change.
+      Changes made to the DHCP scope defaults affect only new scopes. To change the options of an
+      existing scope simply edit the scope in question from IP Management > DHCP. To edit more than
+      one scope's options use "Bulk Change."
       <template v-if="isV6">
-        Routers, prefixes and address lifetimes come from Router Advertisements and are not options;
-        a SLAAC-only scope sends no options at all.
+        Routers and prefixes come from Router Advertisements and are not options. Address lifetime
+        is how long a client keeps an address: the lifetime of a lease, or of the advertised prefix
+        under stateless and SLAAC. A SLAAC-only scope takes the lifetime and no options.
       </template>
     </p>
     <DhcpOptionTable
@@ -45,7 +45,7 @@
       :family="family"
       :rows="optionRows"
       :loading="loadingOptions"
-      :usage="linkedCounts"
+      :locked-codes="lockedCodes"
       deletable-custom
       @delete-custom="deleteCustomOption"
     />
@@ -119,8 +119,10 @@ import Select from '../ui/Select.js';
 import DhcpOptionTable from '../components/dhcp/DhcpOptionTable.vue';
 import {
   useDhcpOptionCatalog,
+  editorEntries,
   fillByCode,
   optionEditorPayload,
+  LIFETIME_KEY,
 } from '../composables/useDhcpOptionCatalog.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
@@ -133,7 +135,6 @@ const props = defineProps({
   family: { type: Number, default: 4 },
 });
 const isV6 = computed(() => Number(props.family) === 6);
-const familyLabel = computed(() => (isV6.value ? 'DHCPv6' : 'DHCPv4'));
 // The IPv4 editor keeps its historic tracking ids; the IPv6 one is suffixed.
 const track = (id) => (isV6.value ? `${id}-v6` : id);
 
@@ -145,12 +146,14 @@ const {
   catalog: optionCatalog,
   rows: optionRows,
   customRange,
-  linkedCounts,
   loading: loadingOptions,
   load: loadCatalog,
 } = useDhcpOptionCatalog(() => props.family);
 const defaultValues = reactive({});
 const defaultEnabled = reactive({});
+// Every scope has a lease time: DHCPv4's Lease Time (51), DHCPv6's Address
+// lifetime row. Their checkboxes stay on.
+const lockedCodes = computed(() => new Set([isV6.value ? LIFETIME_KEY : 51]));
 const savingDefaults = ref(false);
 const savedDefaultsSnapshot = ref('');
 
@@ -207,11 +210,9 @@ async function deleteCustomOption(code) {
 async function loadOptions() {
   try {
     const data = await loadCatalog();
-    fillByCode(defaultValues, Object.entries(data.defaults || {}));
-    fillByCode(
-      defaultEnabled,
-      (data.enabledDefaults || []).map((code) => [code, true]),
-    );
+    const entries = editorEntries(data, props.family);
+    fillByCode(defaultValues, entries.values);
+    fillByCode(defaultEnabled, entries.enabled);
     snapshotDefaults();
   } catch (err) {
     console.error('Failed to load DHCP options:', err);
@@ -221,12 +222,8 @@ async function loadOptions() {
 async function saveDefaults() {
   savingDefaults.value = true;
   try {
-    const { options, enabledDefaults } = optionEditorPayload(
-      optionCatalog.value,
-      defaultValues,
-      defaultEnabled,
-    );
-    await api.put('/dhcp/options/defaults', { family: props.family, options, enabledDefaults });
+    const payload = optionEditorPayload(optionCatalog.value, defaultValues, defaultEnabled);
+    await api.put('/dhcp/options/defaults', { family: props.family, ...payload });
     snapshotDefaults();
     toast.add({ severity: 'success', summary: 'Defaults saved', life: 3000 });
   } catch (err) {
@@ -269,6 +266,8 @@ onMounted(async () => {
 
 .dhcp-defaults-note {
   margin: 0 0 0.75rem;
+  /* Two points above the field-help size: this note is the page's one explanation. */
+  font-size: calc(var(--app-fs-xs) + 2pt);
 }
 
 .form-grid {

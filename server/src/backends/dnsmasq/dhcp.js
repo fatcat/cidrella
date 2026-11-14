@@ -4,7 +4,7 @@ import { cleanStaleFiles } from './dnsmasq.js';
 import { atomicWrite } from '../shared/validated-files.js';
 import { isValidAddress } from '../../utils/ip.js';
 import { isValidIpv6 } from '../../utils/address.js';
-import { dnsmasqOptionToken } from './option-names.js';
+import { dnsmasqOption4Value, dnsmasqOptionToken } from './option-names.js';
 import { poolSegments } from '../shared/pool-segments.js';
 import { loadDhcpReservations, loadDhcpScopes } from '../shared/dhcp-scope-model.js';
 import { CONF_DIR, DHCP_HOSTS_DIR } from './paths.js';
@@ -12,10 +12,13 @@ import { isWholeLeaseFile } from './lease-file.js';
 
 /**
  * One option value as dnsmasq writes it: addresses comma-joined, and for
- * IPv6 in the bracketed form option6 values require.
+ * IPv6 in the bracketed form option6 values require; a DHCPv4 value for a
+ * code dnsmasq has no type for, typed so dnsmasq does not guess.
  */
 function optionText(option, family) {
-  if (!option.addresses) return option.text;
+  if (!option.addresses) {
+    return family === 4 ? dnsmasqOption4Value(option, option.text) : option.text;
+  }
   return option.addresses.map((ip) => (family === 6 ? `[${ip}]` : ip)).join(',');
 }
 

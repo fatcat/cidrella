@@ -263,8 +263,6 @@
         </Column>
       </DataTable>
     </div>
-
-    <Toast />
   </div>
 </template>
 
@@ -279,7 +277,6 @@ import InputText from '../ui/InputText.js';
 import InputNumber from '../ui/InputNumber.js';
 import DataTable from '../ui/DataTable.js';
 import Column from '../ui/Column.js';
-import Toast from '../ui/Toast.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
 import StatusBadge from '../components/StatusBadge.vue';
 import { useRogueDhcpStore } from '../stores/rogueDhcp.js';

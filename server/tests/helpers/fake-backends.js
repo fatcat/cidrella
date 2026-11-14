@@ -164,7 +164,7 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
       ),
     },
     label: name,
-    status: () => ({ name, label: name, running: true, restartPending: false }),
+    status: async () => ({ name, label: name, running: true, restartPending: false }),
     // Only the features of the roles it fills, so a test may narrow `roles`.
     capabilities: () =>
       declareSupport(backend.roles, {
@@ -177,11 +177,14 @@ export function createFakeBackend({ name = 'fake', capabilities = {} } = {}) {
         ...capabilities,
       }),
     transaction: (fn) => fn(),
-    applyActivation: (activation) => {
+    // Daemon control is asynchronous (contract.js), as here.
+    applyActivation: async (activation) => {
       if (activation !== 'none') applied.push(activation);
     },
-    activate: ({ force = false } = {}) => (force ? 'restarted' : 'unchanged'),
-    restart: () => applied.push('restart'),
+    activate: async ({ force = false } = {}) => (force ? 'restarted' : 'unchanged'),
+    restart: async () => {
+      applied.push('restart');
+    },
     prepare: () => {},
     logSource: () => null,
     // Test hook: replace the lease set and tell the watchers.

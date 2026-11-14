@@ -51,6 +51,7 @@ const ScanRun = await import('../../src/models/scan-run.js');
 const IpAddress = await import('../../src/models/ip-address.js');
 const { invalidateSubnetCache } = await import('../../src/utils/ip-sync.js');
 const { OFFLINE_CONFIRM_PINGS } = await import('../../src/config/defaults.js');
+const { recordDnsQueryLiveness } = await import('../../src/utils/ip-liveness.js');
 
 let db;
 let tmpDir;
@@ -90,6 +91,8 @@ beforeAll(async () => {
   vi.spyOn(os, 'networkInterfaces').mockReturnValue({
     eth0: [
       { family: 'IPv4', address: '10.71.0.6', internal: false },
+      { family: 'IPv4', address: '10.73.0.4', internal: false },
+      { family: 'IPv4', address: '10.74.0.4', internal: false },
       { family: 'IPv6', address: 'fd00:71::2', internal: false },
     ],
   });
@@ -196,5 +199,43 @@ describe('a different MAC answering', () => {
         )
         .get().n,
     ).toBe(1);
+  });
+});
+
+describe("the appliance's own address", () => {
+  it('is never a rogue on IPv4, and a scan clears an old flag', async () => {
+    const subnetId = network('10.73.0.0/29');
+    // An old flag from before the exemption, on the address eth0 holds.
+    IpAddress.upsert(db, subnetId, '10.73.0.4', {
+      is_online: 1,
+      is_rogue: 1,
+      rogue_reason: 'Rogue device (IP not assigned)',
+      detection_source: 'scanner',
+    });
+    answersArp.add('10.73.0.4').add('10.73.0.5');
+
+    const scanId = ScanRun.createPending(db, subnetId);
+    await startScan(db, scanId, subnetId);
+
+    const row = (ip) => db.prepare('SELECT * FROM ip_addresses WHERE ip_address = ?').get(ip);
+    expect(row('10.73.0.4')).toMatchObject({ is_online: 1, is_rogue: 0, rogue_reason: null });
+    // A stranger on the same network still is one.
+    expect(row('10.73.0.5')).toMatchObject({ is_rogue: 1 });
+    expect(
+      db.prepare('SELECT conflicts_found FROM network_scans WHERE id = ?').get(scanId)
+        .conflicts_found,
+    ).toBe(1);
+  });
+
+  it('creates no rogue from its own IPv4 DNS queries', () => {
+    network('10.74.0.0/29');
+    // Passive traffic creates a rogue only where no row exists yet.
+    db.prepare("DELETE FROM ip_addresses WHERE ip_address IN ('10.74.0.4', '10.74.0.5')").run();
+    recordDnsQueryLiveness(db, '10.74.0.4', { createRogue: true });
+    recordDnsQueryLiveness(db, '10.74.0.5', { createRogue: true });
+    const rogue = (ip) =>
+      db.prepare('SELECT is_rogue FROM ip_addresses WHERE ip_address = ?').get(ip)?.is_rogue ?? 0;
+    expect(rogue('10.74.0.4')).toBe(0);
+    expect(rogue('10.74.0.5')).toBe(1);
   });
 });

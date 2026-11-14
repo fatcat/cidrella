@@ -30,7 +30,11 @@
  *
  * @typedef {object} ApplyOptions
  * @property {boolean} [activate=true]  perform the activation; false leaves it
- *   to the caller (Service.applyActivation), e.g. to batch two changes
+ *   to the caller (Service.applyActivation), e.g. to batch two changes. An
+ *   apply op that activates returns a Promise of its ApplyResult (the
+ *   restart or reload is asynchronous); one with `activate: false` returns
+ *   the ApplyResult itself, except applyZones on a backend that writes zones
+ *   over HTTP (PowerDNS), which is always a Promise.
  */
 
 import { FEATURES, featureById } from './features.js';
@@ -46,7 +50,7 @@ export const ROLES = Object.freeze(['dns', 'dhcp', 'ra']);
  *   records (PowerDNS writes them over HTTP)
  * - applyResolver(db, opts) -> ApplyResult: forwarders, recursion, DNSSEC
  * - applyListen(db, opts) -> ApplyResult: listen addresses, ports, interfaces
- * - onClockSynchronized() -> void: the system clock is now trustworthy
+ * - onClockSynchronized() -> Promise: the system clock is now trustworthy
  * - servedTtl({type, ttl}) -> number: the TTL in seconds the backend answers
  *   that record with. A backend that cannot serve a record's own TTL says what
  *   it serves instead, so the UI never shows a TTL nobody receives.
@@ -55,6 +59,10 @@ export const ROLES = Object.freeze(['dns', 'dhcp', 'ra']);
  * - forwardsUnknownItself: boolean property; whether a zone set to forward
  *   unknown names sends them upstream without help (dnsmasq), or answers
  *   them NXDOMAIN and leaves the DNS proxy to ask again (PowerDNS)
+ * - splitWildcardChains: boolean property; whether the forwarder hands this
+ *   backend only the first step of a CNAME chain ending in a wildcard. PowerDNS
+ *   rejects the whole chain and asks for the target itself; dnsmasq validates
+ *   it and does not chase a CNAME (dns-proxy/wildcard-chain.js)
  */
 export const DNS_OPS = Object.freeze([
   'applyZones',
@@ -78,8 +86,9 @@ export const DNS_OPS = Object.freeze([
  *   optional; replace the backend's leases with those another backend
  *   handed out (a switch), under the DHCPv6 server DUID they carry. Called while the
  *   backend answers no DHCP; the leases count once it serves again.
- * - dhcpCounters?() -> Promise<{ received, sent }>: optional; DHCP packets
- *   since the daemon started, for a backend whose log does not show them all
+ * - dhcpCounters?() -> Promise<{ 4?: { received, sent }, 6?: { received, sent } }>:
+ *   optional; DHCP packets since the daemon started, per family served, for a
+ *   backend whose log does not show them all
  */
 export const DHCP_OPS = Object.freeze([
   'applyScopes',
@@ -100,25 +109,31 @@ export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
 /**
  * Per process (a backend filling two roles is one service). Each also
  * carries `label`, its name as the UI shows it (dnsmasq, Kea, PowerDNS).
- * - status() -> { name, label, running, restartPending }
+ * - status() -> Promise<{ name, label, running, restartPending }>
  * - capabilities() -> { [featureId]: boolean } for every feature of the roles
  *   it fills (backends/features.js; build it with declareSupport)
  * - capabilityNotes?() -> { [featureId]: string }: optional; why a feature is
  *   off, or what it depends on, in words the UI can show
  * - transaction(fn) -> fn's result: apply ops inside are validated and rolled
  *   back as one
- * - applyActivation(activation) -> void
- * - activate({ force }) -> 'restarted' | 'unchanged': make sure the running
- *   service has the applied configuration
- * - restart() -> void
+ * - applyActivation(activation) -> Promise
+ * - activate({ force }) -> Promise<'restarted' | 'unchanged'>: make sure the
+ *   running service has the applied configuration
+ * - restart() -> Promise
+ *
+ * Daemon control and status are asynchronous: a child process (systemctl,
+ * pkill) never runs synchronously on the event loop the DNS proxy answers
+ * on (docs/ARCHITECTURE.md, Event loop). Validating a rendered
+ * configuration (dnsmasq --test, kea -t) still runs synchronously inside
+ * transaction(); see BACKLOG.md.
  * - prepare() -> void: create what the backend needs on disk before it starts
- * - logSource() -> null, or { path, querySourceIp(line), dhcpDirection(line),
+ * - logSource() -> null, or { path, querySourceIp(line), dhcpMessage(line),
  *   isDhcpLine(line), createDhcpParser?() } for a backend whose log the
  *   liveness, metrics, log viewer and fingerprint readers can use;
  *   createDhcpParser only for a backend that serves DHCP.
  *   `path` is read on every poll, so a log that moves to a new file is
- *   followed (createLogFollower in utils/log-reader.js). dhcpDirection
- *   answers 'client', 'server' or null. Readers take the DNS role's log for
+ *   followed (createLogFollower in utils/log-reader.js). dhcpMessage
+ *   answers { direction: 'client' | 'server', family: 4 | 6 } or null. Readers take the DNS role's log for
  *   queries and the DHCP role's for DHCP. `clearable: false` marks an audit
  *   log the log viewer must not truncate. `proxyQueries: true` asks the DNS
  *   proxy to write its query lines into `path` (utils/query-log.js), for a
@@ -126,17 +141,21 @@ export const RA_OPS = Object.freeze(['applyRouterAdvertisements']);
  *
  * Optional, for a backend that can be switched to and from
  * (services/stack-switch.js):
- * - installed?() -> { ok, reason? }: can it run on this host; absent means yes
+ * - installed?() -> { ok, reason? } (or a Promise of it): can it run on this host; absent
+ *   means yes
  * - stage?(db) -> Promise: before the other stack stops, write and check the
  *   whole configuration and start whatever binds no port the other stack
  *   holds; activate() starts the rest once it has stopped
  * - awaitRunning?() -> Promise: resolves once it runs its configuration and,
  *   when it serves, answers on its sockets; rejects with the reason
- * - stop?() -> void: stop a daemon that fills no role any more
+ * - stop?() -> Promise: stop a daemon that fills no role any more
  * - awaitStopped?(opts) -> Promise: resolves once every daemon has exited, so
  *   another backend can bind its ports; rejects naming one that has not
  * - pruneLogs?(days) -> number: delete audit logs of its own (Kea's legal
  *   log) older than the audit retention; how many files went
+ * - clearLogs?() -> number: delete its daemon logs and their rotated copies,
+ *   once it no longer serves (removeLogFiles in shared/log-files.js); never
+ *   an audit log, which pruneLogs keeps for the retention; how many files went
  */
 export const SERVICE_OPS = Object.freeze([
   'status',
@@ -203,30 +222,31 @@ export function assertBackendShape(backend) {
  * Router Advertisements have no switch of their own and count only for a
  * service that does nothing else.
  */
-export function roleStatuses(serviceFor, { switchedOff = () => false } = {}) {
+export async function roleStatuses(serviceFor, { switchedOff = () => false } = {}) {
   const rolesOf = new Map();
   for (const role of ROLES) {
     const service = serviceFor(role);
     rolesOf.set(service, [...(rolesOf.get(service) || []), role]);
   }
-  const byService = new Map();
-  return Object.fromEntries(
-    ROLES.map((role) => {
-      const service = serviceFor(role);
-      if (!byService.has(service)) {
-        const features = service.capabilities();
-        const roles = rolesOf.get(service);
-        const switchable = roles.length > 1 ? roles.filter((r) => r !== 'ra') : roles;
-        byService.set(service, {
-          ...service.status(),
+  const services = [...rolesOf.keys()];
+  const statuses = await Promise.all(services.map((service) => service.status()));
+  const byService = new Map(
+    services.map((service, i) => {
+      const features = service.capabilities();
+      const roles = rolesOf.get(service);
+      const switchable = roles.length > 1 ? roles.filter((r) => r !== 'ra') : roles;
+      return [
+        service,
+        {
+          ...statuses[i],
           off: switchable.every((r) => switchedOff(r)),
           features,
           capabilities: legacyCapabilities(features),
-        });
-      }
-      return [role, byService.get(service)];
+        },
+      ];
     }),
   );
+  return Object.fromEntries(ROLES.map((role) => [role, byService.get(serviceFor(role))]));
 }
 
 /**

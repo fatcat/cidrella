@@ -16,6 +16,11 @@ vi.mock('child_process', () => ({
   execFile: vi.fn(),
 }));
 
+// systemctl, pkill and rec_control succeed without running anything.
+vi.mock('../../../../src/utils/run-command.js', async () =>
+  (await import('../../../helpers/fake-run-command.js')).fakeRunCommandModule(() => ''),
+);
+
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../../../helpers/test-db.js');
 const { createDnsmasqBackend } = await import('../../../../src/backends/dnsmasq/index.js');
 const { runBackendContract } = await import('../../../contract/backend-contract.js');
@@ -51,6 +56,7 @@ runBackendContract('dnsmasq', async () => {
     backend: createDnsmasqBackend(),
     db: setup.db,
     readOptions: { settleMs: 0, attempts: 2 },
+    splitWildcardChains: false,
     seedLeases(leases) {
       const v4 = leases.filter((lease) => lease.dhcpVersion === 4).map(leaseLine);
       const v6 = leases.filter((lease) => lease.dhcpVersion === 6).map(leaseLine);

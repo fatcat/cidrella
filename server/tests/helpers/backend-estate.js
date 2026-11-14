@@ -61,8 +61,22 @@ function record(db, zoneId, name, type, value, extra = {}) {
 
 const zoneIdOf = (db, name) => db.prepare('SELECT id FROM dns_zones WHERE name = ?').get(name).id;
 
+function pinNtpDefault(db, code, family, value) {
+  const { changes } = db
+    .prepare(
+      'UPDATE dhcp_option_defaults SET value = ? WHERE option_code = ? AND address_family = ?',
+    )
+    .run(value, code, family);
+  if (changes !== 1) throw new Error(`No DHCP default ${code} for family ${family} to pin`);
+}
+
 /** Seed the estate into a migrated, IPv6-enabled test database. */
 export function seedBackendEstate(db) {
+  // The shipped NTP defaults change with every release build's refresh, and new
+  // scopes copy them, so the goldens would change with no renderer changing.
+  pinNtpDefault(db, 42, 4, '192.0.2.1,192.0.2.2,192.0.2.3,192.0.2.4');
+  pinNtpDefault(db, 56, 6, '2001:db8::1,2001:db8::2,2001:db8::3,2001:db8::4');
+
   // IPv4 network with a pool, a domain and reverse DNS.
   const v4 = network(db, '10.60.0.0/24', {
     domain_name: 'golden.test',

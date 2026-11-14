@@ -94,6 +94,10 @@ describe('GET /api/metrics/timeseries', () => {
     expect(res.body[0]).toHaveProperty('ts');
     expect(res.body[0]).toHaveProperty('dns_queries');
     expect(res.body[0]).toHaveProperty('dhcp_requests');
+    for (const family of [4, 6]) {
+      expect(res.body[0]).toHaveProperty(`dhcp${family}_client_msgs`);
+      expect(res.body[0]).toHaveProperty(`dhcp${family}_server_msgs`);
+    }
     expect(res.body[0]).toHaveProperty('blocklist_blocks');
     expect(res.body[0]).toHaveProperty('geoip_blocks');
   });

@@ -110,7 +110,7 @@ export function getNetworkDhcpDiagnostics(db) {
   const scopes = db
     .prepare(
       `
-    SELECT scope.id, scope.subnet_id, scope.gateway, scope.address_family, scope.v6_mode,
+    SELECT scope.id, scope.subnet_id, scope.address_family, scope.v6_mode,
       subnet.cidr, subnet.gateway_address,
       (SELECT value FROM dhcp_scope_options option
        WHERE option.scope_id = scope.id AND option.option_code = 3) AS router_option

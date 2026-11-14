@@ -1,4 +1,8 @@
 import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+// The proxy under test runs in this process.
+vi.mock('../../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../../helpers/proxy-in-process.js')).inProcessProxyClient(),
+);
 
 // Fake backend registry before importing dns-proxy (no dnsmasq writes or restarts)
 vi.mock('../../../src/backends/index.js', async () =>
@@ -12,20 +16,8 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { getDb } from '../../../src/db/init.js';
-import {
-  lookupCountry,
-  getProxyStatus,
-  resetStats,
-  isProxyBypassed,
-  getBlockedDelta,
-  getAndResetCountryHits,
-  getAndResetPerformanceMetrics,
-  loadBlocklist,
-  loadAllowlist,
-  getAndResetBlocklistHits,
-  evaluateInboundPolicy,
-  noteAnswer,
-} from '../../../src/utils/dns-proxy.js';
+import { getProxyStatus, resetStats, isProxyBypassed, loadBlocklist, loadAllowlist } from '../../../src/utils/dns-proxy.js';
+import { lookupCountry, getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics, getAndResetBlocklistHits, evaluateInboundPolicy, noteAnswer } from '../../../src/dns-proxy/server.js';
 import dnsPacket from 'dns-packet';
 import { edeOption } from '../../../src/utils/dns-ede.js';
 
@@ -168,6 +160,21 @@ describe('getAndResetPerformanceMetrics', () => {
     expect(m.cacheMisses).toBe(0);
     expect(m.timeouts).toBe(0);
     expect(m.pendingQueries).toBe(0);
+  });
+
+  it('measures the process it runs in', () => {
+    getAndResetPerformanceMetrics();
+    const spinUntil = Date.now() + 60;
+    while (Date.now() < spinUntil) {
+      /* busy: CPU time to count */
+    }
+    const m = getAndResetPerformanceMetrics();
+    const rssMb = process.memoryUsage().rss / 1048576;
+    expect(m.cpuPercent).toBeGreaterThan(0);
+    expect(m.rssMb).toBeGreaterThan(rssMb * 0.8);
+    expect(m.rssMb).toBeLessThan(rssMb * 1.2);
+    expect(m.heapMb).toBeGreaterThan(0);
+    expect(m.heapMb).toBeLessThanOrEqual(m.rssMb);
   });
 
   it('resets counters after read (drain semantics)', () => {

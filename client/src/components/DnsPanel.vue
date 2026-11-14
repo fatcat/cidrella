@@ -512,7 +512,19 @@
         </div>
         <div class="field">
           <label>{{ recordForm.type === 'PTR' ? 'Hostname *' : 'Value *' }}</label>
-          <InputText v-model="recordForm.value" class="w-full" :placeholder="valuePlaceholder" />
+          <div v-if="suggestNetworkId" class="input-with-action">
+            <InputText v-model="recordForm.value" :placeholder="valuePlaceholder" />
+            <SuggestAddressButton
+              :subnet-id="suggestNetworkId"
+              @suggested="recordForm.value = $event"
+            />
+          </div>
+          <InputText
+            v-else
+            v-model="recordForm.value"
+            class="w-full"
+            :placeholder="valuePlaceholder"
+          />
           <small v-if="recordForm.type === 'PTR'" class="field-help"
             >The FQDN this IP resolves to (e.g., web.example.com)</small
           >
@@ -596,8 +608,6 @@
       :zone-name="selectedZone?.name"
       :soa-minimum-ttl="selectedZone?.soa_minimum_ttl"
     />
-
-    <Toast />
   </div>
 </template>
 
@@ -621,12 +631,12 @@ import TabPanels from '../ui/TabPanels.js';
 import TabPanel from '../ui/TabPanel.js';
 
 import ContextMenu from '../ui/ContextMenu.js';
-import Toast from '../ui/Toast.js';
 import { useDnsStore } from '../stores/dns.js';
 import { useDhcpStore } from '../stores/dhcp.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
-import { dhcpPoolScopeFor, isValidIpv4, isValidIpv6, sortKey } from '../utils/ip.js';
+import { cidrFamily, dhcpPoolScopeFor, isValidIpv4, isValidIpv6, sortKey } from '../utils/ip.js';
+import SuggestAddressButton from './SuggestAddressButton.vue';
 import {
   reverseZoneFamily,
   ptrRecordAddress,
@@ -865,6 +875,15 @@ const recordForm = ref({
   enabled: true,
 });
 const recordError = ref('');
+// The network a record is created from, when it is opened from one: an A or
+// AAAA record of that network's family can take a suggested address.
+const recordNetwork = ref(null);
+const suggestNetworkId = computed(() => {
+  const network = recordNetwork.value;
+  if (!network) return null;
+  const wanted = cidrFamily(network.cidr) === 6 ? 'AAAA' : 'A';
+  return recordForm.value.type === wanted ? network.id : null;
+});
 let recordFormBaseline = '';
 const recordDiscard = useDiscardGuard({
   isDirty: () => JSON.stringify(recordForm.value) !== recordFormBaseline,
@@ -1161,6 +1180,7 @@ const ttlHelp = computed(() => {
 // Record CRUD
 function openRecordDialog(record = null, defaults = {}) {
   editingRecord.value = record;
+  recordNetwork.value = null;
   if (record) {
     recordForm.value = {
       name: record.name,
@@ -1293,9 +1313,10 @@ onMounted(async () => {
   }
 });
 
-function openRecordEditor(record = null, defaults = {}, zone = null) {
+function openRecordEditor(record = null, defaults = {}, zone = null, { network = null } = {}) {
   if (zone) selectedZone.value = zone;
   openRecordDialog(record, defaults);
+  recordNetwork.value = network;
 }
 
 function confirmDeleteRecordForZone(record, zone = null) {

@@ -419,8 +419,9 @@ export function recordPassiveActivity(
 /**
  * Mark a single IP as offline and start its continuous-offline interval.
  * Learned data and rogue evidence survive until the retirement boundary.
+ * `source` names what decided it, on the offline event.
  */
-export function markOffline(db, subnetId, ip) {
+export function markOffline(db, subnetId, ip, { source = null } = {}) {
   const existing = db
     .prepare(
       'SELECT id, is_online, is_rogue FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?',
@@ -429,7 +430,7 @@ export function markOffline(db, subnetId, ip) {
   if (!existing) return { changes: 0 };
 
   if (existing.is_online) {
-    emit(db, existing.id, subnetId, ip, 'offline');
+    emit(db, existing.id, subnetId, ip, 'offline', source ? { source } : undefined);
   }
   if (existing.is_rogue) {
     emit(db, existing.id, subnetId, ip, 'rogue_cleared', { source: 'offline' });
@@ -457,7 +458,7 @@ export function markOffline(db, subnetId, ip) {
  * the short staleness window and the much longer scan interval. Coverage is
  * decided by the same predicate the scheduler uses, see utils/scan-coverage.js.
  *
- * Every stale row is retained until its one-hour retirement boundary. This
+ * Every stale row is retained until its offline retirement boundary. This
  * function owns only the online-to-offline edge.
  */
 export function bulkMarkStale(db, staleMinutes) {

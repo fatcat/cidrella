@@ -1,5 +1,6 @@
 /* The form grammar the range dialogs share (RangeEditor, RangeTypeDialog,
-   BulkRangeTypeDialog): a stacked form with bold labels, a muted help line,
+   BulkRangeTypeDialog, and NextPrefixDialog, which plans a block the same
+   way): a stacked form with bold labels, a muted help line,
    and an error line. Each dialog imports this and adds only its own fields. */
 
 .workspace-range-form {

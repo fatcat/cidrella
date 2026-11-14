@@ -2,6 +2,7 @@ import fs from 'fs';
 import path from 'path';
 import os from 'os';
 import { execFileSync } from 'child_process';
+import { runCommand } from '../../utils/run-command.js';
 import { sortKey } from '../../utils/address.js';
 import { ipForPtrRecord } from '../../models/dns-record.js';
 import {
@@ -20,7 +21,8 @@ import { ipv6Enabled } from '../../utils/ipv6-support.js';
 import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
 import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
 import { createUnitControl } from '../shared/unit-control.js';
-import { backendDnsPort, ENCRYPTED_FORWARDER_PORT } from '../../config/defaults.js';
+import { backendDnsPort } from '../../config/defaults.js';
+import { recursionTargets } from '../../utils/forwarding-settings.js';
 import {
   validateConfigSafeValue,
   validateTxtValue,
@@ -36,20 +38,36 @@ import {
   RESTART_PENDING,
 } from './paths.js';
 
+const TEST_ARGS = () => ['--test', `--conf-file=${DNSMASQ_CONF}`];
+
+function testFailure(err) {
+  if (err?.code === 'ENOENT' && process.env.NODE_ENV !== 'production') {
+    return { ok: true, skipped: 'dnsmasq-not-installed' };
+  }
+  const detail = err?.stderr?.toString?.().trim() || err?.message || 'unknown validation error';
+  throw new Error(`dnsmasq configuration validation failed: ${detail}`);
+}
+
+// Synchronous: it runs inside the validated write (createValidatedFiles),
+// which the render path calls synchronously. Deferred in BACKLOG.md.
 export function validateDnsmasqConfig() {
   if (!fs.existsSync(DNSMASQ_CONF)) return { ok: true, skipped: 'no-config' };
   try {
-    execFileSync('dnsmasq', ['--test', `--conf-file=${DNSMASQ_CONF}`], {
-      encoding: 'utf8',
-      stdio: ['ignore', 'pipe', 'pipe'],
-    });
+    execFileSync('dnsmasq', TEST_ARGS(), { encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] });
     return { ok: true, skipped: null };
   } catch (err) {
-    if (err?.code === 'ENOENT' && process.env.NODE_ENV !== 'production') {
-      return { ok: true, skipped: 'dnsmasq-not-installed' };
-    }
-    const detail = err?.stderr?.toString?.().trim() || err?.message || 'unknown validation error';
-    throw new Error(`dnsmasq configuration validation failed: ${detail}`);
+    return testFailure(err);
+  }
+}
+
+// The same check before a signal or restart, off the event loop.
+async function checkDnsmasqConfig() {
+  if (!fs.existsSync(DNSMASQ_CONF)) return { ok: true, skipped: 'no-config' };
+  try {
+    await runCommand('dnsmasq', TEST_ARGS());
+    return { ok: true, skipped: null };
+  } catch (err) {
+    return testFailure(err);
   }
 }
 
@@ -363,9 +381,12 @@ export function regenerateDnsmasqConf(_db) {
   // disabled, emit NO upstreams (authoritative-only). Otherwise send everything
   // to the in-Node forwarder stub on loopback, in every mode: it picks the
   // resolver (primary, backup, turns) and speaks plain DNS, DoT or DoH to it.
+  // recursionTargets says when the stub is down and where to go instead.
   const noResolvIdx = filtered.findIndex((l) => l.trim() === 'no-resolv');
   const insertIdx = noResolvIdx >= 0 ? noResolvIdx + 1 : 0;
-  const serverLines = noRecursion ? [] : [`server=127.0.0.1#${ENCRYPTED_FORWARDER_PORT}`];
+  const serverLines = noRecursion
+    ? []
+    : recursionTargets().map(({ address, port }) => `server=${address}#${port}`);
   const localLines = reservedLocalLines({ addresses: forwardedAddresses({ noRecursion }) });
   filtered.splice(insertIdx, 0, ...LOCAL_ANSWER_LINES, ...localLines, ...serverLines);
 
@@ -411,14 +432,14 @@ export const dnsmasqUnitInstalled = () => dnsmasqUnit.installed();
 export const dnsmasqRestartPending = () => dnsmasqUnit.restartPending();
 
 // cidrella-dnsmasq.service has ExecReload=/bin/kill -HUP $MAINPID (v0.4.11).
-export function signalDnsmasq() {
-  validateDnsmasqConfig();
-  dnsmasqUnit.reload();
+export async function signalDnsmasq() {
+  await checkDnsmasqConfig();
+  await dnsmasqUnit.reload();
 }
 
-export function restartDnsmasq() {
-  validateDnsmasqConfig();
-  dnsmasqUnit.restart();
+export async function restartDnsmasq() {
+  await checkDnsmasqConfig();
+  await dnsmasqUnit.restart();
 }
 
 export function applyInterfaceConfig(_db) {

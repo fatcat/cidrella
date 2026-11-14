@@ -4,6 +4,10 @@
  * forward those names itself (PowerDNS), and never with recursion off.
  */
 import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+// The proxy under test runs in this process.
+vi.mock('../../src/utils/dns-proxy-client.js', async () =>
+  (await import('../helpers/proxy-in-process.js')).inProcessProxyClient(),
+);
 
 vi.mock('../../src/backends/index.js', async () =>
   (await import('../helpers/fake-backends.js')).fakeBackendsModule(),
@@ -13,7 +17,11 @@ vi.mock('../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 const { setupTestDb, cleanupTestDb } = await import('../helpers/test-db.js');
 const { backend } = await import('../../src/backends/index.js');
 const { setSetting } = await import('../../src/db/init.js');
-const { wantsUnknownRetry } = await import('../../src/utils/dns-proxy.js');
+const { clearSettingCache } = await import('../../src/dns-proxy/db.js');
+// The proxy reads the backend's flag from its config, which the facade
+// refreshes when the DNS backend changes; a test flipping the flag refreshes it.
+const { refreshProxyConfig } = await import('../../src/utils/dns-proxy.js');
+const { wantsUnknownRetry } = await import('../../src/dns-proxy/server.js');
 
 let tmpDir;
 let db;
@@ -26,6 +34,7 @@ beforeAll(async () => {
 afterAll(() => cleanupTestDb(tmpDir));
 beforeEach(() => {
   backend.dns.forwardsUnknownItself = false;
+  refreshProxyConfig();
   setSetting('dns_no_recursion', 'false');
 });
 
@@ -46,11 +55,14 @@ describe('wantsUnknownRetry', () => {
 
   it('never retries on dnsmasq, which forwards those names itself', () => {
     backend.dns.forwardsUnknownItself = true;
+    refreshProxyConfig();
     expect(wantsUnknownRetry(nx, 'vpn.corp.example')).toBe(false);
   });
 
   it('never retries with recursion off', () => {
     setSetting('dns_no_recursion', 'true');
+    // A query reads it through a 2 s cache (dns-proxy/db.js).
+    clearSettingCache();
     expect(wantsUnknownRetry(nx, 'vpn.corp.example')).toBe(false);
   });
 });

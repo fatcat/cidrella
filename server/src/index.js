@@ -76,7 +76,8 @@ import {
   sweepStaleRestoreArtifacts,
   applyRestoreCarryover,
 } from './utils/backup.js';
-import { startGeoipScheduler, startProxyIfEnabled } from './utils/dns-proxy.js';
+import { clearBypassAtBoot, startProxyIfEnabled } from './utils/dns-proxy.js';
+import { startGeoipScheduler } from './services/geoip-update.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
 import { allBackends, uniqueServices } from './backends/index.js';
@@ -85,9 +86,8 @@ import { startSystemAudit, systemAuditBooted } from './services/system-audit.js'
 import { recordAudit } from './services/audit.js';
 import { recordVersionChange } from './services/version-audit.js';
 import { APP_VERSION } from './utils/version.js';
-import { applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
+import { activatePendingBackends, applyAtBoot, HOOK_HANDLERS } from './services/backend-apply.js';
 import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync.js';
-import { applyEncryptedForwarder } from './utils/encrypted-forwarder.js';
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
@@ -100,9 +100,10 @@ import anomalyRoutes from './routes/anomalies.js';
 import rogueDhcpRoutes from './routes/rogue-dhcp.js';
 import deviceRoutes from './routes/devices.js';
 import { initAnalyticsDb } from './db/duckdb.js';
-import { getCapabilityWarning } from './utils/capabilities.js';
+import * as Privileged from './utils/privileged.js';
 import { captureBootServiceHealth } from './utils/service-health.js';
 import { markBackendReady } from './utils/startup-status.js';
+import { isPreflightBoot } from './utils/preflight.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -110,6 +111,10 @@ async function main() {
   // Capture the previous process' systemd/journal crash context before the
   // normal boot path writes enough logs to bury the useful failure lines.
   captureBootServiceHealth();
+
+  // The privileged helper runs the scans' probes and the daemon control
+  // (utils/privileged.js). Connect first: boot restarts daemons.
+  Privileged.startPrivileged();
 
   // Ensure data directories exist
   const dataDirs = ['certs', 'backups', 'blocklists', 'geoip'];
@@ -133,7 +138,7 @@ async function main() {
   }
   console.log('Database initialized');
   // An update or rollback run from the shell leaves its only trace here.
-  if (process.env.CIDRELLA_PREFLIGHT !== '1') {
+  if (!isPreflightBoot()) {
     try {
       recordVersionChange(getDb(), { version: APP_VERSION, dataDir: DATA_DIR });
     } catch (err) {
@@ -228,15 +233,19 @@ async function main() {
   // Sync server IP into DNS Servers default
   syncServerDnsDefault(getDb());
 
-  try {
-    const warning = getCapabilityWarning();
-    if (warning) {
-      console.warn(
-        `[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`,
-      );
+  // Without the privileged helper (development) this process runs the probes
+  // itself; the helper logs its own warning when it says hello.
+  if (!Privileged.usesHelper()) {
+    try {
+      const warning = Privileged.capabilityWarning();
+      if (warning) {
+        console.warn(
+          `[capabilities] ${warning} Active ARP/ICMP liveness scans may report all hosts offline.`,
+        );
+      }
+    } catch (err) {
+      console.warn(`[capabilities] Unable to inspect process capabilities: ${err?.message || err}`);
     }
-  } catch (err) {
-    console.warn(`[capabilities] Unable to inspect process capabilities: ${err?.message || err}`);
   }
 
   // Start DHCP lease file watcher
@@ -255,19 +264,26 @@ async function main() {
   // doubles as "make sure DNS is up" and change-detection must not lose that.
   // (The blocklist scheduler's one-time legacy blocklist.conf blanking ~10s
   // in has its own restart guard and stays separate on purpose.)
-  applyAtBoot(getDb());
+  // A proxy bypass from before the restart would put the DNS backend on the
+  // LAN port and keep the proxy out; the proxy is always tried first.
+  clearBypassAtBoot(getDb());
+  await applyAtBoot(getDb());
+  // A reload or restart that failed while the helper was away (an update
+  // restarting it, a crash) is done once it answers again. Once now as well,
+  // not awaited: the helper may have come back during the boot apply, before
+  // this could listen.
+  if (Privileged.usesHelper() && !isPreflightBoot()) {
+    Privileged.onHelperHello(() => void activatePendingBackends());
+    void activatePendingBackends();
+  }
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,
   // so it switches to enforcing. No-op unless dnssec_enabled.
   if (getSetting('dnssec_enabled') === 'true') {
-    ensureNtpEnabled();
+    await ensureNtpEnabled();
     armDnssecTimecheckWhenSynced();
   }
-
-  // Encrypted DNS forwarders: start the in-Node DoT/DoH stub if enabled
-  // (dnsmasq's server= already points at it via applyAtBoot above).
-  applyEncryptedForwarder();
 
   // 2. Initialize DuckDB analytics
   await initAnalyticsDb(DATA_DIR);

@@ -362,8 +362,6 @@
       </p>
       <p class="text-sm muted">This action cannot be undone.</p>
     </ConfirmDialog>
-
-    <Toast />
   </div>
 </template>
 
@@ -380,7 +378,6 @@ import ContextMenu from '../ui/ContextMenu.js';
 import Dialog from '../ui/Dialog.js';
 import InputText from '../ui/InputText.js';
 import Select from '../ui/Select.js';
-import Toast from '../ui/Toast.js';
 import { useAuthStore } from '../stores/auth.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';

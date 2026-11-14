@@ -4,6 +4,9 @@ import {
   facetFields,
   matchesColumnFilters,
 } from '@shared/ip-columns.js';
+import { expandIpv6, sortKey } from '@shared/address.js';
+import { groupHosts, hostMatches } from '@shared/ip-hosts.js';
+import { networkContains, networksOverlap, parseAddressQuery } from '@shared/cidr.js';
 
 // An in-memory estate that answers the Networks workspace's reads the way the
 // server filters them (models/workspace-view.js and the subnet routes), so a
@@ -12,10 +15,12 @@ import {
 // The data is small and deliberately awkward: two folders plus Ungrouped, a
 // /23 with two reverse zones, a divided unallocated /24, a reverse zone a
 // deallocated network left disabled, an enabled standalone reverse zone, a
-// generated record, a disabled one, and three DHCP scopes.
+// generated record, a disabled one, three DHCP scopes, and an IPv6 /64 that
+// lists only what it knows of.
 
 const net = (id, cidr, fields = {}) => {
   const [address, prefix] = cidr.split('/');
+  const v6 = cidr.includes(':');
   return {
     id,
     cidr,
@@ -25,7 +30,8 @@ const net = (id, cidr, fields = {}) => {
     folder_id: null,
     network_address: address,
     prefix_length: Number(prefix),
-    total_addresses: 2 ** (32 - Number(prefix)),
+    address_family: v6 ? 6 : 4,
+    total_addresses: v6 ? null : 2 ** (32 - Number(prefix)),
     used_count: 0,
     gateway_address: null,
     domain_name: null,
@@ -45,10 +51,17 @@ export const NETWORKS = [
   net(12, '10.0.8.0/24', { name: 'IOT', folder_id: 1, domain_name: 'home.example' }),
   net(13, '172.16.0.0/24', { name: 'Lab net', folder_id: 2, domain_name: 'lab.example' }),
   net(14, '1.1.2.0/24', { name: 'Loose net' }),
+  net(16, 'fd00:5::/64', { name: 'Lab v6', folder_id: 2 }),
   net(20, '192.168.0.0/24', { name: null, status: 'unallocated', folder_id: 2 }),
   net(21, '192.168.0.0/25', { name: null, status: 'unallocated', folder_id: 2, parent_id: 20 }),
   net(22, '192.168.0.128/25', { name: null, status: 'unallocated', folder_id: 2, parent_id: 20 }),
   net(15, '1.1.1.0/24', { name: null, status: 'unallocated' }),
+  // An IPv6 /48 a /64 was carved from: the allocated /64 and the free space
+  // the carve left (docs/IPV6-HANDLING.md, rules 3 and 4).
+  net(30, 'fd00:30::/48', { name: null, status: 'unallocated', folder_id: 2 }),
+  net(31, 'fd00:30::/64', { name: 'Carved v6', folder_id: 2, parent_id: 30 }),
+  net(32, 'fd00:30:0:1::/64', { name: null, status: 'unallocated', folder_id: 2, parent_id: 30 }),
+  net(33, 'fd00:30:0:2::/63', { name: null, status: 'unallocated', folder_id: 2, parent_id: 30 }),
 ];
 
 const zone = (id, name, type, related, fields = {}) => ({
@@ -271,6 +284,85 @@ export function dhcpRow(entry) {
   };
 }
 
+// What the IPv6 /64 stores: a static host and a few SLAAC addresses. The
+// listing is these plus the network address (subnet-router anycast). As
+// hosts: a laptop (the EUI-64 address and the SLAAC one the neighbor table
+// gave its MAC), a DUID-only DHCPv6 client, and the NAS on its own.
+export const V6_STORED = [
+  { ip_address: 'fd00:5::10', allocation_state: 'static_dns', hostname: 'nas.lab.example' },
+  { ip_address: 'fd00:5::21a:2bff:fe3c:4d5e', allocation_state: 'slaac' },
+  {
+    ip_address: 'fd00:5::7f2e:91c4:aa01:3b6d',
+    allocation_state: 'slaac',
+    last_seen_mac: '00:1a:2b:3c:4d:5e',
+  },
+  {
+    ip_address: 'fd00:5::c0a8:1:2',
+    allocation_state: 'slaac',
+    dhcp_duid: '00:02:00:00:ab:11:01:02:03:04',
+  },
+];
+
+function v6Row(network, ip, state, hostname = null, evidence = {}) {
+  const inUse = state !== 'unassigned';
+  return {
+    ip_address: ip,
+    subnet_id: network.id,
+    allocation_state: state,
+    allocation_source_type: state === 'system' ? 'topology' : null,
+    ip_display_status: inUse ? 'in use' : 'available',
+    ip_status_severity: inUse ? 'danger' : 'secondary',
+    address_type: inUse ? state : null,
+    in_dynamic_pool: 0,
+    hostname,
+    mac_address: null,
+    last_seen_mac: evidence.last_seen_mac ?? null,
+    dhcp_duid: evidence.dhcp_duid ?? null,
+    is_online: 0,
+    scanning_enabled: true,
+    scan_enabled: null,
+    filtering_enabled: filteringOn(ip),
+  };
+}
+
+const v6Key = (ip) => (expandIpv6(ip) || '').replaceAll(':', '');
+
+// An IPv6 network is never walked: the network address, what it stores, and
+// an exact address searched for, which is a row even when nothing is stored.
+function v6AddressRows(network, params) {
+  const rows = [
+    v6Row(network, network.network_address, 'system'),
+    ...V6_STORED.map((row) =>
+      v6Row(network, row.ip_address, row.allocation_state, row.hostname ?? null, row),
+    ),
+  ];
+  for (const term of [params.search, params.table_search]) {
+    const query = parseAddressQuery(term);
+    if (
+      query.kind === 'address' &&
+      networkContains(network.cidr, query.ip) &&
+      !rows.some((row) => row.ip_address === query.ip)
+    )
+      rows.push(v6Row(network, query.ip, 'unassigned'));
+  }
+  return rows.sort((a, b) => (v6Key(a.ip_address) < v6Key(b.ip_address) ? -1 : 1));
+}
+
+// The address search of GET /subnets/:id/ips (routes/subnets.js
+// searchMatcher): one address in any spelling, the addresses inside a CIDR,
+// or text in the fields and in an IPv6 address's expanded spelling.
+function addressSearchMatches(row, term) {
+  if (!term) return true;
+  const query = parseAddressQuery(term);
+  if (query.kind === 'cidr') return networkContains(query.cidr, row.ip_address);
+  if (query.kind === 'address' && row.ip_address === query.ip) return true;
+  const needle = text(term).trim();
+  return (
+    Boolean(expandIpv6(row.ip_address)?.includes(needle)) ||
+    ['ip_address', 'hostname', 'mac_address'].some((field) => text(row[field]).includes(needle))
+  );
+}
+
 function addressRows(network) {
   const start = ipToNumber(network.network_address);
   const named = new Map(
@@ -308,12 +400,49 @@ function addressRows(network) {
 // GET /subnets/:id/ips before its column filters: Show available and the two
 // searches.
 function addressQuery(network, params) {
+  // Show available is ignored on an IPv6 network.
+  if (network.address_family === 6)
+    return v6AddressRows(network, params).filter(
+      (row) =>
+        addressSearchMatches(row, params.search) && addressSearchMatches(row, params.table_search),
+    );
   let rows = addressRows(network);
   if (params.showAvailable === 'false')
     rows = rows.filter((row) => row.ip_display_status !== 'available');
   const fields = ['ip_address', 'hostname', 'mac_address'];
   rows = rows.filter((row) => matchesAny(row, fields, params.search));
   return rows.filter((row) => matchesAny(row, fields, params.table_search));
+}
+// GET /subnets/:id/hosts (models/ip-hosts.js): the stored rows with real
+// facts, the network address left out, grouped by the server's own
+// groupHosts and searched by both boxes.
+export function queryHosts(networkId, params = {}) {
+  const network = networkById(networkId);
+  const rows = (
+    network.address_family === 6 ? v6AddressRows(network, {}) : addressRows(network)
+  ).filter(
+    (row) =>
+      row.allocation_state !== 'system' &&
+      (row.allocation_state !== 'unassigned' ||
+        row.hostname ||
+        row.mac_address ||
+        row.last_seen_mac ||
+        row.dhcp_duid),
+  );
+  let hosts = groupHosts(
+    rows.map((row) => ({ ...row, address_sort_key: sortKey(row.ip_address) })),
+  );
+  if (params.address)
+    hosts = hosts.filter((host) => host.addresses.some((a) => a.ip_address === params.address));
+  else
+    hosts = hosts.filter((host) => hostMatches(host, params.q) && hostMatches(host, params.search));
+  return hosts.map((host) => ({
+    ...host,
+    vendor: null,
+    device_type: null,
+    os_family: null,
+    other_family: [],
+  }));
 }
 export function queryAddresses(networkId, params = {}, filters = {}) {
   return applyColumnFilters(addressQuery(networkById(networkId), params), filters, 'addresses');
@@ -439,13 +568,31 @@ export function queryScopes(params = {}) {
 }
 
 // GET /workspace/networks: allocated leaves, by folder and search.
+// The network search of models/workspace-view.js: the network's own fields,
+// a CIDR overlapping it, an address inside it, or a stored address, by any
+// spelling (the IPv6 /64's rows are the only stored ones here).
+function networkSearchMatches(network, term) {
+  if (!term) return true;
+  if (matchesAny(network, ['name', 'cidr', 'domain_name'], term)) return true;
+  const query = parseAddressQuery(term);
+  if (query.kind === 'cidr') return networksOverlap(network.cidr, query.cidr);
+  if (query.kind === 'address' && networkContains(network.cidr, query.ip)) return true;
+  if (network.address_family !== 6) return false;
+  const needle = text(term).trim();
+  return V6_STORED.some(
+    (row) =>
+      text(row.ip_address).includes(needle) ||
+      text(row.hostname).includes(needle) ||
+      expandIpv6(row.ip_address).includes(needle),
+  );
+}
+
 export function queryNetworks(params = {}) {
   let rows = allocatedLeaves();
   if (params.folder_id != null)
     rows = rows.filter((row) => row.folder_id === folderParam(params.folder_id));
-  const fields = ['name', 'cidr', 'domain_name'];
-  rows = rows.filter((row) => matchesAny(row, fields, params.q));
-  rows = rows.filter((row) => matchesAny(row, fields, params.table_q));
+  rows = rows.filter((row) => networkSearchMatches(row, params.q));
+  rows = rows.filter((row) => networkSearchMatches(row, params.table_q));
   return rows;
 }
 
@@ -549,11 +696,26 @@ export function createFakeApi() {
         ips: rows.slice((at - 1) * size, at * size),
         ranges: [],
         totalIps: network.total_addresses,
+        sparse: network.address_family === 6 || undefined,
         filteredTotal: rows.length,
         page: at,
         pageSize: size,
         totalPages: Math.max(1, Math.ceil(rows.length / size)),
         ...extra,
+      });
+    }
+    const hostList = url.match(/^\/subnets\/(\d+)\/hosts$/);
+    if (hostList) {
+      const hosts = queryHosts(hostList[1], params);
+      const size = Number(params.page_size) || 50;
+      const pages = Math.max(1, Math.ceil(hosts.length / size));
+      const at = Math.min(Math.max(1, Number(params.page) || 1), pages);
+      return reply({
+        hosts: hosts.slice((at - 1) * size, at * size),
+        total: hosts.length,
+        page: at,
+        page_size: size,
+        total_pages: pages,
       });
     }
     const summary = url.match(/^\/subnets\/(\d+)\/summary$/);
@@ -562,6 +724,10 @@ export function createFakeApi() {
       return reply({
         subnet_id: network.id,
         total_addresses: network.total_addresses,
+        known_count:
+          network.address_family === 6
+            ? v6AddressRows(network, {}).length
+            : network.total_addresses,
         assigned_count: 0,
         unassigned_count: network.total_addresses,
         online_count: 0,
@@ -571,9 +737,13 @@ export function createFakeApi() {
     if (/^\/subnets\/\d+\/ranges$/.test(url)) return reply([]);
     const one = url.match(/^\/subnets\/(\d+)\/ips\/([^/]+)$/);
     if (one) {
-      const row = addressRows(networkById(one[1])).find(
-        (entry) => entry.ip_address === decodeURIComponent(one[2]),
-      );
+      const network = networkById(one[1]);
+      const ip = decodeURIComponent(one[2]);
+      const rows =
+        network.address_family === 6
+          ? v6AddressRows(network, { search: ip })
+          : addressRows(network);
+      const row = rows.find((entry) => entry.ip_address === ip);
       return row ? reply({ ip: row }) : Promise.reject({ response: { status: 404, data: {} } });
     }
     if (/^\/subnets\/\d+\/ips\/[^/]+\/events(\?.*)?$/.test(url)) return reply({ events: [] });

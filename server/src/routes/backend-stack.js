@@ -17,21 +17,23 @@ import {
 // few seconds.
 const router = Router();
 
-router.get('/', requireRole('admin'), (req, res) => {
+router.get('/', requireRole('admin'), async (req, res) => {
   const current = stackName();
-  const { stacks } = switchPreflight(current);
+  const { stacks } = await switchPreflight(current);
   res.json({
     current,
     label: stackLabel(current),
     switching: switchInProgress(),
     stacks,
     // What switching to each other stack would gain and lose.
-    targets: Object.keys(STACKS)
-      .filter((name) => name !== current)
-      .map((name) => {
-        const { blocked, gained, lost } = switchPreflight(name);
-        return { name, label: stackLabel(name), blocked, gained, lost };
-      }),
+    targets: await Promise.all(
+      Object.keys(STACKS)
+        .filter((name) => name !== current)
+        .map(async (name) => {
+          const { blocked, gained, lost } = await switchPreflight(name);
+          return { name, label: stackLabel(name), blocked, gained, lost };
+        }),
+    ),
   });
 });
 

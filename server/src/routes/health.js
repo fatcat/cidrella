@@ -1,7 +1,6 @@
 import { Router } from 'express';
 import os from 'os';
 import fs from 'fs';
-import { execFileSync } from 'child_process';
 import bcrypt from 'bcryptjs';
 import { getDb, getSetting } from '../db/init.js';
 import { queryRaw } from '../db/duckdb.js';
@@ -12,14 +11,15 @@ import { getEncryptedForwarderStatus } from '../utils/encrypted-forwarder.js';
 import { getProbeState } from '../utils/dhcp-probe.js';
 import { countUnacknowledged } from '../models/rogue-dhcp.js';
 import { requirePerm } from '../auth/require-perm.js';
-import { getCapabilityWarning, readProcessCapabilities } from '../utils/capabilities.js';
+import * as Privileged from '../utils/privileged.js';
 import { getBootServiceHealth } from '../utils/service-health.js';
 import { getIpLifecycleDiagnostics } from '../utils/ip-lifecycle-diagnostics.js';
+import { runCommand } from '../utils/run-command.js';
 
 const router = Router();
 
-function parseDf(target) {
-  const dfOutput = execFileSync('df', ['-B1', target], { encoding: 'utf-8' });
+async function parseDf(target) {
+  const { stdout: dfOutput } = await runCommand('df', ['-B1', target], { timeout: 5000 });
   const lines = dfOutput.trim().split('\n');
   if (lines.length >= 2) {
     const parts = lines[1].split(/\s+/);
@@ -124,32 +124,37 @@ router.get('/deep', requireLocalhost, async (req, res) => {
     allOk = false;
   }
 
-  // ICMP fallback, scanner uses system ping via execFile, not a shell.
-  try {
-    execFileSync('ping', ['-c', '1', '-W', '1', '127.0.0.1'], { stdio: 'pipe', timeout: 2000 });
+  // ICMP, as the scanner sends it: through the privileged helper where there
+  // is one. A helper that does not answer fails the check: scans and daemon
+  // control fail with it. A missing capability is a warning only.
+  const ping = await Privileged.ping('127.0.0.1', { count: 1, timeoutSec: 1 });
+  if (ping.ok) {
     checks.ping = { ok: true };
-  } catch (err) {
-    const detail = `${err.message || ''}\n${err.stderr?.toString?.() || ''}`;
+  } else if (ping.helperDown) {
+    checks.ping = { ok: false, error: Privileged.HELPER_DOWN_MESSAGE };
+    allOk = false;
+  } else {
+    const error = ping.stderr.trim() || `exit ${ping.code}`;
     const missingCapability = /CAP_NET_RAW|Operation not permitted|missing cap_net_raw/i.test(
-      detail,
+      error,
     );
     checks.ping = missingCapability
       ? {
           ok: false,
           warning:
             'ICMP ping requires CAP_NET_RAW; active scans may rely on ARP/passive liveness only.',
-          error: err.message,
+          error,
         }
-      : { ok: false, error: err.message };
+      : { ok: false, error };
     if (!missingCapability) allOk = false;
   }
 
-  // Service capability inheritance. This is warning-only: CIDRella can still
-  // run DNS/DHCP/passive liveness without active ARP/ICMP scan support.
+  // The probing process's capabilities (the helper's, under one). This is
+  // warning-only: CIDRella can still run DNS/DHCP/passive liveness without
+  // active ARP/ICMP scan support.
   try {
-    const caps = readProcessCapabilities();
-    const warning = getCapabilityWarning(caps);
-    checks.capabilities = { ok: !warning, warning: warning || null, ...caps };
+    const warning = Privileged.capabilityWarning();
+    checks.capabilities = { ok: !warning, warning: warning || null, ...Privileged.probeCapabilities() };
   } catch (err) {
     checks.capabilities = {
       ok: false,
@@ -167,7 +172,7 @@ router.get('/deep', requireLocalhost, async (req, res) => {
 });
 
 // GET /api/health/system: detailed system metrics (authenticated)
-router.get('/system', requirePerm('subnets:read'), (req, res) => {
+router.get('/system', requirePerm('subnets:read'), async (req, res) => {
   const db = getDb();
 
   // CPU
@@ -181,22 +186,21 @@ router.get('/system', requirePerm('subnets:read'), (req, res) => {
   const dataDir = process.env.DATA_DIR || '/data';
   let disk = { total: 0, used: 0, available: 0, percent: 0 };
   try {
-    disk = parseDf(dataDir);
+    disk = await parseDf(dataDir);
   } catch {
     try {
-      disk = parseDf('/');
+      disk = await parseDf('/');
     } catch {
       /* ignore */
     }
   }
 
   // Services. One status per backend daemon, keyed by role.
-  const backends = backendStatuses();
+  const [backends, ntp] = await Promise.all([backendStatuses(), getNtpStatus()]);
 
   // DNSSEC + clock sync. "validating" means dnsmasq is actually enforcing
   // signature validation with trustworthy timestamps (enabled + supported +
   // clock synced). Before NTP sync, dnsmasq runs lenient (dnssec-no-timecheck).
-  const ntp = getNtpStatus();
   const dnssecEnabled = getSetting('dnssec_enabled') === 'true';
   const dnssecSupported = backends.dns.features['rec-dnssec-validate'];
 

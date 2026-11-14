@@ -1,6 +1,7 @@
 /**
- * The presentation switcher is withheld for an IPv6 network: its address
- * space cannot be enumerated, so the table is the one presentation.
+ * The presentation switcher and Show available are withheld for an IPv6
+ * network: its address space cannot be enumerated, so the table is the one
+ * presentation and there is no free space to list.
  */
 import { mount } from '@vue/test-utils';
 import { describe, expect, it } from 'vitest';
@@ -33,5 +34,20 @@ describe('WorkspaceToolbar presentation switcher', () => {
   it('offers no switcher at all when the grid is not allowed', () => {
     const wrapper = mountToolbar({ allowGrid: false });
     expect(wrapper.find('.view-switcher').exists()).toBe(false);
+  });
+});
+
+describe('WorkspaceToolbar Show available', () => {
+  it('is offered on the Addresses and DHCP views of an IPv4 network', () => {
+    for (const activeView of ['addresses', 'dhcp']) {
+      expect(mountToolbar({ activeView }).find('.available-switch').exists()).toBe(true);
+    }
+  });
+
+  it('is withheld when the network cannot list available addresses', () => {
+    for (const activeView of ['addresses', 'dhcp']) {
+      const wrapper = mountToolbar({ activeView, allowAvailable: false });
+      expect(wrapper.find('.available-switch').exists()).toBe(false);
+    }
   });
 });

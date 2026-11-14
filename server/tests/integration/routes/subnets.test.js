@@ -771,10 +771,17 @@ describe('canonical subnet IP detail and summary reads', () => {
     expect(summary.body).toEqual({
       subnet_id: created.body.id,
       total_addresses: 8,
+      // The three stored rows plus the network address and the broadcast:
+      // every row the address list can show.
+      known_count: 5,
       assigned_count: 3,
       unassigned_count: 5,
       online_count: 2,
       rogue_count: 1,
+      // .4 is online and rogue with no claim; .3 is claimed, so not seen.
+      by_state: { reserved: 1, system: 2, seen: 1 },
+      pool_size: null,
+      pool_in_use: null,
     });
   });
 });

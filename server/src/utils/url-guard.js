@@ -4,6 +4,7 @@ import https from 'https';
 import net from 'net';
 import { parseIp, formatIp } from './address.js';
 import { networkContains } from './cidr.js';
+import { BLOCKED_IPV4_RANGES, BLOCKED_IPV6_RANGES } from './special-ranges.js';
 import { PassThrough, Transform, pipeline } from 'node:stream';
 import { createGunzip } from 'node:zlib';
 import { ipv6Enabled } from './ipv6-support.js';
@@ -19,26 +20,7 @@ import { ipv6Enabled } from './ipv6-support.js';
 // IPv6 too while IPv6 support is switched on (literal URLs and AAAA answers,
 // checked by isBlockedIpv6), never while it is off. A hostname that resolves
 // to both families connects over IPv4.
-// CIDRs blocked: loopback, link-local, multicast, broadcast, private
-// (10/8, 172.16/12, 192.168/16), CGNAT (100.64/10), 0/8, metadata (169.254/16),
-// TEST-NET ranges.
-
-const BLOCKED_IPV4_RANGES = [
-  '0.0.0.0/8', // "this network"
-  '10.0.0.0/8', // RFC1918
-  '100.64.0.0/10', // CGNAT (RFC6598)
-  '127.0.0.0/8', // loopback
-  '169.254.0.0/16', // link-local + AWS/GCP metadata (169.254.169.254)
-  '172.16.0.0/12', // RFC1918
-  '192.0.0.0/24', // IETF protocol assignments
-  '192.0.2.0/24', // TEST-NET-1
-  '192.168.0.0/16', // RFC1918
-  '198.18.0.0/15', // benchmarking
-  '198.51.100.0/24', // TEST-NET-2
-  '203.0.113.0/24', // TEST-NET-3
-  '224.0.0.0/4', // multicast
-  '240.0.0.0/4', // reserved (includes 255.255.255.255 broadcast)
-];
+// The blocked ranges are the `outbound` rows of special-ranges.js.
 
 /**
  * True if a literal IPv4 address falls in a blocked (private/loopback/metadata/
@@ -50,22 +32,8 @@ export function isBlockedIpv4(ip) {
   return BLOCKED_IPV4_RANGES.some((range) => networkContains(range, ip));
 }
 
-// The IPv6 counterpart for literal upstream addresses: unspecified, loopback,
-// unique local, link-local, multicast, documentation, plus the IPv4-mapped and
-// 6to4/Teredo blocks, whose embedded IPv4 gets the IPv4 check.
-const BLOCKED_IPV6_RANGES = [
-  '::/128',
-  '::1/128',
-  '::ffff:0:0/96',
-  '64:ff9b::/96',
-  '2001::/32',
-  '2001:db8::/32',
-  '2002::/16',
-  'fc00::/7',
-  'fe80::/10',
-  'ff00::/8',
-];
-
+// The IPv6 counterpart for literal upstream addresses. An IPv4-mapped address
+// gets the IPv4 check.
 export function isBlockedIpv6(ip) {
   const parsed = parseIp(ip, { zoneId: false, mapV4: false });
   if (!parsed || parsed.bits !== 128) return false;

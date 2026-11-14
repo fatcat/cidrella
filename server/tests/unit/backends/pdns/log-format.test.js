@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { querySourceIp } from '../../../../src/backends/pdns/log-format.js';
-import { parseLogLines } from '../../../../src/utils/metrics-aggregator.js';
+import { emptyDhcpCounts, parseLogLines } from '../../../../src/utils/metrics-aggregator.js';
 import { formatQueryLine } from '../../../../src/utils/query-log-line.js';
 
 // Recursor 5.3.11's lines, captured on testerella (2026-10-11) with logging.quiet off.
@@ -42,7 +42,7 @@ describe('PowerDNS querySourceIp', () => {
 // PDNS-METRICS-01: the aggregator counted no DNS query on this stack.
 describe('metrics from pdns.log', () => {
   it('counts the queries in the PowerDNS log', () => {
-    const source = { querySourceIp, dhcpDirection: () => null };
+    const source = { querySourceIp, dhcpMessage: () => null };
     const lines = [
       AUTH,
       RECURSOR.daemon,
@@ -52,10 +52,6 @@ describe('metrics from pdns.log', () => {
       RECURSOR.answer,
       RECURSOR.cached,
     ];
-    expect(parseLogLines(lines, source)).toEqual({
-      dnsQueries: 4,
-      dhcpClientMsgs: 0,
-      dhcpServerMsgs: 0,
-    });
+    expect(parseLogLines(lines, source)).toEqual({ dnsQueries: 4, dhcp: emptyDhcpCounts() });
   });
 });

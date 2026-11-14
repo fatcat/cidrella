@@ -8,8 +8,7 @@ import { describe, it, expect, vi } from 'vitest';
 
 vi.mock('../../src/db/duckdb.js', () => ({ logDnsQuery: vi.fn() }));
 
-const { asksRecursion, withRecursionDesired, withClientRd } =
-  await import('../../src/utils/dns-proxy.js');
+const { asksRecursion, withRecursionDesired, withClientRd } = await import('../../src/dns-proxy/server.js');
 
 // ID 0x1234, flags byte 2 as given, byte 3 0, one question.
 const header = (flags2) => Buffer.from([0x12, 0x34, flags2, 0x00, 0, 1, 0, 0, 0, 0, 0, 0]);

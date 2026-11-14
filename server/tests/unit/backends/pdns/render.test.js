@@ -193,7 +193,7 @@ describe('renderRecursorConfig', () => {
     listen: ['127.0.0.1', '::1'],
     port: 5353,
     authPort: 5300,
-    forwarderPort: 5356,
+    forwarders: ['127.0.0.1:5356'],
     recursion: true,
     validation: 'validate',
     networkTimeoutMs: RECURSOR_NETWORK_TIMEOUT_MS,

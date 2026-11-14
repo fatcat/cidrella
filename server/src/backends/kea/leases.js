@@ -20,6 +20,15 @@ function expiresAt(lease) {
   return new Date((Number(lease.cltt) + valid) * 1000).toISOString();
 }
 
+// Kea stores the client's name qualified, as an absolute name: with no
+// qualifying suffix that is the bare name and a dot ("laptop."). CIDRella reads
+// a trailing dot as absolute, which would put the name at the root, so take
+// the name as the client gave it. A name Kea qualified with a real suffix
+// keeps it and loses only the dot.
+function leaseHostname(name) {
+  return name ? String(name).replace(/\.$/, '') || null : null;
+}
+
 /** One Kea lease4 or lease6 as a BackendLease, or null for one not in use. */
 export function backendLeaseFromKea(lease, family) {
   if (Number(lease.state ?? STATE_DEFAULT) !== STATE_DEFAULT) return null;
@@ -30,7 +39,7 @@ export function backendLeaseFromKea(lease, family) {
     return {
       ip: lease['ip-address'],
       mac: null,
-      hostname: lease.hostname || null,
+      hostname: leaseHostname(lease.hostname),
       clientId: duid,
       expiresAt: expiresAt(lease),
       dhcpVersion: 6,
@@ -42,7 +51,7 @@ export function backendLeaseFromKea(lease, family) {
   return {
     ip: lease['ip-address'],
     mac: lower(lease['hw-address']),
-    hostname: lease.hostname || null,
+    hostname: leaseHostname(lease.hostname),
     clientId: lower(lease['client-id']),
     expiresAt: expiresAt(lease),
     dhcpVersion: 4,
@@ -224,18 +233,21 @@ export async function importKeaLeases(commands, leases, { families = [4, 6], ...
 }
 
 /**
- * DHCP packets received and sent since each daemon started, summed over the
- * families served: { received, sent }. The metrics aggregator turns the
- * totals into per-minute counts.
+ * DHCP packets received and sent since each daemon started, per family
+ * served: { 4: { received, sent }, 6: { received, sent } }, a family missing
+ * when not served. The metrics aggregator turns the totals into per-minute
+ * counts.
  */
 export async function keaPacketCounters(commands, families) {
-  const totals = { received: 0, sent: 0 };
+  const counters = {};
   for (const family of families) {
     const stats = await statistics(commands[family]);
-    totals.received += current(stats[`pkt${family}-received`]);
-    totals.sent += current(stats[`pkt${family}-sent`]);
+    counters[family] = {
+      received: current(stats[`pkt${family}-received`]),
+      sent: current(stats[`pkt${family}-sent`]),
+    };
   }
-  return totals;
+  return counters;
 }
 
 // Kea's memfile lease types (lease6 "lease_type").

@@ -1,37 +1,9 @@
-import Database from 'better-sqlite3';
 import fs from 'fs';
-import os from 'os';
-import path from 'path';
-import { fileURLToPath } from 'url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { initDb } from '../../src/db/init.js';
+import { LATEST_MIGRATION, databaseThrough } from '../helpers/migrations.js';
 
-const migrationsDir = fileURLToPath(new URL('../../src/db/migrations/', import.meta.url));
 const tmpDirs = [];
-
-function createDatabaseThrough(maxVersion) {
-  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-network-dhcp-migration-'));
-  tmpDirs.push(tmpDir);
-  const db = new Database(path.join(tmpDir, 'cidrella.db'));
-  db.pragma('foreign_keys = ON');
-  db.exec(`CREATE TABLE schema_version (
-    version INTEGER PRIMARY KEY,
-    applied_at TEXT NOT NULL DEFAULT (datetime('now'))
-  )`);
-  const apply = db.transaction((sql, version) => {
-    db.exec(sql);
-    db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(version);
-  });
-  for (const file of fs
-    .readdirSync(migrationsDir)
-    .filter((name) => name.endsWith('.sql'))
-    .sort()) {
-    const version = Number.parseInt(file, 10);
-    if (version > maxVersion) continue;
-    apply(fs.readFileSync(path.join(migrationsDir, file), 'utf8'), version);
-  }
-  return { db, tmpDir };
-}
 
 afterEach(() => {
   for (const dir of tmpDirs.splice(0)) fs.rmSync(dir, { recursive: true, force: true });
@@ -39,7 +11,7 @@ afterEach(() => {
 
 describe('canonical Network/DHCP migration', () => {
   it('normalizes legacy option 51 into scope lease policy without losing pools', async () => {
-    const { db, tmpDir } = createDatabaseThrough(66);
+    const { db, tmpDir } = databaseThrough(66, { tmpDirs });
     const subnetId = db
       .prepare(
         `
@@ -104,15 +76,19 @@ describe('canonical Network/DHCP migration', () => {
         .prepare('SELECT COUNT(*) AS count FROM dhcp_scope_options WHERE option_code = 51')
         .get().count,
     ).toBe(0);
+    // The migration drops the legacy 51 default; startup then seeds the
+    // shipped Lease Time default (3600) for new scopes.
     expect(
       upgraded
-        .prepare('SELECT enabled_by_default FROM dhcp_option_defaults WHERE option_code = 51')
+        .prepare(
+          'SELECT value, enabled_by_default FROM dhcp_option_defaults WHERE option_code = 51',
+        )
         .get(),
-    ).toBeUndefined();
+    ).toEqual({ value: '3600', enabled_by_default: 1 });
     expect(upgraded.prepare('SELECT COUNT(*) AS count FROM dhcp_scope_pools').get().count).toBe(2);
     expect(
       upgraded.prepare('SELECT MAX(version) AS version FROM schema_version').get().version,
-    ).toBe(89);
+    ).toBe(LATEST_MIGRATION);
     expect(upgraded.pragma('integrity_check', { simple: true })).toBe('ok');
     expect(upgraded.pragma('foreign_key_check')).toEqual([]);
     upgraded.close();

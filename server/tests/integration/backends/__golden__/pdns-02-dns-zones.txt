@@ -3393,6 +3393,7 @@ outgoing:
 recursor:
   socket_dir: "<DATA_DIR>/pdns/run"
   security_poll_suffix: ""
+  serve_rfc1918: false
   forward_zones_recurse:
     - zone: "."
       forwarders:

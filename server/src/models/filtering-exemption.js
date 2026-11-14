@@ -13,6 +13,9 @@ import { isClientMac } from '../utils/ip.js';
 import { activeLeaseSql } from '../utils/lease-sql.js';
 import { currentActor } from '../utils/request-actor.js';
 import { insertEvent } from './ip-events.js';
+import { exemptAddressSet } from './filtering-exemption-read.js';
+
+export { exemptAddressSet };
 
 export const FILTERING_CHANGED = 'filtering_changed';
 
@@ -85,40 +88,6 @@ export function setHostFiltering(db, { ip, subnetId = null, interfaceId = null }
     source: key.mac ? `device ${key.mac}` : 'address',
   });
   return true;
-}
-
-/**
- * Every address with filtering off right now: the exempt addresses, plus the
- * addresses an exempt MAC holds (stored on the address, seen by a scan, or on
- * an active lease, either family).
- */
-export function exemptAddressSet(db) {
-  const rows = db.prepare('SELECT mac_address, ip_address FROM filtering_exemptions').all();
-  const set = new Set();
-  if (!rows.length) return set;
-  const macs = [];
-  for (const row of rows) {
-    if (row.ip_address) set.add(row.ip_address);
-    if (row.mac_address) macs.push(row.mac_address);
-  }
-  if (macs.length) {
-    const marks = macs.map(() => '?').join(',');
-    const held = db
-      .prepare(
-        `SELECT ip_address FROM ip_addresses
-          WHERE lower(mac_address) IN (${marks}) OR lower(last_seen_mac) IN (${marks})
-         UNION
-         SELECT ip_address FROM dhcp_leases
-          WHERE lower(mac_address) IN (${marks}) AND ${activeLeaseSql()}`,
-      )
-      .pluck()
-      .all(...macs, ...macs, ...macs);
-    for (const ip of held) {
-      const canonical = canonicalizeIp(ip);
-      if (canonical) set.add(canonical);
-    }
-  }
-  return set;
 }
 
 /** How many hosts have filtering off. */

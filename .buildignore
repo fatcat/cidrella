@@ -48,6 +48,7 @@ secrets
 # Test scaffolding: not needed at runtime
 tests/
 vitest.config.js
+/coverage/
 
 # Editor/LSP indexing config: dev-only
 jsconfig.json

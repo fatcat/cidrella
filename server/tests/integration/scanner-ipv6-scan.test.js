@@ -138,6 +138,23 @@ describe('IPv6 scan', () => {
     });
   });
 
+  it("never flags the appliance's own address on a stateful network", async () => {
+    // fd00:6::2 is held by eth0; fd00:6::b1 is the stranger from above.
+    neighbors = new Map([
+      ['fd00:6::2', { mac: 'bc:24:11:39:41:38', interface: 'eth0', state: 'REACHABLE' }],
+    ]);
+    responders.clear();
+    responders.add('fd00:6::2');
+    const run = await scan(nets.stateful);
+    expect(run.conflicts_found).toBe(0);
+    expect(row('fd00:6::2')).toMatchObject({ is_online: 1, is_rogue: 0 });
+
+    // Nor do its own DNS queries make it one.
+    db.prepare("DELETE FROM ip_addresses WHERE ip_address = 'fd00:6::2'").run();
+    recordDnsQueryLiveness(db, 'fd00:6::2', { createRogue: true });
+    expect(row('fd00:6::2')).toMatchObject({ is_online: 1, is_rogue: 0 });
+  });
+
   it('records liveness only when the network has no scope', async () => {
     neighbors = new Map([['fd00:7::c1', { mac: null, interface: 'eth0', state: 'STALE' }]]);
     responders.clear();

@@ -8,6 +8,12 @@ vi.mock('child_process', () => ({
   execFileSync: vi.fn(),
   execSync: vi.fn(),
 }));
+// Daemon control runs through runCommand; the same mock sees it.
+vi.mock('../../../../src/utils/run-command.js', async () =>
+  (await import('../../../helpers/fake-run-command.js')).fakeRunCommandModule(
+    (await import('child_process')).execFileSync,
+  ),
+);
 
 let tmpDir;
 let applyZones;
@@ -67,8 +73,8 @@ afterAll(() => {
 });
 
 describe('applyZones reload behavior', () => {
-  it('reloads dnsmasq for hostsdir-only changes', () => {
-    applyZones(
+  it('reloads dnsmasq for hostsdir-only changes', async () => {
+    await applyZones(
       makeDb({
         aRecords: [{ name: 'container-host', value: '10.0.3.231' }],
         // A forwarding zone writes no local= line, so conf.d stays empty and
@@ -77,16 +83,12 @@ describe('applyZones reload behavior', () => {
       }),
     );
 
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['reload', 'cidrella-dnsmasq'], {
-      stdio: 'pipe',
-    });
-    expect(execFileSync).not.toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], {
-      stdio: 'pipe',
-    });
+    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['reload', 'cidrella-dnsmasq'], expect.anything());
+    expect(execFileSync).not.toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
   });
 
-  it('restarts dnsmasq for conf-dir CNAME changes', () => {
-    applyZones(
+  it('restarts dnsmasq for conf-dir CNAME changes', async () => {
+    await applyZones(
       makeDb({
         otherRecords: [
           {
@@ -102,13 +104,11 @@ describe('applyZones reload behavior', () => {
     expect(
       fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'conf.d', 'zone-10.conf'), 'utf-8'),
     ).toContain('cname=checker.the-mcnultys.org,container-host.the-mcnultys.org');
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], {
-      stdio: 'pipe',
-    });
+    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
   });
 
-  it('does not append the zone twice for legacy fully-qualified CNAME names', () => {
-    applyZones(
+  it('does not append the zone twice for legacy fully-qualified CNAME names', async () => {
+    await applyZones(
       makeDb({
         otherRecords: [
           {
@@ -128,8 +128,8 @@ describe('applyZones reload behavior', () => {
 
   // A trailing dot marks the name absolute (zone-file rule); the hosts line
   // carries the name without it, which dnsmasq reads the same either way.
-  it('writes an absolute A-record name outside the zone without the zone', () => {
-    applyZones(
+  it('writes an absolute A-record name outside the zone without the zone', async () => {
+    await applyZones(
       makeDb({
         aRecords: [{ name: 'host.google.com.', value: '10.0.3.232' }],
       }),
@@ -153,8 +153,8 @@ describe('zones answer their own names', () => {
     }
   };
 
-  it('makes every zone local but one that forwards unknown names, in either family', () => {
-    applyZones(
+  it('makes every zone local but one that forwards unknown names, in either family', async () => {
+    await applyZones(
       makeDb({
         extraZones: [
           { id: 11, name: '0.10.in-addr.arpa', type: 'reverse' },
@@ -173,29 +173,23 @@ describe('zones answer their own names', () => {
         '',
       ].join('\n'),
     );
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], {
-      stdio: 'pipe',
-    });
+    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
   });
 
-  it('leaves dnsmasq alone when the local zones are unchanged', () => {
-    applyZones(makeDb());
+  it('leaves dnsmasq alone when the local zones are unchanged', async () => {
+    await applyZones(makeDb());
     vi.clearAllMocks();
-    applyZones(makeDb());
-    expect(execFileSync).not.toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], {
-      stdio: 'pipe',
-    });
+    await applyZones(makeDb());
+    expect(execFileSync).not.toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
   });
 
-  it('removes the file, and restarts, once no zone is local', () => {
-    applyZones(makeDb());
+  it('removes the file, and restarts, once no zone is local', async () => {
+    await applyZones(makeDb());
     expect(localZones()).toBe('local=/the-mcnultys.org/\n');
     vi.clearAllMocks();
-    applyZones(makeDb({ zone: { forward_unknown: 1 } }));
+    await applyZones(makeDb({ zone: { forward_unknown: 1 } }));
     expect(localZones()).toBeNull();
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], {
-      stdio: 'pipe',
-    });
+    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
   });
 });
 
@@ -234,15 +228,15 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
       .mock.calls.filter(([cmd, args]) => cmd === 'systemctl' && args?.[0] === 'reload').length;
   }
 
-  it('rewrites the file but does not restart when only the SOA serial moved', () => {
+  it('rewrites the file but does not restart when only the SOA serial moved', async () => {
     // First pass establishes the file and legitimately restarts.
-    applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860436 } }));
+    await applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860436 } }));
     expect(fs.readFileSync(CONF(), 'utf-8')).toContain('860436');
     expect(restarts()).toBe(1);
 
     // Lease churn bumped the serial. Nothing else about the zone changed.
     vi.clearAllMocks();
-    applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860439 } }));
+    await applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 860439 } }));
 
     const conf = fs.readFileSync(CONF(), 'utf-8');
     expect(conf).toContain('860439'); // comment stays truthful
@@ -251,11 +245,11 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
     expect(reloads()).toBe(0);
   });
 
-  it('still restarts when a real directive changes alongside the serial', () => {
-    applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
+  it('still restarts when a real directive changes alongside the serial', async () => {
+    await applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
     vi.clearAllMocks();
 
-    applyZones(
+    await applyZones(
       makeDb({
         otherRecords: [
           ...CNAME,
@@ -271,26 +265,26 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
     expect(restarts()).toBe(1);
   });
 
-  it('is fully idempotent when nothing at all changed', () => {
+  it('is fully idempotent when nothing at all changed', async () => {
     const db = () => makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 7 } });
-    applyZones(db());
+    await applyZones(db());
     const after = fs.readFileSync(CONF(), 'utf-8');
     vi.clearAllMocks();
 
-    applyZones(db());
+    await applyZones(db());
     expect(fs.readFileSync(CONF(), 'utf-8')).toBe(after);
     expect(restarts()).toBe(0);
     expect(reloads()).toBe(0);
   });
 
-  it('treats a commented-out directive as a real change, not a comment', () => {
+  it('treats a commented-out directive as a real change, not a comment', async () => {
     // Guard against a lazy "ignore anything with a #" implementation: dropping a
     // directive behind a `#` genuinely disables it and must reach the daemon.
-    applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
+    await applyZones(makeDb({ otherRecords: CNAME, zone: { ...SOA, soa_serial: 1 } }));
     vi.clearAllMocks();
 
     // Same serial, but the CNAME is gone. The zone now has only a PTR.
-    applyZones(
+    await applyZones(
       makeDb({
         ptrRecords: [{ name: '231', value: 'container-host.the-mcnultys.org' }],
         zone: { ...SOA, soa_serial: 1 },
@@ -304,8 +298,8 @@ describe('comment-only conf changes do not touch dnsmasq', () => {
 });
 
 describe('TXT record escaping', () => {
-  it('escapes backslashes so a trailing backslash cannot swallow the closing quote', () => {
-    applyZones(
+  it('escapes backslashes so a trailing backslash cannot swallow the closing quote', async () => {
+    await applyZones(
       makeDb({
         otherRecords: [
           { name: 'spf', type: 'TXT', value: 'v=spf1 a:mail.example.com \\', ttl: null },
@@ -317,8 +311,8 @@ describe('TXT record escaping', () => {
     expect(conf).toContain('txt-record=spf.the-mcnultys.org,"v=spf1 a:mail.example.com \\\\"');
   });
 
-  it('escapes quotes and backslashes independently', () => {
-    applyZones(
+  it('escapes quotes and backslashes independently', async () => {
+    await applyZones(
       makeDb({
         otherRecords: [{ name: 'meta', type: 'TXT', value: 'say "hi" via C:\\path', ttl: null }],
       }),
@@ -330,8 +324,8 @@ describe('TXT record escaping', () => {
 });
 
 describe('IPv6 emission', () => {
-  it('writes AAAA hosts lines and nibble ptr-record lines, skipping IPv6 placeholders', () => {
-    applyZones(
+  it('writes AAAA hosts lines and nibble ptr-record lines, skipping IPv6 placeholders', async () => {
+    await applyZones(
       makeDb({
         aRecords: [
           { name: 'host4', value: '10.0.3.231' },

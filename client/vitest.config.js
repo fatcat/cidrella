@@ -12,5 +12,16 @@ export default defineConfig({
     // are unaffected by having a DOM present.
     environment: 'happy-dom',
     setupFiles: ['tests/setup.js'],
+    // Off unless a run passes --coverage (CI does, for SonarQube Cloud).
+    // Paths in lcov.info are relative to the repository root, as the scanner
+    // reads them.
+    coverage: {
+      provider: 'v8',
+      include: ['src/**/*.{js,vue}'],
+      // Generated, and left out of the Sonar analysis (sonar-project.properties).
+      exclude: ['src/utils/country-geo.js'],
+      reporter: [['lcov', { projectRoot: '..' }]],
+      reportsDirectory: 'coverage',
+    },
   },
 });

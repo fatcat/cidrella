@@ -104,10 +104,15 @@
           </div>
         </section>
 
-        <section class="panel" aria-label="DHCP traffic">
+        <section
+          v-for="family in DHCP_FAMILIES"
+          :key="family"
+          class="panel"
+          :aria-label="`DHCPv${family} traffic`"
+        >
           <div class="panel-head">
-            <h2>DHCP traffic</h2>
-            <span class="panel-note">{{ dhcpNote }}</span>
+            <h2>DHCPv{{ family }} traffic</h2>
+            <span class="panel-note">{{ dhcpNote(dhcpRows[family]) }}</span>
           </div>
           <div class="panel-body">
             <p v-if="health.failed.includes('timeseries')" class="unavailable">
@@ -115,11 +120,11 @@
             </p>
             <SeriesChart
               v-else
-              :rows="dhcpRows"
+              :rows="dhcpRows[family]"
               :series="DHCP_SERIES"
               :range="selectedRange"
               :stacked="false"
-              noun="DHCP messages"
+              :noun="`DHCPv${family} messages`"
             />
           </div>
         </section>
@@ -156,8 +161,11 @@ const DNS_SERIES = [
   { key: 'blocklist_blocks', label: 'Blocked by list', color: 'warn' },
   { key: 'geoip_blocks', label: 'Blocked by GeoIP', color: 'err' },
 ];
-// The two halves of the DHCP conversation. Rows from before migration 079
-// only carry the combined dhcp_requests, so they draw as client messages.
+// The two halves of the DHCP conversation, one chart per family. Rows from
+// before migration 090 carry no family split and draw on the DHCPv4 chart;
+// rows from before 079 only carry the combined dhcp_requests, which draw as
+// client messages there.
+const DHCP_FAMILIES = [4, 6];
 const DHCP_SERIES = [
   { key: 'dhcp_client', label: 'Client requests', color: 'info' },
   { key: 'dhcp_server', label: 'Server replies', color: 'ok' },
@@ -253,15 +261,32 @@ const dnsRows = computed(() =>
     geoip_blocks: r.geoip_blocks || 0,
   })),
 );
-const dhcpRows = computed(() =>
-  (store.timeseries || []).map((r) => {
-    const split = (r.dhcp_client_msgs || 0) + (r.dhcp_server_msgs || 0) > 0;
+const familyCount = (r, family, half) => r[`dhcp${family}_${half}_msgs`] || 0;
+const hasFamilySplit = (r) =>
+  DHCP_FAMILIES.some((f) => familyCount(r, f, 'client') + familyCount(r, f, 'server') > 0);
+function dhcpRow(r, family) {
+  if (hasFamilySplit(r)) {
     return {
       ts: r.ts,
-      dhcp_client: split ? r.dhcp_client_msgs || 0 : r.dhcp_requests || 0,
-      dhcp_server: split ? r.dhcp_server_msgs || 0 : 0,
+      dhcp_client: familyCount(r, family, 'client'),
+      dhcp_server: familyCount(r, family, 'server'),
     };
-  }),
+  }
+  if (family !== 4) return { ts: r.ts, dhcp_client: 0, dhcp_server: 0 };
+  const split = (r.dhcp_client_msgs || 0) + (r.dhcp_server_msgs || 0) > 0;
+  return {
+    ts: r.ts,
+    dhcp_client: split ? r.dhcp_client_msgs || 0 : r.dhcp_requests || 0,
+    dhcp_server: split ? r.dhcp_server_msgs || 0 : 0,
+  };
+}
+const dhcpRows = computed(() =>
+  Object.fromEntries(
+    DHCP_FAMILIES.map((family) => [
+      family,
+      (store.timeseries || []).map((r) => dhcpRow(r, family)),
+    ]),
+  ),
 );
 const dnsNote = computed(() => {
   const total = (store.timeseries || []).reduce((s, r) => s + (r.dns_queries || 0), 0);
@@ -272,13 +297,13 @@ const dnsNote = computed(() => {
   if (!total) return rangeLabel.value;
   return `${rangeLabel.value} · ${((blocked / total) * 100).toFixed(1)}% blocked`;
 });
-const dhcpNote = computed(() => {
-  const c = dhcpRows.value.reduce((s, r) => s + r.dhcp_client, 0);
-  const sv = dhcpRows.value.reduce((s, r) => s + r.dhcp_server, 0);
+function dhcpNote(rows) {
+  const c = rows.reduce((s, r) => s + r.dhcp_client, 0);
+  const sv = rows.reduce((s, r) => s + r.dhcp_server, 0);
   if (!c && !sv) return rangeLabel.value;
   if (!sv) return `${rangeLabel.value} · ${formatNumber(c)} messages`;
   return `${rangeLabel.value} · ${formatNumber(c)} requests, ${formatNumber(sv)} replies`;
-});
+}
 
 const rangeLabel = computed(() => rangeLabelOf(selectedRange.value));
 

@@ -29,6 +29,8 @@ const write = (name, lines) => {
   return file;
 };
 
+// Kea writes a client's name qualified: with no qualifying suffix, the name
+// and a trailing dot. The leases read back carry the name without it.
 describe('readMemfileLeases', () => {
   it('reads DHCPv4 leases, the last row for an address winning', () => {
     const older = write('v4.csv.2', [
@@ -37,11 +39,11 @@ describe('readMemfileLeases', () => {
     ]);
     const live = write('v4.csv', [
       V4_HEADER,
-      `10.60.0.120,aa:bb:cc:00:00:09,01:aa:bb:cc:00:00:09,3600,${T + 1800},1,0,0,laptop&#x2cwork,0,,0`,
+      `10.60.0.120,aa:bb:cc:00:00:09,01:aa:bb:cc:00:00:09,3600,${T + 1800},1,0,0,laptop&#x2cwork.,0,,0`,
       `10.60.0.121,aa:bb:cc:00:00:0a,,3600,${T + 60},1,0,0,,1,,0`,
       `10.60.0.122,aa:bb:cc:00:00:0b,,3600,${T - 60},1,0,0,gone,0,,0`,
       `10.60.0.123,aa:bb:cc:00:00:0c,,0,${T},1,0,0,deleted,0,,0`,
-      `10.60.0.124,aa:bb:cc:00:00:0d,,4294967295,${T - 999},1,0,0,caf&#xc3&#xa9,0,,0`,
+      `10.60.0.124,aa:bb:cc:00:00:0d,,4294967295,${T - 999},1,0,0,caf&#xc3&#xa9.,0,,0`,
     ]);
     const leases = readMemfileLeases([path.join(dir, 'missing.csv'), older, live], 4, { now: NOW });
     expect(leases).toEqual([
@@ -72,7 +74,7 @@ describe('readMemfileLeases', () => {
     const duid = '00:01:00:01:aa:bb:cc:dd:ee:ff:00:11:22:33';
     const live = write('v6.csv', [
       V6_HEADER,
-      `fd00:63::120,${duid},3600,${T + 1800},2,1800,0,3,128,0,0,phone,,0,,0,0,0`,
+      `fd00:63::120,${duid},3600,${T + 1800},2,1800,0,3,128,0,0,phone.,,0,,0,0,0`,
       `fd00:63::121,${duid},3600,${T + 1800},2,1800,1,4,128,0,0,,,0,,0,0,0`,
       `fd00:64::,${duid},3600,${T + 1800},2,1800,2,5,56,0,0,,,0,,0,0,0`,
     ]);
