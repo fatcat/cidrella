@@ -171,6 +171,17 @@ deciding setting written last, recovery at boot.
   reachable by clients after a forced promotion (two controllers, possibly two DHCP servers),
   and a handover where the target stops answering after the point of no return. The UI states
   both in plain words where the choice is made.
+- **A controller rolled back below 0.7.0**: `cidrella-rollback` restores the pre-update
+  database, which has no member list, no member credentials and no epoch. Updating that box
+  to 0.7.0 again does not bring the members back: it refuses their credentials, and they
+  refuse its lower epoch, which is the fencing rule doing its job against an older database.
+  The members serve DNS read-only throughout, and hold every change made since the upgrade.
+  Recovery is by hand: promote a member (forced), then join the rolled-back box to it as a
+  plain member. Pairing each member again with a new join token also works, and loses those
+  changes. No automatic way back is built.
+  - `cidrella-rollback` warns and asks for confirmation when members are paired, and names
+    the recovery. It is standalone bash, so the controller keeps a small file under
+    `DATA_DIR/sync/` listing its members for it to read.
 
 ### 8. UI
 
@@ -180,7 +191,9 @@ deciding setting written last, recovery at boot.
   `StatusDot`; no banner.
 - Settings, System, **Instances** (controller): the list with version, last contact, sync
   lag, DNS and DHCP state; Add member (join token); Move DHCP here; Promote. On a member the
-  same page shows its controller and offers Promote.
+  same page shows its controller and offers Promote. When the controller answers without the
+  sync API and reports a version below 0.7.0, the page says it was rolled back and that
+  Promote is the way forward.
 - `GET /api/features` carries the mode; the client store reads it once, as it does features.
 
 ## Phases
@@ -201,7 +214,8 @@ Each leaves the tree shippable with single-box behavior unchanged.
    lifecycle writes arrive late from another host, under the canonical IP model gate.
 6. **Promotion.** Coordinated, then forced, fencing, the divergence report.
 7. **Hardening.** Version and schema skew, restore on the controller, backups on a plain
-   member (off: it holds no record), UPGRADE and README, release notes, harness scenario.
+   member (off: it holds no record), the rollback warning and the rolled-back controller
+   notice, UPGRADE and README, release notes, harness scenario.
 
 ## Verification
 
@@ -217,7 +231,9 @@ Each leaves the tree shippable with single-box behavior unchanged.
   zone on the controller and query the member; stop the controller and confirm the member
   still answers and serves its UI read-only; move DHCP and check a client renews; coordinated
   handover and back; forced promotion with the old controller off, then bring it back and read
-  its report.
+  its report. Roll the controller back to 0.6.4 with a member paired: the warning shows, the
+  member keeps answering and names the rollback, and a forced promotion followed by joining
+  the old box recovers every change.
 - Playwright on the join path, the Instances page, and a member's read-only views.
 - Never on prod. Prod takes 0.7.0 as a single box first; a second instance there is the
   maintainer's call.
