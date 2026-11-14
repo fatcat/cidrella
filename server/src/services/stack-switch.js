@@ -46,6 +46,7 @@ import { recordAudit } from './audit.js';
 import { applyDhcp } from './backend-apply.js';
 import { holdLeaseSync } from './dhcp-lease-sync.js';
 import { isPreflightBoot } from '../utils/preflight.js';
+import { helperMisses, onHelperHello, usesHelper } from '../utils/privileged.js';
 
 export const SETTING_KEY = 'backend_stack';
 // 0.5.2's hidden DHCP-only switch. An install it left on Kea moves back to
@@ -492,6 +493,33 @@ async function stopOutside(name) {
   }
 }
 
+// stopOutside at boot, done again when the privileged helper was away for
+// any of it. The first start after an update that changed the helper's code
+// tells it to restart and reaches here before it is back; a stop only logs
+// its failure, so the count of missed actions says whether one was lost. The
+// second pass waits for the helper's hello and is not awaited: boot goes on.
+async function stopOutsideAtBoot(name) {
+  if (!usesHelper()) return stopOutside(name);
+  let hellos = 0;
+  let onHello = null;
+  const forget = onHelperHello(() => {
+    hellos += 1;
+    onHello?.();
+  });
+  const pass = async () => {
+    onHello = null;
+    // A switch since then stops what it must itself.
+    if (switchInProgress() || stackName() !== name) return forget();
+    const [missedBefore, hellosBefore] = [helperMisses(), hellos];
+    await stopOutside(name);
+    if (helperMisses() === missedBefore) return forget();
+    // It may have answered again while the stops were failing.
+    if (hellos !== hellosBefore) return pass();
+    onHello = () => void pass();
+  };
+  await pass();
+}
+
 /**
  * Boot: choose the stack from the setting, before any backend is prepared
  * or applied. An install 0.5.2 left on Kea, or a stack that cannot run here
@@ -548,7 +576,7 @@ export async function selectStackAtBoot(db) {
   writeStackFile(name);
   // The probe's empty database always says the default stack, and what runs on
   // the host is the live release's stack: stopping the rest would stop that.
-  if (!isPreflightBoot()) await stopOutside(name);
+  if (!isPreflightBoot()) await stopOutsideAtBoot(name);
   clearRetiredLogs(name);
 
   const last = marker || legacyMarker;

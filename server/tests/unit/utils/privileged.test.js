@@ -99,6 +99,17 @@ describe('with the helper', () => {
     });
   });
 
+  it('counts the actions the helper was away for, and no others', async () => {
+    const before = Privileged.helperMisses();
+    helperRun.mockResolvedValue({ ok: false, code: 1, stdout: '', stderr: 'no reply' });
+    await Privileged.arping('10.0.0.5');
+    expect(Privileged.helperMisses()).toBe(before);
+    helperRun.mockResolvedValue(null);
+    await Privileged.unitCommand('stop', 'cidrella-dnsmasq');
+    await Privileged.ping('fd00::5');
+    expect(Privileged.helperMisses()).toBe(before + 2);
+  });
+
   it('turns a refusal from a helper on other code into a failure', async () => {
     helperRun.mockResolvedValue({ type: 'result', id: 1, refused: 'not a unit CIDRella controls' });
     expect(await Privileged.unitCommand('restart', 'cidrella-radvd')).toMatchObject({

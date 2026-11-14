@@ -50,6 +50,10 @@ named from a template.
   held a few leased or reserved rows under a count of every address in the pool, and a search
   for a free address read "Showing 0 of 1". The server now leaves those rows out before it pages
   and counts. The DNS table no longer hides the records of an available address.
+- **A server outside the stack is stopped after an update too.** At every start CIDRella stops
+  the DNS and DHCP servers its stack does not use. On the first start after an update the
+  privileged helper was restarting at that moment, and the stop was lost until the next start.
+  It is now asked again as soon as the helper answers.
 
 ### Upgrading
 

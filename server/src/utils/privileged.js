@@ -31,11 +31,21 @@ const REPLY_SLACK_MS = 5000;
 const helperSocket = () => process.env.CIDRELLA_HELPER_SOCKET || null;
 export const usesHelper = () => helperSocket() !== null;
 
+let misses = 0;
+
+/**
+ * How many actions the helper has not been there for. A caller whose work
+ * goes through code that swallows the failure (a daemon stop) compares the
+ * count before and after, and redoes the work on the next hello.
+ */
+export const helperMisses = () => misses;
+
 async function privileged(op, args = {}) {
   const command = buildCommand({ op, args });
   if (!usesHelper()) return runBuilt(command);
   const reply = await helperRun(op, args, { timeoutMs: command.timeoutMs + REPLY_SLACK_MS });
   if (!reply) {
+    misses += 1;
     return { ok: false, code: null, stdout: '', stderr: HELPER_DOWN_MESSAGE, helperDown: true };
   }
   // Passed here and refused there: the helper runs other code (an update

@@ -6,13 +6,35 @@
  * stopped), the rollback from each step, and the boot reconciliation.
  */
 import { DATA_DIR } from '../../helpers/isolated-data-dir.js';
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, beforeEach, afterEach, vi } from 'vitest';
 import fs from 'fs';
 import path from 'path';
 import dnsPacket from 'dns-packet';
 
 const log = [];
 const dnsAnswer = { rcode: 'NOERROR' };
+
+// The privileged helper, as stack-switch sees it: none by default (the web
+// app runs the commands itself). A test sets `present`, takes it `away`, and
+// calls `hello()` when it answers again.
+const helper = {
+  present: false,
+  away: false,
+  misses: 0,
+  listeners: new Set(),
+  hello() {
+    for (const listener of [...this.listeners]) listener();
+  },
+};
+vi.mock('../../../src/utils/privileged.js', async (original) => ({
+  ...(await original()),
+  usesHelper: () => helper.present,
+  helperMisses: () => helper.misses,
+  onHelperHello: (listener) => {
+    helper.listeners.add(listener);
+    return () => helper.listeners.delete(listener);
+  },
+}));
 
 vi.mock('../../../src/utils/plain-dns.js', () => ({
   plainUdpQuery: async (address, query) => {
@@ -72,6 +94,12 @@ function switchable(createFakeBackend, name, roles, deps, capabilities = {}) {
     note('start');
   };
   b.stop = async () => {
+    // As the real unit control: a stop the helper was away for only logs.
+    if (helper.present && helper.away) {
+      helper.misses += 1;
+      note('stop missed');
+      return;
+    }
     b.running = false;
     note('stop');
   };
@@ -431,6 +459,64 @@ describe('selectStackAtBoot', () => {
     expect(recovered).toMatchObject({ from: 'dnsmasq', to: 'pdns-kea', finished: false });
     expect(b.kea.running).toBe(false);
     expect(fs.existsSync(MARKER_FILE)).toBe(false);
+  });
+
+  describe('with the privileged helper away at boot', () => {
+    beforeEach(() => {
+      Object.assign(helper, { present: true, away: true, misses: 0 });
+      helper.listeners.clear();
+      upsertSetting(db, 'backend_stack', 'pdns-kea');
+      b.dnsmasq.running = true;
+      log.length = 0;
+    });
+    afterEach(() => {
+      Object.assign(helper, { present: false, away: false });
+      helper.listeners.clear();
+    });
+    const stops = () => log.filter((entry) => entry.startsWith('dnsmasq stop'));
+    const settled = () => new Promise((resolve) => setImmediate(resolve));
+
+    it('stops what is outside the stack once the helper answers', async () => {
+      await selectStackAtBoot(db);
+      expect(b.dnsmasq.running).toBe(true);
+      expect(stops()).toEqual(['dnsmasq stop missed']);
+
+      helper.away = false;
+      helper.hello();
+      await settled();
+      expect(b.dnsmasq.running).toBe(false);
+      expect(stops()).toEqual(['dnsmasq stop missed', 'dnsmasq stop']);
+      // Done: a later hello stops nothing again.
+      expect(helper.listeners.size).toBe(0);
+    });
+
+    it('keeps waiting when the helper answers and is away again', async () => {
+      await selectStackAtBoot(db);
+      helper.hello();
+      await settled();
+      expect(stops()).toEqual(['dnsmasq stop missed', 'dnsmasq stop missed']);
+      helper.away = false;
+      helper.hello();
+      await settled();
+      expect(b.dnsmasq.running).toBe(false);
+    });
+
+    it('leaves it to a switch made in the meantime', async () => {
+      await selectStackAtBoot(db);
+      registry.selectStack('dnsmasq');
+      helper.away = false;
+      helper.hello();
+      await settled();
+      expect(stops()).toEqual(['dnsmasq stop missed']);
+      expect(helper.listeners.size).toBe(0);
+    });
+
+    it('asks once when the helper is there', async () => {
+      helper.away = false;
+      await selectStackAtBoot(db);
+      expect(stops()).toEqual(['dnsmasq stop']);
+      expect(helper.listeners.size).toBe(0);
+    });
   });
 
   it('only cleans up after a switch that recorded its setting', async () => {
