@@ -1679,12 +1679,8 @@ const filteredRows = computed(() => {
       ? [globalQuery, tableQuery.value.trim().toLowerCase()].filter(Boolean)
       : [];
   return currentRows.value.filter((row) => {
-    if (
-      !effectiveShowAvailable.value &&
-      (row.status === 'available' || row.leaseStatus === 'available')
-    )
-      return false;
-    // The IP tables arrive filtered by the server; the whole lists filter here.
+    // The IP tables arrive filtered by the server, Show available included;
+    // the whole lists filter here.
     if (
       !isIpTable.value &&
       !Object.entries(filters.value).every(([key, values]) => values.includes(localValue(row, key)))
@@ -2721,7 +2717,10 @@ function tableRequestParams() {
     sort_order: order,
     ...(activeView.value === 'dns'
       ? { zone_id: selectedZoneFilter.value?.id || undefined, ...reverseNetworkParams() }
-      : { scope_id: selectedScopeFilter.value?.id || undefined }),
+      : {
+          scope_id: selectedScopeFilter.value?.id || undefined,
+          show_available: effectiveShowAvailable.value ? undefined : 'false',
+        }),
     ...columnParams(),
   };
 }
@@ -3103,9 +3102,11 @@ async function refreshCurrentContext() {
 watch(showDomainNames, () => saveJson(SHOW_DOMAIN_NAMES_KEY, showDomainNames.value));
 watch(showAvailable, () => {
   saveJson(SHOW_AVAILABLE_KEY, showAvailable.value);
-  if (activeView.value !== 'addresses' || contextKind.value !== 'network') return;
+  // The server hides the available rows of both tables, so either reloads.
+  if (!['addresses', 'dhcp'].includes(activeView.value)) return;
   currentPage.value = 1;
-  loadNetworkContext();
+  if (contextKind.value === 'network') loadNetworkContext();
+  else if (activeView.value === 'dhcp') refreshAggregateTable();
 });
 
 watch(tableQuery, () => {

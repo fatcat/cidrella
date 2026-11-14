@@ -935,6 +935,30 @@ describe('Networks workspace', () => {
     expect(dialogs.dropTargetFolderIdForConfigure).toBe(1);
   });
 
+  // WS-DHCP-AVAIL-01: the server hides the available rows of the DHCP table,
+  // so the switch has to reach the read and reload it, in a network and in
+  // the whole estate.
+  it.each([
+    ['a network', { context: 'network', network: '11', view: 'dhcp' }],
+    ['the whole estate', { context: 'all', view: 'dhcp' }],
+  ])('sends Show available off with the DHCP read of %s, and reloads', async (_place, state) => {
+    localStorage.setItem('cidrella_workspace_v1_admin', JSON.stringify(state));
+    const wrapper = await mountWorkspace();
+    const dhcpReads = () =>
+      api.get.mock.calls
+        .filter(([url, config]) => url === '/workspace/dhcp-addresses' && config?.params?.page)
+        .map(([, config]) => config.params);
+    expect(dhcpReads().some((params) => params.show_available !== undefined)).toBe(false);
+
+    // A network also reads the tab badge's total, which never hides anything.
+    const before = dhcpReads().length;
+    await wrapper.find('.available-switch input').setValue(false);
+    await flushPromises();
+    expect(dhcpReads().slice(before)).toContainEqual(
+      expect.objectContaining({ show_available: 'false', page: 1 }),
+    );
+  });
+
   it('filters available canonical rows and opens details from a live row', async () => {
     const wrapper = await mountWorkspace();
     await enterTestNetwork(wrapper);

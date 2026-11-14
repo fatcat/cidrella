@@ -46,6 +46,10 @@ named from a template.
   showing the last update made from the screen itself (for some installs, the one to 0.6.0)
   and hid Install while it did, because `cidrella-update` does not replace that record. A
   completed update to a version other than the one running is now treated as history.
+- **The DHCP table pages only the rows it shows.** With Show available switched off, a page
+  held a few leased or reserved rows under a count of every address in the pool, and a search
+  for a free address read "Showing 0 of 1". The server now leaves those rows out before it pages
+  and counts. The DNS table no longer hides the records of an available address.
 
 ### Upgrading
 
