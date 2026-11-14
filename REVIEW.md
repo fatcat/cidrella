@@ -16,6 +16,25 @@ again unless the maintainer reopens one.
 
 ---
 
+#### WS-DHCP-AVAIL-01: With Show available off, the DHCP table pages and counts rows it hides
+
+**medium**, confirmed in the browser and the code (2026-11-14).
+`client/src/views/networks-workspace/NetworksWorkspace.vue:1675` (`filteredRows`) and `:2067`
+(`rowTotal`)
+
+- **What happens:** In a network's DHCP tab with Show available switched off, a page of 32 shows
+  only the rows that are not available (4 on the dev estate) under "Showing 4 of 188", and the
+  rest of the leased and reserved rows are spread thinly over the following pages. A search for
+  an available pool address reads "Showing 0 of 1" over "No matching rows".
+- **Why:** The server pages and counts the DHCP rows with available addresses included
+  (`dhcp.total`); the request sends `showAvailable` for the Addresses read only. `filteredRows`
+  then drops available rows on the client, after paging.
+- **Fix:** Send `showAvailable` with the DHCP read and filter in the server query, as the
+  Addresses table does, so the page and the total agree with what is shown. Drop the client
+  filter for the IP tables.
+
+---
+
 ## Will not fix
 
 #### DNSMASQ-02: A reservation change reaches dnsmasq twice and logs a duplicate per line
