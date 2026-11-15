@@ -1323,7 +1323,7 @@ if [ -f "$TARGET_SLOT/scripts/lib/dnsmasq-perms.sh" ]; then
   # shellcheck source=scripts/lib/dnsmasq-perms.sh
   source "$TARGET_SLOT/scripts/lib/dnsmasq-perms.sh"
   repair_dnsmasq_log_permissions "$DATA_DIR"
-  ok "Repaired dnsmasq log permissions"
+  ok "Checked dnsmasq log permissions"
 fi
 
 # Native systemd installs use AmbientCapabilities from the units
