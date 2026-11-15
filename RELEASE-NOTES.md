@@ -54,6 +54,9 @@ named from a template.
   the DNS and DHCP servers its stack does not use. On the first start after an update the
   privileged helper was restarting at that moment, and the stop was lost until the next start.
   It is now asked again as soon as the helper answers.
+- **A new backup file is readable by its owner alone.** It was written readable by everyone
+  (inside a folder only CIDRella can open) until the next update tightened it. It holds the TLS
+  key and the password hashes, so it now gets its final permissions as it is written.
 
 ### Upgrading
 

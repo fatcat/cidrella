@@ -280,6 +280,10 @@ async function writeBackup(db, trigger) {
         '[backup] tar exited 1 (file changed during archive, expected for dnsmasq.leases); archive is valid',
       );
     }
+    // The archive holds the TLS key and the password hashes: the owner alone
+    // reads it, from its first moment under its own name. tar made it with
+    // the service's umask (0644), and only the next update tightened it.
+    fs.chmodSync(partialPath, 0o600);
     fs.renameSync(partialPath, archivePath);
   } finally {
     fs.rmSync(partialPath, { force: true });

@@ -93,6 +93,16 @@ describe('the name a backup is given', () => {
     expect(fs.readdirSync(BACKUP_DIR)).toEqual([backup.filename]);
   }, 60_000);
 
+  it('is written for its owner alone: it holds the TLS key and the password hashes', async () => {
+    const previous = process.umask(0o022);
+    try {
+      const backup = await createBackup(db);
+      expect(fs.statSync(path.join(BACKUP_DIR, backup.filename)).mode & 0o777).toBe(0o600);
+    } finally {
+      process.umask(previous);
+    }
+  });
+
   it('fills in every variable, and counts from -00 when the name repeats', async () => {
     setTemplate('{{hostname}}-{{version}}-s{{schema}}-{{stack}}-{{trigger}}');
     const schema = db.prepare('SELECT MAX(version) AS v FROM schema_version').get().v;
