@@ -7,7 +7,7 @@
   "dependencies": {
     "@duckdb/node-api": "^2.0.0-r.1",
     "bcryptjs": "^3.0.3",
-    "better-sqlite3": "^13.0.1",
+    "better-sqlite3": "^13.1.1",
     "compression": "^1.8.2",
     "cors": "^2.8.5",
     "dns-packet": "^5.6.1",
@@ -16,7 +16,7 @@
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
     "lru-cache": "^11.2.6",
-    "maxmind": "^5.0.5",
+    "maxmind": "^5.0.9",
     "morgan": "^1.10.0",
     "smol-toml": "^1.6.1"
   },
