@@ -6,7 +6,7 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
-## v0.6.4 — 2026-11-14
+## v0.6.4 — 2026-11-16
 
 ```yaml
 min_from: "0.6.3"
@@ -34,6 +34,9 @@ named from a template.
   They are gone now: `cidrella.service` no longer has `CAP_NET_RAW`, and the polkit rule
   grants the `cidrella` account nothing. The sign-in page and the API run with the right to
   bind ports under 1024 and no other.
+- **Node 26.13.1.** The Node that CIDRella ships, in the release tarball and the Docker image,
+  moves from 26.13.0 to 26.13.1, which Node published as a security release. The packages
+  bundled with it are refreshed too.
 
 ### Fixed
 
