@@ -543,11 +543,13 @@ that for it: `server/src/helper/main.js`, run as `cidrella-helper.service`
   `onHelperHello`), as boot would; the change is on disk, only not loaded.
   `/api/health/deep` fails its ping check, which an update's health check
   rolls back on.
-- **Rollback, and the rights left behind.** `rollback.sh` reinstalls neither
-  units nor polkit rules, so `cidrella.service` keeps `CAP_NET_RAW` and the
-  polkit rule keeps the `cidrella` account's old grants for one release, unused,
-  so a rollback to a release that ran these itself still works. The next
-  release, with `min_from` at this one, removes both (BACKLOG.md).
+- **The web app has none of these rights.** `cidrella.service` holds
+  `CAP_NET_BIND_SERVICE` only, and the polkit rule grants the `cidrella`
+  account nothing. 0.6.3 shipped the helper with the web app's old rights left
+  in place, unused, because `rollback.sh` reinstalls neither units nor polkit
+  rules and a rollback could land on a release that still ran these itself.
+  0.6.4 removed them and requires 0.6.3 (`min_from`), so a rollback lands on a
+  release that uses the helper.
 
 ### Proxy bypass
 

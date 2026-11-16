@@ -52,8 +52,9 @@ set -eu
 #
 # CIDRella native installs now use systemd AmbientCapabilities exclusively.
 # Remove stale file capabilities from the bundled Node binary; if left in
-# place, Linux clears the ambient set when the wrapper execs Node, and child
-# arping probes lose CAP_NET_RAW.
+# place, Linux clears the ambient set when the wrapper execs Node, and the
+# process loses what its unit gave it (the web app's CAP_NET_BIND_SERVICE,
+# the helper's CAP_NET_RAW).
 
 if [ -n "${TARGET_SLOT:-}" ] && [ -x "$TARGET_SLOT/runtime/node/bin/node" ]; then
   setcap -r "$TARGET_SLOT/runtime/node/bin/node" 2>/dev/null || true

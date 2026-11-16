@@ -7,6 +7,7 @@ import dnsRouter from '../../../src/routes/dns.js';
 import dhcpRouter from '../../../src/routes/dhcp.js';
 import subnetRouter from '../../../src/routes/subnets.js';
 import { setHostFiltering } from '../../../src/models/filtering-exemption.js';
+import { sortKey } from '../../../src/utils/address.js';
 
 let app;
 let db;
@@ -457,6 +458,108 @@ describe('workspace read routes', () => {
 
     expect((await request(app).get('/api/dns/zones?folder_id=nope')).status).toBe(400);
     expect((await request(app).get('/api/workspace/networks?folder_id=nope')).status).toBe(400);
+  });
+
+  // WS-DHCP-AVAIL-01: the client used to drop available rows after the server
+  // had paged and counted them, so a page came back mostly empty.
+  describe('Show available off on the DHCP table', () => {
+    const read = (query) => request(app).get('/api/workspace/dhcp-addresses').query(query);
+
+    it('pages and counts only the addresses that are held', async () => {
+      const all = await read({ subnet_id: subnetA, page_size: 512 });
+      // Available either way a row says it: no lease or reservation holds it
+      // (Lease column), or the address itself reads available (Status column).
+      const isFree = (row) =>
+        row.lease_status === 'available' || row.ip_display_status === 'available';
+      const free = all.body.items.filter(isFree);
+      const held = all.body.items.filter((row) => !isFree(row));
+      expect(free.length).toBeGreaterThan(1);
+      expect(held.map((row) => row.ip_address)).toContain('10.20.0.11');
+      expect(all.body.total).toBe(all.body.items.length);
+
+      const hidden = await read({ subnet_id: subnetA, page_size: 512, show_available: 'false' });
+      expect(hidden.status).toBe(200);
+      expect(hidden.body.total).toBe(held.length);
+      expect(hidden.body.items.map((row) => row.ip_address)).toEqual(
+        held.map((row) => row.ip_address),
+      );
+
+      // The first page starts at the first held row, however many free
+      // addresses sort before it (10.20.0.10 does).
+      const page = await read({ subnet_id: subnetA, page_size: 1, show_available: 'false' });
+      expect(page.body.items.map((row) => row.ip_address)).toEqual([held[0].ip_address]);
+      expect(page.body.total).toBe(held.length);
+    });
+
+    it('finds nothing for a free pool address, and counts nothing', async () => {
+      const shown = await read({ subnet_id: subnetA, table_q: '10.20.0.12' });
+      expect(shown.body.items.map((row) => row.lease_status)).toEqual(['available']);
+      const hidden = await read({
+        subnet_id: subnetA,
+        table_q: '10.20.0.12',
+        show_available: 'false',
+      });
+      expect(hidden.body).toMatchObject({ items: [], total: 0 });
+    });
+
+    it('leaves available rows out of the filter counts too', async () => {
+      const facets = await read({ subnet_id: subnetA, facets: '1', show_available: 'false' });
+      const counted = JSON.stringify(facets.body.facets);
+      expect(counted).not.toContain('available');
+    });
+
+    it('never hides an IPv6 address: an IPv6 network lists only what it knows of', async () => {
+      const v6 = Number(
+        db
+          .prepare(
+            `INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length,
+               total_addresses, status, address_family)
+             VALUES ('fd00:20::/64', 'Alpha v6', 'fd00:20::', NULL, 64, 0, 'allocated', 6)`,
+          )
+          .run().lastInsertRowid,
+      );
+      const dhcpType = db.prepare("SELECT id FROM range_types WHERE name = 'DHCP Scope'").get().id;
+      const range = db
+        .prepare(
+          `INSERT INTO ranges (subnet_id, range_type_id, start_ip, end_ip)
+           VALUES (?, ?, 'fd00:20::100', 'fd00:20::1ff')`,
+        )
+        .run(v6, dhcpType).lastInsertRowid;
+      const scope = db
+        .prepare(
+          `INSERT INTO dhcp_scopes (range_id, subnet_id, lease_time, address_family, v6_mode)
+           VALUES (?, ?, '1h', 6, 'stateful')`,
+        )
+        .run(range, v6).lastInsertRowid;
+      db.prepare(
+        `INSERT INTO dhcp_scope_pools (scope_id, range_id, start_ip, end_ip)
+         VALUES (?, ?, 'fd00:20::100', 'fd00:20::1ff')`,
+      ).run(scope, range);
+      db.prepare(
+        `INSERT INTO ip_addresses
+           (subnet_id, ip_address, allocation_state, address_family, address_sort_key)
+         VALUES (?, 'fd00:20::150', 'unassigned', 6, ?)`,
+      ).run(v6, sortKey('fd00:20::150'));
+      try {
+        const shown = await read({ subnet_id: v6 });
+        expect(shown.body.items.map((row) => row.ip_address)).toEqual(['fd00:20::150']);
+        const hidden = await read({ subnet_id: v6, show_available: 'false' });
+        expect(hidden.body.items.map((row) => row.ip_address)).toEqual(['fd00:20::150']);
+        expect(hidden.body.total).toBe(1);
+      } finally {
+        db.prepare('DELETE FROM ip_addresses WHERE subnet_id = ?').run(v6);
+        db.prepare('DELETE FROM dhcp_scope_pools WHERE scope_id = ?').run(scope);
+        db.prepare('DELETE FROM dhcp_scopes WHERE id = ?').run(scope);
+        db.prepare('DELETE FROM ranges WHERE id = ?').run(range);
+        db.prepare('DELETE FROM subnets WHERE id = ?').run(v6);
+      }
+    });
+
+    it('refuses a value that is not true or false', async () => {
+      const res = await read({ subnet_id: subnetA, show_available: 'maybe' });
+      expect(res.status).toBe(400);
+      expect(res.body.error).toContain('show_available');
+    });
   });
 
   it('includes an out-of-pool reservation in network view but not scope view', async () => {

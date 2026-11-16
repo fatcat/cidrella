@@ -12,6 +12,7 @@ import {
   parseMapHome,
 } from '../utils/validation.js';
 import { IDLE_TIMEOUT_CHOICES } from '../models/session.js';
+import { validateBackupNameTemplate } from '../utils/backup-name.js';
 import { refreshProxyConfig } from '../utils/dns-proxy.js';
 
 const router = Router();
@@ -89,6 +90,10 @@ const SETTING_SCHEMA = {
   backup_retention_count: {
     validate: (v) => (isIntInRangeCoercing(v, 1, 365) ? null : 'must be an integer 1-365'),
     normalize: (v) => String(intOrNull(v)),
+  },
+  backup_name_template: {
+    validate: (v) => validateBackupNameTemplate(v),
+    normalize: (v) => v,
   },
   // ISO-8601 timestamp. Server writes this itself; refuse arbitrary values.
   backup_last_run: {

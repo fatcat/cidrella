@@ -438,6 +438,24 @@ sudo -u cidrella bash -c '
 '
 ```
 
+### Backup file names
+
+New backups are named from the **File name** template in **Settings → Maintenance → Backup & Restore**. The default, `cidrella-backup-{{date}}_{{time}}`, gives the names backups have always had. `.tar.gz` is added for you. A template can use:
+
+| Variable | Value |
+|---|---|
+| `{{hostname}}` | The host's short name. In Docker this is the container's hostname unless you set one (`hostname:` in compose). |
+| `{{version}}` | The CIDRella release, e.g. `0.6.4` |
+| `{{schema}}` | The database schema version, the number restore checks |
+| `{{stack}}` | `dnsmasq`, or `pdns-kea` for PowerDNS + Kea |
+| `{{trigger}}` | `manual` or `scheduled` |
+| `{{date}}` | The date, UTC, `YYYY-MM-DD` |
+| `{{time}}` | The time, UTC, `HH-MM-SS` |
+
+Literal text may use letters, digits, dots, dashes and underscores. A template without both `{{date}}` and `{{time}}` cannot tell backups apart, so a counter from `-00` to `-FF` goes on the end: the next after the highest in use, then the lowest one retention has freed. With all 256 in use the backup fails and says so.
+
+A name never identifies a backup. CIDRella recognizes its archives by the `cidrella-backup-manifest.json` each one carries as its first member, so a backup you rename or copy into `backups/` is still listed after a restore brings back an older backup table. Archives from before manifests are still recognized by the old `cidrella-backup-*.tar.gz` name.
+
 ### Automatic backups
 
 Backups run on a schedule controlled by the `backup_schedule` setting (default: daily). Retention is controlled by `backup_retention_count` (default: 7). Both are editable in **System → Settings**.
@@ -459,7 +477,7 @@ curl -sk -H "Authorization: Bearer $TOKEN" \
 Via shell:
 
 ```bash
-scp root@SERVER:/var/lib/cidrella/backups/cidrella-backup-*.tar.gz ./
+scp 'root@SERVER:/var/lib/cidrella/backups/*.tar.gz' ./
 ```
 
 Keep backups off-host. If the server disk dies, the backups die with it.

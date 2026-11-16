@@ -53,6 +53,17 @@ from `ndisc6` would do it, not bundled).
 
 ## Deferred design work
 
+### Controller and members: redundant instances (target 0.7.0)
+
+Design in [docs/REDUNDANCY-PLAN.md](docs/REDUNDANCY-PLAN.md), accepted 2026-11-11, not started.
+Every install is a member; one is also the controller and owns all writes; other members sync a
+read-only copy and keep serving when it is away; promotion is manual. The branch `dev/0.7.0` will be
+cut from the released 0.6.4 commit. Rejected and why (all in the doc): scheduled restore,
+whole-table transfer, the SQLite session extension (not compiled into better-sqlite3 13.0.3),
+WAL shipping. Known before starting: `replaceLeases` gives every lease a new id on each sync
+and `syncDhcpDnsRecords` touches unchanged records, both of which would flood a change log;
+`applyDhcp` writes `dns_records`; certificates are never renewed (365 days, `utils/cert.js`).
+
 ### Process isolation and event-loop blocking (target 0.6.3)
 
 Found 2026-10-25, while fixing AUTH-PATH-REDOS-01: a slow request handler stalled DNS, because
@@ -167,16 +178,16 @@ process turned up three pieces of work, in this order.
    Not exercised: an
    update's own auto-rollback; the end state matches the manual rollback above.
 
-   **Stage B, a later release with `min_from` at or above the one that ships stage A.**
-   `rollback.sh` reinstalls neither units nor polkit rules, so stage A left the web process its
-   old rights, unused, for a rollback to a release that still runs these itself. Stage B removes
-   them, so a rollback from it can only land on a release that uses the helper:
-   - `cidrella.service` drops `CAP_NET_RAW` from `CapabilityBoundingSet` and
-     `AmbientCapabilities`.
-   - `49-cidrella.rules` drops the `cidrella` account from `cidrellaAccount` (both rules), and
-     the test in `tests/unit/helper/commands.test.js` that keeps its old grants turns into one
-     that it has none.
-   - `update.sh` installs both, as it does now; nothing else changes there.
+   **Stage B, done on `dev/0.6.4`** (2026-11-11): `cidrella.service` has no `CAP_NET_RAW`, the
+   polkit rule grants the `cidrella` account nothing (its test checks every unit and verb, the
+   update worker and NTP), and install.sh looks for `CAP_NET_RAW` on the helper and
+   `CAP_NET_BIND_SERVICE` on the web app. 0.6.4 has `min_from` 0.6.3, so `cidrella-rollback`
+   can only land on a release that uses the helper. Checked on testerella with `deploy-lxc.sh`
+   over the 0.6.3 release (2026-11-11): the web app and its child hold `cap_net_bind_service`
+   only and still serve 443 and 80; polkit refuses `cidrella` a dnsmasq reload and `set-ntp`;
+   a probe through the app found the gateway by ARP with its MAC and an absent host as no
+   reply; a new DNS zone restarted dnsmasq through the helper; deep health ok. Still to run
+   with the 0.6.4 tarball: the update from 0.6.3, and `cidrella-rollback` back to it.
 
 Looked at and fine in-process: the scanner's tool runs (async `execFile`), DuckDB (its own
 threads), the blocklist refresh (streamed), lease sync, the vendor and update checks, and the

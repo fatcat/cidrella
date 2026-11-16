@@ -176,7 +176,8 @@ All persistent state is stored under `/var/lib/cidrella/`:
 
 ### TLS Certificates
 
-A self-signed certificate is auto-generated on first run. To use your own:
+A self-signed certificate is auto-generated on first run. It lasts a year and is renewed by
+itself 30 days before it ends; a certificate you upload is never replaced. To use your own:
 
 ```bash
 cp cert.pem key.pem /var/lib/cidrella/certs/

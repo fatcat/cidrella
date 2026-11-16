@@ -85,6 +85,10 @@ function parseCommon(req, { paged = false } = {}) {
   const enabled = optionalBoolean(req.query.enabled, 'enabled');
   if (enabled.error) return enabled;
   result.enabled = enabled.value;
+  // The DHCP table's Show available switch; on unless the request says not.
+  const showAvailable = optionalBoolean(req.query.show_available, 'show_available');
+  if (showAvailable.error) return showAvailable;
+  result.showAvailable = showAvailable.value !== false;
   // Any column of the one IP table model (utils/ip-columns.js), and whether
   // to count each column's values over the whole result.
   const filters = parseColumnFilters(req.query.filters);

@@ -1,13 +1,18 @@
-import { describe, it, expect, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
 import { execFileSync } from 'child_process';
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
 import {
+  RENEW_BEFORE_DAYS,
   buildSanList,
+  certDaysLeft,
   certHasSan,
+  certNeedsRenewal,
+  certSummary,
   isSelfGeneratedCert,
   ensureCerts,
+  renewCertIfDue,
 } from '../../../src/utils/cert.js';
 
 const IFACES = {
@@ -152,5 +157,84 @@ describe('ensureCerts', () => {
   it("recognizes its own certificate and not the operator's", () => {
     const { certPath } = ensureCerts(dir);
     expect(isSelfGeneratedCert(certPath)).toBe(true);
+  });
+});
+
+// CERT-EXPIRY-01: a generated certificate lasts a year and used to be left to run out.
+describe('renewing a generated certificate', () => {
+  let dir;
+  const DAY = 24 * 60 * 60 * 1000;
+
+  beforeAll(() => {
+    dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-cert-renew-'));
+  });
+  afterAll(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+  // A certificate with the given subject and lifetime, at the paths ensureCerts uses.
+  function writeCert(subject, days) {
+    const certs = path.join(dir, 'certs');
+    fs.mkdirSync(certs, { recursive: true });
+    execFileSync(
+      'openssl',
+      [
+        'req',
+        '-x509',
+        '-newkey',
+        'rsa:2048',
+        '-keyout',
+        path.join(certs, 'server.key'),
+        '-out',
+        path.join(certs, 'server.crt'),
+        '-days',
+        String(days),
+        '-nodes',
+        '-subj',
+        subject,
+        '-addext',
+        'subjectAltName=DNS:cidrella',
+      ],
+      { stdio: 'pipe' },
+    );
+    return path.join(certs, 'server.crt');
+  }
+
+  it('leaves a fresh one alone, and counts its days', () => {
+    const { certPath } = ensureCerts(dir);
+    expect(certDaysLeft(certPath)).toBeGreaterThan(360);
+    expect(certNeedsRenewal(certPath)).toBe(false);
+    expect(renewCertIfDue()).toBeNull();
+    // Due once the clock is inside the window.
+    const later = Date.now() + (365 - RENEW_BEFORE_DAYS + 1) * DAY;
+    expect(certNeedsRenewal(certPath, later)).toBe(true);
+  });
+
+  it('replaces one near its end at boot', () => {
+    const certPath = writeCert('/CN=cidrella/O=CIDRella/C=US', RENEW_BEFORE_DAYS - 1);
+    const before = certSummary(certPath).sha256;
+    ensureCerts(dir);
+    expect(certSummary(certPath).sha256).not.toBe(before);
+    expect(certDaysLeft(certPath)).toBeGreaterThan(360);
+    expect(certHasSan(certPath)).toBe(true);
+  });
+
+  it('replaces one that runs out while the appliance is up, and says what changed', () => {
+    const { certPath } = ensureCerts(dir);
+    const before = certSummary(certPath).sha256;
+    const renewed = renewCertIfDue(Date.now() + 400 * DAY);
+    expect(renewed.before.sha256).toBe(before);
+    expect(renewed.after.sha256).toBe(certSummary(certPath).sha256);
+    expect(renewed.after.sha256).not.toBe(before);
+  });
+
+  it("never renews an operator's certificate, however close its end", () => {
+    const certPath = writeCert('/CN=ipam.example.com/O=Example Corp/C=US', 5);
+    const before = certSummary(certPath).sha256;
+    const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
+    ensureCerts(dir);
+    expect(renewCertIfDue()).toBeNull();
+    expect(renewCertIfDue(Date.now() + 30 * DAY)).toBeNull();
+    expect(certSummary(certPath).sha256).toBe(before);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('ends in'));
+    warn.mockRestore();
   });
 });

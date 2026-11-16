@@ -74,6 +74,31 @@ describe('PUT /api/settings/:key, apply-coupled keys are not editable', () => {
   });
 });
 
+describe('the backup file name template', () => {
+  it('accepts a valid template, singly or in bulk', async () => {
+    const single = await request(app)
+      .put('/api/settings/backup_name_template')
+      .send({ value: '{{hostname}}-{{date}}_{{time}}' });
+    expect(single.status).toBe(200);
+    const bulk = await request(app)
+      .put('/api/settings/bulk')
+      .send({ settings: { backup_name_template: 'nightly-{{trigger}}' } });
+    expect(bulk.status).toBe(200);
+  });
+
+  it("refuses one that is not, with the validator's reason", async () => {
+    for (const [value, reason] of [
+      ['../{{date}}', 'no spaces or slashes'],
+      ['{{host}}', 'Unknown variable {{host}}'],
+      ['{{date}}.tar.gz', 'it is added for you'],
+    ]) {
+      const res = await request(app).put('/api/settings/backup_name_template').send({ value });
+      expect(res.status, value).toBe(400);
+      expect(res.body.error).toContain(reason);
+    }
+  });
+});
+
 describe('settings the DNS proxy listens by', () => {
   it('hands the proxy its new port when one is written, singly or in bulk', async () => {
     const { proxyConfig } = await import('../../../src/dns-proxy/server.js');

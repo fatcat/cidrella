@@ -686,6 +686,13 @@ function mergePage(materialRows, virtualRows, compare, offset, limit) {
   return items;
 }
 
+// A free IPv4 address on the DHCP table: no lease or reservation holds it, or
+// the address itself reads available.
+function isHiddenAvailable(row) {
+  if (!isValidIpv4(row.ip_address)) return false;
+  return row.lease_status === 'available' || row.ip_display_status === 'available';
+}
+
 export function getWorkspaceDhcpAddresses(
   db,
   {
@@ -699,6 +706,7 @@ export function getWorkspaceDhcpAddresses(
     assignmentType,
     filters = {},
     facets = false,
+    showAvailable = true,
     sortColumn,
     page = 1,
     pageSize = 50,
@@ -763,11 +771,16 @@ export function getWorkspaceDhcpAddresses(
   if (ipAddress) rows = rows.filter((row) => row.ip_address === ipAddress);
   if (leaseStatus) rows = rows.filter((row) => row.lease_status === leaseStatus);
   if (assignmentType) rows = rows.filter((row) => row.dhcp_assignment_type === assignmentType);
+  // Show available off: the free addresses leave before anything is counted
+  // or paged, so the page and the total are of what is shown. IPv4 only, as on
+  // the Addresses table: an IPv6 network lists only addresses it knows of, and
+  // none of those is hidden.
+  if (!showAvailable) rows = rows.filter((row) => !isHiddenAvailable(row));
   // Free pool addresses exist only while nothing narrows the rows to held
   // ones. Their segments are counted for the filter menu, and kept for the
   // page when their sample matches the column filters.
   const segments =
-    (!leaseStatus || leaseStatus === 'available') && !assignmentType
+    showAvailable && (!leaseStatus || leaseStatus === 'available') && !assignmentType
       ? virtualPoolSegments(db, scopes, materializedKeys, [q, tableQ, ipAddress])
       : [];
   const counted = facets

@@ -6,6 +6,67 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.6.4 — 2026-11-16
+
+```yaml
+min_from: "0.6.3"
+breaking: false
+security: false
+```
+
+The web app gives up the rights the privileged helper took over in 0.6.3, and backup files can be
+named from a template.
+
+### New
+
+- **Backup file names from a template.** Settings, Maintenance, Backup & Restore has a File
+  name field built from `{{hostname}}`, `{{version}}`, `{{schema}}`, `{{stack}}`,
+  `{{trigger}}` (manual or scheduled), `{{date}}` and `{{time}}`, with a preview of the next
+  name. The default keeps today's names. A template without both the date and the time gets a
+  counter, `-00` to `-FF`. Backups are recognized by the manifest inside them rather than by
+  their names, so a renamed archive in the backups folder is still listed.
+
+### Security
+
+- **The web app can no longer send raw network packets or control daemons.** 0.6.3 moved
+  ARP and ping probes, daemon control, update starts and NTP into the privileged helper, but
+  left the web app its old rights, unused, so a rollback to an earlier release kept working.
+  They are gone now: `cidrella.service` no longer has `CAP_NET_RAW`, and the polkit rule
+  grants the `cidrella` account nothing. The sign-in page and the API run with the right to
+  bind ports under 1024 and no other.
+- **Node 26.13.1.** The Node that CIDRella ships, in the release tarball and the Docker image,
+  moves from 26.13.0 to 26.13.1, which Node published as a security release. The packages
+  bundled with it are refreshed too.
+
+### Fixed
+
+- **The generated TLS certificate renews itself.** It lasts a year and was left to run out, so
+  browsers went from "not trusted" to "expired" on day 366. It is now replaced 30 days before it
+  ends, at start and once a day, and served without a restart. A certificate you uploaded is
+  never replaced; the log warns when it is within 30 days of ending. Reset certificate now names
+  the host in the new certificate straight away, where it used to take a restart.
+- **The update screen offers Install again after updates from the command line.** It kept
+  showing the last update made from the screen itself (for some installs, the one to 0.6.0)
+  and hid Install while it did, because `cidrella-update` does not replace that record. A
+  completed update to a version other than the one running is now treated as history.
+- **The DHCP table pages only the rows it shows.** With Show available switched off, a page
+  held a few leased or reserved rows under a count of every address in the pool, and a search
+  for a free address read "Showing 0 of 1". The server now leaves those rows out before it pages
+  and counts. The DNS table no longer hides the records of an available address.
+- **A server outside the stack is stopped after an update too.** At every start CIDRella stops
+  the DNS and DHCP servers its stack does not use. On the first start after an update the
+  privileged helper was restarting at that moment, and the stop was lost until the next start.
+  It is now asked again as soon as the helper answers.
+- **A new backup file is readable by its owner alone.** It was written readable by everyone
+  (inside a folder only CIDRella can open) until the next update tightened it. It holds the TLS
+  key and the password hashes, so it now gets its final permissions as it is written.
+
+### Upgrading
+
+Requires 0.6.3: update to 0.6.3 first from anything older. No database migrations. The update
+replaces `cidrella.service` and the polkit rule; `cidrella-rollback` returns to 0.6.3, which
+uses the helper for all of this. Docker images already ran this way from 0.6.3.
+
 ## v0.6.3 — 2026-11-11
 
 ```yaml

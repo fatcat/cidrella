@@ -1,6 +1,6 @@
 {
   "name": "cidrella",
-  "version": "0.6.3",
+  "version": "0.6.4",
   "private": true,
   "license": "Apache-2.0",
   "description": "CIDRella: IP Address Management system with DNS and DHCP via DNSmasq",
@@ -26,11 +26,11 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "eslint": "^10.13.0",
+    "eslint": "^10.15.0",
     "eslint-plugin-regexp": "^3.3.1",
     "eslint-plugin-sonarjs": "^4.2.2",
-    "eslint-plugin-vue": "^10.11.1",
-    "globals": "^17.13.0",
+    "eslint-plugin-vue": "^10.12.1",
+    "globals": "^17.14.0",
     "prettier": "3.9.10"
   }
 }

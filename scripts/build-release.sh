@@ -195,7 +195,7 @@ export NPM_CONFIG_CACHE
 # cidrella-node wrapper resolves to $SLOT/runtime/node/bin/node before falling
 # through to /usr/bin/node. Bumping this version requires a release + testerella
 # validation, not a hot swap.
-BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-26.13.0}"
+BUNDLED_NODE_VERSION="${BUNDLED_NODE_VERSION:-26.13.1}"
 NODE_TARBALL="node-v${BUNDLED_NODE_VERSION}-${BUILD_ARCH}.tar.xz"
 NODE_DOWNLOAD_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/${NODE_TARBALL}"
 NODE_SHASUMS_URL="https://nodejs.org/dist/v${BUNDLED_NODE_VERSION}/SHASUMS256.txt"
@@ -353,19 +353,40 @@ apply_npm_major_updates() {
   ' "$PROJECT_DIR" "$RELEASE_HEALTH_JSON"
 }
 
+# Rewrites both FROM lines to the new tag WITH its digest. The image is pinned
+# by digest (Dependabot keeps it current), so a tag written alone would drop
+# the pin. The digest is the multi-arch index digest Docker Hub reports for
+# the tag; no docker install is needed to read it.
 update_docker_node_tags() {
   local target_tag="$1"
   node -e '
     const fs = require("fs");
     const file = process.argv[1];
     const targetTag = process.argv[2];
-    const before = fs.readFileSync(file, "utf8");
-    const after = before.replace(/^FROM node:[^\s]+/gm, `FROM node:${targetTag}`);
-    if (after === before) {
-      console.error("Could not update Dockerfile node FROM tags");
+    const HUB = "https://registry-1.docker.io/v2/library/node/manifests/";
+    const TOKEN =
+      "https://auth.docker.io/token?service=registry.docker.io&scope=repository:library/node:pull";
+    const ACCEPT =
+      "application/vnd.oci.image.index.v1+json, application/vnd.docker.distribution.manifest.list.v2+json";
+    (async () => {
+      const { token } = await (await fetch(TOKEN)).json();
+      const res = await fetch(HUB + targetTag, {
+        method: "HEAD",
+        headers: { Authorization: `Bearer ${token}`, Accept: ACCEPT },
+      });
+      const digest = res.headers.get("docker-content-digest") || "";
+      if (!res.ok || !/^sha256:[0-9a-f]{64}$/.test(digest)) {
+        throw new Error(`Docker Hub has no digest for node:${targetTag} (HTTP ${res.status})`);
+      }
+      const before = fs.readFileSync(file, "utf8");
+      const after = before.replace(/^FROM node:[^\s]+/gm, `FROM node:${targetTag}@${digest}`);
+      if (after === before) throw new Error("no node FROM line changed");
+      fs.writeFileSync(file, after);
+      console.log(`  Dockerfile: node:${targetTag}@${digest}`);
+    })().catch((error) => {
+      console.error(`Could not update Dockerfile node FROM tags: ${error.message}`);
       process.exit(1);
-    }
-    fs.writeFileSync(file, after);
+    });
   ' "$PROJECT_DIR/Dockerfile" "$target_tag"
 }
 
@@ -442,7 +463,7 @@ run_release_health_check() {
       fi
       if [ "$docker_security" = "true" ]; then
         local docker_security_tag
-        docker_security_tag=$(health_json '((r.docker.nodeImages.find(i => i.securityUpdateRequired) || {}).tag || "").replace(/^\\d+(?:\\.\\d+\\.\\d+)?/, (r.docker.nodeImages.find(i => i.securityUpdateRequired) || {}).latestSameMajor || "")')
+        docker_security_tag=$(health_json '((r.docker.nodeImages.find(i => i.securityUpdateRequired) || {}).tag || "").replace(/^\d+(?:\.\d+\.\d+)?/, (r.docker.nodeImages.find(i => i.securityUpdateRequired) || {}).latestSameMajor || "")')
         if [ -n "$docker_security_tag" ]; then
           echo "  Updating Dockerfile Node base tags to ${docker_security_tag}..."
           update_docker_node_tags "$docker_security_tag"
