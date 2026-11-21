@@ -14,7 +14,7 @@ import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } fro
  * was last new or changed (a renewal moves its expiry).
  */
 export function replaceLeases(db, leases, { lifecycleValidated = false, now = Date.now() } = {}) {
-  const leaseKey = (subnetId, ip) => `${subnetId}|${ip}`;
+  const leaseKey = (subnetId, ip) => `${subnetId ?? null}|${ip}`;
   const replace = db.transaction(() => {
     const remove = db.prepare('DELETE FROM dhcp_leases WHERE id = ?');
     const previous = new Map();

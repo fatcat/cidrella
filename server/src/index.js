@@ -68,6 +68,7 @@ import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js'
 import { ensureCerts, renewCertIfDue, setHttpsServer } from './utils/cert.js';
 import { startLeaseSync } from './services/dhcp-lease-sync.js';
 import { startDhcpNameSync } from './services/dhcp-lease-ingest.js';
+import { pruneTombstones } from './sync/log.js';
 import { syncServerDnsDefault } from './models/dhcp-option.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
@@ -107,6 +108,8 @@ import { markBackendReady } from './utils/startup-status.js';
 import { isPreflightBoot } from './utils/preflight.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+const TOMBSTONE_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 
 // ─── Work on the data of record ───────────────────────────────────
 // The two functions below change the data of record on their own initiative:
@@ -206,6 +209,15 @@ function startControllerJobs(db) {
 
   pruneAuditLog();
   setInterval(pruneAuditLog, AUDIT_PRUNE_INTERVAL_MS);
+
+  // Deletes every copy has taken leave the change log. No copies yet, so all.
+  setInterval(() => {
+    try {
+      pruneTombstones(db);
+    } catch (err) {
+      console.error('Change log prune error:', err.message);
+    }
+  }, TOMBSTONE_PRUNE_INTERVAL_MS).unref();
 }
 
 async function main() {

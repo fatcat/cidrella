@@ -35,6 +35,12 @@ members that keep serving DNS and DHCP from a synced copy.
   observes goes through `facts()` in `server/src/sync/facts.js`; a DHCP apply no longer writes
   DNS records itself, the name sync listens for it; boot work that changes the data of record
   is grouped in `repairEstateAtBoot` and `startControllerJobs`.
+- The change log (phase 1, migration 095): `sync_log` records the newest change to every row of
+  the data of record through triggers generated at boot (`server/src/sync/log.js`), and
+  `exportChanges` and `applyChanges` in `server/src/sync/changes.js` make a copy of it, as a
+  delta or a snapshot. A restore, a rolled-back update and a migration each start a new
+  dataset. `INSERT OR REPLACE` into a table of the data of record is refused by
+  `check-db-ownership`.
 
 ## v0.6.4 — 2026-11-16
 

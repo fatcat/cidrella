@@ -9,6 +9,7 @@ import { DEFAULTS } from '../config/defaults.js';
 import { settingValue } from '../models/setting-value.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
 import { backfillCanonicalIpIdentity } from './ip-identity.js';
+import { dropSyncTriggers, ensureSyncLog } from '../sync/log.js';
 import {
   hasLegacyIpLifecycleTables,
   inventoryLegacyIpLifecycle,
@@ -134,6 +135,11 @@ export async function initDb(dataDir) {
   }
   await ensureDefaults();
 
+  // The change log of the data of record: triggers put right, and a new
+  // dataset when this database is not the one the log last described.
+  const syncLog = ensureSyncLog(db, dataDir);
+  if (syncLog.started) console.log(`Change log: new dataset (${syncLog.started})`);
+
   return db;
 }
 
@@ -192,6 +198,13 @@ function runMigrations() {
       .all()
       .map((r) => r.version),
   );
+
+  // A migration runs without the change-log triggers: a rebuild drops them
+  // with the table, and one that drops a column would trip over a trigger
+  // naming it. ensureSyncLog puts them back and starts a new dataset.
+  if (migrationFiles.some((file) => !applied.has(parseInt(file.split('_')[0], 10)))) {
+    dropSyncTriggers(db);
+  }
 
   // Run each migration in a transaction so partial applies can't corrupt the schema.
   //
@@ -337,9 +350,7 @@ export async function ensureDefaults() {
   // hijacked by an unauthenticated attacker hitting the endpoint first.
   const anyUser = db.prepare('SELECT 1 FROM users LIMIT 1').get();
   if (anyUser) {
-    db.prepare(
-      "INSERT OR REPLACE INTO settings (key, value) VALUES ('installation_complete', 'true')",
-    ).run();
+    upsertSettingWithConflict(db, 'installation_complete', 'true');
   }
 }
 

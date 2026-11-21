@@ -20,10 +20,18 @@ const estate = (key = 'id', more = {}) => ({ class: ESTATE, key, ...more });
 const host = { class: HOST };
 const collected = { class: COLLECTED };
 
+// The after-commit hooks (utils/after-commit.js) a change to a table calls for
+// on an instance that received it: what it serves must follow the new data.
+const DNS = 'regenerate_dns';
+const DHCP = 'regenerate_dhcp';
+const RESOLVER = 'regenerate_dnsmasq_conf';
+
 /**
  * Every table. An estate table names its key, one column, which is how a row
  * is told apart between instances. `hostColumns` are the columns of an estate
- * table that stay behind: state this box keeps about the row.
+ * table that stay behind: state this box keeps about the row. `hooks` are the
+ * applies a change to the table calls for where the DNS and DHCP servers read
+ * it.
  */
 export const TABLES = {
   anomaly_allowlist: estate(),
@@ -43,20 +51,21 @@ export const TABLES = {
   device_fingerprint_changes: estate(),
   device_fingerprints: estate('mac_address'),
   dhcp_authorized_servers: estate(),
-  dhcp_custom_options: estate(),
+  dhcp_custom_options: estate('id', { hooks: [DHCP] }),
   dhcp_leases: estate(),
-  dhcp_option_defaults: estate(),
-  dhcp_reservations: estate(),
-  dhcp_scope_options: estate(),
-  dhcp_scope_pools: estate(),
-  dhcp_scopes: estate(),
-  dns_records: estate(),
-  dns_zones: estate(),
+  dhcp_option_defaults: estate('id', { hooks: [DHCP] }),
+  dhcp_reservations: estate('id', { hooks: [DHCP] }),
+  dhcp_scope_options: estate('id', { hooks: [DHCP] }),
+  dhcp_scope_pools: estate('id', { hooks: [DHCP] }),
+  dhcp_scopes: estate('id', { hooks: [DHCP] }),
+  dns_records: estate('id', { hooks: [DNS] }),
+  dns_zones: estate('id', { hooks: [DNS] }),
   filtering_exemptions: estate(),
   folders: estate(),
   geoip_ip_allowlist: estate(),
   geoip_rules: estate(),
-  ip_addresses: estate(),
+  // A reserved address is cut out of the DHCP pool that holds it.
+  ip_addresses: estate('id', { hooks: [DHCP] }),
   ip_events: estate(),
   ip_range_events: estate(),
   mac_vendors: host,
@@ -67,14 +76,17 @@ export const TABLES = {
   metrics_proxy_perf: collected,
   network_scans: estate(),
   range_types: estate(),
-  ranges: estate(),
+  ranges: estate('id', { hooks: [DHCP] }),
   rogue_dhcp_events: estate(),
   scan_results: estate(),
   schema_version: host,
   sessions: host,
   // Classified key by key, below.
-  settings: estate('key'),
-  subnets: estate(),
+  settings: estate('key', { hooks: [DNS, DHCP, RESOLVER] }),
+  subnets: estate('id', { hooks: [DNS, DHCP] }),
+  // The change log itself and this box's place in it (sync/log.js).
+  sync_log: host,
+  sync_state: host,
   user_backup_codes: estate(),
   users: estate(),
   vlans: estate(),

@@ -1,7 +1,12 @@
 # Controller and members: redundant CIDRella instances
 
-Status: design accepted 2026-11-11, target 0.7.0. Phase 0 is done on `dev/0.7.0` (2026-11-20);
-phases 1 to 7 are not started. This document is the plan of record. What phase 0 built is in
+Status: design accepted 2026-11-11, target 0.7.0. Phases 0 and 1 are done on `dev/0.7.0`
+(2026-11-21); phases 2 to 7 are not started. Changed from this design while building phase 1:
+the HTTP endpoint for changes waits for phase 2, where the credential that guards it is made
+(the export and apply are functions until then); a replaced database is detected by a token
+written at every boot (`DATA_DIR/sync/incarnation`) and a restore marks the database it brings
+in; an apply sets foreign keys and the tables' other triggers aside and checks foreign keys at
+the end, where the design said deferred foreign keys. This document is the plan of record. What phase 0 built is in
 `docs/ARCHITECTURE.md` (Instances: Who Owns the Data) and ADR 006.
 
 ## Context

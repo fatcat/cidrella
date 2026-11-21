@@ -58,7 +58,9 @@ from `ndisc6` would do it, not bundled).
 Design in [docs/REDUNDANCY-PLAN.md](docs/REDUNDANCY-PLAN.md), accepted 2026-11-11. Phase 0
 (groundwork, no behavior change) is done on `dev/0.7.0`, 2026-11-20: the data-class registry and
 its guard, the lease diff-upsert, the facts sink, the grouped owner-only boot work, and a DHCP
-apply that only renders (ADR 006). Next is phase 1, the change log.
+apply that only renders (ADR 006). Phase 1 (the change log) is done too, 2026-11-21:
+`sync_log` and its generated triggers, dataset identity, `exportChanges`/`applyChanges` and a
+loopback test. Next is phase 2, member mode.
 Every install is a member; one is also the controller and owns all writes; other members sync a
 read-only copy and keep serving when it is away; promotion is manual. Rejected and why (all in the doc): scheduled restore,
 whole-table transfer, the SQLite session extension (not compiled into better-sqlite3 13.0.3),

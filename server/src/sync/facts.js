@@ -7,7 +7,9 @@
  * (docs/REDUNDANCY-PLAN.md, section 3).
  *
  *   leases(db, leases)            the DHCP backend's whole lease set; resolves
- *                                 { synced, rejected, blocking }
+ *                                 { synced, rejected, blocking }. The caller
+ *                                 (syncLeasesNow) reloads this box's proxy
+ *                                 exemptions afterwards; a sink does not.
  *   clientSeen(db, ip, options)   a client was heard from (recordDnsQueryLiveness)
  *   fingerprint(db, fingerprint)  a device_fingerprints row for a MAC
  */

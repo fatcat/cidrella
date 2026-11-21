@@ -5,6 +5,7 @@ import zlib from 'zlib';
 import { spawn } from 'child_process';
 import Database from 'better-sqlite3';
 import { insertAuditRow } from '../models/audit-log.js';
+import { forgetDataset } from '../sync/log.js';
 import { recordAudit } from '../services/audit.js';
 import { LAST_VERSION_KEY } from '../services/version-audit.js';
 import {
@@ -740,6 +741,8 @@ export function stampRestoredSettings(
       if (carryover) {
         upsertSettingWithConflict(staged, RESTORE_CARRYOVER_KEY, JSON.stringify(carryover));
       }
+      // The restored data is not what the change log described a moment ago.
+      forgetDataset(staged);
       if (restoredBy) {
         // The backup remembers the version that took it; the next boot would
         // read that as an update. An UPDATE, not an insert: a backup from

@@ -305,12 +305,25 @@ describe('backup round trip', () => {
       'sessions',
       'blocklist_categories',
       'blocklist_domains',
+      // The restored database is a new dataset: its change log starts empty.
+      'sync_log',
+      'sync_state',
     ]);
     for (const name of Object.keys(before)) {
       if (promised.has(name)) continue;
       expect(after[name], `table ${name}`).toEqual(before[name]);
     }
     expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort());
+  });
+
+  it('starts a new dataset, so a copy of the one before the restore starts over', () => {
+    const state = (dump) =>
+      Object.fromEntries(dump.sync_state.map((row) => Object.values(JSON.parse(row))));
+    expect(state(after).dataset).toBeTruthy();
+    expect(state(after).dataset).not.toBe(state(before).dataset);
+    // Nothing logged before the restore is left to serve.
+    const oldest = getDb().prepare('SELECT MIN(seq) AS seq FROM sync_log').get().seq;
+    expect(oldest === null || oldest > Number(state(after).floor)).toBe(true);
   });
 
   it('brings the sessions back ended, but for that unchanged', () => {

@@ -19,7 +19,29 @@ const SCAN_ROOTS = ['server/src', 'server/anomaly'].map((p) => path.join(ROOT, p
 
 const SKIP_DIRS = new Set(['node_modules', '.git', 'dist', 'coverage', '__pycache__']);
 
+// The tables that are data of record (server/src/sync/registry.js), read from
+// its text: this script is CommonJS and the registry an ES module.
+const ESTATE_TABLES = [
+  ...fs
+    .readFileSync(path.join(ROOT, 'server/src/sync/registry.js'), 'utf8')
+    .matchAll(/^ {2}(\w+): estate\(/gm),
+].map((match) => match[1]);
+
 const STRICT_TABLE_RULES = [
+  // REPLACE removes the row it collides with without firing its delete
+  // trigger, so the change log (server/src/sync/log.js) never learns the row
+  // went. Use INSERT ... ON CONFLICT DO UPDATE.
+  {
+    table: 'any data-of-record table with REPLACE',
+    ownerLabel: 'nowhere: write INSERT ... ON CONFLICT DO UPDATE instead',
+    writePattern: new RegExp(
+      `\\b(?:INSERT\\s+OR\\s+REPLACE\\s+INTO|REPLACE\\s+INTO)\\s+[\`'"]?(?:${ESTATE_TABLES.join('|')})\\b`,
+      'gi',
+    ),
+    allow(file) {
+      return relPath(file).startsWith('server/src/db/migrations/');
+    },
+  },
   {
     table: 'ip_addresses',
     ownerLabel: 'server/src/models/ip-address.js or startup identity backfill',

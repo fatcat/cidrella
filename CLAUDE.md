@@ -250,7 +250,15 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   collected; a new table or key is classified there in the change that adds it, and
   `tests/unit/sync/registry.test.js` fails until it is), `facts()` in `sync/facts.js` (where
   anything observed from a daemon or the proxy goes: `leases`, `clientSeen`, `fingerprint`;
-  the code that sees it never writes it, `sync/local-sink.js` does), `onDhcpRendered` in
+  the code that sees it never writes it, `sync/local-sink.js` does), `sync/log.js` (the change log of the data of record:
+  `ensureSyncLog` at boot generates the `sync_log` triggers from the registry and starts a new
+  dataset when the log cannot vouch for the database, `syncStatus`, `pruneTombstones`,
+  `estateTables` for the estate columns and rows of every estate table; never
+  `INSERT OR REPLACE` into an estate table, `check-db-ownership` refuses it) and
+  `sync/changes.js` (`exportChanges`, `parseChanges`, `applyChanges`: a copy made from the
+  log, delta or snapshot; the loopback test is `tests/integration/sync-loopback.test.js`, and
+  a new kind of write to the data of record gets a case in its `randomWrite`),
+  `onDhcpRendered` in
   `services/backend-apply.js` (work to do in a DHCP apply once the config is written; an apply
   itself writes nothing to the database), `repairEstateAtBoot` and `startControllerJobs` in
   `src/index.js` (boot repairs and timed jobs that change the data of record go in these, and
