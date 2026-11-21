@@ -135,9 +135,9 @@ export const SETTINGS = {
   default_lease_time: ESTATE,
   default_scan_enabled: ESTATE,
   default_scan_interval: ESTATE,
-  // Before backend_stack; read once at boot to carry an old choice over.
-  // Which instance serves DHCP (sync/dhcp-active.js), with the three below.
+  // Which instance serves DHCP (sync/dhcp-active.js), with the handover and term keys below.
   dhcp_active_instance: ESTATE,
+  // Before backend_stack; read once at boot to carry an old choice over.
   dhcp_backend: HOST,
   // This box's own address, as last written into the DNS Servers default.
   dhcp_dns_default_server_ip: HOST,
