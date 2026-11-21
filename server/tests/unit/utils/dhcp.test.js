@@ -224,6 +224,75 @@ describe('lease history', () => {
     expect(obtained('10.0.1.61')).toBe(1);
   });
 
+  const rows = () =>
+    db
+      .prepare(
+        'SELECT id, ip_address, expires_at, last_seen FROM dhcp_leases WHERE subnet_id = ? ORDER BY id',
+      )
+      .all(subnetId);
+  const backdate = () =>
+    db.prepare("UPDATE dhcp_leases SET last_seen = '2000-01-01 00:00:00'").run();
+
+  it('keeps a lease in its row across syncs and leaves an unchanged one unwritten', () => {
+    const expiry = inHours(1);
+    replaceLeases(db, [lease('10.0.1.63', 'aa:bb:cc:00:00:64', expiry)]);
+    const [first] = rows();
+    backdate();
+    replaceLeases(db, [lease('10.0.1.63', 'aa:bb:cc:00:00:64', expiry)]);
+    // Same id, and the row was not written: its stamp is still the old one.
+    expect(rows()).toEqual([{ ...first, last_seen: '2000-01-01 00:00:00' }]);
+
+    // A renewal changes the same row.
+    const renewed = inHours(2);
+    replaceLeases(db, [lease('10.0.1.63', 'aa:bb:cc:00:00:64', renewed)]);
+    const [after] = rows();
+    expect(after.id).toBe(first.id);
+    expect(after.expires_at).toBe(renewed);
+    expect(after.last_seen).not.toBe('2000-01-01 00:00:00');
+  });
+
+  it('keeps a DHCPv6 lease in its row too, and changes only the lease that changed', () => {
+    enableIpv6(db);
+    const v6 = (expiresAt) => ({
+      ip: '2001:db8:63::10',
+      mac: null,
+      hostname: 'six',
+      clientId: null,
+      expiresAt,
+      subnetId: null,
+      dhcpVersion: 6,
+      duid: '00:01:00:01:aa:bb:cc:dd:ee:ff:00:11:22:33',
+      iaid: 7,
+    });
+    const v6Row = () =>
+      db
+        .prepare("SELECT id, expires_at, last_seen FROM dhcp_leases WHERE ip_address = '2001:db8:63::10'")
+        .get();
+    const expiry = inHours(1);
+    replaceLeases(db, [v6(expiry), lease('10.0.1.64', 'aa:bb:cc:00:00:65', expiry)]);
+    const first = v6Row();
+    backdate();
+    replaceLeases(db, [v6(expiry), lease('10.0.1.64', 'aa:bb:cc:00:00:65', inHours(2))]);
+    expect(v6Row()).toEqual({ ...first, last_seen: '2000-01-01 00:00:00' });
+    expect(rows()[0].last_seen).not.toBe('2000-01-01 00:00:00');
+    replaceLeases(db, [v6(inHours(3))]);
+    expect(v6Row().id).toBe(first.id);
+    db.prepare("DELETE FROM dhcp_leases WHERE ip_address = '2001:db8:63::10'").run();
+  });
+
+  it('leaves one row for an address that had two', () => {
+    const expiry = inHours(1);
+    replaceLeases(db, [lease('10.0.1.65', 'aa:bb:cc:00:00:66', expiry)]);
+    db.prepare(
+      `INSERT INTO dhcp_leases (ip_address, mac_address, hostname, expires_at, subnet_id, last_seen)
+       SELECT ip_address, mac_address, hostname, expires_at, subnet_id, last_seen FROM dhcp_leases
+       WHERE ip_address = '10.0.1.65'`,
+    ).run();
+    expect(rows()).toHaveLength(2);
+    replaceLeases(db, [lease('10.0.1.65', 'aa:bb:cc:00:00:66', expiry)]);
+    expect(rows()).toHaveLength(1);
+  });
+
   it('records a lease again when the client comes back after it expired', () => {
     replaceLeases(db, [lease('10.0.1.62', 'aa:bb:cc:00:00:63', inHours(1))]);
     db.prepare(
@@ -235,6 +304,26 @@ describe('lease history', () => {
 });
 
 describe('syncDhcpDnsRecords', () => {
+  it('stamps a record its lease still answers once an hour, not on every sync', () => {
+    const leases = [{ ip: '10.0.1.70', hostname: 'stamped', subnetId }];
+    syncDhcpDnsRecords(db, leases);
+    const stamp = () =>
+      db.prepare("SELECT updated_at FROM dns_records WHERE name = 'stamped'").get().updated_at;
+    const set = (when) =>
+      db.prepare("UPDATE dns_records SET updated_at = ? WHERE name = 'stamped'").run(when);
+    const minutesAgo = (m) =>
+      db.prepare("SELECT datetime('now', ?) t").get(`-${m} minutes`).t;
+
+    const recent = minutesAgo(10);
+    set(recent);
+    syncDhcpDnsRecords(db, leases);
+    expect(stamp()).toBe(recent);
+
+    set(minutesAgo(90));
+    syncDhcpDnsRecords(db, leases);
+    expect(stamp() > minutesAgo(5)).toBe(true);
+  });
+
   it('creates DHCP-sourced A records for dynamic leases with hostnames', () => {
     syncDhcpDnsRecords(db, [
       {

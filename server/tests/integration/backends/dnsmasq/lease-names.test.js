@@ -33,7 +33,8 @@ beforeAll(async () => {
   tmpDir = setup.tmpDir;
   // DATA_DIR is read when backends/dnsmasq/dhcp.js loads, so it loads after setupTestDb.
   ({ parseLeaseFile } = await import('../../../../src/backends/dnsmasq/dhcp.js'));
-  ({ ingestLeases, syncLeasesNow } = await import('../../../../src/services/dhcp-lease-sync.js'));
+  ({ syncLeasesNow } = await import('../../../../src/services/dhcp-lease-sync.js'));
+  ({ ingestLeases } = await import('../../../../src/services/dhcp-lease-ingest.js'));
   ({ invalidateSubnetCache } = await import('../../../../src/utils/ip-sync.js'));
   ({ computeIpView } = await import('../../../../src/models/ip-view.js'));
   ({ retireStaleDynamicAddresses, OFFLINE_RETIREMENT_MS } =

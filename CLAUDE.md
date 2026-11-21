@@ -246,6 +246,15 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `tests/helpers/backend-estate.js`; anything reading the backend's log asks
   `getService(role).logSource()` and follows it with `createLogFollower` in
   `utils/log-reader.js`; `/api/logs/sources` tells the client which role has a log),
+  `sync/registry.js` (the data class of every table and settings key: estate, host or
+  collected; a new table or key is classified there in the change that adds it, and
+  `tests/unit/sync/registry.test.js` fails until it is), `facts()` in `sync/facts.js` (where
+  anything observed from a daemon or the proxy goes: `leases`, `clientSeen`, `fingerprint`;
+  the code that sees it never writes it, `sync/local-sink.js` does), `onDhcpRendered` in
+  `services/backend-apply.js` (work to do in a DHCP apply once the config is written; an apply
+  itself writes nothing to the database), `repairEstateAtBoot` and `startControllerJobs` in
+  `src/index.js` (boot repairs and timed jobs that change the data of record go in these, and
+  nowhere else in boot; ADR 006),
   `holdHooks` in `utils/after-commit.js` (wait for the running after-commit hooks and defer new
   ones until released), `backendDnsPort` in `config/defaults.js` (the port the DNS backend
   answers on: internal behind the proxy, the LAN port in bypass), `backends/features.js` (the catalog of backend-dependent
@@ -273,7 +282,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   time, shared with the client as `@shared/lease-time.js`), `reservedLeaseFirstSql` and
   `activeLeaseSql` in `utils/lease-sql.js` (which lease to believe for an address, and is a
   lease active),
-  `services/dhcp-lease-sync.js` (`ingestLeases`, `syncLeasesNow`: every lease sync; `holdLeaseSync` to keep it still;
+  `services/dhcp-lease-sync.js` (`syncLeasesNow`: every lease sync, which reports the leases as a fact; `ingestLeases` in `services/dhcp-lease-ingest.js` is what the owner keeps of them, and `startDhcpNameSync` there puts the DHCP names in DNS on every DHCP apply; `holdLeaseSync` to keep it still;
   it releases a lease holding another client's reservation, `holdsAnotherClientsReservation` in the
   lifecycle service, and runs after every DHCP apply through `onDhcpApplied` in `services/backend-apply.js`), `readSetting` in `models/setting.js` (one stored setting, null when absent), `roleSwitchedOff` in `utils/role-switches.js` (is DNS or DHCP switched off in CIDRella: no stack serves it then; the registry and the DNS proxy both ask it), `findNeighbor` in `utils/nd-cache.js` (every IPv6 neighbor
   lookup: a link-local address is keyed with its interface, so look it up with one),

@@ -346,7 +346,8 @@ Liveness comes from active and passive sources:
 
 - active scans use the scanner and `models/scan-run.js`
 - passive DHCP lease activity routes through DHCP lease sync and IP model writes
-- passive DNS query activity routes through `utils/ip-liveness.js`
+- passive DNS query activity is reported as a fact (`facts().clientSeen`,
+  `sync/facts.js`) and written by `utils/ip-liveness.js`
 
 Manual probes and scheduled scans should share the same probe implementation.
 ARP should be attempted first where appropriate, with ICMP ping fallback inside
@@ -385,8 +386,12 @@ an after-commit hook (`regenerate_dns`, `regenerate_dhcp`,
 adapter for each role from `backends/index.js`. Apply operations are desired
 state: they read the database, make the daemon match it, and report
 `{changed, activation, activated}`. Adapters never write the database
-(`check-db-ownership` refuses it); neutral work such as `syncDhcpDnsRecords`
-and lease ingestion (`services/dhcp-lease-sync.js`) stays in services. Only
+(`check-db-ownership` refuses it), and neither does an apply: it is a pure
+render. Neutral work stays in services and listens for the apply instead: the
+DHCP name sync (`syncDhcpDnsRecords`, started by `startDhcpNameSync` in
+`services/dhcp-lease-ingest.js`) runs from `onDhcpRendered`, once the config is
+written and checked and before the backend takes it, so a failed write leaves
+the records alone. Only
 `backends/**` imports an adapter, enforced by ESLint and
 `scripts/check-backend-imports.js`. `docs/DNSMASQ-COUPLING.md` maps the seams.
 
@@ -683,6 +688,40 @@ with 409 `reservations_present` while any exist in the network or below it.
 `GET /api/subnets/:id/deallocation-preview` reports the same selection
 read-only for the confirmation dialog (`subnet-dns-topology.js`
 `dnsDeallocationImpact`, `subnet-topology.js` `deallocationPreview`).
+
+## Instances: Who Owns the Data
+
+CIDRella is being built to run as several instances: one controller that owns
+every write and members that hold a synced copy (`docs/REDUNDANCY-PLAN.md`,
+ADR 006). Until members exist every install is the owner, and the rules below
+already hold on a single box.
+
+- **Data classes.** `server/src/sync/registry.js` gives every table and every
+  settings key one of three classes. `estate` is the data of record: all
+  configuration, addresses, leases, DNS records, history, users. `host` is
+  about this box alone: sessions, the backup list, the downloaded blocklists,
+  interface and port settings, which servers it runs, update state.
+  `collected` is measured where it happens: the metrics tables and the anomaly
+  models. `tests/unit/sync/registry.test.js` fails on a table or key that is
+  not classified.
+- **An apply only renders.** `services/backend-apply.js` reads the database
+  and writes nothing to it.
+- **Observations are facts.** Code that watches a daemon or the proxy reports
+  what it saw through `facts()` in `server/src/sync/facts.js` and never writes
+  it: the DHCP backend's leases (`services/dhcp-lease-sync.js`), a client heard
+  from (`utils/passive-liveness.js`, `services/dns-proxy-sinks.js`), a DHCP
+  fingerprint (`utils/dhcp-fingerprint.js`). The owner's sink, `localSink`,
+  writes them: leases through `ingestLeases` in
+  `services/dhcp-lease-ingest.js`.
+- **The owner's own work is grouped.** `repairEstateAtBoot` (the repairs boot
+  makes to the data) and `startControllerJobs` (scans, rogue DHCP detection,
+  the backup schedule, the stale-address sweep, audit pruning) in
+  `server/src/index.js` are the only boot steps that change the data of record
+  unasked.
+- **A sync writes what changed.** `replaceLeases` keeps a lease in its row
+  across syncs and leaves an unchanged one alone, so `dhcp_leases.last_seen` is
+  when a lease was last new or renewed. The lease sync stamps a DHCP-made DNS
+  record at most once an hour.
 
 ## Security and Operations Boundaries
 

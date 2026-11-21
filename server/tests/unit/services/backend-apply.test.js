@@ -1,9 +1,9 @@
 /**
- * applyDhcp sequences CIDRella's DHCP name sync around the backend: after the
- * scope files are written (so a failed write leaves the records alone) and
- * before the backend takes them.
+ * applyDhcp renders and activates, and tells its listeners in between: after
+ * the scope files are written (so a failed write leaves the DHCP names alone)
+ * and before the backend takes them.
  */
-import { describe, it, expect, beforeAll, afterAll, beforeEach, vi } from 'vitest';
+import { describe, it, expect, beforeAll, afterAll, afterEach, beforeEach, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 
 const calls = [];
@@ -16,13 +16,8 @@ vi.mock('../../../src/backends/index.js', () => ({
   getRaBackend: () => fake.current,
   uniqueServices: () => [fake.current, fake.dhcpService].filter(Boolean),
 }));
-vi.mock('../../../src/models/dhcp-lease.js', async (importOriginal) => ({
-  ...(await importOriginal()),
-  syncDhcpDnsRecords: vi.fn(() => calls.push('sync')),
-}));
-
 const { createFakeBackend } = await import('../../helpers/fake-backends.js');
-const { activatePendingBackends, applyAtBoot, applyDhcp, HOOK_HANDLERS } =
+const { activatePendingBackends, applyAtBoot, applyDhcp, HOOK_HANDLERS, onDhcpRendered } =
   await import('../../../src/services/backend-apply.js');
 const { setSwitchInProgress } = await import('../../../src/utils/switch-state.js');
 
@@ -48,9 +43,22 @@ beforeEach(() => {
 });
 
 describe('applyDhcp', () => {
-  it('writes the scopes, syncs the DHCP names, then activates', async () => {
+  let stopListening;
+  beforeEach(() => {
+    stopListening = onDhcpRendered((given) => calls.push(given === db ? 'sync' : 'sync without db'));
+  });
+  afterEach(() => stopListening());
+
+  it('writes the scopes, tells the rendered listeners, then activates', async () => {
     await applyDhcp(db);
     expect(calls).toEqual(['applyScopes activate=false', 'sync', 'activate restart']);
+  });
+
+  it('writes nothing to the database itself', async () => {
+    stopListening();
+    const before = db.prepare('SELECT total_changes() n').get().n;
+    await applyDhcp(db);
+    expect(db.prepare('SELECT total_changes() n').get().n).toBe(before);
   });
 
   it('has the RA backend render the DHCPv6 scopes when another backend serves DHCP', async () => {

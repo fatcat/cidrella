@@ -1,7 +1,8 @@
 # Controller and members: redundant CIDRella instances
 
-Status: design accepted 2026-11-11, target 0.7.0. Not started. This document is the plan of
-record; `docs/ARCHITECTURE.md` gets its own section when phase 0 lands.
+Status: design accepted 2026-11-11, target 0.7.0. Phase 0 is done on `dev/0.7.0` (2026-11-20);
+phases 1 to 7 are not started. This document is the plan of record. What phase 0 built is in
+`docs/ARCHITECTURE.md` (Instances: Who Owns the Data) and ADR 006.
 
 ## Context
 

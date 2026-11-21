@@ -34,7 +34,7 @@ let ingestLeases;
 beforeAll(async () => {
   ({ db, tmpDir } = await setupTestDb());
   enableIpv6(db);
-  ({ ingestLeases } = await import('../../src/services/dhcp-lease-sync.js'));
+  ({ ingestLeases } = await import('../../src/services/dhcp-lease-ingest.js'));
   app = createMultiRouterApp([
     { prefix: '/api/dns', router: dnsRouter },
     { prefix: '/api/pihole', router: piholeRouter },

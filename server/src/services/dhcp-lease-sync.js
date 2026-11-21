@@ -1,70 +1,13 @@
 /**
- * Bring the backend's DHCP leases into the database. The backend reads and
- * normalizes its leases (getDhcpBackend().readLeases); what CIDRella keeps of
- * them, and the names and DNS records they get, is decided here.
+ * Read the backend's DHCP leases and hand them on as a fact. The backend reads
+ * and normalizes its leases (getDhcpBackend().readLeases); what CIDRella keeps
+ * of them is decided where the fact lands (sync/facts.js: on a single box,
+ * ingestLeases in services/dhcp-lease-ingest.js).
  */
 import { getDhcpBackend, onBackendChanged } from '../backends/index.js';
 import { onDhcpApplied } from './backend-apply.js';
-import { findSubnetForIp } from '../utils/ip-sync.js';
-import { generateFallbackHostname } from '../utils/mac-vendor.js';
-import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
-import {
-  dhcpLeaseRejectionReason,
-  holdsAnotherClientsReservation,
-} from './ip-lifecycle-service.js';
+import { facts } from '../sync/facts.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
-
-/**
- * Store a backend's whole lease set: leases missing from `leases` are
- * released. Returns how many were kept and how many refused, and the refused
- * leases that hold another client's DHCP Reservation (`blocking`), for
- * syncLeasesNow to release at the backend.
- */
-export function ingestLeases(db, leases) {
-  const located = [];
-  for (const lease of leases) {
-    // A DHCPv6 lease without a client DUID has no identity CIDRella can act on.
-    if (lease.dhcpVersion === 6 && !lease.duid) continue;
-    let subnet;
-    try {
-      subnet = findSubnetForIp(db, lease.ip);
-    } catch {
-      subnet = null;
-    }
-    located.push({ ...lease, subnetId: subnet?.status === 'allocated' ? subnet.id : null });
-  }
-
-  const acceptedLeases = [];
-  const blocking = [];
-  let rejected = 0;
-  for (const lease of located) {
-    const rejection = dhcpLeaseRejectionReason(db, lease);
-    if (rejection) {
-      rejected++;
-      if (holdsAnotherClientsReservation(db, lease)) blocking.push(lease);
-      else console.warn(`Rejected lease ${lease.ip}: ${rejection}`);
-    } else {
-      acceptedLeases.push(lease);
-    }
-  }
-
-  // Persist the effective name every reader uses (ADR 005): unique in its
-  // zone, sticky to the address holding it, the vendor fallback only for an
-  // unnamed client holding none. dnsmasq writes '*' for a client without a
-  // name, and for one whose name it handed to another client. A DHCPv6
-  // client is named by the MAC its DUID-LLT/LL embeds, when it has one.
-  assignLeaseNames(db, acceptedLeases, { fallbackName: generateFallbackHostname });
-
-  replaceLeases(db, acceptedLeases, { lifecycleValidated: true });
-
-  // Sync DHCP hostnames (leases + reservations) into dns_records
-  syncDhcpDnsRecords(db, acceptedLeases);
-
-  // A host with filtering off is keyed by MAC; its new address takes effect now.
-  loadFilteringOverrides();
-
-  return { synced: acceptedLeases.length, rejected, blocking };
-}
 
 /**
  * Release leases that hold a DHCP Reservation's address for another client.
@@ -106,7 +49,9 @@ export async function releaseBlockingLeases(leases, backend = getDhcpBackend()) 
 export async function syncLeasesNow(db, read = {}) {
   const { leases, unsettled } = await getDhcpBackend().readLeases(read);
   if (!leases) return { synced: 0, unsettled: Boolean(unsettled) };
-  const result = ingestLeases(db, leases);
+  const result = await facts().leases(db, leases);
+  // A host with filtering off is keyed by MAC; its new address takes effect now.
+  loadFilteringOverrides();
   if (result.blocking.length) result.released = await releaseBlockingLeases(result.blocking);
   return result;
 }

@@ -850,7 +850,8 @@ export function deleteRecord(db, zone, record) {
 /**
  * Addresses a DHCP lease's A or AAAA record still names with no address row to
  * retire and no lease, untouched since `cutoff`: the lease sync refreshes a
- * record's updated_at while its lease lasts. Nothing else would remove these.
+ * record's updated_at, once an hour, while its lease lasts. Nothing else would
+ * remove these.
  */
 export function findRowlessDhcpRecordAddresses(db, cutoff) {
   return db

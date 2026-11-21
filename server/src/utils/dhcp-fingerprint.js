@@ -18,7 +18,8 @@
 import { createLogFollower } from './log-reader.js';
 import { lookupVendor } from './mac-vendor.js';
 import { classify } from './device-classifier.js';
-import { getByMac, upsertFingerprint } from '../models/device-fingerprint.js';
+import { getByMac } from '../models/device-fingerprint.js';
+import { facts } from '../sync/facts.js';
 import { DHCP_FINGERPRINT_POLL_MS } from '../config/defaults.js';
 import { getService, onBackendChanged } from '../backends/index.js';
 
@@ -37,7 +38,7 @@ function persist(db, tx) {
     hostname,
     vendor,
   });
-  upsertFingerprint(db, {
+  facts().fingerprint(db, {
     mac_address: tx.mac,
     dhcp_fingerprint: opt55,
     vendor_class: opt60,

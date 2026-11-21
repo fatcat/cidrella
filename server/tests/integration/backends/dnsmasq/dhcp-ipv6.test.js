@@ -33,7 +33,7 @@ beforeAll(async () => {
   db = setup.db;
   ({ regenerateScopeConfigs, regenerateReservations, parseLeaseLine, parseLeaseFile } =
     await import('../../../../src/backends/dnsmasq/dhcp.js'));
-  ({ ingestLeases } = await import('../../../../src/services/dhcp-lease-sync.js'));
+  ({ ingestLeases } = await import('../../../../src/services/dhcp-lease-ingest.js'));
   const { default: subnetRouter } = await import('../../../../src/routes/subnets.js');
   const { default: dhcpRouter } = await import('../../../../src/routes/dhcp.js');
   const { default: dnsRouter } = await import('../../../../src/routes/dns.js');

@@ -6,6 +6,36 @@ The `min_from` field in the YAML block declares the lowest version that may upgr
 
 ---
 
+## v0.7.0 — 2026-11-20
+
+```yaml
+min_from: "0.6.4"
+breaking: false
+security: false
+```
+
+0.7.0 will let CIDRella run as more than one instance: a controller that owns the data, and
+members that keep serving DNS and DHCP from a synced copy.
+
+### Known issues
+
+- **In development.** Only the groundwork is in so far. There is no second instance to add yet,
+  and a single box behaves as it did in 0.6.4.
+
+### Changed
+
+- **A lease sync writes only what changed.** A DHCP lease keeps its row from one sync to the
+  next, and a lease the server lists unchanged is not rewritten. Nothing looks different in the
+  DHCP tables.
+
+### Developer notes
+
+- Groundwork for instances (ADR 006, `docs/REDUNDANCY-PLAN.md` phase 0): every table and
+  settings key has a data class in `server/src/sync/registry.js`; what a daemon or the proxy
+  observes goes through `facts()` in `server/src/sync/facts.js`; a DHCP apply no longer writes
+  DNS records itself, the name sync listens for it; boot work that changes the data of record
+  is grouped in `repairEstateAtBoot` and `startControllerJobs`.
+
 ## v0.6.4 — 2026-11-16
 
 ```yaml

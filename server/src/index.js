@@ -67,6 +67,7 @@ import interfaceRoutes from './routes/interfaces.js';
 import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js';
 import { ensureCerts, renewCertIfDue, setHttpsServer } from './utils/cert.js';
 import { startLeaseSync } from './services/dhcp-lease-sync.js';
+import { startDhcpNameSync } from './services/dhcp-lease-ingest.js';
 import { syncServerDnsDefault } from './models/dhcp-option.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
@@ -91,7 +92,7 @@ import { ensureNtpEnabled, armDnssecTimecheckWhenSynced } from './utils/timesync
 import { resumeInterruptedScans } from './utils/scanner.js';
 import { startVendorScheduler } from './utils/mac-vendor.js';
 import { startUpdateScheduler } from './utils/update-checker.js';
-import { startPassiveLivenessWatcher } from './utils/passive-liveness.js';
+import { startPassiveLivenessWatcher, startStaleAddressSweep } from './utils/passive-liveness.js';
 import { startDhcpFingerprintWatcher } from './utils/dhcp-fingerprint.js';
 import { startMetricsAggregator } from './utils/metrics-aggregator.js';
 import metricsRoutes from './routes/metrics.js';
@@ -106,6 +107,106 @@ import { markBackendReady } from './utils/startup-status.js';
 import { isPreflightBoot } from './utils/preflight.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+
+// ─── Work on the data of record ───────────────────────────────────
+// The two functions below change the data of record on their own initiative:
+// repairs at boot, and jobs on a timer. They are kept apart from the rest of
+// boot because only the instance that owns that data may run them
+// (docs/REDUNDANCY-PLAN.md, section 3). Every install owns its data today.
+
+function repairEstateAtBoot(db) {
+  // Migrate legacy DHCP scope columns to scope_options table
+  migrateLegacyScopeOptions(db);
+
+  // Remove redundant gateway options that should be inherited from subnet
+  cleanupRedundantGatewayOptions(db);
+
+  // Reverse zones are a complete projection of usable managed addresses. Fill
+  // gaps left by older releases and replace empty/bare-IP placeholders with a
+  // canonical DNS or DHCP hostname when one exists.
+  try {
+    const ptrRepair = reconcileManagedReverseDns(db);
+    if (ptrRepair.inserted > 0 || ptrRepair.updated > 0) {
+      console.log(
+        `Reconciled reverse DNS: ${ptrRepair.inserted} PTR row(s) inserted, ` +
+          `${ptrRepair.updated} updated`,
+      );
+    }
+    for (const skipped of ptrRepair.skipped_subnets) {
+      console.warn(
+        `Reverse DNS placeholder reconciliation skipped ${skipped.cidr}: ` +
+          `${skipped.addresses} usable addresses exceeds the 65536-address safety limit`,
+      );
+    }
+  } catch (err) {
+    console.warn('Reverse DNS placeholder reconciliation skipped:', err?.message || err);
+  }
+
+  // Rewrite GeoIP allowlist entries to canonical CIDR form and collapse
+  // same-network duplicates (idempotent; runs before the proxy loads them).
+  // Never let a surprising data shape in this table take the whole
+  // appliance down: worst case the allowlist stays un-canonicalized and
+  // the proxy still loads whatever is stored.
+  try {
+    canonicalizeGeoipAllowlist(db);
+  } catch (err) {
+    console.error(
+      'GeoIP allowlist canonicalization failed (continuing with stored values):',
+      err.message,
+    );
+  }
+
+  // Repair stale system "Gateway" range rows whose start_ip doesn't match
+  // the subnet's own `gateway_address`. An earlier version of
+  // migrateConfigToChild passed the PARENT's gateway IP to createSystemRanges
+  // for every child, so /22 → 4x/24 divides left all four children pointing
+  // at the parent's gateway IP, which falls outside the child's CIDR and
+  // breaks the Grid View's gateway coloring. New divides use the child's
+  // gateway; this heal fixes the ones that already landed.
+  try {
+    const repaired = Range.repairStaleGatewayRanges(db);
+    if (repaired.changes > 0)
+      console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
+  } catch (err) {
+    console.warn('Gateway range repair skipped:', err?.message || err);
+  }
+
+  // Sync server IP into DNS Servers default
+  syncServerDnsDefault(db);
+}
+
+function pruneAuditLog() {
+  try {
+    const days = getSetting('audit_log_retention_days');
+    const result = AuditLog.pruneAuditLog(getDb(), days);
+    if (result.changes > 0) {
+      console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
+      recordAudit({
+        action: 'audit_log_pruned',
+        entityType: 'audit_log',
+        source: 'retention',
+        details: { removed: result.changes, retention_days: Number(days) },
+      });
+    }
+  } catch (err) {
+    console.error('Audit log prune error:', err.message);
+  }
+}
+
+function startControllerJobs(db) {
+  startBackupScheduler();
+  startRogueDhcpScheduler();
+
+  // Resume any scans interrupted by server restart, then start scheduler
+  resumeInterruptedScans(db);
+  startScanScheduler();
+
+  // Mark addresses stale, prune address history, retire long-offline hosts
+  startStaleAddressSweep(db);
+
+  pruneAuditLog();
+  setInterval(pruneAuditLog, AUDIT_PRUNE_INTERVAL_MS);
+}
 
 async function main() {
   // Capture the previous process' systemd/journal crash context before the
@@ -124,6 +225,7 @@ async function main() {
   // What each after-commit hook runs. Registered before anything can queue
   // one (the pending-work resume below, request handlers, the lease watcher).
   registerHookHandlers(HOOK_HANDLERS);
+  startDhcpNameSync();
 
   // Initialize database
   await initDb(DATA_DIR);
@@ -163,61 +265,7 @@ async function main() {
   // rewritten and nothing is signaled.
   queueRegen('regenerate_dns');
 
-  // Migrate legacy DHCP scope columns to scope_options table
-  migrateLegacyScopeOptions(getDb());
-
-  // Remove redundant gateway options that should be inherited from subnet
-  cleanupRedundantGatewayOptions(getDb());
-
-  // Reverse zones are a complete projection of usable managed addresses. Fill
-  // gaps left by older releases and replace empty/bare-IP placeholders with a
-  // canonical DNS or DHCP hostname when one exists.
-  try {
-    const ptrRepair = reconcileManagedReverseDns(getDb());
-    if (ptrRepair.inserted > 0 || ptrRepair.updated > 0) {
-      console.log(
-        `Reconciled reverse DNS: ${ptrRepair.inserted} PTR row(s) inserted, ` +
-          `${ptrRepair.updated} updated`,
-      );
-    }
-    for (const skipped of ptrRepair.skipped_subnets) {
-      console.warn(
-        `Reverse DNS placeholder reconciliation skipped ${skipped.cidr}: ` +
-          `${skipped.addresses} usable addresses exceeds the 65536-address safety limit`,
-      );
-    }
-  } catch (err) {
-    console.warn('Reverse DNS placeholder reconciliation skipped:', err?.message || err);
-  }
-
-  // Rewrite GeoIP allowlist entries to canonical CIDR form and collapse
-  // same-network duplicates (idempotent; runs before the proxy loads them).
-  // Never let a surprising data shape in this table take the whole
-  // appliance down: worst case the allowlist stays un-canonicalized and
-  // the proxy still loads whatever is stored.
-  try {
-    canonicalizeGeoipAllowlist(getDb());
-  } catch (err) {
-    console.error(
-      'GeoIP allowlist canonicalization failed (continuing with stored values):',
-      err.message,
-    );
-  }
-
-  // Repair stale system "Gateway" range rows whose start_ip doesn't match
-  // the subnet's own `gateway_address`. An earlier version of
-  // migrateConfigToChild passed the PARENT's gateway IP to createSystemRanges
-  // for every child, so /22 → 4x/24 divides left all four children pointing
-  // at the parent's gateway IP, which falls outside the child's CIDR and
-  // breaks the Grid View's gateway coloring. New divides use the child's
-  // gateway; this heal fixes the ones that already landed.
-  try {
-    const repaired = Range.repairStaleGatewayRanges(getDb());
-    if (repaired.changes > 0)
-      console.log(`Repaired ${repaired.changes} stale Gateway range row(s)`);
-  } catch (err) {
-    console.warn('Gateway range repair skipped:', err?.message || err);
-  }
+  repairEstateAtBoot(getDb());
 
   // Sweep abandoned restore-staging files from a prior crashed restore.
   // A SIGKILL/OOM between upload-start and cleanup strands multi-GB files
@@ -229,9 +277,6 @@ async function main() {
   } catch (err) {
     console.warn('Restore-staging sweep skipped:', err?.message || err);
   }
-
-  // Sync server IP into DNS Servers default
-  syncServerDnsDefault(getDb());
 
   // Without the privileged helper (development) this process runs the probes
   // itself; the helper logs its own warning when it says hello.
@@ -293,13 +338,8 @@ async function main() {
 
   // 3. Start schedulers
   startBlocklistScheduler();
-  startBackupScheduler();
   startGeoipScheduler();
-  startRogueDhcpScheduler();
-
-  // Resume any scans interrupted by server restart, then start scheduler
-  resumeInterruptedScans(getDb());
-  startScanScheduler();
+  startControllerJobs(getDb());
 
   // Start MAC vendor database auto-refresh (every 24h)
   startVendorScheduler();
@@ -316,21 +356,11 @@ async function main() {
   // Start metrics aggregator (collects stats every 60s for dashboard)
   startMetricsAggregator(getDb());
 
-  // Audit log retention
-  function pruneAuditLog() {
+  // What this box keeps for as long as the audit log: a backend's own audit
+  // log (Kea's legal log) and ended sign-in sessions.
+  function pruneHostLogs() {
     try {
       const days = getSetting('audit_log_retention_days');
-      const result = AuditLog.pruneAuditLog(getDb(), days);
-      if (result.changes > 0) {
-        console.log(`Audit log pruned: ${result.changes} entries older than ${days} days removed`);
-        recordAudit({
-          action: 'audit_log_pruned',
-          entityType: 'audit_log',
-          source: 'retention',
-          details: { removed: result.changes, retention_days: Number(days) },
-        });
-      }
-      // A backend's own audit log (Kea's legal log) keeps as long.
       for (const backend of allBackends()) {
         const files = backend.pruneLogs?.(Number(days)) || 0;
         if (files > 0)
@@ -343,11 +373,11 @@ async function main() {
         console.log(`Sessions pruned: ${sessions.changes} older than ${days} days removed`);
       }
     } catch (err) {
-      console.error('Audit log prune error:', err.message);
+      console.error('Log prune error:', err.message);
     }
   }
-  pruneAuditLog();
-  setInterval(pruneAuditLog, AUDIT_PRUNE_INTERVAL_MS);
+  pruneHostLogs();
+  setInterval(pruneHostLogs, AUDIT_PRUNE_INTERVAL_MS);
 
   // Generate or load TLS certs
   const { keyPath, certPath } = ensureCerts(DATA_DIR);

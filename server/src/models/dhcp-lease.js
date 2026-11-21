@@ -7,40 +7,52 @@ import { isLeaseActive, leaseExpiryMs } from '../utils/lease-sql.js';
 import { resolveEffectiveScopeOptions } from './dhcp-scope.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
+/**
+ * Make dhcp_leases hold `leases`, the backend's whole set, changing only the
+ * rows that differ: a lease keeps its row (and id) across syncs, and one the
+ * backend lists unchanged is not written at all. `last_seen` is when the lease
+ * was last new or changed (a renewal moves its expiry).
+ */
 export function replaceLeases(db, leases, { lifecycleValidated = false, now = Date.now() } = {}) {
+  const leaseKey = (subnetId, ip) => `${subnetId}|${ip}`;
   const replace = db.transaction(() => {
-    const previous = new Map(
-      db
-        .prepare(
-          `
-      SELECT subnet_id, ip_address, mac_address, hostname, client_id, expires_at, last_seen,
-        dhcp_version, duid, iaid
-      FROM dhcp_leases
-    `,
-        )
-        .all()
-        .map((lease) => [`${lease.subnet_id}|${lease.ip_address}`, lease]),
-    );
+    const remove = db.prepare('DELETE FROM dhcp_leases WHERE id = ?');
+    const previous = new Map();
+    const stored = db
+      .prepare(
+        `SELECT id, subnet_id, ip_address, mac_address, hostname, client_id, expires_at,
+           dhcp_version, duid, iaid
+         FROM dhcp_leases ORDER BY id`,
+      )
+      .all();
+    for (const row of stored) {
+      const key = leaseKey(row.subnet_id, row.ip_address);
+      // One row per address: an older duplicate goes.
+      if (previous.has(key)) remove.run(previous.get(key).id);
+      previous.set(key, row);
+    }
     const reservationKeys = new Set(
       db
-        .prepare(
-          `
-      SELECT subnet_id, ip_address FROM dhcp_reservations WHERE enabled = 1
-    `,
-        )
+        .prepare('SELECT subnet_id, ip_address FROM dhcp_reservations WHERE enabled = 1')
         .all()
-        .map((row) => `${row.subnet_id}|${row.ip_address}`),
+        .map((row) => leaseKey(row.subnet_id, row.ip_address)),
     );
-    db.prepare('DELETE FROM dhcp_leases').run();
     const insert = db.prepare(`
       INSERT INTO dhcp_leases (ip_address, mac_address, hostname, client_id, expires_at, subnet_id,
         last_seen, dhcp_version, duid, iaid)
-      VALUES (?, ?, ?, ?, ?, ?, datetime('now'), ?, ?, ?)
+      VALUES (@ip, @mac, @hostname, @clientId, @expiresAt, @subnetId, datetime('now'),
+        @dhcpVersion, @duid, @iaid)
+    `);
+    const update = db.prepare(`
+      UPDATE dhcp_leases SET mac_address = @mac, hostname = @hostname, client_id = @clientId,
+        expires_at = @expiresAt, dhcp_version = @dhcpVersion, duid = @duid, iaid = @iaid,
+        last_seen = datetime('now')
+      WHERE id = @id
     `);
     // The client identity is the MAC for DHCPv4 and the DUID for DHCPv6.
     const clientOf = (mac, duid) => String(duid || mac || '').toLowerCase();
     const observedLeases = leases.map((lease) => {
-      const old = previous.get(`${lease.subnetId}|${lease.ip}`);
+      const old = previous.get(leaseKey(lease.subnetId, lease.ip));
       // A new lease is one the address did not hold a moment ago: no lease,
       // another client's, or one that had expired. A renewal (same client,
       // new expiry) is activity but not a new lease, so it writes no history.
@@ -59,54 +71,64 @@ export function replaceLeases(db, leases, { lifecycleValidated = false, now = Da
           newLease || (isLeaseActive(lease.expiresAt, now) && old.expires_at !== lease.expiresAt),
       };
     });
+    const currentKeys = new Set();
     for (const l of observedLeases) {
-      insert.run(
-        l.ip,
-        l.mac || null,
-        l.hostname,
-        l.clientId,
-        l.expiresAt,
-        l.subnetId,
-        l.dhcpVersion || 4,
-        l.duid || null,
-        l.iaid ?? null,
-      );
+      const key = leaseKey(l.subnetId, l.ip);
+      currentKeys.add(key);
+      const row = {
+        ip: l.ip,
+        mac: l.mac || null,
+        hostname: l.hostname ?? null,
+        clientId: l.clientId ?? null,
+        expiresAt: l.expiresAt ?? null,
+        subnetId: l.subnetId ?? null,
+        dhcpVersion: l.dhcpVersion || 4,
+        duid: l.duid || null,
+        iaid: l.iaid ?? null,
+      };
+      const old = previous.get(key);
+      if (!old) {
+        const id = insert.run(row).lastInsertRowid;
+        // A second lease for the same address in this set updates this row.
+        previous.set(key, {
+          id,
+          mac_address: row.mac,
+          hostname: row.hostname,
+          client_id: row.clientId,
+          expires_at: row.expiresAt,
+          dhcp_version: row.dhcpVersion,
+          duid: row.duid,
+          iaid: row.iaid,
+        });
+        continue;
+      }
+      const same =
+        old.mac_address === row.mac &&
+        old.hostname === row.hostname &&
+        old.client_id === row.clientId &&
+        old.expires_at === row.expiresAt &&
+        old.dhcp_version === row.dhcpVersion &&
+        old.duid === row.duid &&
+        old.iaid === row.iaid;
+      if (!same) update.run({ ...row, id: old.id });
     }
-    const currentKeys = new Set(observedLeases.map((lease) => `${lease.subnetId}|${lease.ip}`));
-    const retainExpired = db.prepare(`
-      INSERT INTO dhcp_leases
-        (ip_address, mac_address, hostname, client_id, expires_at, subnet_id, last_seen,
-         dhcp_version, duid, iaid)
-      VALUES (?, ?, ?, ?,
-        CASE
-          WHEN ? = 'infinite' OR datetime(?) > datetime('now') THEN datetime('now')
-          ELSE ?
-        END,
-        ?, ?, ?, ?, ?)
-    `);
     // A lease the backend no longer holds is kept, expired, for the offline
     // window, so its name outlives it while the host is away (ARCHITECTURE.md,
     // Canonical IP Model). Past that the row goes: the retirement sweep clears
     // it only for an address it retires, and passes over one that is already
     // unassigned, whose row would then stay for good.
+    const expire = db.prepare(`
+      UPDATE dhcp_leases SET expires_at = datetime('now')
+      WHERE id = ? AND (expires_at = 'infinite' OR datetime(expires_at) > datetime('now'))
+    `);
     const keepSince = now - OFFLINE_RETIREMENT_MS;
     for (const [key, old] of previous) {
-      if (currentKeys.has(key) || reservationKeys.has(key)) continue;
-      if (leaseExpiryMs(old.expires_at) < keepSince) continue;
-      retainExpired.run(
-        old.ip_address,
-        old.mac_address,
-        old.hostname,
-        old.client_id,
-        old.expires_at,
-        old.expires_at,
-        old.expires_at,
-        old.subnet_id,
-        old.last_seen,
-        old.dhcp_version || 4,
-        old.duid,
-        old.iaid,
-      );
+      if (currentKeys.has(key)) continue;
+      if (reservationKeys.has(key) || leaseExpiryMs(old.expires_at) < keepSince) {
+        remove.run(old.id);
+      } else {
+        expire.run(old.id);
+      }
     }
     observeDhcpLeases(db, observedLeases, { prevalidated: lifecycleValidated });
   });
@@ -396,8 +418,13 @@ export function syncDhcpDnsRecords(db, leases) {
     INSERT INTO dns_records (zone_id, name, type, value, source, enabled)
     VALUES (?, ?, ?, ?, ?, 1)
   `);
+  // A record a lease still answers is stamped so the retirement of a record
+  // with no address row can tell how long it has gone unlisted
+  // (findRowlessDhcpRecordAddresses). Once an hour is enough for a clock that
+  // runs a day, and leaves an unchanged record unwritten on every other sync.
   const touchDhcp = db.prepare(`
-    UPDATE dns_records SET updated_at = datetime('now') WHERE id = ?
+    UPDATE dns_records SET updated_at = datetime('now')
+    WHERE id = ? AND datetime(updated_at) <= datetime('now', '-1 hour')
   `);
   const updateSource = db.prepare(`
     UPDATE dns_records SET source = ?, updated_at = datetime('now') WHERE id = ?

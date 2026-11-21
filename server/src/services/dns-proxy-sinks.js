@@ -6,7 +6,7 @@
  */
 import { getDb } from '../db/init.js';
 import { logDnsQuery } from '../db/duckdb.js';
-import { recordDnsQueryLiveness } from '../utils/ip-liveness.js';
+import { facts } from '../sync/facts.js';
 import { recordResolution } from '../utils/resolution-feed.js';
 import { proxyLog } from '../dns-proxy/log.js';
 
@@ -16,7 +16,7 @@ export function sinkQueryRow(entry) {
 
 export function sinkClientSeen(clientIp) {
   try {
-    recordDnsQueryLiveness(getDb(), clientIp, { createRogue: true, source: 'passive' });
+    facts().clientSeen(getDb(), clientIp, { createRogue: true, source: 'passive' });
   } catch (err) {
     proxyLog('warn', 'Failed to record DNS-query liveness', { clientIp, error: err.message });
   }

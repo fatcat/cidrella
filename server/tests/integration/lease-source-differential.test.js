@@ -45,7 +45,7 @@ beforeAll(async () => {
   const setup = await setupTestDb();
   ({ db, tmpDir } = setup);
   enableIpv6(db);
-  ({ ingestLeases } = await import('../../src/services/dhcp-lease-sync.js'));
+  ({ ingestLeases } = await import('../../src/services/dhcp-lease-ingest.js'));
   ({ getCanonicalSubnetIpRow } = await import('../../src/models/subnet-ip-read.js'));
   ({ resolveCanonicalHostname } = await import('../../src/utils/ip-sync.js'));
   const { default: subnetRouter } = await import('../../src/routes/subnets.js');

@@ -1,15 +1,13 @@
 /**
  * Apply the database to the DNS/DHCP backends. These are what the after-commit
- * hooks run, and the one place work that belongs to CIDRella (not the backend)
- * is sequenced around a backend apply.
+ * hooks run. An apply only renders: it reads the database and writes nothing
+ * to it. Work that belongs to CIDRella is sequenced around one by listening
+ * (onDhcpRendered, onDhcpApplied).
  *
- * Tests of routes and services mock this module, not the adapter: stubbing
- * applyDhcp here also skips the DHCP name sync, as stubbing the old
- * regenerateDhcpConfigs did.
+ * Tests of routes and services mock this module, not the adapter.
  */
 import { getDnsBackend, getRaBackend, getService, uniqueServices } from '../backends/index.js';
 import fs from 'fs';
-import { syncDhcpDnsRecords } from '../models/dhcp-lease.js';
 import { BACKEND_RESTART_MARKER } from '../config/defaults.js';
 import { isPreflightBoot } from '../utils/preflight.js';
 import { switchInProgress } from '../utils/switch-state.js';
@@ -34,23 +32,28 @@ function renderDhcp(db) {
   return { dhcp, result, ra, raResult };
 }
 
-// The DHCP hostnames (leases and reservations) go into dns_records after the
-// scope files are written and before the backend takes them, so a failed
-// write or validation leaves the records alone. Stored leases already carry
-// their effective names (ADR 005), the vendor fallback included. When another
-// backend sends the Router Advertisements (radvd beside Kea), the DHCPv6
-// scopes go to it too.
+// Written and checked, the listeners of onDhcpRendered run, then the backend
+// takes the change. When another backend sends the Router Advertisements
+// (radvd beside Kea), the DHCPv6 scopes go to it too.
 export async function applyDhcp(db) {
   const { dhcp, result, ra, raResult } = renderDhcp(db);
-  const leases = db
-    .prepare(
-      'SELECT ip_address as ip, hostname, mac_address as mac, subnet_id as subnetId FROM dhcp_leases',
-    )
-    .all();
-  syncDhcpDnsRecords(db, leases);
+  for (const listener of dhcpRenderedListeners) listener(db);
   await dhcp.applyActivation(result.activation);
   if (raResult) await ra.applyActivation(raResult.activation);
   for (const listener of dhcpAppliedListeners) listener();
+}
+
+const dhcpRenderedListeners = new Set();
+
+/**
+ * Call `listener(db)` in every DHCP apply once the config is written and
+ * checked, before the backend takes it. A failed write or validation never
+ * reaches it. The DHCP name sync listens (services/dhcp-lease-ingest.js).
+ * Returns the unsubscribe.
+ */
+export function onDhcpRendered(listener) {
+  dhcpRenderedListeners.add(listener);
+  return () => dhcpRenderedListeners.delete(listener);
 }
 
 const dhcpAppliedListeners = new Set();

@@ -49,6 +49,8 @@ const { setSetting } = await import('../../../src/db/init.js');
 const { queueRegen } = await import('../../../src/utils/after-commit.js');
 const { applyAtBoot, applyListenNow } = await import('../../../src/services/backend-apply.js');
 const { syncLeasesNow } = await import('../../../src/services/dhcp-lease-sync.js');
+// As boot does: the DHCP names reach dns_records on every DHCP apply.
+(await import('../../../src/services/dhcp-lease-ingest.js')).startDhcpNameSync();
 const { getDnsBackend } = await import('../../../src/backends/index.js');
 const { ESTATE_INTERFACES, seedBackendEstate } = await import('../../helpers/backend-estate.js');
 
