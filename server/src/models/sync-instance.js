@@ -67,14 +67,18 @@ export function setOwnDnsAddresses(db, addresses) {
 
 /**
  * The instances that answer DNS, in the order their addresses are served:
- * the controller, then the members by name. [{ name, addresses }].
+ * the one that serves DHCP (sync/dhcp-active.js: its clients reach it for
+ * sure), then the controller, then the members by name.
+ * [{ name, addresses }].
  */
 export function dnsInstances(db) {
   let statement;
   try {
     statement = db.prepare(
       `SELECT name, dns_addresses FROM sync_instances WHERE serves_dns = 1
-       ORDER BY is_controller DESC, name, id`,
+       ORDER BY COALESCE(instance_id = (
+         SELECT value FROM settings WHERE key = 'dhcp_active_instance'), 0) DESC,
+         is_controller DESC, name, id`,
     );
   } catch {
     // A database from before instances (a migration test resolving options
@@ -84,6 +88,28 @@ export function dnsInstances(db) {
   return statement
     .all()
     .map((row) => ({ name: row.name, addresses: JSON.parse(row.dns_addresses || '[]') }));
+}
+
+/**
+ * Every address an instance of this CIDRella is known by, lowercased: the
+ * one it pairs from and the ones it answers DNS on. An offer from one of
+ * them is CIDRella's own DHCP, whichever instance serves it.
+ */
+export function instanceAddressSet(db) {
+  const known = new Set();
+  let rows;
+  try {
+    rows = db.prepare('SELECT address, dns_addresses FROM sync_instances').all();
+  } catch {
+    return known;
+  }
+  for (const row of rows) {
+    for (const address of [row.address, ...JSON.parse(row.dns_addresses || '[]')]) {
+      const canonical = address && canonicalizeIp(String(address));
+      if (canonical) known.add(canonical.toLowerCase());
+    }
+  }
+  return known;
 }
 
 /**

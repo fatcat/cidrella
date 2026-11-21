@@ -48,7 +48,9 @@ export const MEMBER_ALLOWED = [
     // form sends it with every save: unchanged, it is taken out of the
     // request so the handler does not write it; changed, the save is refused.
     estate: (req) => {
-      // DHCP is the controller's until it is moved here (phase 5 of the plan).
+      // A member's own DHCP switch decides nothing: the controller moves DHCP
+      // to a member (sync/dhcp-active.js). Switching it on here is refused so
+      // nobody takes it for the way.
       if (req.body?.dhcp_enabled === true) return true;
       if (req.body?.ipv6_enabled === undefined) return false;
       if (req.body.ipv6_enabled !== ipv6Enabled()) return true;

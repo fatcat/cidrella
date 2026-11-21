@@ -64,6 +64,10 @@ near routes until a read model meaningfully reduces duplication or ambiguity.
 IP state is the most important shared contract in CIDRella. It is displayed in
 Networks, DHCP, and DNS views, so those views must not infer conflicting state.
 
+The lease set may be read by another instance (the member that serves DHCP, see Instances).
+It is validated and then passed to the same `ingestLeases`: no precedence rule changes with
+who read it. While a handover between instances is pending, no lease set is accepted.
+
 Current owners:
 
 - `server/src/services/ip-lifecycle-service.js` owns allocation transitions,
@@ -785,7 +789,7 @@ already hold on a single box.
   scope's DNS servers option (6, and 23 for DHCPv6) names CIDRella by one
   address; when the scope's options are resolved
   (`resolveEffectiveScopeOptions`), that entry is served as every DNS-serving
-  instance, the controller first, each by its address inside the scope's
+  instance, the one serving DHCP first and then the controller, each by its address inside the scope's
   network when it has one (`utils/instance-dns.js`). Other resolvers a person
   listed stay where they are, a list naming no instance is served as it is,
   and nothing stored changes. A change to the instances re-renders DHCP.
@@ -797,8 +801,32 @@ already hold on a single box.
   sink calls (`sync/member-facts.js`), as of the time the member observed
   it, read by the member's clock. A sighting older than the stale window, or
   older than what the row already holds, only moves `last_seen_at` forward:
-  it never brings an address online, makes a row or a rogue. Leases are not
-  sent until DHCP runs on a member.
+  it never brings an address online, makes a row or a rogue.
+- **One instance serves DHCP.** The data of record names it:
+  `dhcp_active_instance` (absent: the controller), `dhcp_term` (raised by
+  one at every move) and `dhcp_handover_from` (an instance that lost DHCP
+  and still owes its last leases). `servesDhcpHere` in `sync/dhcp-active.js`
+  is the one rule, behind `roleSwitchedOff('dhcp')`: the active instance
+  serves once nothing is owed and its own server has loaded the leases at
+  that term (`dhcp_ready_term`, kept on the box). A member's own
+  `dhcp_enabled` is ignored. The serving member posts its whole lease set to
+  `POST /api/sync/leases`; the controller takes it only from the active
+  instance at the current term and keeps it through `ingestLeases`, the same
+  path as its own leases, so a lease set means the same thing whoever read
+  it. The answer carries the leases to release (`blocking`, and the ones the
+  controller decided on since, `releaseLeaseAnywhere`). A report that fails
+  is sent again within 30 seconds, and the member keeps serving meanwhile.
+- **Moving DHCP** (`services/dhcp-move.js`, `POST /api/instances/:id/dhcp`).
+  From the controller: it stops answering, reads its leases one last time,
+  then writes the term and the new instance; the member imports the leases
+  from its copy of `dhcp_leases` and starts (`services/dhcp-follow.js`). From
+  a member: the new instance waits while the old one stops, posts a final
+  report and the controller clears the handover. `POST
+  /api/instances/dhcp/force` clears it for an instance that is gone: the new
+  one starts with the leases the controller last heard, and if the old one
+  is in fact alive two servers answer. Nothing can close that without a
+  witness, and the dialog says so. The DHCPv6 server DUID does not move, so
+  DHCPv6 clients rebind.
 - **Collected data goes up with its instance.** A member uploads new rows of
   the metrics tables and of DuckDB `dns_queries` from a cursor
   (`sync/collected-upload.js` to `POST /api/sync/collected/:stream`). The

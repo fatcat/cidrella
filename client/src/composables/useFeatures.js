@@ -6,6 +6,7 @@ const SINGLE_BOX = Object.freeze({
   controller_name: null,
   members: 0,
   sync: null,
+  serves_dhcp: true,
 });
 
 /**

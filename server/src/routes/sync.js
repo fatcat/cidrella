@@ -4,7 +4,7 @@
  * credential, not a user's session, and a box that is joining presents a join
  * token. Only the controller answers.
  */
-import { Router } from 'express';
+import express, { Router } from 'express';
 import rateLimit from 'express-rate-limit';
 import zlib from 'zlib';
 import { getDb } from '../db/init.js';
@@ -18,6 +18,10 @@ import { syncHead, syncStatus } from '../sync/log.js';
 import { applyMemberFact, isMemberFact } from '../sync/member-facts.js';
 import { sqlTime } from '../utils/sql-time.js';
 import { controllerOnly, requireMember } from '../sync/require-member.js';
+import { acceptLeaseReport } from '../sync/lease-intake.js';
+import { LEASE_REPORT_TYPE, MAX_REPORT_BYTES, unpackReport } from '../sync/lease-wire.js';
+import { followDhcp } from '../services/dhcp-follow.js';
+import { loadFilteringOverrides } from '../utils/dns-proxy.js';
 import {
   addMember,
   noteContact,
@@ -252,6 +256,38 @@ router.post('/outbox', (req, res) => {
   noteContact(db, req.member.id);
   res.json({ taken });
 });
+
+/**
+ * POST /api/sync/leases { term, leases } (gzip, sync/lease-wire.js)
+ * The whole lease set of the member that serves DHCP. Kept only from the
+ * instance that is active at that term (sync/lease-intake.js); anyone else
+ * gets 409 `not_dhcp_active`. `final: true` is the last report of a member
+ * that lost DHCP, which ends its handover. The body is read here, past the
+ * app's JSON parser, which leaves this content type alone.
+ */
+router.post(
+  '/leases',
+  express.raw({ type: LEASE_REPORT_TYPE, limit: MAX_REPORT_BYTES }),
+  async (req, res) => {
+    const db = getDb();
+    noteContact(db, req.member.id);
+    const outcome = acceptLeaseReport(db, req.member, unpackReport(req.body));
+    // A host with filtering off is keyed by MAC; its new address takes effect now.
+    if (outcome.status === 200) loadFilteringOverrides();
+    if (outcome.cleared) {
+      recordAudit({
+        action: 'dhcp_handover_completed',
+        entityType: 'instance',
+        entityId: req.member.id,
+        source: 'sync',
+        details: { from: req.member.name, leases: outcome.body.synced },
+      });
+      // The instance DHCP moved to may start; when it is this one, it does now.
+      await followDhcp(db);
+    }
+    res.status(outcome.status).json(outcome.body);
+  },
+);
 
 // POST /api/sync/leave: a member that could not finish joining takes itself
 // off the list, so its row does not hold the change log's deletes back.

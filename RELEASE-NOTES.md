@@ -20,7 +20,11 @@ members that keep serving DNS and DHCP from a synced copy.
 ### Known issues
 
 - **In development.** A second CIDRella can join as a member and serve DNS from a copy of the
-  data, but it cannot run DHCP or become the controller yet.
+  data, and can serve DHCP, but it cannot become the controller yet.
+- After DHCP moves to another instance, DHCPv6 clients rebind instead of renewing: the new
+  server has its own DUID. DHCPv4 clients renew as usual.
+- Rogue DHCPv6 detection can flag the member that serves DHCP, which answers from a link-local
+  address the controller does not know. Add it under authorized servers.
 - Anomaly detection scores the controller's own clients only; a member's clients are not scored.
 - The Resolution Map shows the queries of the box you are looking at.
 
@@ -41,6 +45,12 @@ members that keep serving DNS and DHCP from a synced copy.
   latency percentiles, CPU and memory cannot be, so with All selected they are shown per instance
   and the summary names the highest. Clients a member hears are marked online on the controller
   with the time the member heard them.
+- **DHCP on a member.** **Settings > System > Instances** shows which instance serves DHCP and
+  offers **Move DHCP here** on the others. The leases are handed over, DHCP stops for a moment,
+  and the member keeps serving while the controller is away. If the instance that had DHCP is
+  gone for good, **Start without the old leases** starts the new one with the leases the
+  controller last heard about. The new instance must be where the clients can reach it: the same
+  segments, or the relays pointed at it.
 - **DHCP clients are given every instance.** Where a scope's DNS servers option names
   CIDRella, clients get the controller and every member, so they keep resolving when one is
   away. Other resolvers you listed stay in the list, and a scope pointed elsewhere is untouched.

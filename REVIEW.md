@@ -54,6 +54,20 @@ again unless the maintainer reopens one.
 - **Fix:** Import `sqlTime` in the four files, after checking each copy rounds and rejects bad
   input the same way.
 
+#### ROGUE-V6-MEMBER-01: Rogue DHCPv6 detection can flag the member that serves DHCP
+
+**medium**, confirmed in the code (2026-11-21). `server/src/utils/dhcpv6-probe.js`
+(`classifyAdvertise`)
+
+- **What happens:** With DHCP moved to a member, the controller's DHCPv6 probe hears that
+  member's advertisement from its link-local address. `instanceAddressSet` holds no link-local
+  addresses (they are dropped from `dns_addresses`) and the member's server DUID is not the
+  controller's, so the advertisement is recorded as a rogue server. DHCPv4 is fine: the member's
+  addresses are trusted.
+- **Why:** An instance's link-local addresses and DHCPv6 DUID are not in the data of record.
+- **Fix:** Have each instance report its DHCPv6 server DUID (and move the DUID with DHCP, see
+  BACKLOG.md), and trust an advertisement carrying a known instance's DUID.
+
 ---
 
 ## Will not fix

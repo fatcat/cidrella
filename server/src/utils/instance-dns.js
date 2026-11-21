@@ -4,8 +4,9 @@
  *
  * A scope's DNS option holds what a person or networkOptionFills put there:
  * usually one address, CIDRella's own. That entry stands for "CIDRella", so
- * what is served in its place is every DNS-serving instance, the controller
- * first. Entries that are not an instance's address are someone's choice and
+ * what is served in its place is every DNS-serving instance, in the order
+ * dnsInstances (models/sync-instance.js) lists them: the one that serves
+ * DHCP first, then the controller. Entries that are not an instance's address are someone's choice and
  * stay where they are; a list naming no instance is served as it is. Nothing
  * stored changes: this is a projection made when the options are resolved.
  * A single box has one instance, and its list comes out as it went in.

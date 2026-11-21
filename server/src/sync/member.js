@@ -30,28 +30,19 @@ import {
   refreshProxyConfig,
 } from '../utils/dns-proxy.js';
 import { applyChanges, parseChanges, SyncError } from './changes.js';
+import { CREDENTIAL_FILE, readCredential, syncDirOf } from './credential.js';
+import { dhcpStateChanged } from './dhcp-active.js';
 import { syncFingerprint } from './identity.js';
 import { ensureSyncTriggers, MEMBER, readSyncState, syncStatus, writeSyncState } from './log.js';
 import { controllerOf } from './mode.js';
 import { flushSeen } from './remote-sink.js';
 
-const CREDENTIAL_FILE = 'credential';
 const WAIT_SECONDS = 25;
 const RETRY_MIN_MS = 5_000;
 const RETRY_MAX_MS = 60_000;
 const PAUSED_RETRY_MS = 60_000;
 
-/** The data directory a database lives in: where its sync files are kept. */
-const syncDirOf = (db) => path.join(path.dirname(db.name), 'sync');
-
-// The credential the controller issued this member, or null.
-export function readCredential(db) {
-  try {
-    return fs.readFileSync(path.join(syncDirOf(db), CREDENTIAL_FILE), 'utf8').trim() || null;
-  } catch {
-    return null;
-  }
-}
+export { readCredential };
 
 // The settings about the box itself a new member starts with.
 const MEMBER_DEFAULTS = {
@@ -267,8 +258,11 @@ const blocklistFeeds = (db) =>
   void refreshAllEnabled(db)
     .then(() => loadBlocklist())
     .catch((err) => console.warn('Blocklist refresh after sync failed:', err.message));
+// Which instance serves DHCP is in the settings: this box may have just been
+// given it, or lost it (services/dhcp-follow.js).
+const dhcpInstance = (db) => dhcpStateChanged(db);
 const RELOADS = {
-  settings: [proxyConfig, blocklist, geoipRules, exemptions],
+  settings: [proxyConfig, blocklist, geoipRules, exemptions, dhcpInstance],
   blocklist_allowlist: [allowlist],
   blocklist_categories: [blocklistFeeds],
   geoip_rules: [geoipRules],

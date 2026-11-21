@@ -7,16 +7,22 @@
 import { getDhcpBackend, onBackendChanged } from '../backends/index.js';
 import { onDhcpApplied } from './backend-apply.js';
 import { facts } from '../sync/facts.js';
+import { onLeaseReportRetry } from '../sync/lease-report.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
 
+// Why a lease is released, for the log.
+const BLOCKING = 'the address is reserved for another client';
+const ASKED = 'the controller asked for it';
+
 /**
- * Release leases that hold a DHCP Reservation's address for another client.
+ * Release leases at the backend: by default ones that hold a DHCP
+ * Reservation's address for another client.
  * The server will not give a leased address to the reservation's client, and
  * a lease that never ends (dnsmasq gives a reserved host one, and a switch
  * used to carry it over) would keep it from that client for good. Never
  * throws: what could not be released is logged and tried on the next sync.
  */
-export async function releaseBlockingLeases(leases, backend = getDhcpBackend()) {
+export async function releaseBlockingLeases(leases, backend = getDhcpBackend(), reason = BLOCKING) {
   let released = 0;
   for (const lease of leases) {
     const client = lease.duid || lease.mac || 'unknown client';
@@ -28,14 +34,10 @@ export async function releaseBlockingLeases(leases, backend = getDhcpBackend()) 
     }
     if (result?.released) {
       released++;
-      console.log(
-        `Released lease ${lease.ip} (${client}): the address is reserved for another client`,
-      );
+      console.log(`Released lease ${lease.ip} (${client}): ${reason}`);
     } else {
       const why = result?.error || result?.skipped || 'not released';
-      console.warn(
-        `Could not release lease ${lease.ip} (${client}) blocking its DHCP Reservation: ${why}`,
-      );
+      console.warn(`Could not release lease ${lease.ip} (${client}), ${reason}: ${why}`);
     }
   }
   return released;
@@ -53,6 +55,10 @@ export async function syncLeasesNow(db, read = {}) {
   // A host with filtering off is keyed by MAC; its new address takes effect now.
   loadFilteringOverrides();
   if (result.blocking.length) result.released = await releaseBlockingLeases(result.blocking);
+  // A member that serves DHCP is told what the controller wants released.
+  if (result.release?.length) {
+    await releaseBlockingLeases(result.release, getDhcpBackend(), ASKED);
+  }
   return result;
 }
 
@@ -138,11 +144,14 @@ export function startLeaseSync(db) {
     }
   });
   const stopApplied = onDhcpApplied(() => runLeaseSync('Lease sync error'));
+  // A member whose report did not reach the controller sends it again.
+  const stopRetry = onLeaseReportRetry(() => runLeaseSync('Lease sync error'));
   runLeaseSync('Initial lease sync failed');
   watch();
   return () => {
     unsubscribe();
     stopApplied();
+    stopRetry();
     stopWatching?.();
   };
 }

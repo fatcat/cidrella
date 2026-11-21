@@ -2,7 +2,11 @@
      a synced read-only copy of it and keep serving DNS. On the controller this
      is where a member is added (a join token) and removed; on a member it
      shows which controller it follows and how the sync stands. A single box
-     is a controller with itself as the only row. -->
+     is a controller with itself as the only row.
+
+     One instance serves DHCP at a time. The controller's view moves it to a
+     member and back; while the old one still owes its leases the page says so
+     and re-reads the list until the move is done. -->
 <template>
   <div class="content-card">
     <EmptyState
@@ -45,6 +49,20 @@
         </p>
       </section>
 
+      <p v-if="handover" class="dhcp-moving" data-track="instances-dhcp-handover">
+        <StatusDot kind="warn" label="DHCP is moving" />
+        <span>{{ handoverLine }}</span>
+        <Button
+          v-if="canForce"
+          label="Start without the old leases"
+          severity="danger"
+          text
+          size="small"
+          data-track="instances-dhcp-force"
+          @click="forcing = true"
+        />
+      </p>
+
       <DataTable :value="rows" :loading="loading" size="small" stripedRows data-key="id">
         <template #empty>
           <EmptyState icon="pi-sitemap" title="No instances" :description="emptyText" />
@@ -72,20 +90,42 @@
         <Column v-if="isController" header="Sync">
           <template #body="{ data }">{{ behindText(data) }}</template>
         </Column>
-        <Column v-if="isController" header="" style="width: 3rem">
+        <Column v-if="showDhcp" header="DHCP">
           <template #body="{ data }">
-            <Button
-              v-if="!data.is_controller && !data.is_self"
-              icon="pi pi-trash"
-              severity="danger"
-              text
-              rounded
-              size="small"
-              :aria-label="`Remove ${data.name}`"
-              title="Remove"
-              data-track="instances-remove"
-              @click="removing = data"
+            <StatusDot
+              v-if="dhcpState(data, handover)"
+              :kind="dhcpState(data, handover).tone"
+              :label="dhcpState(data, handover).words"
+              show-label
             />
+          </template>
+        </Column>
+        <Column v-if="isController" header="">
+          <template #body="{ data }">
+            <div class="action-buttons row-actions">
+              <Button
+                v-if="data.can_take_dhcp"
+                label="Move DHCP here"
+                severity="secondary"
+                text
+                size="small"
+                data-track="instances-dhcp-move"
+                @click="moving = data"
+              />
+              <Button
+                v-if="!data.is_controller && !data.is_self"
+                icon="pi pi-trash"
+                severity="danger"
+                text
+                rounded
+                size="small"
+                :disabled="Boolean(data.dhcp)"
+                :aria-label="`Remove ${data.name}`"
+                :title="removeTitle(data)"
+                data-track="instances-remove"
+                @click="removing = data"
+              />
+            </div>
           </template>
         </Column>
       </DataTable>
@@ -152,11 +192,61 @@
         the copy it has, which goes out of date from now on.
       </p>
     </ConfirmDialog>
+
+    <ConfirmDialog
+      :visible="moving !== null"
+      :header="`Move DHCP to ${moving?.name}?`"
+      severity="warn"
+      confirm-label="Move DHCP"
+      width="34rem"
+      :loading="moveBusy"
+      data-track="instances-dhcp-move-dialog"
+      confirm-track="instances-dhcp-move-confirm"
+      cancel-track="instances-dhcp-move-cancel"
+      @update:visible="(v) => !v && !moveBusy && (moving = null)"
+      @confirm="moveDhcp"
+    >
+      <p>
+        {{ servingName }} serves DHCP now. After the move, {{ moving?.name }} serves it and
+        {{ servingName }} stops.
+      </p>
+      <p>
+        Clients keep their leases: {{ servingName }} hands them over to {{ moving?.name }}. DHCP
+        stops for a moment during the move.
+      </p>
+      <p>
+        {{ moving?.name }} must be on a network where the clients can reach it: on the same
+        segments, or with the DHCP relays pointed at it. CIDRella cannot check this.
+      </p>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      :visible="forcing"
+      :header="`Start DHCP on ${handoverEnds.to} without the leases from ${handoverEnds.from}?`"
+      confirm-label="Start without the old leases"
+      width="34rem"
+      :type-to-confirm="handoverEnds.from"
+      :loading="forceBusy"
+      data-track="instances-dhcp-force-dialog"
+      confirm-track="instances-dhcp-force-confirm"
+      cancel-track="instances-dhcp-force-cancel"
+      @update:visible="(v) => !v && !forceBusy && (forcing = false)"
+      @confirm="forceDhcp"
+    >
+      <p>Do this only when {{ handoverEnds.from }} is switched off or cut off for good.</p>
+      <p>
+        {{ handoverEnds.to }} starts with the leases the controller last heard about. A lease
+        {{ handoverEnds.from }} gave after that is unknown to {{ handoverEnds.to }}.
+      </p>
+      <p>
+        If {{ handoverEnds.from }} is still running, two DHCP servers will answer on the network.
+      </p>
+    </ConfirmDialog>
   </div>
 </template>
 
 <script setup>
-import { computed, onMounted, ref } from 'vue';
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
 import Button from '../../ui/Button.js';
 import Column from '../../ui/Column.js';
 import DataTable from '../../ui/DataTable.js';
@@ -172,7 +262,16 @@ import { useAuthStore } from '../../stores/auth.js';
 import { useFeatures } from '../../composables/useFeatures.js';
 import { apiError, EMPTY_CELL } from '../../utils/format.js';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormat.js';
-import { behindText, lastSyncText, syncState } from '../../utils/instances.js';
+import {
+  behindText,
+  dhcpServer,
+  dhcpState,
+  handoverNames,
+  handoverText,
+  handoverWaited,
+  lastSyncText,
+  syncState,
+} from '../../utils/instances.js';
 import { formatHostPort } from '@shared/address.js';
 
 const auth = useAuthStore();
@@ -206,9 +305,12 @@ function fail(summary, err) {
   toast.add({ severity: 'error', summary, detail: apiError(err), life: 6000 });
 }
 
-async function load() {
+// `quiet` is the re-read while DHCP moves: no spinner over the table, and a
+// read that fails is tried again on the next turn instead of raising a toast
+// every few seconds.
+async function load({ quiet = false } = {}) {
   if (!auth.isAdmin) return;
-  loading.value = true;
+  if (!quiet) loading.value = true;
   try {
     state.value = (await api.get('/instances')).data;
     // The header chip counts the members; a member that joined since the
@@ -218,13 +320,106 @@ async function load() {
       void features.reload();
     }
   } catch (err) {
-    fail('Instances not loaded', err);
+    if (!quiet) fail('Instances not loaded', err);
   } finally {
-    loading.value = false;
+    if (!quiet) loading.value = false;
   }
 }
 
-onMounted(load);
+onMounted(() => load());
+
+// DHCP. A server that says nothing about it predates moving DHCP: the
+// controller serves, and the page shows nothing new.
+const handover = computed(() => state.value?.dhcp?.handover || null);
+const showDhcp = computed(() => Boolean(state.value?.dhcp) || rows.value.some((row) => row.dhcp));
+const servingName = computed(
+  () =>
+    (dhcpServer(rows.value) || rows.value.find((row) => row.is_controller))?.name ||
+    'The controller',
+);
+const handoverEnds = computed(() => handoverNames(handover.value, rows.value));
+
+function removeTitle(row) {
+  return row.dhcp ? `Move DHCP to another instance before removing ${row.name}` : 'Remove';
+}
+
+// While a handover is pending the line counts the wait and the list is read
+// again every few seconds; both stop when it clears or the page is left.
+const TICK_MS = 1000;
+const POLL_EVERY_TICKS = 5;
+const FORCE_AFTER_SECONDS = 60;
+const now = ref(Date.now());
+let ticker = null;
+let ticks = 0;
+
+function stopTicker() {
+  clearInterval(ticker);
+  ticker = null;
+}
+watch(
+  () => handover.value !== null,
+  (pending) => {
+    stopTicker();
+    if (!pending) {
+      forcing.value = false;
+      return;
+    }
+    now.value = Date.now();
+    ticks = 0;
+    ticker = setInterval(() => {
+      now.value = Date.now();
+      ticks += 1;
+      if (ticks % POLL_EVERY_TICKS === 0) void load({ quiet: true });
+    }, TICK_MS);
+  },
+);
+onBeforeUnmount(stopTicker);
+
+const handoverLine = computed(() => handoverText(handover.value, rows.value, now.value));
+const canForce = computed(
+  () => isController.value && handoverWaited(handover.value, now.value) > FORCE_AFTER_SECONDS,
+);
+
+const moving = ref(null);
+const moveBusy = ref(false);
+
+async function moveDhcp() {
+  const row = moving.value;
+  moveBusy.value = true;
+  try {
+    const { data } = await api.post(`/instances/${row.id}/dhcp`);
+    toast.add({
+      severity: 'success',
+      summary: data?.handover ? `DHCP is moving to ${row.name}` : `${row.name} serves DHCP`,
+      life: 4000,
+    });
+  } catch (err) {
+    fail('DHCP not moved', err);
+  } finally {
+    moveBusy.value = false;
+    moving.value = null;
+    // A refusal usually means the list on screen is out of date.
+    await Promise.all([load(), features.reload()]);
+  }
+}
+
+const forcing = ref(false);
+const forceBusy = ref(false);
+
+async function forceDhcp() {
+  const { to } = handoverEnds.value;
+  forceBusy.value = true;
+  try {
+    await api.post('/instances/dhcp/force', { confirm: true });
+    toast.add({ severity: 'success', summary: `${to} serves DHCP`, life: 4000 });
+  } catch (err) {
+    fail('DHCP not started', err);
+  } finally {
+    forceBusy.value = false;
+    forcing.value = false;
+    await Promise.all([load(), features.reload()]);
+  }
+}
 
 // Add member: a one-use join token, shown once.
 const showToken = ref(false);
@@ -294,6 +489,16 @@ async function removeMember() {
   display: flex;
   align-items: center;
   gap: 0.75rem;
+}
+.dhcp-moving {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+.row-actions {
+  justify-content: flex-end;
+  align-items: center;
 }
 .steps {
   margin: 0 0 1rem;

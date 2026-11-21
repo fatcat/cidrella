@@ -4,7 +4,17 @@
  * a member is, in words.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { behindText, instanceChip, lastSyncText, syncState } from '../../../src/utils/instances.js';
+import {
+  behindText,
+  dhcpServer,
+  dhcpState,
+  handoverNames,
+  handoverText,
+  handoverWaited,
+  instanceChip,
+  lastSyncText,
+  syncState,
+} from '../../../src/utils/instances.js';
 import { EMPTY_CELL } from '../../../src/utils/format.js';
 
 beforeEach(() => {
@@ -93,5 +103,73 @@ describe('behindText', () => {
     expect(behindText({ is_controller: true, behind: null, last_contact_at: null })).toBe(
       EMPTY_CELL,
     );
+  });
+});
+
+describe('DHCP wording', () => {
+  const handover = { from_instance_id: 'i-ctl', from_name: 'ns1', since: '2026-11-21T11:59:15Z' };
+  const rows = [
+    { name: 'ns1', is_controller: true, dhcp: 'handing_over' },
+    { name: 'ns2', dhcp: 'starting' },
+    { name: 'ns3', dhcp: null },
+  ];
+
+  it('has words and a tone for each state, and nothing for the rest', () => {
+    expect(dhcpState({ dhcp: 'serving' })).toEqual({ tone: 'ok', words: 'Serving' });
+    expect(dhcpState({ dhcp: 'starting' }, handover)).toEqual({
+      tone: 'warn',
+      words: 'Starting, waiting for ns1',
+    });
+    expect(dhcpState({ dhcp: 'starting' })).toEqual({ tone: 'warn', words: 'Starting' });
+    expect(dhcpState({ dhcp: 'handing_over' }, handover)).toEqual({
+      tone: 'warn',
+      words: 'Handing over',
+    });
+    expect(dhcpState({ dhcp: null })).toBeNull();
+    // A server older than moving DHCP says nothing, and so does a new word.
+    expect(dhcpState({})).toBeNull();
+    expect(dhcpState({ dhcp: 'paused' })).toBeNull();
+  });
+
+  it('finds the instance that serves', () => {
+    expect(
+      dhcpServer([
+        { name: 'ns1', dhcp: null },
+        { name: 'ns2', dhcp: 'serving' },
+      ]).name,
+    ).toBe('ns2');
+    expect(dhcpServer(rows)).toBeNull();
+  });
+
+  it('names both ends of a handover, from the rows when the handover has no name', () => {
+    expect(handoverNames(handover, rows)).toEqual({ from: 'ns1', to: 'ns2' });
+    expect(handoverNames({ since: handover.since }, rows)).toEqual({ from: 'ns1', to: 'ns2' });
+    expect(handoverNames(handover, [])).toEqual({ from: 'ns1', to: 'the new instance' });
+  });
+
+  it('counts the wait in seconds, then minutes, and never below zero', () => {
+    expect(handoverWaited(handover)).toBe(45);
+    expect(handoverText(handover, rows)).toBe(
+      'DHCP is moving to ns2. Waiting for ns1 to hand over its leases, 45 seconds so far.',
+    );
+    const later = Date.parse('2026-11-21T12:02:30Z');
+    expect(handoverText(handover, rows, later)).toBe(
+      'DHCP is moving to ns2. Waiting for ns1 to hand over its leases, 3 minutes so far.',
+    );
+    expect(handoverWaited({ since: '2026-11-21T12:00:30Z' })).toBe(0);
+    expect(handoverWaited({ since: 'not a time' })).toBe(0);
+    expect(handoverWaited(null)).toBe(0);
+  });
+
+  it('says in the header chip that a member serves DHCP, and nothing on a controller', () => {
+    const sync = { state: 'current', last_sync_at: '2026-11-21T11:59:00Z', last_error: null };
+    expect(instanceChip({ ...member(sync), serves_dhcp: true }).title).toBe(
+      'Member of ns1: Current with the controller\nLast sync 1m ago\nThis instance serves DHCP',
+    );
+    expect(instanceChip({ ...member(sync), serves_dhcp: false }).title).not.toContain('DHCP');
+    expect(instanceChip(member(sync)).title).not.toContain('DHCP');
+    expect(
+      instanceChip({ mode: 'controller', members: 2, sync: null, serves_dhcp: true }).title,
+    ).toBe('Controller of 2 members');
   });
 });

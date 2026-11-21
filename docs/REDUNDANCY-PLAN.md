@@ -1,7 +1,11 @@
 # Controller and members: redundant CIDRella instances
 
-Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 4 are done on `dev/0.7.0`
-(2026-11-21); phases 5 to 7 are not started. Phase 4 sends up the clients a member hears, the
+Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 5 are done on `dev/0.7.0`
+(2026-11-21); phases 6 and 7 are not started. Phase 5 (DHCP on a member) differs from section 7
+in three ways: there is no marker file, since the settings plus `dhcp_ready_term` on each box are
+the state and boot redoes a step cut short; leases are handed over through the replicated
+`dhcp_leases` table, not a snapshot directory; and the old instance's final report is a third
+setting, `dhcp_handover_from`. Phase 4 sends up the clients a member hears, the
 fingerprints it reads and its metrics and query rows; rogue DHCP events and a member's leases
 wait for phase 5, and the anomaly sidecar scores the controller's own clients only. Phase 3 left the NS records out: a name for each
 instance in every zone is a naming-policy choice that has not been made, and NS only matters

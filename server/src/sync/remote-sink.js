@@ -10,7 +10,8 @@
  *                written out every FLUSH_MS as one 'seen' row per
  *                SEEN_PER_ROW addresses.
  *   fingerprint  rare: one 'fingerprint' row each.
- *   leases       dropped. DHCP on a member comes in a later phase.
+ *   leases       posted whole and at once while this member serves DHCP,
+ *                dropped while it does not (sync/lease-report.js).
  *
  * What the controller does with a row is sync/member-facts.js.
  */
@@ -18,6 +19,7 @@ import net from 'net';
 import { lookupArpMac } from '../utils/arp-cache.js';
 import { lookupNdEntry } from '../utils/nd-cache.js';
 import { isLocalAddress } from '../utils/local-addresses.js';
+import { reportLeases } from './lease-report.js';
 
 export const SEEN_KIND = 'seen';
 export const FINGERPRINT_KIND = 'fingerprint';
@@ -105,7 +107,7 @@ export function stopRemoteSink() {
 }
 
 export const remoteSink = {
-  leases: async () => ({ synced: 0, rejected: 0, blocking: [] }),
+  leases: (db, leases) => reportLeases(db, leases),
 
   // `source` does not travel: every caller says 'passive', and the controller
   // records a member's sighting as that. `createRogue` does, and it sticks for

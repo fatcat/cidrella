@@ -18,6 +18,7 @@ import {
 } from '../shared/dns-zone-model.js';
 import { getSetting } from '../../db/init.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
+import { roleSwitchedOff } from '../../utils/role-switches.js';
 import { listenableAddresses, selectInterfaceNames } from '../../utils/interface-config.js';
 import { atomicWrite, createValidatedFiles } from '../shared/validated-files.js';
 import { createUnitControl } from '../shared/unit-control.js';
@@ -479,8 +480,8 @@ export function applyInterfaceConfig(_db) {
   }
 
   try {
-    const val = getSetting('dhcp_enabled');
-    if (val === 'false') dhcpEnabled = false;
+    // Off on every instance but the one that serves DHCP (utils/role-switches.js).
+    if (roleSwitchedOff('dhcp')) dhcpEnabled = false;
   } catch {
     /* use default */
   }

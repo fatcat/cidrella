@@ -12,6 +12,8 @@ const { getScopeWithDetails } = await import('../../../src/models/dhcp-scope.js'
 const { addMember, dnsInstances, ensureOwnInstance, setDnsAddresses } =
   await import('../../../src/models/sync-instance.js');
 
+const { deleteSetting, upsertSetting } = await import('../../../src/models/setting.js');
+
 let db;
 let tmpDir;
 let v4Scope;
@@ -95,6 +97,20 @@ describe('the DNS servers a scope serves', () => {
     expect(served(v4Scope, 6)).toBe('10.60.0.2');
     expect(served(v6Scope, 23)).toBe('fd00:63::2');
     db.prepare("UPDATE sync_instances SET serves_dns = 1 WHERE name = 'member-b'").run();
+  });
+
+  it('puts the instance that serves DHCP first, both families and both adapters’ input', () => {
+    // DHCP moved to the member (sync/dhcp-active.js): its clients reach it for sure.
+    upsertSetting(db, 'dhcp_active_instance', '11111111-1111-4111-8111-111111111111');
+    expect(dnsInstances(db).map((instance) => instance.name)[0]).toBe('member-b');
+    expect(served(v4Scope, 6)).toBe('10.60.0.3,10.60.0.2');
+    expect(served(v6Scope, 23)).toBe('fd00:63::3,fd00:63::2');
+    expect(rendered('10.60.0.0/24')).toContain('"10.60.0.3","10.60.0.2"');
+    expect(rendered('fd00:63::/64')).toContain('"fd00:63::3","fd00:63::2"');
+    // Back on the controller, the controller is first again.
+    deleteSetting(db, 'dhcp_active_instance');
+    expect(served(v4Scope, 6)).toBe('10.60.0.2,10.60.0.3');
+    expect(served(v6Scope, 23)).toBe('fd00:63::2,fd00:63::3');
   });
 
   it('leaves a scope pointed at other resolvers alone', () => {

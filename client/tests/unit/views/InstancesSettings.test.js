@@ -3,6 +3,10 @@
  * how far behind each member is, Add member (a join token shown with its
  * warning), and Remove through the confirmation. On a member: the controller
  * it follows, the sync state, and the list with no actions.
+ *
+ * DHCP: which instance serves it, Move DHCP here on the controller's view,
+ * the line and the re-reads while a handover is pending, and Start without
+ * the old leases once it has waited a minute. Against mocked API calls.
  */
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
@@ -46,7 +50,8 @@ vi.mock('../../../src/ui/DataTable.js', () => {
   const Row = {
     props: { row: { type: Object, required: true } },
     setup(props, { slots }) {
-      provide('row', props.row);
+      // A getter, so a row that is read again shows what the new read says.
+      provide('row', () => props.row);
       return () => h('tr', slots.default?.());
     },
   };
@@ -68,16 +73,16 @@ vi.mock('../../../src/ui/Column.js', () => ({
     props: { header: { type: String, default: '' } },
     setup(props, { slots }) {
       const row = inject('row');
-      return () => h('td', { 'data-col': props.header }, slots.body?.({ data: row }));
+      return () => h('td', { 'data-col': props.header }, slots.body?.({ data: row() }));
     },
   },
 }));
 vi.mock('../../../src/components/ConfirmDialog.vue', () => ({
   default: {
-    props: ['visible', 'header', 'severity'],
+    props: ['visible', 'header', 'severity', 'confirmLabel', 'typeToConfirm'],
     emits: ['confirm', 'update:visible'],
     template:
-      '<div v-if="visible" class="confirm"><h2>{{ header }}</h2><slot /><button class="go" @click="$emit(\'confirm\')">Remove</button></div>',
+      '<div v-if="visible" class="confirm" :data-severity="severity || \'danger\'" :data-typed="typeToConfirm"><h2>{{ header }}</h2><slot /><button class="go" @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
   },
 }));
 
@@ -277,7 +282,309 @@ describe('on the controller', () => {
   });
 });
 
+// What a server that can move DHCP adds to the list.
+const withDhcp = (rows, handover = null, active = 'i-ctl') => ({
+  ...CONTROLLER,
+  dhcp: { active_instance_id: active, term: 4, handover },
+  instances: rows,
+});
+const SERVED_BY_CONTROLLER = withDhcp([
+  controllerRow({ dhcp: 'serving', can_take_dhcp: false }),
+  memberRow(2, { dhcp: null, can_take_dhcp: true }),
+  memberRow(3, { dhcp: null, can_take_dhcp: false, behind: 3 }),
+]);
+const SERVED_BY_MEMBER = withDhcp(
+  [
+    controllerRow({ dhcp: null, can_take_dhcp: true }),
+    memberRow(2, { dhcp: 'serving', can_take_dhcp: false }),
+    memberRow(3, { dhcp: null, can_take_dhcp: true }),
+  ],
+  null,
+  'i-m2',
+);
+const movingSince = (since) =>
+  withDhcp(
+    [
+      controllerRow({ dhcp: 'handing_over', can_take_dhcp: false }),
+      memberRow(2, { dhcp: 'starting', can_take_dhcp: false }),
+      memberRow(3, { dhcp: null, can_take_dhcp: false }),
+    ],
+    { from_instance_id: 'i-ctl', from_name: 'ns1', since },
+    'i-m2',
+  );
+const refusal = (code, error) => ({ response: { status: 409, data: { error, code } } });
+
+describe('DHCP on the controller', () => {
+  it('says which instance serves DHCP and offers the move only where the server allows it', async () => {
+    const w = await mountPage(SERVED_BY_CONTROLLER);
+    expect(cells(w, 'DHCP')).toEqual(['Serving', '', '']);
+    expect(w.find('td[data-col="DHCP"] .cid-status-dot').classes()).toContain('sd-ok');
+    const rowsWithMove = w
+      .findAll('tr')
+      .map((tr) => tr.find('[data-track="instances-dhcp-move"]').exists());
+    expect(rowsWithMove).toEqual([false, true, false]);
+    expect(w.find('[data-track="instances-dhcp-handover"]').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('offers the move back to the controller while a member serves', async () => {
+    const w = await mountPage(SERVED_BY_MEMBER);
+    expect(cells(w, 'DHCP')).toEqual(['', 'Serving', '']);
+    const rowsWithMove = w
+      .findAll('tr')
+      .map((tr) => tr.find('[data-track="instances-dhcp-move"]').exists());
+    expect(rowsWithMove).toEqual([true, false, true]);
+    w.unmount();
+  });
+
+  it('Move DHCP here asks first in plain words, then moves it and reads the list again', async () => {
+    api.post.mockResolvedValue({
+      data: {
+        active_instance_id: 'i-m2',
+        term: 5,
+        handover: { from_instance_id: 'i-ctl', from_name: 'ns1', since: '2026-11-21T12:00:00Z' },
+      },
+    });
+    const w = await mountPage(SERVED_BY_CONTROLLER);
+    await w.find('[data-track="instances-dhcp-move"]').trigger('click');
+    const confirm = w.find('.confirm');
+    expect(confirm.attributes('data-severity')).toBe('warn');
+    expect(confirm.find('h2').text()).toBe('Move DHCP to ns2?');
+    expect(confirm.find('.go').text()).toBe('Move DHCP');
+    const text = confirm.text().replace(/\s+/g, ' ');
+    expect(text).toContain('ns1 serves DHCP now. After the move, ns2 serves it and ns1 stops.');
+    expect(text).toContain('Clients keep their leases: ns1 hands them over to ns2.');
+    expect(text).toContain('DHCP stops for a moment during the move.');
+    expect(text).toContain(
+      'ns2 must be on a network where the clients can reach it: on the same segments, or with the DHCP relays pointed at it. CIDRella cannot check this.',
+    );
+    expect(api.post).not.toHaveBeenCalled();
+
+    await confirm.find('.go').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/instances/2/dhcp');
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: 'success', summary: 'DHCP is moving to ns2' }),
+    );
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(w.find('.confirm').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('names the member that serves now when DHCP moves back', async () => {
+    api.post.mockResolvedValue({ data: { active_instance_id: 'i-ctl', term: 6, handover: null } });
+    const w = await mountPage(SERVED_BY_MEMBER);
+    await w.find('[data-track="instances-dhcp-move"]').trigger('click');
+    expect(w.find('.confirm').text().replace(/\s+/g, ' ')).toContain(
+      'ns2 serves DHCP now. After the move, ns1 serves it and ns2 stops.',
+    );
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/instances/1/dhcp');
+    expect(toast.add).toHaveBeenCalledWith(expect.objectContaining({ summary: 'ns1 serves DHCP' }));
+    w.unmount();
+  });
+
+  it("shows the server's words when the move is refused, and reads the list again", async () => {
+    api.post.mockRejectedValue(
+      refusal('not_current', 'ns2 is 3 changes behind. Wait until it is current.'),
+    );
+    const w = await mountPage(SERVED_BY_CONTROLLER);
+    await w.find('[data-track="instances-dhcp-move"]').trigger('click');
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        summary: 'DHCP not moved',
+        detail: 'ns2 is 3 changes behind. Wait until it is current.',
+      }),
+    );
+    expect(w.find('.confirm').exists()).toBe(false);
+    expect(api.get).toHaveBeenCalledTimes(2);
+    w.unmount();
+  });
+
+  it('will not remove the instance that serves DHCP, and says to move it first', async () => {
+    const w = await mountPage(SERVED_BY_MEMBER);
+    const [serving, other] = w.findAll('[data-track="instances-remove"]');
+    expect(serving.attributes('disabled')).toBeDefined();
+    expect(serving.attributes('title')).toBe('Move DHCP to another instance before removing ns2');
+    expect(other.attributes('disabled')).toBeUndefined();
+    expect(other.attributes('title')).toBe('Remove');
+    await serving.trigger('click');
+    expect(w.find('.confirm').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it("shows the server's words when a removal is refused because the member serves DHCP", async () => {
+    api.delete.mockRejectedValue(
+      refusal('dhcp_active', 'ns3 serves DHCP. Move DHCP to another instance first.'),
+    );
+    const w = await mountPage(SERVED_BY_CONTROLLER);
+    await w.findAll('[data-track="instances-remove"]')[1].trigger('click');
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        detail: 'ns3 serves DHCP. Move DHCP to another instance first.',
+      }),
+    );
+    w.unmount();
+  });
+
+  it('shows nothing new for a server that says nothing about DHCP', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+    const w = await mountPage(CONTROLLER);
+    expect(cells(w, 'DHCP')).toEqual([]);
+    expect(w.find('[data-track="instances-dhcp-move"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-dhcp-handover"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-dhcp-force"]').exists()).toBe(false);
+    for (const remove of w.findAll('[data-track="instances-remove"]')) {
+      expect(remove.attributes('disabled')).toBeUndefined();
+    }
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.get).toHaveBeenCalledTimes(1);
+    w.unmount();
+  });
+});
+
+describe('while DHCP is moving', () => {
+  beforeEach(() => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+  });
+
+  it('says what it waits for and how long, and reads the list again until the move is done', async () => {
+    const w = await mountPage(movingSince('2026-11-21T11:59:50Z'));
+    const line = w.find('[data-track="instances-dhcp-handover"]');
+    expect(line.text()).toContain(
+      'DHCP is moving to ns2. Waiting for ns1 to hand over its leases, 10 seconds so far.',
+    );
+    expect(line.find('.cid-status-dot').classes()).toContain('sd-warn');
+    expect(cells(w, 'DHCP')).toEqual(['Handing over', 'Starting, waiting for ns1', '']);
+    expect(api.get).toHaveBeenCalledTimes(1);
+
+    // The wait counts up between reads.
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(line.text()).toContain('13 seconds so far');
+    expect(api.get).toHaveBeenCalledTimes(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(api.get).toHaveBeenCalledTimes(2);
+
+    // The old instance handed over: the line goes and the reads stop.
+    api.get.mockResolvedValue({
+      data: withDhcp(
+        [controllerRow({ dhcp: null, can_take_dhcp: true }), memberRow(2, { dhcp: 'serving' })],
+        null,
+        'i-m2',
+      ),
+    });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(api.get).toHaveBeenCalledTimes(3);
+    expect(w.find('[data-track="instances-dhcp-handover"]').exists()).toBe(false);
+    expect(cells(w, 'DHCP')).toEqual(['', 'Serving']);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.get).toHaveBeenCalledTimes(3);
+    w.unmount();
+  });
+
+  it('stops reading when the page is left, and a failed re-read raises no toast', async () => {
+    const w = await mountPage(movingSince('2026-11-21T11:59:50Z'));
+    api.get.mockRejectedValue(new Error('Network Error'));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(api.get).toHaveBeenCalledTimes(2);
+    expect(toast.add).not.toHaveBeenCalled();
+    expect(w.find('[data-track="instances-dhcp-handover"]').exists()).toBe(true);
+    w.unmount();
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.get).toHaveBeenCalledTimes(2);
+  });
+
+  it('offers Start without the old leases only after a minute of waiting', async () => {
+    const w = await mountPage(movingSince('2026-11-21T11:59:10Z'));
+    expect(w.find('[data-track="instances-dhcp-force"]').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(w.find('[data-track="instances-dhcp-force"]').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(1000);
+    expect(w.find('[data-track="instances-dhcp-force"]').text()).toBe(
+      'Start without the old leases',
+    );
+    expect(w.find('[data-track="instances-dhcp-handover"]').text()).toContain('1 minute so far');
+    w.unmount();
+  });
+
+  it('Start without the old leases is gated on the old name, says the risk, then forces', async () => {
+    api.post.mockResolvedValue({ data: { active_instance_id: 'i-m2', term: 5, handover: null } });
+    const w = await mountPage(movingSince('2026-11-21T11:55:00Z'));
+    expect(w.find('[data-track="instances-dhcp-handover"]').text()).toContain('5 minutes so far');
+    await w.find('[data-track="instances-dhcp-force"]').trigger('click');
+    const confirm = w.find('.confirm');
+    expect(confirm.attributes('data-severity')).toBe('danger');
+    expect(confirm.attributes('data-typed')).toBe('ns1');
+    expect(confirm.find('h2').text()).toBe('Start DHCP on ns2 without the leases from ns1?');
+    const text = confirm.text().replace(/\s+/g, ' ');
+    expect(text).toContain('Do this only when ns1 is switched off or cut off for good.');
+    expect(text).toContain('ns2 starts with the leases the controller last heard about.');
+    expect(text).toContain('A lease ns1 gave after that is unknown to ns2.');
+    expect(text).toContain('If ns1 is still running, two DHCP servers will answer on the network.');
+    expect(api.post).not.toHaveBeenCalled();
+
+    await confirm.find('.go').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/instances/dhcp/force', { confirm: true });
+    expect(toast.add).toHaveBeenCalledWith(expect.objectContaining({ summary: 'ns2 serves DHCP' }));
+    expect(w.find('.confirm').exists()).toBe(false);
+    expect(api.get).toHaveBeenCalledTimes(2);
+    w.unmount();
+  });
+
+  it("shows the server's words when there is no handover left to force", async () => {
+    api.post.mockRejectedValue(refusal('no_handover', 'No DHCP handover is pending.'));
+    const w = await mountPage(movingSince('2026-11-21T11:55:00Z'));
+    await w.find('[data-track="instances-dhcp-force"]').trigger('click');
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        summary: 'DHCP not started',
+        detail: 'No DHCP handover is pending.',
+      }),
+    );
+    w.unmount();
+  });
+});
+
 describe('on a member', () => {
+  it('shows which instance serves DHCP and the pending move, with no actions', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+    vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+    features.instance = computed(() => ({ mode: 'member', members: 0 }));
+    const w = await mountPage({
+      ...MEMBER,
+      dhcp: {
+        active_instance_id: 'i-m2',
+        term: 5,
+        handover: { from_instance_id: 'i-ctl', from_name: 'ns1', since: '2026-11-21T11:50:00Z' },
+      },
+      instances: [
+        controllerRow({ is_self: false, dhcp: 'handing_over', can_take_dhcp: false }),
+        memberRow(2, { is_self: true, dhcp: 'starting', can_take_dhcp: false }),
+      ],
+    });
+    expect(cells(w, 'DHCP')).toEqual(['Handing over', 'Starting, waiting for ns1']);
+    expect(w.find('[data-track="instances-dhcp-handover"]').text()).toContain(
+      'DHCP is moving to ns2. Waiting for ns1 to hand over its leases, 10 minutes so far.',
+    );
+    expect(w.find('[data-track="instances-dhcp-force"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-dhcp-move"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-remove"]').exists()).toBe(false);
+    w.unmount();
+  });
+
   it('names the controller it follows and the sync state, and offers no actions', async () => {
     features.instance = computed(() => ({ mode: 'member', members: 0 }));
     const w = await mountPage(MEMBER);

@@ -69,6 +69,7 @@ import versionRoutes, { reapStaleUpdateStatusOnBoot } from './routes/version.js'
 import { ensureCerts, renewCertIfDue, setHttpsServer } from './utils/cert.js';
 import { startLeaseSync } from './services/dhcp-lease-sync.js';
 import { startDhcpNameSync } from './services/dhcp-lease-ingest.js';
+import { startDhcpFollow } from './services/dhcp-follow.js';
 import { pruneTombstones } from './sync/log.js';
 import { memberSink, setFactsSink } from './sync/facts.js';
 import { ensureSyncIdentity, syncSecureContext } from './sync/identity.js';
@@ -371,6 +372,11 @@ async function main() {
     Privileged.onHelperHello(() => void activatePendingBackends());
     void activatePendingBackends();
   }
+
+  // Which instance serves DHCP may have changed while this one was down, or
+  // a move may have been cut short: this box's server is made to agree, and
+  // follows the settings from here on (services/dhcp-follow.js).
+  if (!isPreflightBoot()) startDhcpFollow(getDb());
 
   // DNSSEC: dnsmasq starts lenient on signature timestamps (dnssec-no-timecheck).
   // Make sure NTP is running and arm a one-shot SIGHUP for once the clock syncs,

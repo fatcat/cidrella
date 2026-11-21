@@ -21,6 +21,7 @@ import { selectInterfaceNames } from './interface-config.js';
 import { localIpv4Set } from './local-addresses.js';
 import { getSetting } from '../db/init.js';
 import { upsertRogueEvent, authorizedIpSet } from '../models/rogue-dhcp.js';
+import { instanceAddressSet } from '../models/sync-instance.js';
 
 const DHCP_SERVER_PORT = 67;
 const DHCP_CLIENT_PORT = 68;
@@ -262,7 +263,8 @@ export function runProbe(db, { windowMs = PROBE_WINDOW_MS } = {}) {
   let ifaces, selfIps, authorized;
   try {
     ifaces = getLanInterfaces();
-    selfIps = getSelfIps();
+    // DHCP may be served by another instance of this CIDRella.
+    selfIps = new Set([...getSelfIps(), ...instanceAddressSet(db)]);
     authorized = authorizedIpSet(db);
   } catch (err) {
     // Anything thrown here used to strand probeInProgress, because only

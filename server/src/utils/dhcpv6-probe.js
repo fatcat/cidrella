@@ -30,6 +30,7 @@ import { canonicalizeIp, formatIp, IPV6_BITS } from './address.js';
 import { duidFromBytes } from './duid.js';
 import { getDhcpBackend } from '../backends/index.js';
 import { upsertRogueEvent, authorizedSets } from '../models/rogue-dhcp.js';
+import { instanceAddressSet } from '../models/sync-instance.js';
 
 const DHCPV6_SERVER_PORT = 547;
 const DHCPV6_CLIENT_PORT = 546;
@@ -327,7 +328,8 @@ export function runProbe6(
   let ifaces, selfIps, selfDuid, authorized;
   try {
     ifaces = interfaces || getProbeInterfaces();
-    selfIps = localAddressSet();
+    // DHCP may be served by another instance of this CIDRella.
+    selfIps = new Set([...localAddressSet(), ...instanceAddressSet(db)]);
     selfDuid = serverDuid !== undefined ? serverDuid : getDhcpBackend().serverIdentity().duid;
     authorized = authorizedSets(db);
   } catch (err) {

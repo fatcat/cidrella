@@ -52,12 +52,26 @@ describe('features store', () => {
       controller_name: null,
       members: 0,
       sync: null,
+      serves_dhcp: true,
     });
     expect(store.isMember).toBe(false);
     // A server older than 0.7.0 sends no instance at all.
     store.set({ ipv6: true });
     expect(store.instance.mode).toBe('controller');
     expect(store.isMember).toBe(false);
+  });
+
+  it('reads whether this box serves DHCP, and the old rule from a server that does not say', () => {
+    const store = useFeaturesStore();
+    store.set({ instance: { mode: 'member', controller_name: 'ns1', serves_dhcp: true } });
+    expect(store.instance.serves_dhcp).toBe(true);
+    store.set({ instance: { mode: 'controller', members: 1, serves_dhcp: false } });
+    expect(store.instance.serves_dhcp).toBe(false);
+    // Before DHCP could move, the controller served it and a member never did.
+    store.set({ instance: { mode: 'member', controller_name: 'ns1' } });
+    expect(store.instance.serves_dhcp).toBe(false);
+    store.set({ instance: { mode: 'controller', members: 1 } });
+    expect(store.instance.serves_dhcp).toBe(true);
   });
 
   it('exposes the instance mode from /features', async () => {

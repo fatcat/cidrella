@@ -3,7 +3,8 @@ import { queueRegen } from '../utils/after-commit.js';
 import { addressInRange, isValidAddress } from '../utils/ip.js';
 import { addressFamily, sortKey } from '../utils/address.js';
 import { macFromDuid } from '../utils/duid.js';
-import { isLeaseActive, leaseExpiryMs } from '../utils/lease-sql.js';
+import { activeLeaseSql, isLeaseActive, leaseExpiryMs } from '../utils/lease-sql.js';
+import { backendLeaseFromRow } from './dhcp-lease-queries.js';
 import { resolveEffectiveScopeOptions } from './dhcp-scope.js';
 import { clearPtrForARecord, syncPtrForARecord, normalizeRecordNameForZone } from './dns-record.js';
 
@@ -530,4 +531,19 @@ export function syncDhcpDnsRecords(db, leases) {
   if (configChanged) {
     queueRegen('regenerate_dns');
   }
+}
+
+/**
+ * The stored leases still active, as BackendLease (backends/contract.js): what
+ * an instance that takes DHCP over loads into its own server. The name is the
+ * stored one, which is the effective name (ADR 005).
+ */
+export function activeBackendLeases(db) {
+  return db
+    .prepare(
+      `SELECT ip_address, mac_address, hostname, client_id, expires_at, dhcp_version, duid, iaid
+       FROM dhcp_leases WHERE ${activeLeaseSql()} ORDER BY id`,
+    )
+    .all()
+    .map(backendLeaseFromRow);
 }

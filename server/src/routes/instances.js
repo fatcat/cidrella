@@ -14,6 +14,15 @@ import { syncFingerprint } from '../sync/identity.js';
 import { syncHead } from '../sync/log.js';
 import { controllerOf, instanceMode, isMember, memberRefusal } from '../sync/mode.js';
 import { memberSyncStatus } from '../sync/member.js';
+import { clearHandover, dhcpState, dhcpStateChanged } from '../sync/dhcp-active.js';
+import {
+  DhcpMoveError,
+  dhcpRole,
+  dhcpView,
+  forceDhcpStart,
+  moveDhcp,
+  moveRefusal,
+} from '../services/dhcp-move.js';
 import {
   createJoinToken,
   listInstances,
@@ -41,6 +50,7 @@ router.get('/', (req, res) => {
   const self = ownInstanceId(db);
   const head = syncHead(db);
   const controller = controllerOf(db);
+  const dhcp = dhcpState(db);
   res.json({
     mode: instanceMode(),
     self: {
@@ -56,6 +66,8 @@ router.get('/', (req, res) => {
       port: controller.port,
     },
     sync: memberSyncStatus(db),
+    // Which instance serves DHCP, and a move that is not finished.
+    dhcp: dhcpView(db, dhcp),
     instances: listInstances(db).map((row) => ({
       id: row.id,
       instance_id: row.instance_id,
@@ -72,6 +84,9 @@ router.get('/', (req, res) => {
       last_contact_at: member || row.is_controller ? null : row.last_contact_at,
       behind:
         member || row.is_controller || row.cursor === null ? null : Math.max(0, head - row.cursor),
+      dhcp: dhcpRole(dhcp, row),
+      // Only the controller moves DHCP.
+      can_take_dhcp: !member && moveRefusal(db, row, dhcp) === null,
     })),
   });
 });
@@ -88,6 +103,37 @@ router.post('/join-token', controllerOnly, (req, res) => {
   res.status(201).json(result);
 });
 
+// A refused move answers its reason; anything else is the error handler's.
+function sendMoveError(res, err) {
+  if (!(err instanceof DhcpMoveError)) throw err;
+  res.status(err.status).json({ error: err.message, code: err.code });
+}
+
+// POST /api/instances/dhcp/force { confirm: true }: start DHCP on the new
+// instance without the final leases of the one that had it.
+router.post('/dhcp/force', controllerOnly, async (req, res) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      error: 'Confirm that the instance that served DHCP is off.',
+      code: 'confirm_required',
+    });
+  }
+  try {
+    res.json(await forceDhcpStart(getDb()));
+  } catch (err) {
+    sendMoveError(res, err);
+  }
+});
+
+// POST /api/instances/:id/dhcp: move DHCP to this instance.
+router.post('/:id/dhcp', controllerOnly, async (req, res) => {
+  try {
+    res.json(await moveDhcp(getDb(), Number(req.params.id)));
+  } catch (err) {
+    sendMoveError(res, err);
+  }
+});
+
 // DELETE /api/instances/:id: stop sending a member changes.
 router.delete('/:id', controllerOnly, (req, res) => {
   const db = getDb();
@@ -95,8 +141,26 @@ router.delete('/:id', controllerOnly, (req, res) => {
   const row = Number.isInteger(id)
     ? db.prepare('SELECT name, instance_id, address FROM sync_instances WHERE id = ?').get(id)
     : null;
+  // Its leases are the leases: taking it off the list would leave DHCP to nobody.
+  if (row && row.instance_id === dhcpState(db).active) {
+    recordAudit({
+      action: 'instance_remove_refused',
+      entityType: 'instance',
+      entityId: id,
+      details: { name: row.name, instance_id: row.instance_id, code: 'dhcp_active' },
+    });
+    return res.status(409).json({
+      error: `${row.name} serves DHCP. Move DHCP to another instance first, then remove it.`,
+      code: 'dhcp_active',
+    });
+  }
   if (!row || !removeMember(db, id)) {
     return res.status(404).json({ error: 'No such member.' });
+  }
+  // It owed its last leases: nobody will send them now, so the new one starts.
+  if (row.instance_id === dhcpState(db).handoverFrom) {
+    clearHandover(db);
+    dhcpStateChanged(db);
   }
   // Its address leaves the DNS servers DHCP hands out.
   queueRegen('regenerate_dhcp');

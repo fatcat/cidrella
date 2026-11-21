@@ -280,8 +280,15 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `utils/sql-time.js`, tests' `makeMember` in `tests/helpers/member-mode.js` (a member's guards
   refuse `INSERT OR IGNORE` and upserts on the data of record too, whatever the values:
   `tests/integration/member-tripwire.test.js` runs a member's own work against them, and work
-  a member starts by itself gets a line there), client `utils/instances.js` (the one wording
-  for sync state, the header chip and how far behind), `useFeatures().instance`/`isMember`,
+  a member starts by itself gets a line there), `servesDhcpHere`, `holdsDhcp` and `dhcpState` in `sync/dhcp-active.js` (which instance serves
+  DHCP: the one rule behind `roleSwitchedOff('dhcp')`), `moveDhcp` and `forceDhcpStart` in
+  `services/dhcp-move.js`, `followDhcp` in `services/dhcp-follow.js` (a box starting or stopping
+  DHCP as the instance changes), `releaseLeaseAnywhere` in `services/dhcp-release.js` (every
+  release the controller decides on: never `getDhcpBackend().releaseLease` for one, the server
+  may be on a member), `activeBackendLeases` in `models/dhcp-lease.js`, `readCredential` in
+  `sync/credential.js`, `instanceAddressSet` in `models/sync-instance.js` (every address an
+  instance is known by), client `utils/instances.js` (the one wording
+  for sync state, which instance serves DHCP, the header chip and how far behind), `useFeatures().instance`/`isMember`,
   `readOnly` in the auth store and `usePermissions` (`can()` refuses every `:write` on a
   member),
   `onDhcpRendered` in

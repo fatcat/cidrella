@@ -64,7 +64,18 @@ loopback test. Phase 2 (member mode, DNS only) is done too, 2026-11-21: sync ide
 the sync loop, the write gate, guard triggers, first-run join and the Instances page. Phase 3 (clients find every member) is done, 2026-11-21: a scope's DNS
 servers option serves every DNS-serving instance (`utils/instance-dns.js`). Phase 4 (facts and
 analytics) is done, 2026-11-21: `sync/remote-sink.js`, `sync/collected-upload.js`, the
-`?instance=` filter. Next is phase 5, DHCP on a member. Left open by phase 4:
+`?instance=` filter. Phase 5 (DHCP on a member) is done,
+2026-11-21: `sync/dhcp-active.js`, `services/dhcp-move.js`, `services/dhcp-follow.js`,
+`POST /api/sync/leases`. Next is phase 6, promotion. Left open by phase 5:
+- The DHCPv6 server DUID does not move with DHCP, so DHCPv6 clients rebind. Carrying it needs the
+  DUID in the data of record and both adapters taking one.
+- Imported leases carry the stored effective name (ADR 005), not the name the client asked for.
+- Not run against real dnsmasq or Kea under a move: tests use the fake backend, and the local
+  two-instance check had no DHCP daemon. Do it on testerella plus a throwaway LXC.
+- The Interfaces page on a member still shows a DHCP switch, which does nothing there.
+- A member not serving DHCP does not reload filtering exemptions when leases change under it.
+
+Left open by phase 4:
 - The anomaly sidecar reads this box's query rows only (`instance_id IS NULL`), so nobody scores a
   member's clients. Scoring them on the controller needs the model to treat each instance's
   clients as its own population, or one model per instance.

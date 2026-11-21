@@ -35,6 +35,8 @@ const ALLOWED = new Map(
     "version.js POST '/update-dismiss'": 'hides an update notice for one viewer',
     "routes.js POST '/totp/setup'": 'starts enrolment; enabling it is recorded',
     "routes.js POST '/activity'": 'keeps a session alive',
+    "instances.js POST '/dhcp/force'": 'records through forceDhcpStart',
+    "instances.js POST '/:id/dhcp'": 'records through moveDhcp, a refusal included',
     "sync.js POST '/outbox'": 'writes the audit rows a member sends',
     "sync-collected.js POST '/:stream'": 'stores the measurements a member sends, once a minute',
     "routes.js PUT '/preferences'": 'one user’s display preferences',

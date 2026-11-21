@@ -2,7 +2,8 @@
  * The tripwire: on a member, nothing the box does by itself changes the data
  * of record. The work a member's process runs (defaults at boot, the change
  * log check, the lease sync, the proxy's client reports, the DNS and DHCP
- * applies, an audit row, the blocklist bookkeeping) is run here on a member's
+ * applies, taking DHCP over and reporting its leases, an audit row, the
+ * blocklist bookkeeping) is run here on a member's
  * database, whose guards refuse any such write: none may throw, and the data
  * of record must be what it was.
  */
@@ -26,6 +27,11 @@ const { recordAudit } = await import('../../src/services/audit.js');
 const { startDhcpNameSync } = await import('../../src/services/dhcp-lease-ingest.js');
 const { ensureCategoryRows, recountBlocklistDomains } =
   await import('../../src/utils/blocklist.js');
+const { followDhcp } = await import('../../src/services/dhcp-follow.js');
+const { servesDhcpHere } = await import('../../src/sync/dhcp-active.js');
+const { stopLeaseReports } = await import('../../src/sync/lease-report.js');
+const { ownInstanceId } = await import('../../src/models/sync-instance.js');
+const { upsertSetting } = await import('../../src/models/setting.js');
 
 let db;
 let tmpDir;
@@ -57,11 +63,16 @@ beforeAll(async () => {
     `INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length,
        total_addresses, status) VALUES ('fd00:66::/64', 'six', 'fd00:66::', NULL, 64, 0, 'allocated')`,
   ).run();
+  // The controller has moved DHCP to this member (sync/dhcp-active.js): the
+  // settings arrived with a sync, before the guards below.
+  upsertSetting(db, 'dhcp_active_instance', ownInstanceId(db));
+  upsertSetting(db, 'dhcp_term', 1);
   makeMember(db);
   ensureSyncTriggers(db, MEMBER);
   undoSink = setFactsSink(memberSink);
 });
 afterAll(() => {
+  stopLeaseReports();
   undoSink();
   cleanupTestDb(tmpDir);
 });
@@ -86,6 +97,10 @@ describe('a member’s own work', () => {
     startDhcpNameSync();
     await ensureDefaults({ owner: false });
     ensureSyncLog(db, tmpDir);
+    // Given DHCP, the member loads the leases into its server and starts it,
+    // then reports its leases (to a controller that is not there).
+    await followDhcp(db);
+    expect(servesDhcpHere(db)).toBe(true);
     await syncLeasesNow(db);
     sinkClientSeen('10.66.0.10');
     sinkClientSeen('fd00:66::10');

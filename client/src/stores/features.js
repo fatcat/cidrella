@@ -49,15 +49,19 @@ export const useFeaturesStore = defineStore('features', () => {
 
 // What a server that says nothing about instances is: one box, as before 0.7.0.
 function singleBox() {
-  return { mode: 'controller', controller_name: null, members: 0, sync: null };
+  return { mode: 'controller', controller_name: null, members: 0, sync: null, serves_dhcp: true };
 }
 
 function readInstance(raw) {
   if (!raw) return singleBox();
+  const mode = raw.mode === 'member' ? 'member' : 'controller';
   return {
-    mode: raw.mode === 'member' ? 'member' : 'controller',
+    mode,
     controller_name: raw.controller_name ?? null,
     members: Number(raw.members) || 0,
     sync: raw.sync ?? null,
+    // Whether this box answers DHCP. A server that does not say predates
+    // moving DHCP, when the controller always served it.
+    serves_dhcp: typeof raw.serves_dhcp === 'boolean' ? raw.serves_dhcp : mode === 'controller',
   };
 }

@@ -17,7 +17,8 @@ import {
 } from '../services/ip-lifecycle-service.js';
 import { queueRegen } from './after-commit.js';
 import { PASSIVE_LIVENESS_POLL_MS, PASSIVE_LIVENESS_STALE_MS } from '../config/defaults.js';
-import { getDhcpBackend, getService, onBackendChanged } from '../backends/index.js';
+import { getService, onBackendChanged } from '../backends/index.js';
+import { releaseLeaseAnywhere } from '../services/dhcp-release.js';
 
 /**
  * Start the passive liveness watcher.
@@ -82,7 +83,7 @@ export function startStaleAddressSweep(db) {
     markStalePassiveAddresses(db, staleMinutes);
     pruneLifecycleEvents(db);
     const retirement = await retireStaleDynamicAddresses(db, {
-      releaseLease: (lease) => getDhcpBackend().releaseLease(lease),
+      releaseLease: (lease) => releaseLeaseAnywhere(db, lease),
     });
     if (retirement.dnsRecordsRemoved > 0) queueRegen('regenerate_dns');
     if (retirement.retired > 0 || retirement.deferred > 0) {
