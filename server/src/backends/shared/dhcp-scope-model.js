@@ -104,7 +104,7 @@ function v6Options(db, scope, effective) {
         instanceDnsServers(serverIp, {
           family: 6,
           cidr: scope.subnet_cidr,
-          instances: dnsInstances(db),
+          instances: scope.dnsInstances,
         }),
       );
     }
@@ -162,7 +162,10 @@ export function loadDhcpScopes(db) {
   );
   const ipv6 = ipv6Enabled();
   const live = [];
+  // Read once for the whole render (resolveEffectiveScopeOptions takes it).
+  const instances = dnsInstances(db);
   for (const scope of scopes) {
+    scope.dnsInstances = instances;
     const parsed = parseNetwork(scope.subnet_cidr);
     if (parsed.family === 6 && !ipv6) continue;
     const effective = resolveEffectiveScopeOptions(db, scope);

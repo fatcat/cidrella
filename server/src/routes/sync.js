@@ -147,7 +147,17 @@ router.get('/changes', async (req, res) => {
   noteContact(db, req.member.id, { cursor: since, version, schema });
   if (typeof req.query.addr === 'string') {
     const addresses = req.query.addr.slice(0, 2048).split(',').filter(Boolean);
-    if (setDnsAddresses(db, req.member.id, addresses)) queueRegen('regenerate_dhcp');
+    if (setDnsAddresses(db, req.member.id, addresses)) {
+      queueRegen('regenerate_dhcp');
+      // DHCP clients are sent to these: worth a line in the audit log.
+      recordAudit({
+        action: 'instance_dns_addresses_changed',
+        entityType: 'instance',
+        entityId: req.member.id,
+        source: 'sync',
+        details: { name: req.member.name, addresses },
+      });
+    }
   }
   if (schema !== local.schema) {
     return res.status(409).json({

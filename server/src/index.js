@@ -75,7 +75,11 @@ import { ensureSyncIdentity, syncSecureContext } from './sync/identity.js';
 import { startMemberSync } from './sync/member.js';
 import { isMember } from './sync/mode.js';
 import { memberWriteGate } from './sync/write-gate.js';
-import { ensureOwnInstance, lowestMemberCursor } from './models/sync-instance.js';
+import {
+  ensureOwnInstance,
+  lowestMemberCursor,
+  setOwnDnsAddresses,
+} from './models/sync-instance.js';
 import { syncServerDnsDefault } from './models/dhcp-option.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
@@ -117,6 +121,7 @@ import { isPreflightBoot } from './utils/preflight.js';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const TOMBSTONE_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
+const OWN_ADDRESS_REFRESH_MS = 60 * 1000;
 
 // ─── Work on the data of record ───────────────────────────────────
 // The two functions below change the data of record on their own initiative:
@@ -226,6 +231,16 @@ function startControllerJobs(db) {
       console.error('Change log prune error:', err.message);
     }
   }, TOMBSTONE_PRUNE_INTERVAL_MS).unref();
+
+  // Where this box answers DNS can change under it (an interface edit, a new
+  // address from the network): keep the list DHCP clients are given current.
+  setInterval(() => {
+    try {
+      if (setOwnDnsAddresses(db, listenAddresses())) queueRegen('regenerate_dhcp');
+    } catch (err) {
+      console.error('DNS address refresh error:', err.message);
+    }
+  }, OWN_ADDRESS_REFRESH_MS).unref();
 }
 
 async function main() {

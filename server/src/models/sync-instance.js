@@ -57,6 +57,14 @@ export function setDnsAddresses(db, id, addresses) {
   );
 }
 
+/** Record the addresses this box, the controller, answers DNS on. True when they changed. */
+export function setOwnDnsAddresses(db, addresses) {
+  const own = db
+    .prepare('SELECT id FROM sync_instances WHERE instance_id = ?')
+    .get(ownInstanceId(db));
+  return Boolean(own) && setDnsAddresses(db, own.id, addresses);
+}
+
 /**
  * The instances that answer DNS, in the order their addresses are served:
  * the controller, then the members by name. [{ name, addresses }].
