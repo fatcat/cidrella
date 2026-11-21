@@ -64,7 +64,6 @@ export function setProxyConfig(next) {
 }
 export const proxyConfig = () => config;
 
-
 // Module state
 let proxyServers = []; // Array of { socket, address }, one per LAN address on port 53 (UDP)
 let tcpServers = []; // Array of { server, address }, TCP listener per LAN address (DNS-over-TCP)
@@ -455,7 +454,8 @@ function getLookupStmt(db) {
 function countEnabledDomains() {
   try {
     return (
-      deps.db()
+      deps
+        .db()
         .prepare(
           'SELECT COALESCE(SUM(domain_count), 0) AS c FROM blocklist_categories WHERE enabled = 1',
         )
@@ -541,7 +541,7 @@ export async function reloadAll() {
     // No database path yet: a first start, before the web app has sent a
     // config. Its reload once it connects loads the database.
     if (!config.geoipDbPath) {
-      proxyLog('info', 'GeoIP database waits for the web app\'s config');
+      proxyLog('info', "GeoIP database waits for the web app's config");
     } else if (!(await loadMmdbFrom())) {
       proxyLog('warn', 'GeoIP enabled but MMDB not available, starting without GeoIP filtering');
     }
@@ -1471,7 +1471,8 @@ function processUsage(now = Date.now()) {
   lastCpuAt = now;
   const mem = process.memoryUsage();
   return {
-    cpuPercent: wallMs > 0 ? Math.round(((cpu.user + cpu.system) / 1000 / wallMs) * 10000) / 100 : 0,
+    cpuPercent:
+      wallMs > 0 ? Math.round(((cpu.user + cpu.system) / 1000 / wallMs) * 10000) / 100 : 0,
     rssMb: megabytes(mem.rss),
     heapMb: megabytes(mem.heapUsed),
   };

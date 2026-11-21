@@ -123,7 +123,9 @@ function backupNameTemplate(db) {
   if (stored === null) return DEFAULT_BACKUP_NAME_TEMPLATE;
   const problem = validateBackupNameTemplate(stored);
   if (!problem) return stored;
-  console.warn(`[backup] backup_name_template "${stored}" is not valid (${problem}); using the default`);
+  console.warn(
+    `[backup] backup_name_template "${stored}" is not valid (${problem}); using the default`,
+  );
   return DEFAULT_BACKUP_NAME_TEMPLATE;
 }
 

@@ -9,6 +9,7 @@ import rateLimit from 'express-rate-limit';
 import zlib from 'zlib';
 import { getDb } from '../db/init.js';
 import { APP_VERSION } from '../utils/version.js';
+import { queueRegen } from '../utils/after-commit.js';
 import { runDbTask } from '../utils/db-worker/index.js';
 import { recordAudit } from '../services/audit.js';
 import { AUDIT_OUTBOX_KIND, insertAuditRow } from '../models/audit-log.js';
@@ -22,6 +23,7 @@ import {
   ownInstanceId,
   ownInstanceName,
   redeemJoinToken,
+  setDnsAddresses,
 } from '../models/sync-instance.js';
 
 const router = Router();
@@ -143,6 +145,10 @@ router.get('/changes', async (req, res) => {
     return res.status(400).json({ error: 'since must be a number.', code: 'bad_request' });
   }
   noteContact(db, req.member.id, { cursor: since, version, schema });
+  if (typeof req.query.addr === 'string') {
+    const addresses = req.query.addr.slice(0, 2048).split(',').filter(Boolean);
+    if (setDnsAddresses(db, req.member.id, addresses)) queueRegen('regenerate_dhcp');
+  }
   if (schema !== local.schema) {
     return res.status(409).json({
       error:

@@ -20,6 +20,7 @@ import {
   loadBlocklist,
   loadFilteringOverrides,
   loadGeoipAllowlist,
+  listenAddresses,
   loadGeoipRules,
   refreshProxyConfig,
 } from '../utils/dns-proxy.js';
@@ -77,7 +78,13 @@ function ask(db, controller, { path: requestPath, credential, timeoutMs }) {
 
 function changesPath(db, { wait = 0 } = {}) {
   const local = syncStatus(db);
-  const query = new URLSearchParams({ schema: local.schema, version: APP_VERSION, wait });
+  const query = new URLSearchParams({
+    schema: local.schema,
+    version: APP_VERSION,
+    wait,
+    // Where this box answers DNS, for the list DHCP clients are given.
+    addr: listenAddresses().join(','),
+  });
   const cursor = readSyncState(db, 'cursor');
   if (cursor !== null && local.dataset) {
     query.set('dataset', local.dataset);

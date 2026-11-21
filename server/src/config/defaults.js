@@ -24,7 +24,6 @@ import {
   DATA_DIR,
 } from '../dns-proxy/constants.js';
 
-
 // Left by a restore: the next boot restarts every DNS/DHCP backend, so the
 // daemons load the restored leases instead of writing theirs over them.
 export const BACKEND_RESTART_MARKER = path.join(DATA_DIR, 'runtime', 'restart-backends-on-boot');
@@ -184,7 +183,6 @@ export const RECURSOR_NETWORK_TIMEOUT_MS = ENCRYPTED_FORWARDER_BUDGET_MS + 100;
 // PowerDNS Authoritative on loopback: DNS for Recursor, and its HTTP API.
 export const PDNS_AUTH_DNS_PORT = 5300;
 export const PDNS_AUTH_API_PORT = 8053;
-
 
 /**
  * Where the DNS backend (dnsmasq or PowerDNS Recursor) answers on loopback:

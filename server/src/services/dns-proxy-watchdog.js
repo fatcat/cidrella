@@ -34,7 +34,6 @@ import {
 } from '../config/defaults.js';
 import { proxyLog } from '../dns-proxy/log.js';
 
-
 let proxy = null;
 // Dead checks in a row so far.
 let deadChecks = 0;

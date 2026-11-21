@@ -1,7 +1,9 @@
 # Controller and members: redundant CIDRella instances
 
-Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 2 are done on `dev/0.7.0`
-(2026-11-21); phases 3 to 7 are not started. Changed while building phase 2: the guard triggers
+Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 3 are done on `dev/0.7.0`
+(2026-11-21); phases 4 to 7 are not started. Phase 3 left the NS records out: a name for each
+instance in every zone is a naming-policy choice that has not been made, and NS only matters
+where a parent zone delegates to CIDRella (see BACKLOG.md). Changed while building phase 2: the guard triggers
 need no flag, since the apply sets every trigger on the tables aside; a join ends with the
 process exiting so it restarts as a member; a member's audit rows wait in `sync_outbox` and
 its other observations are dropped until phase 4. Changed from this design while building phase 1:

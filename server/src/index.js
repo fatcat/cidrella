@@ -85,7 +85,7 @@ import {
   sweepStaleRestoreArtifacts,
   applyRestoreCarryover,
 } from './utils/backup.js';
-import { clearBypassAtBoot, startProxyIfEnabled } from './utils/dns-proxy.js';
+import { clearBypassAtBoot, listenAddresses, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startGeoipScheduler } from './services/geoip-update.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
 import { startScanScheduler } from './utils/scan-scheduler.js';
@@ -298,6 +298,7 @@ async function main() {
       fingerprint: syncIdentity.fingerprint,
       port: getHttpsPort(),
       version: APP_VERSION,
+      dnsAddresses: listenAddresses(),
     });
   }
 

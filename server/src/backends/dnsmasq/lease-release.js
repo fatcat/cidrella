@@ -35,12 +35,7 @@ export async function releaseDnsmasqLease(lease) {
   if (!interfaceName) return { released: false, skipped: 'no-route-interface' };
 
   try {
-    await runCommand('dhcp_release', [
-      interfaceName,
-      lease.ip,
-      lease.mac,
-      lease.clientId || '*',
-    ]);
+    await runCommand('dhcp_release', [interfaceName, lease.ip, lease.mac, lease.clientId || '*']);
     return { released: true, interface: interfaceName };
   } catch (err) {
     if (err?.code === 'ENOENT') {

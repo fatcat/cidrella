@@ -20,8 +20,7 @@ members that keep serving DNS and DHCP from a synced copy.
 ### Known issues
 
 - **In development.** A second CIDRella can join as a member and serve DNS from a copy of the
-  data, but it cannot run DHCP or become the controller yet, and DHCP clients are not told about
-  it. What a member observes (queries, clients seen) stays on the member for now.
+  data, but it cannot run DHCP or become the controller yet. What a member observes (queries, clients seen) stays on the member for now.
 
 ### New
 
@@ -34,6 +33,10 @@ members that keep serving DNS and DHCP from a synced copy.
   accounts.
 - **A member is as sensitive as the controller.** It holds the whole copy, password hashes and
   two-factor secrets included, so that you can sign in to it while the controller is down.
+- **DHCP clients are given every instance.** Where a scope's DNS servers option names
+  CIDRella, clients get the controller and every member, so they keep resolving when one is
+  away. Other resolvers you listed stay in the list, and a scope pointed elsewhere is untouched.
+  IPv4 and IPv6 scopes both.
 - A single CIDRella is a controller with no members and looks as it did.
 
 ### Changed

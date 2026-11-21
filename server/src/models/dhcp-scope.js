@@ -1,3 +1,5 @@
+import { dnsInstances } from './sync-instance.js';
+import { instanceDnsServers } from '../utils/instance-dns.js';
 import { addressToBig, addressInRange, isValidAddress, parseNetwork } from '../utils/ip.js';
 
 // The one definition of "this DHCP pool would swallow the subnet's gateway".
@@ -271,6 +273,15 @@ function computeInheritedOptions(subnet) {
   return inherited;
 }
 
+// The DNS servers option names CIDRella by one address. With members, every
+// DNS-serving instance is served in its place (utils/instance-dns.js).
+function serveEveryInstance(db, scope, values, code, family) {
+  if (!values.has(code)) return;
+  const instances = scope.dnsInstances || dnsInstances(db);
+  const cidr = scope.subnet_cidr || scope.cidr;
+  values.set(code, instanceDnsServers(values.get(code), { family, cidr, instances }));
+}
+
 /**
  * What a scope serves, option by option, with where each value came from.
  * The defaults (dhcp_option_defaults) play no part: a scope copies them when
@@ -309,6 +320,7 @@ export function resolveEffectiveScopeOptions(db, scope) {
     set(56, legacyListValue(scope.ntp_servers), 'legacy_scope');
     for (const option of explicit) set(option.option_code, option.value, 'scope');
     if (!values.has(24)) set(24, scope.domain_name || scope.subnet_domain_name, 'network');
+    serveEveryInstance(db, scope, values, 23, 6);
     return {
       lease_time: scope.lease_time,
       router_suppressed: false,
@@ -348,6 +360,7 @@ export function resolveEffectiveScopeOptions(db, scope) {
   }
   if (!values.has(15)) set(15, scope.subnet_domain_name, 'network');
   if (!values.has(119)) set(119, scope.subnet_domain_name, 'network');
+  serveEveryInstance(db, scope, values, 6, 4);
 
   return {
     lease_time: scope.lease_time,

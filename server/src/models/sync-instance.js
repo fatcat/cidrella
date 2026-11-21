@@ -6,6 +6,7 @@
 import crypto from 'crypto';
 import os from 'os';
 import { readSyncState, writeSyncState } from '../sync/log.js';
+import { canonicalizeIp } from '../utils/address.js';
 
 export const JOIN_TOKEN_MINUTES = 15;
 const JOIN_PREFIX = 'cj1';
@@ -32,24 +33,71 @@ export function ownInstanceName(db) {
   return readSyncState(db, 'instance_name') || os.hostname();
 }
 
+const MAX_DNS_ADDRESSES = 32;
+
+// A list of addresses as it is stored: valid ones, canonical, either family,
+// the rule listenableAddresses (utils/interface-config.js) binds by.
+function cleanAddresses(addresses) {
+  const out = (Array.isArray(addresses) ? addresses : [])
+    .map((address) => canonicalizeIp(String(address)))
+    // Link-local is no use to a client on another link.
+    .filter((address) => address && !/^fe[89ab]/i.test(address));
+  return JSON.stringify([...new Set(out)].slice(0, MAX_DNS_ADDRESSES));
+}
+
+/** Record the addresses an instance answers DNS on. True when they changed. */
+export function setDnsAddresses(db, id, addresses) {
+  const stored = cleanAddresses(addresses);
+  return (
+    db
+      .prepare(
+        'UPDATE sync_instances SET dns_addresses = ? WHERE id = ? AND dns_addresses IS NOT ?',
+      )
+      .run(stored, id, stored).changes === 1
+  );
+}
+
+/**
+ * The instances that answer DNS, in the order their addresses are served:
+ * the controller, then the members by name. [{ name, addresses }].
+ */
+export function dnsInstances(db) {
+  let statement;
+  try {
+    statement = db.prepare(
+      `SELECT name, dns_addresses FROM sync_instances WHERE serves_dns = 1
+       ORDER BY is_controller DESC, name, id`,
+    );
+  } catch {
+    // A database from before instances (a migration test resolving options
+    // at an old schema): one box, nothing to add.
+    return [];
+  }
+  return statement
+    .all()
+    .map((row) => ({ name: row.name, addresses: JSON.parse(row.dns_addresses || '[]') }));
+}
+
 /**
  * The controller's own row, made or brought up to date. Only the controller
  * calls this: the row is data of record.
  */
-export function ensureOwnInstance(db, { fingerprint, port, version }) {
+export function ensureOwnInstance(db, { fingerprint, port, version, dnsAddresses = [] }) {
   const instanceId = ownInstanceId(db);
   const name = ownInstanceName(db);
   db.prepare(
-    `INSERT INTO sync_instances (instance_id, name, port, fingerprint, is_controller, version)
-     VALUES (@instanceId, @name, @port, @fingerprint, 1, @version)
+    `INSERT INTO sync_instances
+       (instance_id, name, port, fingerprint, is_controller, version, dns_addresses)
+     VALUES (@instanceId, @name, @port, @fingerprint, 1, @version, @dns)
      ON CONFLICT(instance_id) DO UPDATE SET name = excluded.name, port = excluded.port,
-       fingerprint = excluded.fingerprint, is_controller = 1, version = excluded.version`,
-  ).run({ instanceId, name, port, fingerprint, version });
+       fingerprint = excluded.fingerprint, is_controller = 1, version = excluded.version,
+       dns_addresses = excluded.dns_addresses`,
+  ).run({ instanceId, name, port, fingerprint, version, dns: cleanAddresses(dnsAddresses) });
   return instanceId;
 }
 
 const PUBLIC_COLUMNS = `id, instance_id, name, address, port, fingerprint, is_controller,
-  serves_dns, created_at, last_contact_at, cursor, version, schema_version`;
+  serves_dns, dns_addresses, created_at, last_contact_at, cursor, version, schema_version`;
 
 export function listInstances(db) {
   return db

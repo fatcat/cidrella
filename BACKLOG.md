@@ -61,8 +61,17 @@ its guard, the lease diff-upsert, the facts sink, the grouped owner-only boot wo
 apply that only renders (ADR 006). Phase 1 (the change log) is done too, 2026-11-21:
 `sync_log` and its generated triggers, dataset identity, `exportChanges`/`applyChanges` and a
 loopback test. Phase 2 (member mode, DNS only) is done too, 2026-11-21: sync identity, pairing,
-the sync loop, the write gate, guard triggers, first-run join and the Instances page. Next is
-phase 3, clients find every member. Left open by phase 2:
+the sync loop, the write gate, guard triggers, first-run join and the Instances page. Phase 3 (clients find every member) is done, 2026-11-21: a scope's DNS
+servers option serves every DNS-serving instance (`utils/instance-dns.js`). Next is phase 4, facts
+and analytics. Left open by phase 3:
+- NS records per instance (PowerDNS stack) are not generated. Each instance needs a name in
+  every zone, which is naming policy under the canonical IP model gate, and NS only matters where
+  a parent zone delegates to CIDRella. The maintainer's call: what the names are.
+- `dhcp_dns_default_server_ip` stays a host key: it records which entry of the DNS Servers
+  default is the controller's own, and the default itself is data of record. A promoted member
+  has to take that over (phase 6).
+
+Left open by phase 2:
 - Most settings views have no client permission gate, so on a member their controls stay live
   and a save shows the server's refusal as a toast. Only the Networks workspace, Blocklists and
   the Resolution Map grey out through `can()`. Greying the rest is per-view work.
@@ -77,8 +86,7 @@ phase 3, clients find every member. Left open by phase 2:
 Every install is a member; one is also the controller and owns all writes; other members sync a
 read-only copy and keep serving when it is away; promotion is manual. Rejected and why (all in the doc): scheduled restore,
 whole-table transfer, the SQLite session extension (not compiled into better-sqlite3 13.0.3),
-WAL shipping. Still open from phase 0: `dhcp_dns_default_server_ip` is classed host until
-phase 3 turns the DNS Servers default into a list of every instance.
+WAL shipping.
 
 ### Process isolation and event-loop blocking (target 0.6.3)
 

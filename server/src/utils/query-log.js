@@ -19,4 +19,3 @@ export function queryLogPath() {
   }
   return source?.proxyQueries ? source.path : null;
 }
-

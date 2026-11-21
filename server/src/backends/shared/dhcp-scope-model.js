@@ -17,6 +17,8 @@ import {
 } from '../../utils/dhcp-options.js';
 import { validateConfigSafeValue } from '../../utils/config-value-validation.js';
 import { resolveEffectiveScopeOptions } from '../../models/dhcp-scope.js';
+import { dnsInstances } from '../../models/sync-instance.js';
+import { instanceDnsServers } from '../../utils/instance-dns.js';
 import { ipv6Enabled } from '../../utils/ipv6-support.js';
 
 /**
@@ -88,7 +90,7 @@ function v4Options(scope, effective) {
 // DHCPv6: the effective options, with CIDRella's own address as the DNS
 // server when nothing else names one. Ordered by code; internal codes the
 // server builds itself are left out.
-function v6Options(scope, effective) {
+function v6Options(db, scope, effective) {
   const merged = new Map();
   for (const opt of effective.options) {
     const code = Number(opt.option_code ?? opt.code);
@@ -96,7 +98,16 @@ function v6Options(scope, effective) {
   }
   if (!merged.has(23)) {
     const serverIp = getServerIpForSubnet(scope.subnet_cidr);
-    if (serverIp) merged.set(23, serverIp);
+    if (serverIp) {
+      merged.set(
+        23,
+        instanceDnsServers(serverIp, {
+          family: 6,
+          cidr: scope.subnet_cidr,
+          instances: dnsInstances(db),
+        }),
+      );
+    }
   }
   const internal = optionCatalogFor(6).internalCodes;
   return new Map([...merged].filter(([code]) => !internal.has(code)).sort((a, b) => a[0] - b[0]));
@@ -160,7 +171,7 @@ export function loadDhcpScopes(db) {
     const family = parsed.family;
     const { merged, leaseTime } =
       family === 6
-        ? { merged: v6Options(scope, effective), leaseTime: scope.lease_time }
+        ? { merged: v6Options(db, scope, effective), leaseTime: scope.lease_time }
         : v4Options(scope, effective);
     const options = [];
     for (const [code, value] of merged) {

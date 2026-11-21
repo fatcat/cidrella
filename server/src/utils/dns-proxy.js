@@ -73,8 +73,9 @@ export function loadMmdb() {
   return reload('mmdb', { path: dbPath });
 }
 
-// The LAN addresses of both families to bind proxy sockets on.
-function listenAddresses() {
+// The LAN addresses of both families to bind proxy sockets on: where this
+// box answers DNS.
+export function listenAddresses() {
   let ifaceConfig = {};
   try {
     const raw = getSetting('interface_config');

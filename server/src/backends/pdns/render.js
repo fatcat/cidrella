@@ -307,9 +307,7 @@ export function renderRecursorConfig({
       socket_dir: runDir,
       security_poll_suffix: '',
       serve_rfc1918: false,
-      forward_zones_recurse: recursion
-        ? [{ zone: '.', forwarders }]
-        : [],
+      forward_zones_recurse: recursion ? [{ zone: '.', forwarders }] : [],
     },
     dnssec: { validation },
   };

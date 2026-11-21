@@ -9,6 +9,7 @@ import { requireRole } from '../auth/roles.js';
 import { recordAudit } from '../services/audit.js';
 import { currentActor } from '../utils/request-actor.js';
 import { APP_VERSION } from '../utils/version.js';
+import { queueRegen } from '../utils/after-commit.js';
 import { syncFingerprint } from '../sync/identity.js';
 import { syncHead } from '../sync/log.js';
 import { controllerOf, instanceMode, isMember, memberRefusal } from '../sync/mode.js';
@@ -65,6 +66,7 @@ router.get('/', (req, res) => {
       is_controller: row.is_controller === 1,
       is_self: row.instance_id === self,
       serves_dns: row.serves_dns === 1,
+      dns_addresses: JSON.parse(row.dns_addresses || '[]'),
       version: row.instance_id === self ? APP_VERSION : row.version,
       // What a controller heard from each member is its own knowledge.
       last_contact_at: member || row.is_controller ? null : row.last_contact_at,
@@ -96,6 +98,8 @@ router.delete('/:id', controllerOnly, (req, res) => {
   if (!row || !removeMember(db, id)) {
     return res.status(404).json({ error: 'No such member.' });
   }
+  // Its address leaves the DNS servers DHCP hands out.
+  queueRegen('regenerate_dhcp');
   recordAudit({
     action: 'instance_removed',
     entityType: 'instance',

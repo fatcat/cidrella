@@ -48,5 +48,5 @@ export const DOH_PROVIDERS = [
 ];
 
 export function getProvider(id) {
-  return DOH_PROVIDERS.find(p => p.id === id) || null;
+  return DOH_PROVIDERS.find((p) => p.id === id) || null;
 }

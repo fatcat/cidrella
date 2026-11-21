@@ -154,7 +154,11 @@ router.get('/deep', requireLocalhost, async (req, res) => {
   // active ARP/ICMP scan support.
   try {
     const warning = Privileged.capabilityWarning();
-    checks.capabilities = { ok: !warning, warning: warning || null, ...Privileged.probeCapabilities() };
+    checks.capabilities = {
+      ok: !warning,
+      warning: warning || null,
+      ...Privileged.probeCapabilities(),
+    };
   } catch (err) {
     checks.capabilities = {
       ok: false,

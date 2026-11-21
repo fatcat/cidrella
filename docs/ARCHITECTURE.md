@@ -780,6 +780,15 @@ already hold on a single box.
   audit row waits in `sync_outbox`.
   `tests/integration/member-tripwire.test.js` runs a member's own work
   against the guards.
+- **Clients are given every instance.** Each instance reports the addresses
+  it answers DNS on (`sync_instances.dns_addresses`, data of record). A
+  scope's DNS servers option (6, and 23 for DHCPv6) names CIDRella by one
+  address; when the scope's options are resolved
+  (`resolveEffectiveScopeOptions`), that entry is served as every DNS-serving
+  instance, the controller first, each by its address inside the scope's
+  network when it has one (`utils/instance-dns.js`). Other resolvers a person
+  listed stay where they are, a list naming no instance is served as it is,
+  and nothing stored changes. A change to the instances re-renders DHCP.
 
 ## Security and Operations Boundaries
 
