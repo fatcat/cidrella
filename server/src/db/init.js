@@ -9,7 +9,8 @@ import { DEFAULTS } from '../config/defaults.js';
 import { settingValue } from '../models/setting-value.js';
 import { seedDefaultOptions } from '../models/dhcp-option.js';
 import { backfillCanonicalIpIdentity } from './ip-identity.js';
-import { dropSyncTriggers, ensureSyncLog } from '../sync/log.js';
+import { dropSyncTriggers, ensureSyncLog, MEMBER, storedMode } from '../sync/log.js';
+import { SETTINGS } from '../sync/registry.js';
 import {
   hasLegacyIpLifecycleTables,
   inventoryLegacyIpLifecycle,
@@ -94,46 +95,51 @@ export async function initDb(dataDir) {
   db.pragma('journal_mode = WAL');
 
   runMigrations();
-  const { backfillGatewayPolicies } = await import('../services/subnet-topology.js');
-  backfillGatewayPolicies(db);
-  const identityBackfill = backfillCanonicalIpIdentity(db);
-  if (identityBackfill.conflicts > 0) {
-    console.warn(
-      `Found ${identityBackfill.conflicts} canonical IP identity conflict(s) for reconciliation`,
-    );
+  // The repairs below change the data of record, which a member only holds a
+  // copy of: its controller makes them, and they arrive with the next sync.
+  const owner = storedMode(db) !== MEMBER;
+  if (owner) {
+    const { backfillGatewayPolicies } = await import('../services/subnet-topology.js');
+    backfillGatewayPolicies(db);
+    const identityBackfill = backfillCanonicalIpIdentity(db);
+    if (identityBackfill.conflicts > 0) {
+      console.warn(
+        `Found ${identityBackfill.conflicts} canonical IP identity conflict(s) for reconciliation`,
+      );
+    }
+    if (lifecycleReport) {
+      lifecycleReport.outcome = 'reconciliation_pending';
+      lifecycleReport.schema_after =
+        db.prepare('SELECT MAX(version) AS version FROM schema_version').get()?.version ??
+        schemaBefore;
+      writeLifecycleMigrationReport(dataDir, lifecycleReport);
+      const reconciliation = reconcileMigratedIpLifecycle(db);
+      lifecycleReport.outcome = 'complete';
+      lifecycleReport.reconciliation = reconciliation;
+      writeLifecycleMigrationReport(dataDir, lifecycleReport);
+      console.log(
+        `IP lifecycle migration reconciliation complete: ${reconciliation.updated} updated, ${reconciliation.inserted} inserted`,
+      );
+    }
+    // ADR 004: a manual address record that exists but is not served holds its
+    // address. Idempotent, so installs from before the rule, upgrades and
+    // restored backups all converge here.
+    const { reconcileDnsHolds, reconcileStaticDnsAllocations } =
+      await import('../services/ip-lifecycle-service.js');
+    const holds = reconcileDnsHolds(db);
+    if (holds.changed) console.log(`DNS holds reconciled: ${holds.changed} address(es) changed`);
+    // An enabled manual record allocates its address whichever came first, the
+    // record or its network. Heals rows left blank by a network configured
+    // after its records, before configure adopted them.
+    const staticDns = reconcileStaticDnsAllocations(db);
+    if (staticDns.changed) {
+      console.log(`Static DNS reconciled: ${staticDns.changed} address(es) changed`);
+    }
+    for (const conflict of staticDns.conflicts) {
+      console.warn(`[static-dns] ${conflict.ip}: ${conflict.reason}`);
+    }
   }
-  if (lifecycleReport) {
-    lifecycleReport.outcome = 'reconciliation_pending';
-    lifecycleReport.schema_after =
-      db.prepare('SELECT MAX(version) AS version FROM schema_version').get()?.version ??
-      schemaBefore;
-    writeLifecycleMigrationReport(dataDir, lifecycleReport);
-    const reconciliation = reconcileMigratedIpLifecycle(db);
-    lifecycleReport.outcome = 'complete';
-    lifecycleReport.reconciliation = reconciliation;
-    writeLifecycleMigrationReport(dataDir, lifecycleReport);
-    console.log(
-      `IP lifecycle migration reconciliation complete: ${reconciliation.updated} updated, ${reconciliation.inserted} inserted`,
-    );
-  }
-  // ADR 004: a manual address record that exists but is not served holds its
-  // address. Idempotent, so installs from before the rule, upgrades and
-  // restored backups all converge here.
-  const { reconcileDnsHolds, reconcileStaticDnsAllocations } =
-    await import('../services/ip-lifecycle-service.js');
-  const holds = reconcileDnsHolds(db);
-  if (holds.changed) console.log(`DNS holds reconciled: ${holds.changed} address(es) changed`);
-  // An enabled manual record allocates its address whichever came first, the
-  // record or its network. Heals rows left blank by a network configured
-  // after its records, before configure adopted them.
-  const staticDns = reconcileStaticDnsAllocations(db);
-  if (staticDns.changed) {
-    console.log(`Static DNS reconciled: ${staticDns.changed} address(es) changed`);
-  }
-  for (const conflict of staticDns.conflicts) {
-    console.warn(`[static-dns] ${conflict.ip}: ${conflict.reason}`);
-  }
-  await ensureDefaults();
+  await ensureDefaults({ owner });
 
   // The change log of the data of record: triggers put right, and a new
   // dataset when this database is not the one the log last described.
@@ -307,7 +313,7 @@ function prepareAnomalyIdentityMigration() {
   }
 }
 
-export async function ensureDefaults() {
+export async function ensureDefaults({ owner = true } = {}) {
   // Generate JWT secret if not present
   const existing = db.prepare("SELECT value FROM settings WHERE key = 'jwt_secret'").get();
   if (!existing) {
@@ -319,15 +325,17 @@ export async function ensureDefaults() {
   // Seed every key in DEFAULTS that doesn't already have a DB row
   const insert = db.prepare('INSERT OR IGNORE INTO settings (key, value) VALUES (?, ?)');
   for (const [key, value] of Object.entries(DEFAULTS)) {
+    // A member seeds only what is about this box; the rest is its controller's.
+    if (!owner && SETTINGS[key] !== 'host') continue;
     const serialized = typeof value === 'object' ? JSON.stringify(value) : String(value);
     insert.run(key, serialized);
   }
 
-  seedDefaultOptions(db);
+  if (owner) seedDefaultOptions(db);
 
   // Create default admin user if no users exist
   const userCount = db.prepare('SELECT COUNT(*) as count FROM users').get();
-  if (userCount.count === 0) {
+  if (owner && userCount.count === 0) {
     const password = crypto.randomBytes(12).toString('base64url');
     const hash = await bcrypt.hash(password, 10);
     db.prepare(

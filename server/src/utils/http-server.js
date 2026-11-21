@@ -3,6 +3,7 @@ import https from 'https';
 import net from 'net';
 import fs from 'fs';
 import { getSetting } from '../db/init.js';
+import { SYNC_SERVER_NAME } from '../sync/identity.js';
 
 // Port fallback order (v0.4.15+):
 //   1. DB setting `https_port` / `http_port`  , source of truth when the
@@ -59,6 +60,7 @@ let _tlsKeyPath = null;
 let _tlsCertPath = null;
 let _httpsServer = null;
 let _httpsServerSetter = null; // delegate for cert.js TLS reload
+let _syncContext = null; // getter for the sync identity's SecureContext, or null
 let _httpsPort = 0;
 let _httpServer = null;
 let _httpPort = 0;
@@ -86,18 +88,51 @@ export async function checkPortAvailable(port) {
 
 // ─── HTTPS listener ─────────────────────────────────────────────────────────
 
+// A client that asks for the sync name gets the sync identity certificate
+// (sync/identity.js), which instances pin. Everyone else, a client sending no
+// name included, gets the server's own context: the web certificate, as
+// setSecureContext last left it, so a renewal or an upload still lands.
+function sniCallback(servername, done) {
+  let context = null;
+  if (servername === SYNC_SERVER_NAME) {
+    try {
+      context = _syncContext() || null;
+    } catch (err) {
+      console.warn(`Sync identity certificate unavailable: ${err?.message || err}`);
+    }
+  }
+  // No context means the server's default one.
+  done(null, context || undefined);
+}
+
 function loadTlsOptions() {
-  return {
+  const options = {
     key: fs.readFileSync(_tlsKeyPath),
     cert: fs.readFileSync(_tlsCertPath),
   };
+  // Without a sync identity the server is built exactly as it always was.
+  if (_syncContext) options.SNICallback = sniCallback;
+  return options;
 }
 
 /**
  * Called once from main() at boot. Owns the initial listen. Subsequent port
  * changes via applyHttpsPortChange() close + relisten on a NEW server.
+ *
+ * `syncContext` is optional: a function returning the sync identity's
+ * tls.SecureContext, or null while there is none. It is asked on every
+ * connection that names SYNC_SERVER_NAME, on this server and on any a port
+ * change makes.
  */
-export async function startHttpsServer({ app, keyPath, certPath, onReady, setHttpsServer }) {
+export async function startHttpsServer({
+  app,
+  keyPath,
+  certPath,
+  onReady,
+  setHttpsServer,
+  syncContext = null,
+}) {
+  _syncContext = typeof syncContext === 'function' ? syncContext : null;
   _app = app;
   _tlsKeyPath = keyPath;
   _tlsCertPath = certPath;

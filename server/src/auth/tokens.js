@@ -4,6 +4,7 @@
 // migration 054 for why SHA-256 rather than bcrypt.
 
 import crypto from 'crypto';
+import { MEMBER, storedMode } from '../sync/mode.js';
 
 // Recognisable on sight, so a leaked string can be identified as a CIDRella
 // credential in a log or a paste without having to try it.
@@ -81,9 +82,11 @@ export function resolveApiToken(db, token) {
   const now = Date.now();
   if (isExpired(row, now)) return { error: 'Token expired' };
 
+  // A member holds a copy of api_tokens it never writes, so the stamp is the
+  // controller's alone: it shows when the token was last used there.
   if (
-    !row.last_used_at ||
-    now - new Date(row.last_used_at + 'Z').getTime() > LAST_USED_THROTTLE_MS
+    storedMode(db) !== MEMBER &&
+    (!row.last_used_at || now - new Date(row.last_used_at + 'Z').getTime() > LAST_USED_THROTTLE_MS)
   ) {
     db.prepare("UPDATE api_tokens SET last_used_at = datetime('now') WHERE id = ?").run(row.id);
   }

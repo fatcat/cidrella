@@ -258,6 +258,24 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `sync/changes.js` (`exportChanges`, `parseChanges`, `applyChanges`: a copy made from the
   log, delta or snapshot; the loopback test is `tests/integration/sync-loopback.test.js`, and
   a new kind of write to the data of record gets a case in its `randomWrite`),
+  `sync/mode.js` (`isMember`, `instanceMode`, `controllerOf`, `memberRefusal`: is this box a
+  member, and of what; `storedMode(db)` in `sync/log.js` for code that has a handle and must
+  not import the database module), `sync/identity.js` (the sync identity certificate and its
+  fingerprint; `writeSelfSignedCert` in `utils/cert.js` makes it), `syncRequest` in
+  `utils/sync-client.js` (the only call from one instance to another: pinned to that
+  certificate, never the system trust store), `sync/member.js` (`joinController`,
+  `startMemberSync`, `syncOnce`, `sendOutbox`; a table the DNS proxy caches gets an entry in
+  its `RELOADS`), `models/sync-instance.js` (instances, join tokens, credentials),
+  `memberWriteGate` and `MEMBER_ALLOWED` in `sync/write-gate.js` (a write route a member may
+  serve is listed there with its reason; unlisted is refused), `insertAuditRow` in
+  `models/audit-log.js` (on a member the row waits in `sync_outbox`), `memberSink` in
+  `sync/facts.js`, tests' `makeMember` in `tests/helpers/member-mode.js` (a member's guards
+  refuse `INSERT OR IGNORE` and upserts on the data of record too, whatever the values:
+  `tests/integration/member-tripwire.test.js` runs a member's own work against them, and work
+  a member starts by itself gets a line there), client `utils/instances.js` (the one wording
+  for sync state, the header chip and how far behind), `useFeatures().instance`/`isMember`,
+  `readOnly` in the auth store and `usePermissions` (`can()` refuses every `:write` on a
+  member),
   `onDhcpRendered` in
   `services/backend-apply.js` (work to do in a DHCP apply once the config is written; an apply
   itself writes nothing to the database), `repairEstateAtBoot` and `startControllerJobs` in

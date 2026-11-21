@@ -125,14 +125,3 @@ async function submit() {
   }
 }
 </script>
-
-<style scoped>
-.fr-cards-2 {
-  grid-template-columns: repeat(2, 1fr);
-}
-@media (max-width: 720px) {
-  .fr-cards-2 {
-    grid-template-columns: 1fr;
-  }
-}
-</style>

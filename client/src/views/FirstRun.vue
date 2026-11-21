@@ -10,7 +10,7 @@
           <li
             v-for="s in STEPS"
             :key="s.n"
-            :class="{ active: step === s.n, done: step > s.n }"
+            :class="{ active: !branch && step === s.n, done: step > s.n }"
             :data-step="s.n"
           >
             <span class="fr-step-n">{{ s.n }}</span>
@@ -30,7 +30,9 @@
           <i class="pi pi-spinner pi-spin"></i>
         </div>
         <template v-else>
-          <StepPassword v-if="step === 1" @next="go(2)" />
+          <StepSetupKind v-if="branch === 'choose'" @setup="go(2)" @join="branch = 'join'" />
+          <StepJoin v-else-if="branch === 'join'" @back="branch = 'choose'" />
+          <StepPassword v-else-if="step === 1" @next="chooseKind" />
           <StepTwoFactor v-else-if="step === 2" @next="go(3)" />
           <StepDeployment v-else-if="step === 3" @next="go(4)" @back="go(2)" />
           <StepImport v-else-if="step === 4" @next="go(5)" @back="go(3)" />
@@ -61,6 +63,8 @@ import { useToast } from '../ui/useToast.js';
 import api from '../api/client.js';
 import { apiError } from '../utils/format.js';
 import StepPassword from '../components/first-run/StepPassword.vue';
+import StepSetupKind from '../components/first-run/StepSetupKind.vue';
+import StepJoin from '../components/first-run/StepJoin.vue';
 import StepTwoFactor from '../components/first-run/StepTwoFactor.vue';
 import StepDeployment from '../components/first-run/StepDeployment.vue';
 import StepImport from '../components/first-run/StepImport.vue';
@@ -70,7 +74,10 @@ import StepReview from '../components/first-run/StepReview.vue';
 // one-time password, optionally add a second factor, say what this appliance
 // does and on which interfaces, say what it brings with it, then Start
 // applies the lot and opens the workspace. Nothing but the password touches the appliance before Start, so
-// closing the tab halfway through leaves it exactly as installed. The server
+// closing the tab halfway through leaves it exactly as installed. Between the
+// password and the second factor sits one question outside the numbered
+// steps: set this box up, or join it to a controller as a member (which ends
+// the wizard: the controller's data and accounts replace this box's). The server
 // keeps a marker per finished step (stores/setup.js) so a return visit
 // resumes at the step that was not finished.
 
@@ -98,6 +105,10 @@ const pihole = usePiholeImport({ toast, fallbackZoneName: () => setup.draft.netw
 provide('firstRunPihole', pihole);
 
 const step = ref(1);
+// The question after the password: 'choose' asks it, 'join' is the join form,
+// null is the numbered steps. Nothing is saved for it, so a setup resumed
+// before its two-factor answer is asked again.
+const branch = ref(null);
 const starting = ref(false);
 const restarting = ref(false);
 const progress = ref('');
@@ -122,8 +133,14 @@ function subtitleFor(n) {
 
 function go(n) {
   error.value = '';
+  branch.value = null;
   step.value = n;
   window.scrollTo({ top: 0 });
+}
+
+function chooseKind() {
+  go(2);
+  branch.value = 'choose';
 }
 
 onMounted(async () => {
@@ -133,6 +150,7 @@ onMounted(async () => {
     error.value = apiError(err);
   }
   step.value = firstUnfinishedStep();
+  if (step.value === 2) branch.value = 'choose';
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -376,6 +394,9 @@ async function start() {
   font-weight: 500;
   font-size: 0.9rem;
 }
+.fr-gap {
+  margin-top: 18px;
+}
 .fr-help {
   font-size: 0.8rem;
   color: var(--cid-text-muted-color);
@@ -404,6 +425,9 @@ async function start() {
   display: grid;
   grid-template-columns: repeat(3, 1fr);
   gap: 12px;
+}
+.fr-cards-2 {
+  grid-template-columns: repeat(2, 1fr);
 }
 .fr-card {
   text-align: left;

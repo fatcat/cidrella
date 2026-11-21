@@ -85,7 +85,13 @@ export const TABLES = {
   settings: estate('key', { hooks: [DNS, DHCP, RESOLVER] }),
   subnets: estate('id', { hooks: [DNS, DHCP] }),
   // The change log itself and this box's place in it (sync/log.js).
+  // What the controller last heard from an instance is the controller's own.
+  sync_instances: estate('id', {
+    hostColumns: ['last_contact_at', 'cursor', 'version', 'schema_version'],
+  }),
+  sync_join_tokens: host,
   sync_log: host,
+  sync_outbox: host,
   sync_state: host,
   user_backup_codes: estate(),
   users: estate(),

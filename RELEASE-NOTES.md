@@ -19,8 +19,22 @@ members that keep serving DNS and DHCP from a synced copy.
 
 ### Known issues
 
-- **In development.** Only the groundwork is in so far. There is no second instance to add yet,
-  and a single box behaves as it did in 0.6.4.
+- **In development.** A second CIDRella can join as a member and serve DNS from a copy of the
+  data, but it cannot run DHCP or become the controller yet, and DHCP clients are not told about
+  it. What a member observes (queries, clients seen) stays on the member for now.
+
+### New
+
+- **Members.** A new install can join an existing CIDRella instead of being set up on its own:
+  choose **Join an existing CIDRella** during the first run and enter the other box's address
+  and a join token from its **Settings > System > Instances** page. The box that was there first
+  is the controller: it owns the data and every change is made there. A member keeps a copy that
+  follows the controller within seconds, answers DNS from it, and keeps answering when the
+  controller is away. Its pages are read-only, and you sign in to it with the controller's
+  accounts.
+- **A member is as sensitive as the controller.** It holds the whole copy, password hashes and
+  two-factor secrets included, so that you can sign in to it while the controller is down.
+- A single CIDRella is a controller with no members and looks as it did.
 
 ### Changed
 
@@ -41,6 +55,10 @@ members that keep serving DNS and DHCP from a synced copy.
   delta or a snapshot. A restore, a rolled-back update and a migration each start a new
   dataset. `INSERT OR REPLACE` into a table of the data of record is refused by
   `check-db-ownership`.
+- Member mode (phase 2, migration 096): `sync_instances`, a sync identity certificate served by
+  SNI on the web port, pairing by join token, `/api/sync/*` for instances and `/api/instances`
+  for admins, `startMemberSync`, the member write gate and guard triggers. `GET /api/features`
+  carries `instance`, and the permission projection carries `read_only`.
 
 ## v0.6.4 — 2026-11-16
 

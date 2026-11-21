@@ -108,24 +108,47 @@ export function certNeedsRenewal(certPath, now = Date.now()) {
   return left !== null && left <= RENEW_BEFORE_DAYS && isSelfGeneratedCert(certPath);
 }
 
-function generateCert(san) {
+/**
+ * One self-signed certificate and its key, made by openssl. Every certificate
+ * CIDRella generates comes through here: the web certificate below, and the
+ * sync identity in sync/identity.js. Throws what openssl throws.
+ */
+export function writeSelfSignedCert({
+  keyPath,
+  certPath,
+  subject,
+  days,
+  san = null,
+  keyType = 'rsa:2048',
+}) {
   const args = [
     'req',
     '-x509',
     '-newkey',
-    'rsa:2048',
+    keyType,
     '-keyout',
-    keyFilePath,
+    keyPath,
     '-out',
-    certFilePath,
+    certPath,
     '-days',
-    '365',
+    String(days),
     '-nodes',
     '-subj',
-    '/CN=cidrella/O=CIDRella/C=US',
+    subject,
   ];
+  if (san) args.push('-addext', `subjectAltName=${san}`);
+  execFileSync('openssl', args, { stdio: 'pipe' });
+}
+
+function generateCert(san) {
+  const spec = {
+    keyPath: keyFilePath,
+    certPath: certFilePath,
+    subject: '/CN=cidrella/O=CIDRella/C=US',
+    days: 365,
+  };
   try {
-    execFileSync('openssl', [...args, '-addext', `subjectAltName=${san}`], { stdio: 'pipe' });
+    writeSelfSignedCert({ ...spec, san });
     console.log(`Self-signed certificate generated (${san})`);
   } catch (err) {
     // -addext needs OpenSSL 1.1.1+. Falling back keeps the appliance bootable
@@ -135,7 +158,7 @@ function generateCert(san) {
         'Falling back to a certificate without one. Browsers will reject it by name, ' +
         'so reach the UI by IP or install a certificate of your own.',
     );
-    execFileSync('openssl', args, { stdio: 'pipe' });
+    writeSelfSignedCert(spec);
     console.log('Self-signed certificate generated (no subjectAltName)');
   }
 }

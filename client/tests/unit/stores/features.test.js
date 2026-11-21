@@ -44,4 +44,50 @@ describe('features store', () => {
     store.set({});
     expect(store.ipv6).toBe(false);
   });
+
+  it('reads as a single box until the server says otherwise', () => {
+    const store = useFeaturesStore();
+    expect(store.instance).toEqual({
+      mode: 'controller',
+      controller_name: null,
+      members: 0,
+      sync: null,
+    });
+    expect(store.isMember).toBe(false);
+    // A server older than 0.7.0 sends no instance at all.
+    store.set({ ipv6: true });
+    expect(store.instance.mode).toBe('controller');
+    expect(store.isMember).toBe(false);
+  });
+
+  it('exposes the instance mode from /features', async () => {
+    api.get.mockResolvedValueOnce({
+      data: {
+        instance: {
+          mode: 'member',
+          controller_name: 'ns1',
+          members: 0,
+          sync: { state: 'behind', last_sync_at: '2026-11-21T10:00:00Z', last_error: null },
+        },
+      },
+    });
+    const store = useFeaturesStore();
+    await store.load();
+    expect(store.isMember).toBe(true);
+    expect(store.instance.controller_name).toBe('ns1');
+    expect(store.instance.sync.state).toBe('behind');
+
+    store.set({ instance: { mode: 'controller', controller_name: null, members: 2, sync: null } });
+    expect(store.isMember).toBe(false);
+    expect(store.instance.members).toBe(2);
+  });
+
+  it('reset makes the next navigation read the features again', async () => {
+    api.get.mockResolvedValue({ data: {} });
+    const store = useFeaturesStore();
+    await store.load();
+    expect(store.loaded).toBe(true);
+    store.reset();
+    expect(store.loaded).toBe(false);
+  });
 });

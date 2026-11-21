@@ -747,6 +747,39 @@ already hold on a single box.
   aside, the log rows are mirrored, foreign keys are checked at the end, and
   the applies the changed tables call for (`hooks` in the registry) are
   queued. Nothing sends this between machines yet.
+- **Instance mode.** A box is a controller or a member (`sync_state.mode`,
+  read through `server/src/sync/mode.js`). A single box is a controller with
+  no members. A member holds a copy of the data of record, serves DNS from
+  it, and never writes it.
+- **Instances trust a pinned certificate.** Each box has a sync identity in
+  `DATA_DIR/sync/` (`sync/identity.js`): a certificate made once and never
+  replaced, served on the web port to a TLS client that asks for the name
+  `cidrella-sync`. `utils/sync-client.js` is the only client that calls
+  another instance, and its one trust decision is that certificate's SHA-256.
+  The web certificate is not involved, so replacing it breaks nothing.
+- **Pairing.** The controller makes a join token (one use, 15 minutes, hashed
+  at rest) that carries its own certificate fingerprint, so the joining box
+  trusts nothing on first use. `POST /api/sync/join` trades it for a
+  credential, stored hashed in `sync_instances` and in a 0600 file on the
+  member. `joinController` in `sync/member.js` then takes a snapshot, marks
+  the box a member and exits for the service manager to restart it.
+- **A member follows.** `startMemberSync` asks `GET /api/sync/changes` for
+  what it is missing, one request at a time; with nothing to send the
+  controller holds the request until something changes. A controller on
+  another schema pauses the sync and the member keeps serving. After an
+  apply the DNS and DHCP servers follow through the registry's hooks and the
+  DNS proxy through the reload table in `sync/member.js`.
+- **A member cannot write the data of record.** Three layers: the UI gets a
+  permission projection with no write permission (`auth/roles.js`);
+  `memberWriteGate` (`sync/write-gate.js`) refuses every write request not
+  on its allowlist of requests about this box alone; and guard triggers
+  (`ensureSyncTriggers` in member mode) abort any write to an estate row or
+  column from anything but the sync apply. Boot skips the repairs and
+  seeding that change that data, the controller's jobs do not start, what
+  the box observes goes to `memberSink` (dropped until phase 4), and an
+  audit row waits in `sync_outbox`.
+  `tests/integration/member-tripwire.test.js` runs a member's own work
+  against the guards.
 
 ## Security and Operations Boundaries
 

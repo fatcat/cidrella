@@ -1,7 +1,10 @@
 # Controller and members: redundant CIDRella instances
 
-Status: design accepted 2026-11-11, target 0.7.0. Phases 0 and 1 are done on `dev/0.7.0`
-(2026-11-21); phases 2 to 7 are not started. Changed from this design while building phase 1:
+Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 2 are done on `dev/0.7.0`
+(2026-11-21); phases 3 to 7 are not started. Changed while building phase 2: the guard triggers
+need no flag, since the apply sets every trigger on the tables aside; a join ends with the
+process exiting so it restarts as a member; a member's audit rows wait in `sync_outbox` and
+its other observations are dropped until phase 4. Changed from this design while building phase 1:
 the HTTP endpoint for changes waits for phase 2, where the credential that guards it is made
 (the export and apply are functions until then); a replaced database is detected by a token
 written at every boot (`DATA_DIR/sync/incarnation`) and a restore marks the database it brings

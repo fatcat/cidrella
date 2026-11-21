@@ -35,6 +35,7 @@ const ALLOWED = new Map(
     "version.js POST '/update-dismiss'": 'hides an update notice for one viewer',
     "routes.js POST '/totp/setup'": 'starts enrolment; enabling it is recorded',
     "routes.js POST '/activity'": 'keeps a session alive',
+    "sync.js POST '/outbox'": 'writes the audit rows a member sends',
     "routes.js PUT '/preferences'": 'one user’s display preferences',
   }),
 );

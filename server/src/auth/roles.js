@@ -1,3 +1,5 @@
+import { isMember } from '../sync/mode.js';
+
 // Role definitions and permission checks
 //
 // Scope vocabulary: dns:*, dhcp:*, subnets:* (IPAM), analytics:read, and
@@ -68,10 +70,18 @@ export function permissionsForRole(role) {
   return [...(ROLES[role]?.permissions || [])];
 }
 
-export function permissionProjection(role) {
+/**
+ * What the client is told a role may do. On a member nothing can be changed
+ * (sync/write-gate.js refuses the request), so the write permissions are left
+ * out and `read_only` says why. This is for the UI alone: requirePerm,
+ * hasPermission and requireRole still answer from ROLES.
+ */
+export function permissionProjection(role, { member = isMember() } = {}) {
+  const permissions = permissionsForRole(role);
   return {
-    permissions: permissionsForRole(role),
+    permissions: member ? permissions.filter((p) => !p.endsWith(':write')) : permissions,
     is_admin: isSuperuser(role),
+    read_only: member,
   };
 }
 

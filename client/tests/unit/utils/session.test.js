@@ -30,6 +30,17 @@ describe('sign-out reasons', () => {
     expect(takeSignOutMessage()).toMatch(text);
   });
 
+  it('names the controller a box joined at first run', () => {
+    rememberSignOut('joined', null, 'ns1');
+    expect(takeSignOutMessage()).toBe(
+      'This CIDRella is now a member of ns1. Sign in with an account from ns1.',
+    );
+    rememberSignOut('joined');
+    expect(takeSignOutMessage()).toMatch(
+      /now a member\. Sign in with an account from its controller/,
+    );
+  });
+
   it('says nothing when nothing ended a session', () => {
     expect(takeSignOutMessage()).toBeNull();
   });

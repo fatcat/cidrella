@@ -14,6 +14,9 @@ export const useAuthStore = defineStore('auth', () => {
   const setupRequired = computed(() => user.value?.setup_required === true);
   const permissions = computed(() => user.value?.permissions || []);
   const isAdmin = computed(() => user.value?.is_admin === true);
+  // On a member every account is read-only: the data belongs to the
+  // controller. An admin is still an admin for what acts on this box alone.
+  const readOnly = computed(() => user.value?.read_only === true);
   // Set if the current password was installed via a CLI reset rather than a
   // normal first-time login. The string is the actor label recorded by
   // reset-password.js, e.g. "cli:root@cidrella-prod". Cleared after a
@@ -129,9 +132,10 @@ export const useAuthStore = defineStore('auth', () => {
 
   // Forget the session in this browser. `reason` is shown on the sign-in
   // page; the server has already ended the session, or signOut asks it to.
-  function logout(reason = null) {
+  // `detail` is what the reason's message names (the controller a box joined).
+  function logout(reason = null, detail = null) {
     if (reason) {
-      rememberSignOut(reason, session.value?.idleTimeoutSeconds);
+      rememberSignOut(reason, session.value?.idleTimeoutSeconds, detail);
     }
     token.value = null;
     user.value = null;
@@ -160,6 +164,7 @@ export const useAuthStore = defineStore('auth', () => {
     setupRequired,
     permissions,
     isAdmin,
+    readOnly,
     passwordResetBy,
     preferences,
     timeFormat,

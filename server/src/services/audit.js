@@ -14,7 +14,8 @@
  *
  * The actor comes from the request the work runs under (utils/request-actor.js),
  * so a daemon restart that a person's edit caused is theirs; work outside any
- * request is the system's. models/audit-log.js does the write.
+ * request is the system's. models/audit-log.js does the write, and on a member
+ * queues the row for the controller instead.
  */
 import { getDb } from '../db/init.js';
 import { insertAuditRow } from '../models/audit-log.js';
@@ -94,7 +95,7 @@ function maskDetails(details) {
  *   actor, userId, origin, sourceIp  override what the request says (sign-in,
  *               before a session exists)
  *
- * Returns true when a row was written.
+ * Returns true when a row was written (on a member: queued for the controller).
  */
 export function recordAudit({
   action,

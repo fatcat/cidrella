@@ -5,6 +5,7 @@
  * set here).
  */
 import { onDhcpRendered } from './backend-apply.js';
+import { MEMBER, storedMode } from '../sync/log.js';
 import { findSubnetForIp } from '../utils/ip-sync.js';
 import { generateFallbackHostname } from '../utils/mac-vendor.js';
 import { assignLeaseNames, replaceLeases, syncDhcpDnsRecords } from '../models/dhcp-lease.js';
@@ -83,5 +84,6 @@ export function syncStoredDhcpNames(db) {
  * alone. Returns the stop.
  */
 export function startDhcpNameSync() {
-  return onDhcpRendered(syncStoredDhcpNames);
+  // A member renders what its controller named: the records are not its own.
+  return onDhcpRendered((db) => (storedMode(db) === MEMBER ? undefined : syncStoredDhcpNames(db)));
 }

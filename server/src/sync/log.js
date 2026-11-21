@@ -19,7 +19,13 @@ import path from 'path';
 import { SETTINGS, TABLES } from './registry.js';
 
 const TRIGGER_PREFIX = 'sync_log_';
+const GUARD_PREFIX = 'sync_guard_';
 const ESTATE = 'estate';
+
+export const CONTROLLER = 'controller';
+export const MEMBER = 'member';
+// What a refused write on a member says. Tests and logs look for it.
+export const GUARD_MESSAGE = 'cidrella-member-guard: the data of record is read-only on a member';
 
 const quote = (text) => `'${String(text).replaceAll("'", "''")}'`;
 
@@ -84,20 +90,54 @@ END`,
   };
 }
 
+// On a member nothing but the sync apply may change the data of record: a
+// write to it is refused in the database itself, so a stray job, raw SQL or a
+// second connection cannot make the copy differ. Host rows and host columns
+// stay writable. The apply sets these aside with every other trigger
+// (sync/changes.js).
+function guardSql(table) {
+  const { name } = table;
+  const refuse = `SELECT RAISE(ABORT, ${quote(GUARD_MESSAGE)})`;
+  const changed = table.columns.map((column) => `OLD.${column} IS NOT NEW.${column}`).join(' OR ');
+  return {
+    [`${GUARD_PREFIX}${name}_bi`]: `CREATE TRIGGER ${GUARD_PREFIX}${name}_bi BEFORE INSERT ON ${name} WHEN ${table.isEstateRow('NEW')} BEGIN
+  ${refuse};
+END`,
+    [`${GUARD_PREFIX}${name}_bu`]: `CREATE TRIGGER ${GUARD_PREFIX}${name}_bu BEFORE UPDATE ON ${name} WHEN (${changed}) AND (${table.isEstateRow('OLD')} OR ${table.isEstateRow('NEW')}) BEGIN
+  ${refuse};
+END`,
+    [`${GUARD_PREFIX}${name}_bd`]: `CREATE TRIGGER ${GUARD_PREFIX}${name}_bd BEFORE DELETE ON ${name} WHEN ${table.isEstateRow('OLD')} BEGIN
+  ${refuse};
+END`,
+  };
+}
+
 const installedTriggers = (db) =>
   db
     .prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger'")
     .all()
-    .filter((row) => row.name.startsWith(TRIGGER_PREFIX));
+    .filter((row) => row.name.startsWith(TRIGGER_PREFIX) || row.name.startsWith(GUARD_PREFIX));
 
-/** Remove the log triggers. A migration runs without them: a rebuild drops them anyway. */
+/** Remove the log and guard triggers. A migration runs without them: a rebuild drops them anyway. */
 export function dropSyncTriggers(db) {
   for (const { name } of installedTriggers(db)) db.exec(`DROP TRIGGER ${name}`);
 }
 
-/** Make the log triggers match the registry and the schema. Returns how many changed. */
-export function ensureSyncTriggers(db) {
-  const wanted = Object.assign({}, ...estateTables(db).map(triggerSql));
+/** The mode stored in `db`. A database from before instances is a controller's. */
+export function storedMode(db) {
+  const hasState = db
+    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_state'")
+    .get();
+  return hasState && readSyncState(db, 'mode') === MEMBER ? MEMBER : CONTROLLER;
+}
+
+/**
+ * Make the triggers match the mode, the registry and the schema: the log
+ * triggers on a controller, the guards on a member. Returns how many changed.
+ */
+export function ensureSyncTriggers(db, mode = storedMode(db)) {
+  const build = mode === MEMBER ? guardSql : triggerSql;
+  const wanted = Object.assign({}, ...estateTables(db).map(build));
   let changed = 0;
   db.transaction(() => {
     const installed = new Map(installedTriggers(db).map((row) => [row.name, row.sql]));
@@ -128,9 +168,7 @@ export function writeSyncState(db, key, value) {
 
 /** The newest seq the log has ever given out. */
 export function syncHead(db) {
-  return (
-    db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'sync_log'").get()?.seq ?? 0
-  );
+  return db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'sync_log'").get()?.seq ?? 0;
 }
 
 /** { dataset, epoch, floor, head, schema }: what a copy must match to take a delta. */
@@ -182,17 +220,21 @@ export function forgetDataset(db) {
 }
 
 /**
- * Boot, after the migrations: put the triggers right, and start a new dataset
- * when the log cannot vouch for this database. That is when it has never had
- * one (or a restore brought it in, forgetDataset), when a migration ran (it
+ * Boot, after the migrations: put the triggers right, and start over when the
+ * log cannot vouch for this database. That is when it has never had a dataset
+ * (or a restore brought it in, forgetDataset), when a migration ran (it
  * changes rows with the triggers off), and when the database file is not the
  * one this data directory last booted: every boot writes a fresh token into
  * the database and into DATA_DIR/sync/incarnation, which no backup or update
  * snapshot carries, so a database put back from before does not match it.
- * Returns { dataset, started } where started says why a new one began.
+ *
+ * Starting over is a new dataset on a controller. On a member, whose dataset
+ * is its controller's, it is forgetting the cursor: the next sync is a
+ * snapshot. Returns { dataset, started } where started says why.
  */
 export function ensureSyncLog(db, dataDir) {
-  const triggersChanged = ensureSyncTriggers(db) > 0;
+  const mode = storedMode(db);
+  const triggersChanged = ensureSyncTriggers(db, mode) > 0;
   const dataset = readSyncState(db, 'dataset');
   let started = null;
   if (!dataset) started = 'first run';
@@ -202,13 +244,19 @@ export function ensureSyncLog(db, dataDir) {
   }
   // What counts as data of record changed with no migration: rows that now
   // belong were never logged.
-  else if (triggersChanged) started = 'what is logged changed';
+  else if (triggersChanged && mode !== MEMBER) started = 'what is logged changed';
 
   const incarnation = crypto.randomUUID();
   writeSyncState(db, 'incarnation', incarnation);
   fs.mkdirSync(path.dirname(incarnationFile(dataDir)), { recursive: true });
   fs.writeFileSync(incarnationFile(dataDir), `${incarnation}\n`, { mode: 0o600 });
-  return { dataset: started ? startNewDataset(db) : dataset, started };
+  if (!started) return { dataset, started };
+  if (mode === MEMBER) {
+    db.prepare("DELETE FROM sync_state WHERE key = 'cursor'").run();
+    writeSyncState(db, 'schema', schemaVersion(db));
+    return { dataset, started };
+  }
+  return { dataset: startNewDataset(db), started };
 }
 
 /**

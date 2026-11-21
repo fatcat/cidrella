@@ -27,12 +27,47 @@ describe('ROLES', () => {
 
 describe('client permission projection', () => {
   it('projects the server-owned role grants and superuser flag', () => {
-    expect(permissionProjection('admin')).toEqual({ permissions: ['*'], is_admin: true });
-    expect(permissionProjection('dns_admin')).toEqual({
+    const on = { member: false };
+    expect(permissionProjection('admin', on)).toEqual({
+      permissions: ['*'],
+      is_admin: true,
+      read_only: false,
+    });
+    expect(permissionProjection('dns_admin', on)).toEqual({
       permissions: ROLES.dns_admin.permissions,
       is_admin: false,
+      read_only: false,
     });
-    expect(permissionProjection('unknown')).toEqual({ permissions: [], is_admin: false });
+    expect(permissionProjection('unknown', on)).toEqual({
+      permissions: [],
+      is_admin: false,
+      read_only: false,
+    });
+  });
+
+  it('leaves the write permissions out on a member', () => {
+    const on = { member: true };
+    expect(permissionProjection('dns_admin', on)).toEqual({
+      permissions: ['dns:read', 'subnets:read', 'system:read', 'analytics:read'],
+      is_admin: false,
+      read_only: true,
+    });
+    expect(permissionProjection('readonly', on)).toEqual({
+      permissions: ROLES.readonly.permissions,
+      is_admin: false,
+      read_only: true,
+    });
+    // The wildcard is not a write permission by name; read_only is what tells
+    // the client an admin cannot change anything here.
+    expect(permissionProjection('admin', on)).toEqual({
+      permissions: ['*'],
+      is_admin: true,
+      read_only: true,
+    });
+    for (const role of Object.keys(ROLES)) {
+      const { permissions } = permissionProjection(role, on);
+      expect(permissions.filter((p) => p.endsWith(':write'))).toEqual([]);
+    }
   });
 
   it('does not expose the mutable authority array', () => {

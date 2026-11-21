@@ -29,7 +29,7 @@ import { reconcileManagedReverseDns } from './models/dns-record.js';
 import * as AuditLog from './models/audit-log.js';
 import * as Session from './models/session.js';
 import { DATA_DIR, AUDIT_PRUNE_INTERVAL_MS } from './config/defaults.js';
-import { startHttpsServer, applyHttpRedirectConfig } from './utils/http-server.js';
+import { startHttpsServer, applyHttpRedirectConfig, getHttpsPort } from './utils/http-server.js';
 import { sanitizeForLog } from './utils/validation.js';
 import { authMiddleware } from './auth/middleware.js';
 import { actorMiddleware } from './utils/request-actor.js';
@@ -43,6 +43,7 @@ import {
 import authRoutes from './auth/routes.js';
 import healthRoutes from './routes/health.js';
 import featuresRoutes from './routes/features.js';
+import instanceRoutes from './routes/instances.js';
 import backendStackRoutes from './routes/backend-stack.js';
 import { BackendFeatureError } from './utils/backend-features.js';
 import subnetRoutes from './routes/subnets.js';
@@ -69,6 +70,12 @@ import { ensureCerts, renewCertIfDue, setHttpsServer } from './utils/cert.js';
 import { startLeaseSync } from './services/dhcp-lease-sync.js';
 import { startDhcpNameSync } from './services/dhcp-lease-ingest.js';
 import { pruneTombstones } from './sync/log.js';
+import { memberSink, setFactsSink } from './sync/facts.js';
+import { ensureSyncIdentity, syncSecureContext } from './sync/identity.js';
+import { startMemberSync } from './sync/member.js';
+import { isMember } from './sync/mode.js';
+import { memberWriteGate } from './sync/write-gate.js';
+import { ensureOwnInstance, lowestMemberCursor } from './models/sync-instance.js';
 import { syncServerDnsDefault } from './models/dhcp-option.js';
 import { migrateLegacyScopeOptions, cleanupRedundantGatewayOptions } from './models/dhcp-option.js';
 import { canonicalizeExisting as canonicalizeGeoipAllowlist } from './models/geoip-ip-allowlist.js';
@@ -210,10 +217,11 @@ function startControllerJobs(db) {
   pruneAuditLog();
   setInterval(pruneAuditLog, AUDIT_PRUNE_INTERVAL_MS);
 
-  // Deletes every copy has taken leave the change log. No copies yet, so all.
+  // Deletes every member has taken leave the change log: all of them when
+  // there are no members.
   setInterval(() => {
     try {
-      pruneTombstones(db);
+      pruneTombstones(db, lowestMemberCursor(db) ?? undefined);
     } catch (err) {
       console.error('Change log prune error:', err.message);
     }
@@ -277,7 +285,21 @@ async function main() {
   // rewritten and nothing is signaled.
   queueRegen('regenerate_dns');
 
-  repairEstateAtBoot(getDb());
+  // A member holds a copy of the data of record: its controller repairs it,
+  // and what this box observes is not written here (the remote sink that
+  // sends it to the controller comes with phase 4 of the plan).
+  const member = isMember();
+  const syncIdentity = ensureSyncIdentity(DATA_DIR);
+  if (member) {
+    setFactsSink(memberSink);
+  } else {
+    repairEstateAtBoot(getDb());
+    ensureOwnInstance(getDb(), {
+      fingerprint: syncIdentity.fingerprint,
+      port: getHttpsPort(),
+      version: APP_VERSION,
+    });
+  }
 
   // Sweep abandoned restore-staging files from a prior crashed restore.
   // A SIGKILL/OOM between upload-start and cleanup strands multi-GB files
@@ -351,7 +373,8 @@ async function main() {
   // 3. Start schedulers
   startBlocklistScheduler();
   startGeoipScheduler();
-  startControllerJobs(getDb());
+  if (member) startMemberSync(getDb());
+  else startControllerJobs(getDb());
 
   // Start MAC vendor database auto-refresh (every 24h)
   startVendorScheduler();
@@ -492,10 +515,17 @@ async function main() {
   const { default: internalAnalyticsRoutes } = await import('./routes/internal-analytics.js');
   app.use('/api/internal/analytics', internalAnalyticsRoutes);
 
+  // What instances say to each other, by a member's credential or a join
+  // token rather than a user's session.
+  const { default: syncRoutes } = await import('./routes/sync.js');
+  app.use('/api/sync', syncRoutes);
+
   // Auth middleware for API routes
   app.use(authMiddleware);
   // Names the signed-in user on the records written for this request.
   app.use(actorMiddleware);
+  // A member changes nothing in the data of record: the controller does.
+  app.use(memberWriteGate);
 
   // v0.4.15: authenticated write rate-limiter. v0.4.14 had only the login
   // limiter, so a compromised/bought token could fill the DB, thrash dnsmasq
@@ -545,6 +575,7 @@ async function main() {
   app.use('/api/setup', setupRoutes);
   app.use('/api/health', healthRoutes);
   app.use('/api/features', featuresRoutes);
+  app.use('/api/instances', instanceRoutes);
   app.use('/api/subnets', subnetRoutes);
   app.use('/api/range-types', rangeTypeRoutes);
   app.use('/api/settings', settingsRoutes);
@@ -671,6 +702,7 @@ h1{color:#e74c3c;margin:0 0 1rem}p{color:#666}</style>
     keyPath,
     certPath,
     setHttpsServer,
+    syncContext: () => syncSecureContext(DATA_DIR),
     onReady: () => {
       try {
         markBackendReady();

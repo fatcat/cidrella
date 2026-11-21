@@ -165,6 +165,14 @@ function mountWizard(state, { servers = null } = {}) {
 }
 
 const stepOf = (w) => Number(w.find('.fr-steps li.active').attributes('data-step'));
+// After the password comes the question outside the numbered steps: set this
+// box up, or join a controller.
+const atKindQuestion = (w) => w.find('[data-track="first-run-step-kind"]').exists();
+async function pickKind(w, kind) {
+  await w.find(`[data-track="first-run-kind-${kind}"]`).trigger('click');
+  await w.find('[data-track="first-run-kind-continue"]').trigger('click');
+  await flushPromises();
+}
 const setInput = async (w, sel, value) => {
   const el = w.find(sel);
   el.element.value = value;
@@ -232,10 +240,14 @@ describe('resume', () => {
     w.unmount();
   });
 
-  it('stops at the two-factor step when the password is done but no choice was made', async () => {
+  it('asks set up or join, then the two-factor step, when the password is done and nothing else', async () => {
     auth.mustChangePassword = false;
     const w = mountWizard(serverState({ password: true }));
     await flushPromises();
+    expect(atKindQuestion(w)).toBe(true);
+    expect(w.find('.fr-steps li.active').exists()).toBe(false);
+    expect(w.find('[data-track="first-run-kind-continue"]').attributes('disabled')).toBeDefined();
+    await pickKind(w, 'setup');
     expect(stepOf(w)).toBe(2);
     w.unmount();
   });
@@ -327,6 +339,8 @@ describe('password step', () => {
     await flushPromises();
     expect(auth.changePassword).toHaveBeenCalledWith('installer-pw', 'Strong-pass1');
     expect(api.put).toHaveBeenCalledWith('/setup/state', { password: true });
+    expect(atKindQuestion(w)).toBe(true);
+    await pickKind(w, 'setup');
     expect(stepOf(w)).toBe(2);
     w.unmount();
   });
@@ -354,6 +368,7 @@ describe('two-factor step', () => {
     auth.mustChangePassword = false;
     const w = mountWizard(serverState({ password: true }));
     await flushPromises();
+    await pickKind(w, 'setup');
     expect(stepOf(w)).toBe(2);
     return w;
   }
@@ -704,6 +719,93 @@ describe('import step and start', () => {
     expect(router.push).toHaveBeenCalledWith({ name: 'Login' });
     vi.useRealTimers();
     vi.unstubAllGlobals();
+    w.unmount();
+  });
+});
+
+describe('join an existing CIDRella', () => {
+  async function atJoin() {
+    auth.mustChangePassword = false;
+    const w = mountWizard(serverState({ password: true }));
+    await flushPromises();
+    await pickKind(w, 'join');
+    expect(w.find('[data-track="first-run-step-join"]').exists()).toBe(true);
+    return w;
+  }
+  const join = (w) => w.find('[data-track="first-run-join-submit"]');
+  async function fill(w) {
+    await setInput(w, '#fr-join-address', ' ctl.example.net ');
+    await setInput(w, '#fr-join-token', ' tok-123 ');
+    await w.find('[data-track="first-run-join-understood"]').setValue(true);
+  }
+
+  it('says what joining replaces and holds Join until every field and the confirmation are in', async () => {
+    const w = await atJoin();
+    expect(w.text()).toContain(
+      "Joining replaces everything on this box with the controller's data",
+    );
+    expect(w.find('#fr-join-port').element.value).toBe('443');
+    expect(join(w).attributes('disabled')).toBeDefined();
+    await setInput(w, '#fr-join-address', 'ctl.example.net');
+    await setInput(w, '#fr-join-token', 'tok-123');
+    expect(join(w).attributes('disabled')).toBeDefined();
+    expect(w.text()).toContain('Confirm that this box is replaced.');
+    await w.find('[data-track="first-run-join-understood"]').setValue(true);
+    expect(join(w).attributes('disabled')).toBeUndefined();
+    expect(api.post).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it('goes back to the question without calling the server', async () => {
+    const w = await atJoin();
+    await w.find('[data-track="first-run-join-back"]').trigger('click');
+    expect(atKindQuestion(w)).toBe(true);
+    expect(api.post).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it("shows the server's error as it is and stays on the form", async () => {
+    api.post.mockRejectedValue({
+      response: {
+        status: 400,
+        data: { error: 'The join token was refused. Make a new one.', code: 'token_refused' },
+      },
+    });
+    const w = await atJoin();
+    await fill(w);
+    await w.find('form#first-run-join').trigger('submit');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/setup/join', {
+      address: 'ctl.example.net',
+      port: 443,
+      token: 'tok-123',
+    });
+    expect(w.text()).toContain('The join token was refused. Make a new one.');
+    expect(w.find('[data-track="first-run-step-join"]').exists()).toBe(true);
+    expect(auth.logout).not.toHaveBeenCalled();
+    expect(router.push).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it('on success signs out with the controller named and lands on the sign-in page', async () => {
+    api.post.mockResolvedValue({ data: { controller: { name: 'ns1' } } });
+    const { useFeaturesStore } = await import('../../../src/stores/features.js');
+    const features = useFeaturesStore();
+    features.set({ ipv6: false });
+    const w = await atJoin();
+    await fill(w);
+    await setInput(w, '#fr-join-port', '8443');
+    await w.find('form#first-run-join').trigger('submit');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/setup/join', {
+      address: 'ctl.example.net',
+      port: 8443,
+      token: 'tok-123',
+    });
+    expect(auth.logout).toHaveBeenCalledWith('joined', 'ns1');
+    // The mode changed under the open page: the next sign-in reads it again.
+    expect(features.loaded).toBe(false);
+    expect(router.push).toHaveBeenCalledWith({ name: 'Login' });
     w.unmount();
   });
 });

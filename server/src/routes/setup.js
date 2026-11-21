@@ -1,4 +1,8 @@
 import { Router } from 'express';
+import { requireRole } from '../auth/roles.js';
+import { countMembers } from '../models/sync-instance.js';
+import { isMember } from '../sync/mode.js';
+import { joinController, JoinError } from '../sync/member.js';
 import { effectivePasswordPolicy, validatePolicyPatch } from '../auth/password-policy.js';
 import { getDb } from '../db/init.js';
 import { recordAudit } from '../services/audit.js';
@@ -113,6 +117,40 @@ router.put('/state', requirePerm('system:write'), (req, res) => {
     },
   });
   res.json(stateResponse(db));
+});
+
+// POST /api/setup/join: make this box a member of an existing CIDRella. Only
+// while the first run is unfinished: joining replaces everything here with
+// the controller's data, sign-in accounts included.
+router.post('/join', requireRole('admin'), async (req, res) => {
+  const db = getDb();
+  if (isMember() || getSetupState(db).done || countMembers(db) > 0) {
+    return res.status(400).json({
+      error: 'This CIDRella is already set up. Only a new install can join another.',
+      code: 'already_set_up',
+    });
+  }
+  const { address, token } = req.body || {};
+  const port = req.body?.port === undefined ? 443 : Number(req.body.port);
+  if (typeof address !== 'string' || !address.trim() || address.length > 255) {
+    return res.status(400).json({ error: 'Enter the controller’s address.', code: 'unreachable' });
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return res.status(400).json({ error: 'The port must be 1 to 65535.', code: 'unreachable' });
+  }
+  try {
+    const joined = await joinController(db, { address, port, token });
+    // This box is a member now, so the row waits for its controller.
+    recordAudit({
+      action: 'instance_joined_controller',
+      entityType: 'instance',
+      details: { controller: joined.controller.name, address: address.trim(), port },
+    });
+    res.json(joined);
+  } catch (err) {
+    if (!(err instanceof JoinError)) throw err;
+    res.status(400).json({ error: err.message, code: err.code });
+  }
 });
 
 export default router;

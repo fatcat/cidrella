@@ -167,9 +167,6 @@ async function submit() {
 </script>
 
 <style scoped>
-.fr-gap {
-  margin-top: 18px;
-}
 .fr-policy {
   max-width: 560px;
 }

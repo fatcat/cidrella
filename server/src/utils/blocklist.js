@@ -7,6 +7,7 @@ import { BLOCKLIST_DOWNLOAD_TIMEOUT_MS, BLOCKLIST_INSERT_BATCH } from '../config
 import { openPinnedOutboundStream, TOO_LARGE_CODE } from './url-guard.js';
 import { recordAudit } from '../services/audit.js';
 import { readSetting, upsertSettingWithConflict } from '../models/setting.js';
+import { MEMBER, storedMode } from '../sync/log.js';
 import { runDbTask } from './db-worker/index.js';
 
 // Domain validation
@@ -25,9 +26,14 @@ export function ensureCategoryRows(db) {
   // blocklist_domains "in case the migration hasn't run yet", which meant two
   // sources of truth for the same DDL, and the copy here had already drifted:
   // it omitted source_url and both indexes. Migrations own the schema.
-  const insert = db.prepare('INSERT OR IGNORE INTO blocklist_categories (slug) VALUES (?)');
+  // A member holds a copy of this table: its controller adds the rows.
+  if (storedMode(db) === MEMBER) return;
+  const insert = db.prepare(
+    `INSERT INTO blocklist_categories (slug)
+     SELECT @slug WHERE NOT EXISTS (SELECT 1 FROM blocklist_categories WHERE slug = @slug)`,
+  );
   for (const cat of BLOCKLIST_CATEGORIES) {
-    insert.run(cat.slug);
+    insert.run({ slug: cat.slug });
   }
 }
 

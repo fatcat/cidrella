@@ -214,6 +214,22 @@ export const SETTINGS_AREAS = [
     ],
   },
   {
+    id: 'instances',
+    label: 'Instances',
+    icon: 'pi pi-sitemap',
+    group: 'System',
+    blurb: 'Controller and members',
+    dataTrack: 'settings-area-instances',
+    subtabs: [
+      {
+        id: 'instances',
+        label: 'Instances',
+        dataTrack: 'settings-sec-instances',
+        component: defineAsyncComponent(() => import('../views/settings/InstancesSettings.vue')),
+      },
+    ],
+  },
+  {
     id: 'preferences',
     label: 'Preferences',
     icon: 'pi pi-palette',

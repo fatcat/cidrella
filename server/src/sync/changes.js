@@ -32,6 +32,13 @@ const encode = (row) => {
 const decodeValue = (value) =>
   value !== null && typeof value === 'object' ? Buffer.from(value.$b, 'base64') : value;
 
+/** Whether a copy holding `dataset` at cursor `since` can only be given everything. */
+export function needsSnapshot(status, { dataset = null, since = null } = {}) {
+  return (
+    since === null || dataset !== status.dataset || since < status.floor || since > status.head
+  );
+}
+
 /**
  * What a copy holding `dataset` at cursor `since` needs to reach the head, as
  * one Buffer. A snapshot when the copy has no cursor, holds another dataset,
@@ -41,8 +48,7 @@ const decodeValue = (value) =>
 export function exportChanges(db, { dataset = null, since = null } = {}) {
   return db.transaction(() => {
     const status = syncStatus(db);
-    const snapshot =
-      since === null || dataset !== status.dataset || since < status.floor || since > status.head;
+    const snapshot = needsSnapshot(status, { dataset, since });
     const tables = new Map(estateTables(db).map((table) => [table.name, table]));
     const lines = [
       JSON.stringify({
@@ -75,9 +81,7 @@ export function exportChanges(db, { dataset = null, since = null } = {}) {
         if (!byKey.has(tbl)) byKey.set(tbl, select(table, `r.${table.key} = ?`));
         const row = op === 'u' ? byKey.get(tbl).get(pk) : null;
         lines.push(
-          JSON.stringify(
-            row ? { t: tbl, s: seq, row: encode(row) } : { t: tbl, s: seq, del: pk },
-          ),
+          JSON.stringify(row ? { t: tbl, s: seq, row: encode(row) } : { t: tbl, s: seq, del: pk }),
         );
       }
     }
@@ -110,7 +114,11 @@ export function parseChanges(buffer) {
     ) {
       throw new Error('the hash does not match');
     }
-    entries = text.slice(0, cut).split('\n').filter(Boolean).map((line) => JSON.parse(line));
+    entries = text
+      .slice(0, cut)
+      .split('\n')
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
   } catch (err) {
     throw new SyncError('damaged', `The changes arrived damaged: ${err.message}`);
   }
@@ -201,7 +209,9 @@ export function applyChanges(db, { header, changes }) {
           );
           if (header.snapshot && table.keepsHostColumns) {
             const sent = new Set(list.map((change) => change.row[table.key]));
-            for (const { key } of db.prepare(`SELECT ${table.key} AS key FROM ${table.name}`).all()) {
+            for (const { key } of db
+              .prepare(`SELECT ${table.key} AS key FROM ${table.name}`)
+              .all()) {
               if (!sent.has(key)) remove.run(key);
             }
           }
@@ -216,7 +226,9 @@ export function applyChanges(db, { header, changes }) {
           for (const change of list) {
             if (!change.row) continue;
             put.run(
-              Object.fromEntries(columns.map((column) => [column, decodeValue(change.row[column] ?? null)])),
+              Object.fromEntries(
+                columns.map((column) => [column, decodeValue(change.row[column] ?? null)]),
+              ),
             );
           }
         }

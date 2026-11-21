@@ -64,4 +64,45 @@ describe('server-projected permissions', () => {
     expect(auth.isAdmin).toBe(false);
     expect(access.can('subnets:read')).toBe(false);
   });
+
+  it('on a member denies every write, for an admin too, and still allows reads', async () => {
+    get.mockResolvedValue({
+      data: { role: 'admin', permissions: ['*'], is_admin: true, read_only: true },
+    });
+    const auth = useAuthStore();
+    await auth.fetchUser();
+    const access = usePermissions();
+
+    expect(auth.readOnly).toBe(true);
+    expect(access.readOnly.value).toBe(true);
+    // Still an admin, for what acts on this box alone.
+    expect(access.isAdmin.value).toBe(true);
+    expect(access.can('subnets:read')).toBe(true);
+    expect(access.can('analytics:read')).toBe(true);
+    expect(access.can('subnets:write')).toBe(false);
+    expect(access.can('system:write')).toBe(false);
+    expect(access.canAny('dns:write', 'dns:read')).toBe(true);
+    expect(access.canAll('dns:write', 'dns:read')).toBe(false);
+  });
+
+  it('on a member a listed role reads what it is given and writes nothing', async () => {
+    get.mockResolvedValue({
+      data: { role: 'dns_admin', permissions: ['dns:read', 'subnets:read'], read_only: true },
+    });
+    const auth = useAuthStore();
+    await auth.fetchUser();
+    const access = usePermissions();
+    expect(access.can('dns:read')).toBe(true);
+    expect(access.can('dns:write')).toBe(false);
+  });
+
+  it('writes are allowed where the server does not say read-only', async () => {
+    get.mockResolvedValue({
+      data: { role: 'admin', permissions: ['*'], is_admin: true, read_only: false },
+    });
+    const auth = useAuthStore();
+    await auth.fetchUser();
+    expect(auth.readOnly).toBe(false);
+    expect(usePermissions().can('subnets:write')).toBe(true);
+  });
 });

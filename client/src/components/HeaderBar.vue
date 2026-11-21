@@ -41,6 +41,16 @@
 
     <div class="header-status">
       <button
+        v-if="modeChip"
+        class="status-chip status-chip-instance"
+        data-track="header-chip-instance"
+        :title="modeChip.title"
+        @click="goToInstances"
+      >
+        <StatusDot :kind="modeChip.tone" :label="modeChip.state" />
+        <span class="status-chip-label">{{ modeChip.label }}</span>
+      </button>
+      <button
         class="status-chip status-chip-scan"
         :class="scanChipClass"
         data-track="header-chip-scan"
@@ -353,6 +363,8 @@ import Popover from '../ui/Popover.js';
 import Select from '../ui/Select.js';
 import StatusDot from './StatusDot.vue';
 import { anyBackendDown, backendUnits, unitState } from '../utils/backend-status.js';
+import { instanceChip } from '../utils/instances.js';
+import { useFeatures } from '../composables/useFeatures.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
 import { useAnomalyStore } from '../stores/anomalies.js';
@@ -499,6 +511,14 @@ const opsTitle = computed(() => {
   if (opsWarn.value) return `Operations: ${rogueDhcpCount.value} rogue DHCP server(s) detected`;
   return 'Operations: ok';
 });
+
+// Controller or member. A single box (a controller with no members) has no
+// chip. A member's sync state moves, so its chip follows the 60 s poll.
+const features = useFeatures();
+const modeChip = computed(() => instanceChip(features.instance.value));
+function goToInstances() {
+  router.push('/system?area=instances');
+}
 
 function goToRogueDhcp() {
   router.push('/system?area=dhcp&sec=rogue');
@@ -763,6 +783,7 @@ onMounted(() => {
     fetchHealth();
     refreshScanHeader();
     fetchAnomalySummary();
+    if (features.isMember.value) void features.reload();
   }, 60000);
   window.addEventListener('ipam:stats-changed', fetchHealth);
   window.addEventListener('ipam:scan-started', refreshScanHeader);

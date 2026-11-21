@@ -18,6 +18,8 @@ import {
   hashBackupCode,
   looksLikeBackupCode,
 } from './totp.js';
+import { lastTotpStep, rememberTotpStep } from './totp-step.js';
+import { controllerOf, isMember } from '../sync/mode.js';
 
 const router = Router();
 
@@ -248,6 +250,15 @@ router.post('/login/totp', loginLimiter, (req, res) => {
     }
 
     if (looksLikeBackupCode(code)) {
+      // Spending a code changes the data of record, which a member cannot do.
+      // Refused before the code is looked at, so nothing is learned from it.
+      if (isMember()) {
+        const controller = controllerOf(db)?.name || 'the controller';
+        return res.status(409).json({
+          error: `Sign in with a backup code on ${controller}.`,
+          code: 'member_read_only',
+        });
+      }
       if (BackupCode.consumeBackupCode(db, user.id, hashBackupCode(code))) {
         const remaining = BackupCode.countUnusedBackupCodes(db, user.id);
         recordAudit({
@@ -261,9 +272,9 @@ router.post('/login/totp', loginLimiter, (req, res) => {
         return res.json({ ...sessionPayload(db, user, req), backup_codes_remaining: remaining });
       }
     } else {
-      const step = verifyTotp(user.totp_secret, code, { afterStep: user.totp_last_step });
+      const step = verifyTotp(user.totp_secret, code, { afterStep: lastTotpStep(db, user) });
       if (step != null) {
-        User.recordTotpStep(db, user.id, step);
+        rememberTotpStep(db, user.id, step);
         return res.json(sessionPayload(db, user, req));
       }
     }

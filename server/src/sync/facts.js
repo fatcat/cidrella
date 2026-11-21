@@ -19,6 +19,17 @@ let sink = localSink;
 
 export const facts = () => sink;
 
+/**
+ * What a member does with what it observes, until it can send it to its
+ * controller (phase 4 of docs/REDUNDANCY-PLAN.md): nothing. It does not own
+ * the tables these facts are written to.
+ */
+export const memberSink = {
+  leases: async () => ({ synced: 0, rejected: 0, blocking: [] }),
+  clientSeen: () => {},
+  fingerprint: () => {},
+};
+
 /** Send facts to `next` from now on. Returns the undo. */
 export function setFactsSink(next) {
   const previous = sink;

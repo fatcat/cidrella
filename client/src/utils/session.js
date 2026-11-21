@@ -16,6 +16,11 @@ const MESSAGES = {
   logout: () => 'You signed out in another tab.',
   revoked: () => 'Your session was ended. Sign in again.',
   restore: () => 'A backup was restored. Sign in again.',
+  // First run joined this box to a controller, whose accounts replaced its own.
+  joined: (_minutes, name) =>
+    name
+      ? `This CIDRella is now a member of ${name}. Sign in with an account from ${name}.`
+      : 'This CIDRella is now a member. Sign in with an account from its controller.',
 };
 
 /** Why a 401 ended the session: the server's SESSION_ENDED reason, else revoked. */
@@ -23,13 +28,15 @@ export function endedReason(data) {
   return data?.code === 'SESSION_ENDED' ? data.reason || 'revoked' : 'revoked';
 }
 
-export function rememberSignOut(reason, idleTimeoutSeconds = null) {
+/** `detail` is the name a reason's message carries: the controller for `joined`. */
+export function rememberSignOut(reason, idleTimeoutSeconds = null, detail = null) {
   try {
     sessionStorage.setItem(
       SIGNED_OUT_KEY,
       JSON.stringify({
         reason,
         minutes: idleTimeoutSeconds ? Math.round(idleTimeoutSeconds / 60) : null,
+        detail,
       }),
     );
   } catch {
@@ -48,5 +55,5 @@ export function takeSignOutMessage() {
   }
   if (!saved) return null;
   const message = MESSAGES[saved.reason];
-  return message ? message(saved.minutes) : 'Your session ended. Sign in again.';
+  return message ? message(saved.minutes, saved.detail) : 'Your session ended. Sign in again.';
 }

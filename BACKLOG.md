@@ -60,12 +60,24 @@ Design in [docs/REDUNDANCY-PLAN.md](docs/REDUNDANCY-PLAN.md), accepted 2026-11-1
 its guard, the lease diff-upsert, the facts sink, the grouped owner-only boot work, and a DHCP
 apply that only renders (ADR 006). Phase 1 (the change log) is done too, 2026-11-21:
 `sync_log` and its generated triggers, dataset identity, `exportChanges`/`applyChanges` and a
-loopback test. Next is phase 2, member mode.
+loopback test. Phase 2 (member mode, DNS only) is done too, 2026-11-21: sync identity, pairing,
+the sync loop, the write gate, guard triggers, first-run join and the Instances page. Next is
+phase 3, clients find every member. Left open by phase 2:
+- Most settings views have no client permission gate, so on a member their controls stay live
+  and a save shows the server's refusal as a toast. Only the Networks workspace, Blocklists and
+  the Resolution Map grey out through `can()`. Greying the rest is per-view work.
+- `DATA_DIR/sync/` (the identity key, the member's credential) is not carried by a backup, so a
+  box rebuilt from a backup gets a new identity and must be paired again. Carrying it would let
+  a backup restored on a second box clone the identity. Decide in phase 7.
+- A member drops what it observes until the remote sink of phase 4; only audit rows are sent up.
+- The first-run "set up or join" answer is not stored, so a first run resumed before the
+  two-factor step asks again.
+- `syncRequest` buffers a whole response in memory: a snapshot of a very large estate wants a
+  streaming apply.
 Every install is a member; one is also the controller and owns all writes; other members sync a
 read-only copy and keep serving when it is away; promotion is manual. Rejected and why (all in the doc): scheduled restore,
 whole-table transfer, the SQLite session extension (not compiled into better-sqlite3 13.0.3),
-WAL shipping. Still open from phase 0: audit rows are not a fact in the sink yet (`recordAudit` is
-the one writer, switched in phase 2), and `dhcp_dns_default_server_ip` is classed host until
+WAL shipping. Still open from phase 0: `dhcp_dns_default_server_ip` is classed host until
 phase 3 turns the DNS Servers default into a list of every instance.
 
 ### Process isolation and event-loop blocking (target 0.6.3)
