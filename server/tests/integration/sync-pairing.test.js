@@ -116,8 +116,12 @@ describe('a join that fails after the controller said yes', () => {
       "CREATE TRIGGER break_apply BEFORE INSERT ON sync_state WHEN NEW.key = 'cursor' BEGIN SELECT RAISE(ABORT, 'no'); END",
     );
     const before = listInstances(controller).length;
+    const settings = () => box.db.prepare('SELECT key, value FROM settings ORDER BY key').all();
+    const had = settings();
 
     const err = await join(box).catch((e) => e);
+
+    expect(settings()).toEqual(had);
 
     expect(err).toBeInstanceOf(JoinError);
     expect(storedMode(box.db)).not.toBe(MEMBER);
