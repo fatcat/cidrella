@@ -1226,7 +1226,13 @@ export function observeIpv6Presence(
   } = {},
 ) {
   if (/^fe[89ab]/i.test(ip)) {
-    return observeNeighbor(db, subnetId, ip, { interfaceId, mac, rogueAllowed: false, source });
+    return observeNeighbor(db, subnetId, ip, {
+      interfaceId,
+      mac,
+      rogueAllowed: false,
+      source,
+      observedAt,
+    });
   }
   const mode = policy?.mode || null;
   if (mode === 'slaac' || mode === 'stateless') {
