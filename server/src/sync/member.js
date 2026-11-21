@@ -12,12 +12,7 @@ import path from 'path';
 import { getHttpsPort } from '../utils/http-server.js';
 import { syncRequest } from '../utils/sync-client.js';
 import { APP_VERSION } from '../utils/version.js';
-import {
-  getSetupState,
-  readSetting,
-  setSetupState,
-  upsertSettingWithConflict,
-} from '../models/setting.js';
+import { SETUP_STATE_KEY, setSetupState, upsertSettingWithConflict } from '../models/setting.js';
 import { ownInstanceId, ownInstanceName, parseJoinToken } from '../models/sync-instance.js';
 import { refreshAllEnabled } from '../utils/blocklist.js';
 import {
@@ -177,7 +172,7 @@ export async function joinController(
   // From here the controller has this box on its list. Whatever fails, the
   // box takes itself off again and stays what it was.
   const credentialPath = path.join(syncDirOf(db), CREDENTIAL_FILE);
-  const was = {};
+  const was = new Map();
   const pinned = {
     ...controller,
     // The address, port and fingerprint are the ones this box checked, never
@@ -209,24 +204,32 @@ export async function joinController(
     // DHCP stays off until it is moved here, it takes no backups of data it
     // does not own, and its first run is over.
     db.transaction(() => {
+      // The rows as they are, a missing one as missing, to put back.
+      const stored = db.prepare('SELECT value FROM settings WHERE key = ?');
+      for (const key of [...Object.keys(MEMBER_DEFAULTS), SETUP_STATE_KEY]) {
+        was.set(key, stored.get(key)?.value ?? null);
+      }
       for (const [key, value] of Object.entries(MEMBER_DEFAULTS)) {
-        was[key] = readSetting(db, key);
         upsertSettingWithConflict(db, key, value);
       }
-      was.setup = getSetupState(db);
       setSetupState(db, { done: true });
       writeSyncState(db, 'mode', MEMBER);
       writeSyncState(db, 'controller', JSON.stringify(pinned));
     })();
     applyChanges(db, changes);
   } catch (err) {
-    db.transaction(() => {
-      db.prepare("DELETE FROM sync_state WHERE key IN ('mode', 'controller')").run();
-      for (const key of Object.keys(MEMBER_DEFAULTS)) {
-        if (key in was && was[key] !== null) upsertSettingWithConflict(db, key, was[key]);
-      }
-      if (was.setup) setSetupState(db, { done: was.setup.done === true });
-    })();
+    // Whatever the undo itself runs into, the box still leaves the list.
+    try {
+      db.transaction(() => {
+        db.prepare("DELETE FROM sync_state WHERE key IN ('mode', 'controller')").run();
+        for (const [key, value] of was) {
+          if (value === null) db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+          else upsertSettingWithConflict(db, key, value);
+        }
+      })();
+    } catch (undo) {
+      console.error(`Could not undo a failed join: ${undo.message}`);
+    }
     fs.rmSync(credentialPath, { force: true });
     await syncRequest({
       ...controller,
