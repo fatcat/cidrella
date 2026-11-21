@@ -144,13 +144,6 @@ function withoutTriggers(db, tables, work) {
 }
 
 /**
- * Make `db` match what parseChanges read. One transaction; nothing changes if
- * it throws. Refuses (SyncError) a different schema version ('schema'), and a
- * delta that does not start at this copy's cursor or belongs to another
- * dataset ('restart': ask again without a cursor). Queues the applies the
- * changed tables call for. Returns { snapshot, rows, head, tables }.
- */
-/**
  * Rows went in with foreign keys off, so a row deleted on the sender did not
  * do here what its foreign keys ask of the tables only this box keeps (a
  * session of a user who is gone, the downloaded domains of a list that is).
@@ -193,6 +186,13 @@ function settleHostRows(db, estate) {
 
 const quoteName = (name) => `"${String(name).replaceAll('"', '""')}"`;
 
+/**
+ * Make `db` match what parseChanges read. One transaction; nothing changes if
+ * it throws. Refuses (SyncError) a different schema version ('schema'), and a
+ * delta that does not start at this copy's cursor or belongs to another
+ * dataset ('restart': ask again without a cursor). Queues the applies the
+ * changed tables call for. Returns { snapshot, rows, head, tables }.
+ */
 export function applyChanges(db, { header, changes }) {
   const local = syncStatus(db);
   if (header.schema !== local.schema) {

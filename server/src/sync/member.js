@@ -12,7 +12,12 @@ import path from 'path';
 import { getHttpsPort } from '../utils/http-server.js';
 import { syncRequest } from '../utils/sync-client.js';
 import { APP_VERSION } from '../utils/version.js';
-import { upsertSettingWithConflict, setSetupState } from '../models/setting.js';
+import {
+  getSetupState,
+  readSetting,
+  setSetupState,
+  upsertSettingWithConflict,
+} from '../models/setting.js';
 import { ownInstanceId, ownInstanceName, parseJoinToken } from '../models/sync-instance.js';
 import { refreshAllEnabled } from '../utils/blocklist.js';
 import {
@@ -46,6 +51,13 @@ function readCredential(db) {
     return null;
   }
 }
+
+// The settings about the box itself a new member starts with.
+const MEMBER_DEFAULTS = {
+  dhcp_enabled: 'false',
+  backup_schedule: 'off',
+  installation_complete: 'true',
+};
 
 /** An error the join screen shows as is, with a `code` it can tell apart. */
 export class JoinError extends Error {
@@ -165,6 +177,7 @@ export async function joinController(
   // From here the controller has this box on its list. Whatever fails, the
   // box takes itself off again and stays what it was.
   const credentialPath = path.join(syncDirOf(db), CREDENTIAL_FILE);
+  const was = {};
   const pinned = {
     ...controller,
     // The address, port and fingerprint are the ones this box checked, never
@@ -191,14 +204,29 @@ export async function joinController(
     fs.mkdirSync(syncDirOf(db), { recursive: true, mode: 0o700 });
     fs.writeFileSync(credentialPath, `${answer.credential}\n`, { mode: 0o600 });
     // A member before the data arrives: a box that dies between the two
-    // comes back as a member with no cursor and takes a snapshot.
+    // comes back as a member with no cursor and takes a snapshot. What is
+    // about this box alone starts from a member's defaults: it serves DNS,
+    // DHCP stays off until it is moved here, it takes no backups of data it
+    // does not own, and its first run is over.
     db.transaction(() => {
+      for (const [key, value] of Object.entries(MEMBER_DEFAULTS)) {
+        was[key] = readSetting(db, key);
+        upsertSettingWithConflict(db, key, value);
+      }
+      was.setup = getSetupState(db);
+      setSetupState(db, { done: true });
       writeSyncState(db, 'mode', MEMBER);
       writeSyncState(db, 'controller', JSON.stringify(pinned));
     })();
     applyChanges(db, changes);
   } catch (err) {
-    db.prepare("DELETE FROM sync_state WHERE key IN ('mode', 'controller')").run();
+    db.transaction(() => {
+      db.prepare("DELETE FROM sync_state WHERE key IN ('mode', 'controller')").run();
+      for (const key of Object.keys(MEMBER_DEFAULTS)) {
+        if (key in was && was[key] !== null) upsertSettingWithConflict(db, key, was[key]);
+      }
+      if (was.setup) setSetupState(db, { done: was.setup.done === true });
+    })();
     fs.rmSync(credentialPath, { force: true });
     await syncRequest({
       ...controller,
@@ -209,17 +237,8 @@ export async function joinController(
     if (err instanceof JoinError) throw err;
     throw new JoinError('unreachable', `The first copy of the data failed: ${err.message}`);
   }
-  // What is about this box alone starts from a member's defaults: it serves
-  // DNS, DHCP stays off until it is moved here, it takes no backups of data
-  // it does not own, and its first run is over.
-  db.transaction(() => {
-    upsertSettingWithConflict(db, 'dhcp_enabled', 'false');
-    upsertSettingWithConflict(db, 'backup_schedule', 'off');
-    upsertSettingWithConflict(db, 'installation_complete', 'true');
-    setSetupState(db, { done: true });
-    // The accounts here are the controller's now: nobody is signed in.
-    db.prepare('DELETE FROM sessions').run();
-  })();
+  // The accounts here are the controller's now: nobody is signed in.
+  db.prepare('DELETE FROM sessions').run();
   ensureSyncTriggers(db, MEMBER);
   restart();
   return { controller: { name: pinned.name } };
