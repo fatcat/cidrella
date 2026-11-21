@@ -162,8 +162,16 @@ export async function joinController(
     );
   }
 
-  // The whole dataset, before anything here changes.
-  let changes;
+  // From here the controller has this box on its list. Whatever fails, the
+  // box takes itself off again and stays what it was.
+  const credentialPath = path.join(syncDirOf(db), CREDENTIAL_FILE);
+  const pinned = {
+    ...controller,
+    // The address, port and fingerprint are the ones this box checked, never
+    // ones the answer names.
+    instance_id: String(answer.controller?.instance_id || ''),
+    name: String(answer.controller?.name || controller.address).slice(0, 255),
+  };
   try {
     db.prepare("DELETE FROM sync_state WHERE key = 'cursor'").run();
     const response = await ask(db, controller, {
@@ -178,33 +186,33 @@ export async function joinController(
         body.error || `The controller answered ${response.status}.`,
       );
     }
-    changes = parseChanges(response.body);
-  } catch (err) {
-    if (err instanceof JoinError) throw err;
-    throw new JoinError(
-      'unreachable',
-      `Joined, but the first copy of the data failed: ${err.message}`,
-    );
-  }
+    const changes = parseChanges(response.body);
 
-  fs.mkdirSync(syncDirOf(db), { recursive: true, mode: 0o700 });
-  fs.writeFileSync(path.join(syncDirOf(db), CREDENTIAL_FILE), `${answer.credential}\n`, {
-    mode: 0o600,
-  });
-  try {
+    fs.mkdirSync(syncDirOf(db), { recursive: true, mode: 0o700 });
+    fs.writeFileSync(credentialPath, `${answer.credential}\n`, { mode: 0o600 });
+    // A member before the data arrives: a box that dies between the two
+    // comes back as a member with no cursor and takes a snapshot.
+    db.transaction(() => {
+      writeSyncState(db, 'mode', MEMBER);
+      writeSyncState(db, 'controller', JSON.stringify(pinned));
+    })();
     applyChanges(db, changes);
   } catch (err) {
-    throw new JoinError(
-      'unreachable',
-      `Joined, but the first copy of the data failed: ${err.message}`,
-    );
+    db.prepare("DELETE FROM sync_state WHERE key IN ('mode', 'controller')").run();
+    fs.rmSync(credentialPath, { force: true });
+    await syncRequest({
+      ...controller,
+      method: 'POST',
+      path: '/api/sync/leave',
+      credential: answer.credential,
+    }).catch(() => {});
+    if (err instanceof JoinError) throw err;
+    throw new JoinError('unreachable', `The first copy of the data failed: ${err.message}`);
   }
-  // A member, from here. What is about this box alone starts from a member's
-  // defaults: it serves DNS, DHCP stays off until it is moved here, it takes
-  // no backups of data it does not own, and its first run is over.
+  // What is about this box alone starts from a member's defaults: it serves
+  // DNS, DHCP stays off until it is moved here, it takes no backups of data
+  // it does not own, and its first run is over.
   db.transaction(() => {
-    writeSyncState(db, 'mode', MEMBER);
-    writeSyncState(db, 'controller', JSON.stringify({ ...controller, ...answer.controller }));
     upsertSettingWithConflict(db, 'dhcp_enabled', 'false');
     upsertSettingWithConflict(db, 'backup_schedule', 'off');
     upsertSettingWithConflict(db, 'installation_complete', 'true');
@@ -214,7 +222,7 @@ export async function joinController(
   })();
   ensureSyncTriggers(db, MEMBER);
   restart();
-  return { controller: { name: answer.controller?.name || controller.address } };
+  return { controller: { name: pinned.name } };
 }
 
 // What the DNS proxy and the blocklists must be told when a table changes
@@ -252,18 +260,34 @@ function reloadFor(db, tables) {
 }
 
 const OUTBOX_BATCH = 200;
+// The controller reads a request body of up to 100 KB.
+const OUTBOX_BYTES = 60_000;
 
 /** Send what waits in the outbox to the controller. Returns how many it took. */
 export async function sendOutbox(db) {
   const controller = controllerOf(db);
   const credential = readCredential(db);
+  if (!controller || !credential) return 0;
+  const forget = db.prepare('DELETE FROM sync_outbox WHERE id = ?');
   let sent = 0;
   for (;;) {
-    const rows = db
+    const waiting = db
       .prepare('SELECT id, kind, payload FROM sync_outbox ORDER BY id LIMIT ?')
-      .all(OUTBOX_BATCH)
-      .map((row) => ({ ...row, payload: JSON.parse(row.payload) }));
-    if (rows.length === 0 || !controller || !credential) return sent;
+      .all(OUTBOX_BATCH);
+    if (waiting.length === 0) return sent;
+    const rows = [];
+    let bytes = 0;
+    for (const row of waiting) {
+      bytes += row.payload.length + 64;
+      if (rows.length > 0 && bytes > OUTBOX_BYTES) break;
+      let payload = null;
+      try {
+        payload = JSON.parse(row.payload);
+      } catch {
+        /* sent as nothing, so the controller takes it off the queue */
+      }
+      rows.push({ id: row.id, kind: row.kind, payload });
+    }
     const response = await syncRequest({
       ...controller,
       method: 'POST',
@@ -271,12 +295,18 @@ export async function sendOutbox(db) {
       credential,
       body: { rows },
     });
+    // One row the controller will never read: let it go, or it blocks the rest.
+    if (response.status === 413 && rows.length === 1) {
+      console.warn(`[sync] dropped an outbox row too large to send (${bytes} bytes)`);
+      forget.run(rows[0].id);
+      continue;
+    }
     const taken = response.status === 200 ? jsonBody(response).taken : null;
-    if (!Array.isArray(taken) || taken.length === 0) return sent;
-    const forget = db.prepare('DELETE FROM sync_outbox WHERE id = ?');
+    if (!Array.isArray(taken) || taken.length === 0) {
+      throw new Error(`The controller answered ${response.status} to this member's audit rows.`);
+    }
     db.transaction(() => taken.forEach((id) => forget.run(id)))();
     sent += taken.length;
-    if (rows.length < OUTBOX_BATCH) return sent;
   }
 }
 
@@ -346,13 +376,15 @@ export function startMemberSync(db) {
         // The first request does not wait: a member that just booted wants
         // what it missed, not the controller's next change.
         await syncOnce(db, { wait: status.state === 'current' ? WAIT_SECONDS : 0 });
-        await sendOutbox(db);
+        await sendOutbox(db).catch((err) => console.warn(`[sync] ${err.message}`));
         status = { state: 'current', last_sync_at: new Date().toISOString(), last_error: null };
         retryMs = RETRY_MIN_MS;
       } catch (err) {
-        const paused = err.code === 'paused';
+        // Another version, or taken off the controller's list: neither mends itself.
+        const paused = err.code === 'paused' || err.code === 'unknown_member';
         if (status.last_error !== err.message) console.warn(`[sync] ${err.message}`);
-        status = { ...status, state: paused ? 'paused' : 'offline', last_error: err.message };
+        const state = err.code === 'paused' ? 'paused' : 'offline';
+        status = { ...status, state, last_error: err.message };
         if (stopped) break;
         await pause(paused ? PAUSED_RETRY_MS : retryMs);
         retryMs = Math.min(RETRY_MAX_MS, retryMs * 2);

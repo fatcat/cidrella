@@ -18,7 +18,7 @@
  */
 import crypto from 'crypto';
 import { queueRegen } from '../utils/after-commit.js';
-import { estateTables, readSyncState, syncStatus, writeSyncState } from './log.js';
+import { estateTables, isEstateSetting, readSyncState, syncStatus, writeSyncState } from './log.js';
 
 const FORMAT = 1;
 
@@ -150,6 +150,49 @@ function withoutTriggers(db, tables, work) {
  * dataset ('restart': ask again without a cursor). Queues the applies the
  * changed tables call for. Returns { snapshot, rows, head, tables }.
  */
+/**
+ * Rows went in with foreign keys off, so a row deleted on the sender did not
+ * do here what its foreign keys ask of the tables only this box keeps (a
+ * session of a user who is gone, the downloaded domains of a list that is).
+ * Do that now: SET NULL where the key says so, the row removed otherwise.
+ * Returns the violations left, which are in the data of record itself.
+ */
+function settleHostRows(db, estate) {
+  const left = [];
+  const settled = new Set();
+  for (const violation of db.pragma('foreign_key_check')) {
+    const { table, fkid, parent } = violation;
+    if (estate.has(table)) {
+      left.push(violation);
+      continue;
+    }
+    if (settled.has(`${table}/${fkid}`)) continue;
+    settled.add(`${table}/${fkid}`);
+    // Every row of the table whose key has no parent, at once: a table
+    // without rowids gives the check no row to name.
+    const keys = db.pragma(`foreign_key_list(${quoteName(table)})`).filter((fk) => fk.id === fkid);
+    if (keys.length === 0 || keys.some((fk) => !fk.to)) {
+      left.push(violation);
+      continue;
+    }
+    const child = quoteName(table);
+    const orphan =
+      keys.map((fk) => `${child}.${quoteName(fk.from)} IS NOT NULL`).join(' AND ') +
+      ` AND NOT EXISTS (SELECT 1 FROM ${quoteName(parent)} AS p WHERE ${keys
+        .map((fk) => `p.${quoteName(fk.to)} = ${child}.${quoteName(fk.from)}`)
+        .join(' AND ')})`;
+    if (keys.every((fk) => fk.on_delete === 'SET NULL')) {
+      const cleared = keys.map((fk) => `${quoteName(fk.from)} = NULL`).join(', ');
+      db.exec(`UPDATE ${child} SET ${cleared} WHERE ${orphan}`);
+    } else {
+      db.exec(`DELETE FROM ${child} WHERE ${orphan}`);
+    }
+  }
+  return left;
+}
+
+const quoteName = (name) => `"${String(name).replaceAll('"', '""')}"`;
+
 export function applyChanges(db, { header, changes }) {
   const local = syncStatus(db);
   if (header.schema !== local.schema) {
@@ -168,6 +211,14 @@ export function applyChanges(db, { header, changes }) {
   for (const change of changes) {
     const table = tables.get(change.t);
     if (!table) throw new SyncError('damaged', `The changes name an unknown table: ${change.t}`);
+    // Only the settings that are data of record: a key about this box (its
+    // ports, its sign-in secret) is never taken from another one.
+    if (table.name === 'settings') {
+      const key = change.row ? change.row.key : change.del;
+      if (!isEstateSetting(key)) {
+        throw new SyncError('damaged', `The changes name a setting that is not shared: ${key}`);
+      }
+    }
     if (!byTable.has(table)) byTable.set(table, []);
     byTable.get(table).push(change);
   }
@@ -240,7 +291,7 @@ export function applyChanges(db, { header, changes }) {
       writeSyncState(db, 'epoch', header.epoch);
       writeSyncState(db, 'cursor', header.head);
       if (header.snapshot) writeSyncState(db, 'floor', header.head);
-      const broken = db.pragma('foreign_key_check');
+      const broken = settleHostRows(db, tables);
       if (broken.length > 0) {
         const { table, rowid, parent } = broken[0];
         throw new SyncError(

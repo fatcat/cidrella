@@ -81,8 +81,6 @@ Left open by phase 2:
 - A member drops what it observes until the remote sink of phase 4; only audit rows are sent up.
 - The first-run "set up or join" answer is not stored, so a first run resumed before the
   two-factor step asks again.
-- `syncRequest` buffers a whole response in memory: a snapshot of a very large estate wants a
-  streaming apply.
 Every install is a member; one is also the controller and owns all writes; other members sync a
 read-only copy and keep serving when it is away; promotion is manual. Rejected and why (all in the doc): scheduled restore,
 whole-table transfer, the SQLite session extension (not compiled into better-sqlite3 13.0.3),

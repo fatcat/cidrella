@@ -108,6 +108,24 @@ describe('joining a controller', () => {
   });
 });
 
+describe('a join that fails after the controller said yes', () => {
+  it('leaves the box as it was and off the controller’s list', async () => {
+    const box = newBox();
+    // The first copy cannot be applied: its last step, the cursor, is refused.
+    box.db.exec(
+      "CREATE TRIGGER break_apply BEFORE INSERT ON sync_state WHEN NEW.key = 'cursor' BEGIN SELECT RAISE(ABORT, 'no'); END",
+    );
+    const before = listInstances(controller).length;
+
+    const err = await join(box).catch((e) => e);
+
+    expect(err).toBeInstanceOf(JoinError);
+    expect(storedMode(box.db)).not.toBe(MEMBER);
+    expect(fs.existsSync(path.join(box.dir, 'sync', 'credential'))).toBe(false);
+    expect(listInstances(controller)).toHaveLength(before);
+  });
+});
+
 describe('a member', () => {
   let box;
   beforeAll(async () => {
@@ -214,17 +232,15 @@ describe('a member', () => {
 
   it('sends its audit rows to the controller, which records them as the member’s', async () => {
     recordAudit({ action: 'pairing_tested', entityType: 'test', details: { n: 7 } });
-    box.db
-      .prepare('INSERT INTO sync_outbox (kind, payload) VALUES (?, ?)')
-      .run(
-        'audit',
-        JSON.stringify({
-          action: 'member_did',
-          actor: 'pat',
-          details: { ip: 'fd00:88::1' },
-          at: '2026-11-01T10:00:00.000Z',
-        }),
-      );
+    box.db.prepare('INSERT INTO sync_outbox (kind, payload) VALUES (?, ?)').run(
+      'audit',
+      JSON.stringify({
+        action: 'member_did',
+        actor: 'pat',
+        details: { ip: 'fd00:88::1' },
+        at: '2026-11-01T10:00:00.000Z',
+      }),
+    );
     expect(
       controller.prepare("SELECT 1 FROM audit_log WHERE action = 'member_did'").get(),
     ).toBeUndefined();
@@ -241,6 +257,49 @@ describe('a member', () => {
     expect(
       box.db.prepare("SELECT 1 FROM audit_log WHERE action = 'member_did'").get(),
     ).toBeDefined();
+  });
+
+  it('keeps sending when one waiting row names a user who is gone, or is not an audit row', async () => {
+    const queue = box.db.prepare('INSERT INTO sync_outbox (kind, payload) VALUES (?, ?)');
+    queue.run(
+      'audit',
+      JSON.stringify({ action: 'by_a_ghost', userId: 987654, entityId: { odd: 1 } }),
+    );
+    queue.run('audit', 'not json');
+    queue.run('audit', JSON.stringify({ action: 'after_the_ghost' }));
+
+    expect(await sendOutbox(box.db)).toBe(3);
+
+    expect(box.db.prepare('SELECT count(*) AS n FROM sync_outbox').get().n).toBe(0);
+    expect(
+      controller
+        .prepare("SELECT user_id, entity_id FROM audit_log WHERE action = 'by_a_ghost'")
+        .get(),
+    ).toEqual({ user_id: null, entity_id: null });
+    expect(
+      controller.prepare("SELECT 1 FROM audit_log WHERE action = 'after_the_ghost'").get(),
+    ).toBeDefined();
+  });
+
+  it('does not let a member claim a cursor it cannot hold', async () => {
+    const credential = fs.readFileSync(path.join(box.dir, 'sync', 'credential'), 'utf8').trim();
+    const mine = () =>
+      listInstances(controller).find(
+        (row) =>
+          row.instance_id ===
+          box.db.prepare("SELECT value FROM sync_state WHERE key = 'instance_id'").get().value,
+      );
+    const before = mine().cursor;
+    const { syncRequest } = await import('../../src/utils/sync-client.js');
+    const local = syncStatus(controller);
+    await syncRequest({
+      address: '127.0.0.1',
+      port,
+      fingerprint: identity.fingerprint,
+      credential,
+      path: `/api/sync/changes?schema=${local.schema}&dataset=${local.dataset}&since=${local.head + 1_000_000}`,
+    });
+    expect(mine().cursor).toBe(before);
   });
 
   it('pauses when the two sides are on different schemas', async () => {

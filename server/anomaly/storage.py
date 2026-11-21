@@ -121,6 +121,15 @@ def is_enabled():
     """Check if anomaly detection is enabled in settings."""
     con = _connect()
     try:
+        # A member holds a copy of the scores: its controller does the scoring.
+        try:
+            mode = con.execute(
+                "SELECT value FROM sync_state WHERE key = 'mode'"
+            ).fetchone()
+        except sqlite3.OperationalError:
+            mode = None
+        if mode and mode["value"] == "member":
+            return False
         row = con.execute(
             "SELECT value FROM settings WHERE key = 'anomaly_detection_enabled'"
         ).fetchone()

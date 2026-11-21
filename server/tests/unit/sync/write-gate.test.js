@@ -169,6 +169,14 @@ describe('on a member', () => {
       (await send('PUT', '/api/interfaces/config', { https_port: 8443, ipv6_enabled: true }))
         .status,
     ).toBe(409);
+    // DHCP stays the controller's.
+    expect(
+      (await send('PUT', '/api/interfaces/config', { https_port: 8443, dhcp_enabled: true }))
+        .status,
+    ).toBe(409);
+    expect(
+      (await send('PUT', '/api/interfaces/config', { https_port: 8443, dhcp_enabled: false })).body,
+    ).toEqual(ok);
     // The form sends the switch with every save: unchanged, the save goes through.
     expect((await send('PUT', '/api/interfaces/config', { ipv6_enabled: false })).body).toEqual(ok);
     expect((await send('PUT', '/api/setup/state', { done: true })).body).toEqual(ok);

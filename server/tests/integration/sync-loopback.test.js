@@ -20,8 +20,7 @@ const {
   forgetDataset,
   pruneTombstones,
   syncStatus,
-} =
-  await import('../../src/sync/log.js');
+} = await import('../../src/sync/log.js');
 const { replaceLeases } = await import('../../src/models/dhcp-lease.js');
 const { recordAudit } = await import('../../src/services/audit.js');
 const { setSetting } = await import('../../src/db/init.js');
@@ -89,7 +88,8 @@ function randomWrite(db, random, n) {
     db.prepare(`SELECT id FROM ${table} ORDER BY random() LIMIT 1`).get()?.id ?? null;
   const writes = [
     () => db.prepare('INSERT INTO folders (name) VALUES (?)').run(`folder-${n}`),
-    () => db.prepare('UPDATE folders SET description = ? WHERE id = ?').run(`d${n}`, anyId('folders')),
+    () =>
+      db.prepare('UPDATE folders SET description = ? WHERE id = ?').run(`d${n}`, anyId('folders')),
     // Deleting a folder sets folder_id to NULL on its zones, networks and VLANs.
     () => db.prepare('DELETE FROM folders WHERE id = ?').run(anyId('folders')),
     () =>
@@ -109,10 +109,12 @@ function randomWrite(db, random, n) {
         v6 ? `2001:db8:${n.toString(16)}::1` : `10.20.${n % 250}.${(n * 7) % 250}`,
       );
     },
-    () => db.prepare('UPDATE dns_records SET ttl = ? WHERE id = ?').run(60 + n, anyId('dns_records')),
+    () =>
+      db.prepare('UPDATE dns_records SET ttl = ? WHERE id = ?').run(60 + n, anyId('dns_records')),
     () => db.prepare('DELETE FROM dns_records WHERE id = ?').run(anyId('dns_records')),
     // The same value again: not a change, and it must not be sent as one.
-    () => db.prepare('UPDATE dns_records SET enabled = enabled WHERE id = ?').run(anyId('dns_records')),
+    () =>
+      db.prepare('UPDATE dns_records SET enabled = enabled WHERE id = ?').run(anyId('dns_records')),
     () =>
       db
         .prepare('INSERT OR IGNORE INTO geoip_rules (country_code, country_name) VALUES (?, ?)')
@@ -136,7 +138,8 @@ function randomWrite(db, random, n) {
     () => db.prepare('DELETE FROM geoip_rules WHERE id = ?').run(anyId('geoip_rules')),
     // An estate setting and a host one: only the first is data of record.
     () => setSettingOn(db, 'map_home', `${n},${n}`),
-    () => setSettingOn(db, 'backup_last_run', `2026-01-01T00:00:${String(n % 60).padStart(2, '0')}Z`),
+    () =>
+      setSettingOn(db, 'backup_last_run', `2026-01-01T00:00:${String(n % 60).padStart(2, '0')}Z`),
     // A category's switch is shared; what this box fetched of it is not.
     () =>
       db
@@ -156,14 +159,21 @@ function randomWrite(db, random, n) {
            ON CONFLICT(mac_address) DO UPDATE SET device_type = excluded.device_type`,
         )
         .run(`aa:bb:cc:00:00:${(n % 5).toString(16).padStart(2, '0')}`, pick(['Phone', 'Printer'])),
-    () => db.prepare('DELETE FROM device_fingerprints WHERE rowid = (SELECT min(rowid) FROM device_fingerprints)').run(),
+    () =>
+      db
+        .prepare(
+          'DELETE FROM device_fingerprints WHERE rowid = (SELECT min(rowid) FROM device_fingerprints)',
+        )
+        .run(),
   ];
   pick(writes)();
 }
 
 const setSettingOn = (db, key, value) =>
   db
-    .prepare('INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value')
+    .prepare(
+      'INSERT INTO settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value',
+    )
     .run(key, value);
 
 describe('change log loopback', () => {
@@ -197,17 +207,23 @@ describe('change log loopback', () => {
     const before = syncStatus(source).head;
     source.prepare('UPDATE dns_zones SET enabled = enabled').run();
     setSettingOn(source, 'backup_last_run', 'again');
-    source.prepare("UPDATE blocklist_categories SET domain_count = domain_count + 1, etag = 'x'").run();
+    source
+      .prepare("UPDATE blocklist_categories SET domain_count = domain_count + 1, etag = 'x'")
+      .run();
     expect(syncStatus(source).head).toBe(before);
     expect(sync(copy).rows).toBe(0);
   });
 
   it('keeps what the copy fetched of a blocklist when the list’s switch changes', () => {
     setSettingOn(source, 'map_home', 'reset');
-    source.prepare("INSERT OR IGNORE INTO blocklist_categories (slug, enabled) VALUES ('ads', 1)").run();
+    source
+      .prepare("INSERT OR IGNORE INTO blocklist_categories (slug, enabled) VALUES ('ads', 1)")
+      .run();
     sync(copy);
     copy.db.prepare("UPDATE blocklist_categories SET domain_count = 4242 WHERE slug = 'ads'").run();
-    source.prepare("UPDATE blocklist_categories SET enabled = 1 - enabled WHERE slug = 'ads'").run();
+    source
+      .prepare("UPDATE blocklist_categories SET enabled = 1 - enabled WHERE slug = 'ads'")
+      .run();
     sync(copy);
     expect(
       copy.db.prepare("SELECT domain_count FROM blocklist_categories WHERE slug = 'ads'").get()
@@ -226,43 +242,68 @@ describe('change log loopback', () => {
       )
       .run().lastInsertRowid;
     const inAnHour = new Date(Date.now() + 3600_000).toISOString();
-    replaceLeases(source, [
-      { ip: '10.77.0.10', mac: 'aa:bb:cc:77:00:10', hostname: 'four', expiresAt: inAnHour, subnetId: subnet },
-      {
-        ip: '2001:db8:77::10',
-        hostname: 'six',
-        expiresAt: inAnHour,
-        subnetId: null,
-        dhcpVersion: 6,
-        duid: '00:01:00:01:00:00:00:77',
-        iaid: 1,
-      },
-    ], { lifecycleValidated: true });
+    replaceLeases(
+      source,
+      [
+        {
+          ip: '10.77.0.10',
+          mac: 'aa:bb:cc:77:00:10',
+          hostname: 'four',
+          expiresAt: inAnHour,
+          subnetId: subnet,
+        },
+        {
+          ip: '2001:db8:77::10',
+          hostname: 'six',
+          expiresAt: inAnHour,
+          subnetId: null,
+          dhcpVersion: 6,
+          duid: '00:01:00:01:00:00:00:77',
+          iaid: 1,
+        },
+      ],
+      { lifecycleValidated: true },
+    );
     // As the anomaly sidecar writes: its own connection, plain SQL.
     const second = new Database(path.join(sourceDir, 'cidrella.db'));
-    second.prepare("INSERT INTO anomaly_allowlist (identity, client_ip, reason) VALUES ('m1', '10.77.0.10', 'loop')").run();
+    second
+      .prepare(
+        "INSERT INTO anomaly_allowlist (identity, client_ip, reason) VALUES ('m1', '10.77.0.10', 'loop')",
+      )
+      .run();
     second.close();
 
     const result = sync(copy);
     expect(result.tables).toEqual(
-      expect.arrayContaining(['audit_log', 'settings', 'subnets', 'dhcp_leases', 'anomaly_allowlist']),
+      expect.arrayContaining([
+        'audit_log',
+        'settings',
+        'subnets',
+        'dhcp_leases',
+        'anomaly_allowlist',
+      ]),
     );
     expectSame(copy.db);
-    expect(copy.db.prepare('SELECT ip_address FROM dhcp_leases ORDER BY ip_address').all()).toEqual([
-      { ip_address: '10.77.0.10' },
-      { ip_address: '2001:db8:77::10' },
-    ]);
+    expect(copy.db.prepare('SELECT ip_address FROM dhcp_leases ORDER BY ip_address').all()).toEqual(
+      [{ ip_address: '10.77.0.10' }, { ip_address: '2001:db8:77::10' }],
+    );
   });
 
   it('follows a delete that cascades', () => {
-    const zone = source.prepare("INSERT INTO dns_zones (name, type) VALUES ('cascade.test', 'forward')").run().lastInsertRowid;
-    const add = source.prepare("INSERT INTO dns_records (zone_id, name, type, value) VALUES (?, ?, 'A', ?)");
+    const zone = source
+      .prepare("INSERT INTO dns_zones (name, type) VALUES ('cascade.test', 'forward')")
+      .run().lastInsertRowid;
+    const add = source.prepare(
+      "INSERT INTO dns_records (zone_id, name, type, value) VALUES (?, ?, 'A', ?)",
+    );
     for (let i = 1; i <= 5; i++) add.run(zone, `c${i}`, `10.88.0.${i}`);
     sync(copy);
     source.prepare('DELETE FROM dns_zones WHERE id = ?').run(zone);
     const result = sync(copy);
     expect(result.rows).toBe(6);
-    expect(copy.db.prepare('SELECT count(*) n FROM dns_records WHERE zone_id = ?').get(zone).n).toBe(0);
+    expect(
+      copy.db.prepare('SELECT count(*) n FROM dns_records WHERE zone_id = ?').get(zone).n,
+    ).toBe(0);
     expectSame(copy.db);
   });
 
@@ -278,7 +319,9 @@ describe('change log loopback', () => {
   it('refuses a delta that does not follow on, and one for another schema', () => {
     const status = syncStatus(source);
     source.prepare("INSERT INTO folders (name) VALUES ('ahead')").run();
-    const stale = parseChanges(exportChanges(source, { dataset: status.dataset, since: status.head }));
+    const stale = parseChanges(
+      exportChanges(source, { dataset: status.dataset, since: status.head }),
+    );
     sync(copy);
     // The same delta again: the copy is past where it starts.
     expect(() => applyChanges(copy.db, stale)).toThrow(SyncError);
@@ -295,7 +338,9 @@ describe('change log loopback', () => {
   it('refuses changes that arrived damaged, and changes nothing', () => {
     source.prepare("INSERT INTO folders (name) VALUES ('damaged')").run();
     const status = syncStatus(copy.db);
-    const cursor = Number(copy.db.prepare("SELECT value FROM sync_state WHERE key = 'cursor'").get().value);
+    const cursor = Number(
+      copy.db.prepare("SELECT value FROM sync_state WHERE key = 'cursor'").get().value,
+    );
     const payload = exportChanges(source, { dataset: status.dataset, since: cursor });
     const flipped = Buffer.from(payload);
     flipped[Math.floor(flipped.length / 2)] ^= 1;
@@ -308,7 +353,9 @@ describe('change log loopback', () => {
   it('gives a copy behind the pruned tombstones a snapshot', () => {
     const behind = emptyCopy();
     sync(behind);
-    const victim = source.prepare("INSERT INTO folders (name) VALUES ('to-go')").run().lastInsertRowid;
+    const victim = source
+      .prepare("INSERT INTO folders (name) VALUES ('to-go')")
+      .run().lastInsertRowid;
     sync(copy);
     source.prepare('DELETE FROM folders WHERE id = ?').run(victim);
     // Every copy the owner knows of has taken the delete: only `copy` counts here.
@@ -333,7 +380,9 @@ describe('change log loopback', () => {
     expect(ensureSyncLog(source, sourceDir).started).toBe(null);
     // A rolled-back update puts back the database file from before this
     // boot, with the token of an earlier one; the token beside it is newer.
-    source.prepare("UPDATE sync_state SET value = 'an-earlier-boot' WHERE key = 'incarnation'").run();
+    source
+      .prepare("UPDATE sync_state SET value = 'an-earlier-boot' WHERE key = 'incarnation'")
+      .run();
     expect(ensureSyncLog(source, sourceDir).started).toBe('database replaced');
     const after = syncStatus(source);
     expect(after.dataset).not.toBe(before.dataset);
@@ -357,8 +406,13 @@ describe('change log loopback', () => {
     source.prepare("UPDATE sync_state SET value = '1' WHERE key = 'schema'").run();
     dropSyncTriggers(source);
     expect(ensureSyncLog(source, sourceDir).started).toBe('schema changed');
-    expect(source.prepare("SELECT count(*) n FROM sqlite_master WHERE name LIKE 'sync_log_%' AND type = 'trigger'").get().n)
-      .toBe(estateTables(source).length * 3);
+    expect(
+      source
+        .prepare(
+          "SELECT count(*) n FROM sqlite_master WHERE name LIKE 'sync_log_%' AND type = 'trigger'",
+        )
+        .get().n,
+    ).toBe(estateTables(source).length * 3);
   });
 
   it('keeps the triggers a copy had on its tables', () => {
@@ -370,5 +424,64 @@ describe('change log loopback', () => {
     sync(copy);
     expect(triggers(copy.db)).toEqual(had);
     expect(copy.db.pragma('foreign_keys', { simple: true })).toBe(1);
+  });
+
+  it('does for the copy’s own tables what a delete’s foreign keys ask', () => {
+    const user = source
+      .prepare("INSERT INTO users (username, password_hash, role) VALUES ('leaver', 'x', 'readonly')")
+      .run().lastInsertRowid;
+    source.prepare("INSERT INTO blocklist_categories (slug) VALUES ('gone-list')").run();
+    sync(copy);
+    // What only the copy keeps: a session of that user, a list's downloaded domains.
+    copy.db
+      .prepare(
+        "INSERT INTO sessions (id, user_id, username, expires_at) VALUES ('s-leaver', ?, 'leaver', '2099-01-01')",
+      )
+      .run(user);
+    copy.db
+      .prepare(
+        "INSERT INTO blocklist_domains (domain, category_slug) VALUES ('ads.test', 'gone-list')",
+      )
+      .run();
+
+    source.prepare('DELETE FROM users WHERE id = ?').run(user);
+    source.prepare("DELETE FROM blocklist_categories WHERE slug = 'gone-list'").run();
+    sync(copy);
+
+    expectSame(copy.db);
+    expect(copy.db.prepare("SELECT user_id FROM sessions WHERE id = 's-leaver'").get()).toEqual({
+      user_id: null,
+    });
+    expect(
+      copy.db
+        .prepare("SELECT count(*) AS n FROM blocklist_domains WHERE category_slug = 'gone-list'")
+        .get().n,
+    ).toBe(0);
+    expect(copy.db.pragma('foreign_key_check')).toEqual([]);
+  });
+
+  it('takes no setting about the box itself from the wire, in a row or a delete', () => {
+    const header = { ...parseChanges(exportChanges(source, {})).header, snapshot: false };
+    const at = (db) =>
+      Number(db.prepare("SELECT value FROM sync_state WHERE key = 'cursor'").get().value);
+    const secret = () =>
+      copy.db.prepare("SELECT value FROM settings WHERE key = 'jwt_secret'").get();
+    copy.db
+      .prepare("INSERT OR IGNORE INTO settings (key, value) VALUES ('jwt_secret', 'mine')")
+      .run();
+    const before = secret();
+    for (const change of [
+      { t: 'settings', s: header.head + 1, row: { key: 'jwt_secret', value: 'theirs' } },
+      { t: 'settings', s: header.head + 1, del: 'jwt_secret' },
+      { t: 'settings', s: header.head + 1, row: { key: 'never_heard_of_it', value: 'x' } },
+    ]) {
+      expect(() =>
+        applyChanges(copy.db, {
+          header: { ...header, since: at(copy.db), head: header.head + 1 },
+          changes: [change],
+        }),
+      ).toThrow(/not shared/);
+    }
+    expect(secret()).toEqual(before);
   });
 });

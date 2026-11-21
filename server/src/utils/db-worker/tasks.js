@@ -1,13 +1,15 @@
 // The tasks runDbTask (index.js) can run, each given a read-only connection.
 import Database from 'better-sqlite3';
+import zlib from 'zlib';
 import { countEnabledBlocklistDomains, dropFeedDomains } from '../../models/blocklist-store.js';
 import { exportChanges } from '../../sync/changes.js';
 
 export const TASKS = {
   // The whole data of record for a copy that is starting over: every row, so
   // it is read off the event loop (sync/changes.js).
+  // Gzipped here too: the whole dataset is a lot to compress beside DNS.
   syncExport(db, { dataset, since }) {
-    return exportChanges(db, { dataset, since });
+    return zlib.gzipSync(exportChanges(db, { dataset, since }));
   },
 
   /**

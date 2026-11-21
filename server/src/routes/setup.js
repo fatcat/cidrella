@@ -122,9 +122,10 @@ router.put('/state', requirePerm('system:write'), (req, res) => {
 // POST /api/setup/join: make this box a member of an existing CIDRella. Only
 // while the first run is unfinished: joining replaces everything here with
 // the controller's data, sign-in accounts included.
+let joining = false;
 router.post('/join', requireRole('admin'), async (req, res) => {
   const db = getDb();
-  if (isMember() || getSetupState(db).done || countMembers(db) > 0) {
+  if (joining || isMember() || getSetupState(db).done || countMembers(db) > 0) {
     return res.status(400).json({
       error: 'This CIDRella is already set up. Only a new install can join another.',
       code: 'already_set_up',
@@ -138,6 +139,7 @@ router.post('/join', requireRole('admin'), async (req, res) => {
   if (!Number.isInteger(port) || port < 1 || port > 65535) {
     return res.status(400).json({ error: 'The port must be 1 to 65535.', code: 'unreachable' });
   }
+  joining = true;
   try {
     const joined = await joinController(db, { address, port, token });
     // This box is a member now, so the row waits for its controller.
@@ -150,6 +152,8 @@ router.post('/join', requireRole('admin'), async (req, res) => {
   } catch (err) {
     if (!(err instanceof JoinError)) throw err;
     res.status(400).json({ error: err.message, code: err.code });
+  } finally {
+    joining = false;
   }
 });
 

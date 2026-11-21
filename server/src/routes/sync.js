@@ -15,7 +15,7 @@ import { recordAudit } from '../services/audit.js';
 import { AUDIT_OUTBOX_KIND, insertAuditRow } from '../models/audit-log.js';
 import { exportChanges, needsSnapshot } from '../sync/changes.js';
 import { syncHead, syncStatus } from '../sync/log.js';
-import { controllerOf, isMember } from '../sync/mode.js';
+import { isMember } from '../sync/mode.js';
 import {
   addMember,
   memberForCredential,
@@ -23,6 +23,7 @@ import {
   ownInstanceId,
   ownInstanceName,
   redeemJoinToken,
+  removeMember,
   setDnsAddresses,
 } from '../models/sync-instance.js';
 
@@ -43,12 +44,9 @@ const joinLimiter = rateLimit({
 // Every answer here comes from the controller. A member says who that is.
 router.use((req, res, next) => {
   if (!isMember()) return next();
-  const controller = controllerOf();
-  res.status(409).json({
-    error: 'This instance is a member, not the controller.',
-    code: 'not_controller',
-    controller: controller && { address: controller.address, port: controller.port },
-  });
+  res
+    .status(409)
+    .json({ error: 'This instance is a member, not the controller.', code: 'not_controller' });
 });
 
 const isUuid = (value) => /^[0-9a-f-]{36}$/.test(String(value || ''));
@@ -73,8 +71,18 @@ router.post('/join', joinLimiter, (req, res) => {
   if (instance_id === ownInstanceId(db)) {
     return res.status(400).json({ error: 'A CIDRella cannot join itself.', code: 'token_refused' });
   }
-  const local = syncStatus(db);
-  if (schema !== local.schema) {
+  // The token first: nothing is told to a caller without one. It is used up
+  // with the member's row or not at all, so another schema leaves it good.
+  const mismatch = Symbol('schema');
+  let credential;
+  try {
+    credential = db.transaction(() => {
+      if (!redeemJoinToken(db, token)) return null;
+      if (schema !== syncStatus(db).schema) throw mismatch;
+      return addJoiningMember();
+    })();
+  } catch (err) {
+    if (err !== mismatch) throw err;
     return res.status(409).json({
       error:
         `This CIDRella is at version ${APP_VERSION} and the one joining is at ${version || 'another version'}. ` +
@@ -82,21 +90,12 @@ router.post('/join', joinLimiter, (req, res) => {
       code: 'schema_mismatch',
     });
   }
-  if (!redeemJoinToken(db, token)) {
+  if (!credential) {
     return res.status(403).json({
       error: 'The join token is wrong, already used or more than 15 minutes old. Make a new one.',
       code: 'token_refused',
     });
   }
-  const credential = addMember(db, {
-    instanceId: instance_id,
-    name: name.trim(),
-    address: req.ip.replace(/^::ffff:/, ''),
-    port,
-    fingerprint,
-    version: typeof version === 'string' ? version.slice(0, 64) : null,
-    schema,
-  });
   recordAudit({
     action: 'instance_joined',
     entityType: 'instance',
@@ -108,6 +107,18 @@ router.post('/join', joinLimiter, (req, res) => {
     controller: { instance_id: ownInstanceId(db), name: ownInstanceName(db) },
     version: APP_VERSION,
   });
+
+  function addJoiningMember() {
+    return addMember(db, {
+      instanceId: instance_id,
+      name: name.trim(),
+      address: req.ip.replace(/^::ffff:/, ''),
+      port,
+      fingerprint,
+      version: typeof version === 'string' ? version.slice(0, 64) : null,
+      schema,
+    });
+  }
 });
 
 // Everything below is a member's, by its credential.
@@ -144,7 +155,10 @@ router.get('/changes', async (req, res) => {
   if (since !== null && !Number.isSafeInteger(since)) {
     return res.status(400).json({ error: 'since must be a number.', code: 'bad_request' });
   }
-  noteContact(db, req.member.id, { cursor: since, version, schema });
+  // A cursor counts only where it could be true: it decides which deletes
+  // the log may forget.
+  const believable = dataset === local.dataset && since !== null && since <= local.head;
+  noteContact(db, req.member.id, { cursor: believable ? since : null, version, schema });
   if (typeof req.query.addr === 'string') {
     const addresses = req.query.addr.slice(0, 2048).split(',').filter(Boolean);
     if (setDnsAddresses(db, req.member.id, addresses)) {
@@ -183,12 +197,14 @@ router.get('/changes', async (req, res) => {
     if (syncHead(db) === since) return res.status(204).end();
   }
   // A snapshot reads every row: off the event loop, on a connection of its own.
+  // A snapshot reads and compresses every row: off the event loop, on a
+  // connection of its own.
   const payload = snapshot
     ? Buffer.from(await runDbTask('syncExport', { dbPath: db.name, dataset, since }))
-    : exportChanges(db, { dataset, since });
+    : zlib.gzipSync(exportChanges(db, { dataset, since }));
   res.set('Content-Type', 'application/x-ndjson');
   res.set('Content-Encoding', 'gzip');
-  res.send(zlib.gzipSync(payload));
+  res.send(payload);
 });
 
 const MAX_OUTBOX_ROWS = 500;
@@ -207,19 +223,23 @@ router.post('/outbox', (req, res) => {
   const db = getDb();
   const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, MAX_OUTBOX_ROWS) : [];
   const taken = [];
-  db.transaction(() => {
-    for (const row of rows) {
-      if (!Number.isInteger(row?.id)) continue;
-      taken.push(row.id);
-      const payload = row.payload;
-      if (row.kind !== AUDIT_OUTBOX_KIND || !payload || typeof payload.action !== 'string')
-        continue;
-      const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : null);
+  const userExists = db.prepare('SELECT 1 FROM users WHERE id = ?');
+  const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : null);
+  // Every row is taken, whatever it holds: one the controller cannot write
+  // is dropped with a line in the log, so it never holds up the rest.
+  for (const row of rows) {
+    if (!Number.isInteger(row?.id)) continue;
+    taken.push(row.id);
+    const payload = row.payload;
+    if (row.kind !== AUDIT_OUTBOX_KIND || !payload || typeof payload.action !== 'string') continue;
+    try {
+      const userId = Number.isInteger(payload.userId) ? payload.userId : null;
       insertAuditRow(db, {
-        userId: Number.isInteger(payload.userId) ? payload.userId : null,
+        // The user may have been removed since.
+        userId: userId !== null && userExists.get(userId) ? userId : null,
         action: payload.action.slice(0, 100),
         entityType: text(payload.entityType, 100),
-        entityId: payload.entityId ?? null,
+        entityId: ['string', 'number'].includes(typeof payload.entityId) ? payload.entityId : null,
         details: payload.details ?? null,
         actor: text(payload.actor, 255),
         origin: `member:${req.member.name}`.slice(0, 255),
@@ -227,10 +247,27 @@ router.post('/outbox', (req, res) => {
         sourceIp: text(payload.sourceIp, 64),
         at: sqlTime(payload.at),
       });
+    } catch (err) {
+      console.warn(`[sync] dropped an audit row from ${req.member.name}: ${err.message}`);
     }
-  })();
+  }
   noteContact(db, req.member.id);
   res.json({ taken });
+});
+
+// POST /api/sync/leave: a member that could not finish joining takes itself
+// off the list, so its row does not hold the change log's deletes back.
+router.post('/leave', (req, res) => {
+  removeMember(getDb(), req.member.id);
+  queueRegen('regenerate_dhcp');
+  recordAudit({
+    action: 'instance_left',
+    entityType: 'instance',
+    entityId: req.member.id,
+    source: 'sync',
+    details: { name: req.member.name },
+  });
+  res.status(204).end();
 });
 
 export default router;

@@ -29,6 +29,9 @@ export const GUARD_MESSAGE = 'cidrella-member-guard: the data of record is read-
 
 const quote = (text) => `'${String(text).replaceAll("'", "''")}'`;
 
+/** Whether a settings key is data of record. One the registry does not know is not. */
+export const isEstateSetting = (key) => Object.hasOwn(SETTINGS, key) && SETTINGS[key] === ESTATE;
+
 /** The settings keys that are data of record, as a SQL list. */
 export const estateSettingsSql = () =>
   Object.entries(SETTINGS)

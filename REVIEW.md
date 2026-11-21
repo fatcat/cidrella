@@ -14,6 +14,34 @@ Entries under **Will not fix** are decided: the maintainer chose to leave them. 
 the behavior they describe is explained when someone runs into it. Do not raise or fix them
 again unless the maintainer reopens one.
 
+#### SYNC-SNAPSHOT-SIZE-01: A snapshot is built, sent and parsed as one string
+
+**medium**, confirmed in the code (review of 63d815d, 2026-11-21). `server/src/sync/changes.js`
+(`exportChanges`, `parseChanges`), `server/src/utils/sync-client.js` (`syncRequest`)
+
+- **What happens:** A member's first copy, and every restart from a snapshot, holds the whole
+  data of record in memory several times over: the export joins every row into one string, the
+  client buffers the response, and the parse turns it back into one string. A data of record
+  past Node's string limit (about 512 MB of NDJSON; `audit_log`, `ip_events`, `scan_results` and
+  `dhcp_leases` are all in it) cannot be exported or applied at all, and a smaller one costs the
+  controller and the member that much memory.
+- **Why:** Phase 1 wrote the wire format as a Buffer in and a Buffer out.
+- **Fix:** Stream it: the worker writes gzip to a file or a stream, the route pipes it, the
+  client hands lines to the apply as they arrive, with the trailer hash checked before commit.
+
+#### MEMBER-PWCHANGE-01: A user who must change their password cannot use a member
+
+**low**, confirmed in the code (2026-11-21). `server/src/auth/middleware.js`
+(`PASSWORD_CHANGE_PATHS`), `server/src/sync/write-gate.js`
+
+- **What happens:** An account with `must_change_password` set signs in to a member and can do
+  nothing: every request but the password change is refused by the sign-in middleware, and the
+  password change is refused by the member write gate, with "This is a member of X. Make changes
+  there." shown on the forced-password screen.
+- **Why:** A member cannot write `users`.
+- **Fix:** On a member, refuse the sign-in itself with "Set your password on X first.", or show
+  that on the forced-password screen in place of the form.
+
 ---
 
 ## Will not fix
