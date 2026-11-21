@@ -201,6 +201,65 @@ export function proxyPerfFigures(s) {
   };
 }
 
+// The figures that are one proxy's own: a p95 cannot be made from two p95s,
+// and CPU and memory are one process's. With every instance selected the
+// merged minute rows leave them empty, and they are read from each
+// instance's own rows instead (/api/metrics/proxy-perf?by=instance,
+// [{ instance_id, name, rows }]).
+const OWN_FIGURES = ['p95', 'cpu', 'memory'];
+
+/**
+ * `figures` with each of OWN_FIGURES replaced by the highest instance's, its
+ * sub naming that instance. Unchanged with no per-instance rows.
+ */
+export function figuresAcrossInstances(figures, groups = []) {
+  if (!groups.length) return figures;
+  const each = groups.map((g) => ({
+    name: g.name,
+    figures: proxyPerfFigures(summarizeProxyPerf(g.rows)),
+  }));
+  const out = { ...figures };
+  for (const key of OWN_FIGURES) {
+    const ranked = each
+      .filter((e) => e.figures[key].value !== null)
+      .sort((a, b) => b.figures[key].value - a.figures[key].value);
+    out[key] = ranked.length
+      ? {
+          ...ranked[0].figures[key],
+          sub: `highest of ${ranked.length} ${ranked.length === 1 ? 'instance' : 'instances'}: ${ranked[0].name}`,
+        }
+      : { ...figures[key], value: null, series: [], sub: 'no samples in this range' };
+  }
+  return out;
+}
+
+/**
+ * One column of each instance's rows as chart rows and series: a row per
+ * minute holding `${column}:${instance_id}`, and a series per instance named
+ * for it. `scale` converts a value (microseconds to milliseconds); `base` is
+ * spread into every series.
+ */
+export function instanceChart(groups = [], column, { scale = (v) => v, label, base = {} } = {}) {
+  const minutes = new Map();
+  for (const g of groups) {
+    for (const r of g.rows) {
+      if (!minutes.has(r.ts)) minutes.set(r.ts, { ts: r.ts });
+      minutes.get(r.ts)[`${column}:${g.instance_id}`] = scale(num(r[column]));
+    }
+  }
+  return {
+    rows: [...minutes.values()].sort((a, b) => a.ts - b.ts),
+    series: groups.map((g, i) => ({
+      key: `${column}:${g.instance_id}`,
+      label: label ? `${label} ${g.name}` : g.name,
+      color: i + 1,
+      aggregate: 'avg',
+      summary: 'avg',
+      ...base,
+    })),
+  };
+}
+
 // /api/metrics/dns-failures as TopList rows: the name, how often it failed,
 // and its usual cause and error code.
 export function failedNameRows(failures = []) {

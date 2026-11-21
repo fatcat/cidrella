@@ -5,12 +5,12 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 
-const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../helpers/test-db.js');
-const { seedBackendEstate } = await import('../helpers/backend-estate.js');
-const { loadDhcpScopes } = await import('../../src/backends/shared/dhcp-scope-model.js');
-const { getScopeWithDetails } = await import('../../src/models/dhcp-scope.js');
+const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../../helpers/test-db.js');
+const { seedBackendEstate } = await import('../../helpers/backend-estate.js');
+const { loadDhcpScopes } = await import('../../../src/backends/shared/dhcp-scope-model.js');
+const { getScopeWithDetails } = await import('../../../src/models/dhcp-scope.js');
 const { addMember, dnsInstances, ensureOwnInstance, setDnsAddresses } =
-  await import('../../src/models/sync-instance.js');
+  await import('../../../src/models/sync-instance.js');
 
 let db;
 let tmpDir;

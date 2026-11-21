@@ -12,9 +12,9 @@
 import { createLogFollower } from './log-reader.js';
 import { drainProxyMetrics } from './dns-proxy.js';
 import { getDhcpBackend, getService, onBackendChanged } from '../backends/index.js';
+import { METRICS_RETENTION_DAYS as RETENTION_DAYS } from '../config/defaults.js';
 
 const AGGREGATE_INTERVAL_MS = 60_000;
-const RETENTION_DAYS = 30;
 const RETENTION_CLEANUP_EVERY = 100; // run cleanup every N cycles
 
 let db = null;
@@ -206,7 +206,9 @@ async function aggregate() {
     });
     insertAll();
 
-    // Periodic retention cleanup
+    // Periodic retention cleanup. The rows written above carry no instance_id:
+    // they are this box's own (migration 098). On a controller the cleanup
+    // takes its members' rows by the same age.
     cycleCount++;
     if (cycleCount % RETENTION_CLEANUP_EVERY === 0) {
       const cutoff = Math.floor(Date.now() / 1000) - RETENTION_DAYS * 86400;

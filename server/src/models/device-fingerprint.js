@@ -28,22 +28,30 @@ function logDrift(db, mac, before, after) {
 // later 'dhcp' capture, we still bump last_seen_at and refresh the raw DHCP
 // signals, but keep the operator-set type/os/source. Any drift on an
 // already-classified device is logged to device_fingerprint_changes.
+//
+// `fp.observed_at` (SQL time) is when the capture was made, for one another
+// instance made and sent here; now when absent. A capture older than the
+// newest one already on the row is dropped whole, so it cannot put older
+// signals over newer ones.
 export function upsertFingerprint(db, fp) {
   const mac = String(fp.mac_address).toLowerCase();
   const before = getByMac(db, mac);
+  const observedAt = fp.observed_at || null;
+  if (observedAt && before && before.last_seen_at > observedAt) return { changes: 0 };
   const result = db
     .prepare(
       `
     INSERT INTO device_fingerprints
       (mac_address, dhcp_fingerprint, vendor_class, dhcp_hostname,
-       device_type, os_family, confidence, source, raw)
+       device_type, os_family, confidence, source, raw, first_seen_at, last_seen_at)
     VALUES (@mac_address, @dhcp_fingerprint, @vendor_class, @dhcp_hostname,
-            @device_type, @os_family, @confidence, @source, @raw)
+            @device_type, @os_family, @confidence, @source, @raw,
+            COALESCE(@observed_at, datetime('now')), COALESCE(@observed_at, datetime('now')))
     ON CONFLICT(mac_address) DO UPDATE SET
       dhcp_fingerprint = COALESCE(excluded.dhcp_fingerprint, device_fingerprints.dhcp_fingerprint),
       vendor_class     = COALESCE(excluded.vendor_class, device_fingerprints.vendor_class),
       dhcp_hostname    = COALESCE(excluded.dhcp_hostname, device_fingerprints.dhcp_hostname),
-      last_seen_at     = datetime('now'),
+      last_seen_at     = COALESCE(@observed_at, datetime('now')),
       updated_at       = datetime('now'),
       -- Manual overrides stay sticky. Automatic results keep the strongest
       -- classification seen so an incomplete renewal cannot erase or
@@ -80,6 +88,7 @@ export function upsertFingerprint(db, fp) {
       confidence: Number.isInteger(fp.confidence) ? fp.confidence : 0,
       source: fp.source || 'dhcp',
       raw: fp.raw ?? null,
+      observed_at: observedAt,
     });
 
   // Compare against the row as actually written, not against the incoming

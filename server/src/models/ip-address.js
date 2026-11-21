@@ -113,6 +113,30 @@ function allocationEvent(named, oldState, newState) {
 }
 
 /**
+ * The seen stamps of a row something was just heard from. `observedAt` (SQL
+ * time) is when, for a sighting made earlier than now (another instance's):
+ * last_seen_at then only ever moves forward.
+ */
+function seenStamps(observedAt) {
+  if (!observedAt) {
+    return {
+      updates: [
+        "last_seen_at = datetime('now')",
+        "first_seen_at = COALESCE(first_seen_at, datetime('now'))",
+      ],
+      params: [],
+    };
+  }
+  return {
+    updates: [
+      "last_seen_at = MAX(COALESCE(last_seen_at, ''), ?)",
+      'first_seen_at = COALESCE(first_seen_at, ?)',
+    ],
+    params: [observedAt, observedAt],
+  };
+}
+
+/**
  * Core upsert: ensure an ip_addresses row exists, then update provided fields.
  * Only updates fields that are explicitly provided (not undefined).
  * Never overwrites first_seen_at on UPDATE (write-once).
@@ -142,6 +166,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
     // Not a column: names an allocation change ({ type, old, new, source })
     // so history says what happened rather than only the state it went to.
     allocation_event,
+    // Not a column: when the activity behind is_online was seen (SQL time),
+    // for a sighting another instance made. Now when absent.
+    observed_at,
   } = fields;
 
   const existing = db
@@ -177,8 +204,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
       updates.push('is_online = ?');
       params.push(is_online);
       if (is_online) {
-        updates.push("last_seen_at = datetime('now')");
-        updates.push("first_seen_at = COALESCE(first_seen_at, datetime('now'))");
+        const seen = seenStamps(observed_at);
+        updates.push(...seen.updates);
+        params.push(...seen.params);
         updates.push('offline_since_at = NULL');
       } else {
         updates.push("offline_since_at = COALESCE(offline_since_at, datetime('now'))");
@@ -261,9 +289,9 @@ export function upsert(db, subnetId, ip, fields = {}) {
       dhcp_duid, dhcp_iaid, reservation_note, scan_enabled, offline_since_at
     ) VALUES (
       ?, ?, ?, ?,
-      ?, ${is_online ? "datetime('now')" : 'NULL'}, ?,
+      ?, ${is_online ? "COALESCE(?, datetime('now'))" : 'NULL'}, ?,
       ?, ?, ?,
-      ${hasActivity ? "datetime('now')" : 'NULL'}, ?, ?,
+      ${hasActivity ? "COALESCE(?, datetime('now'))" : 'NULL'}, ?, ?,
       ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL
     )
   `,
@@ -274,10 +302,12 @@ export function upsert(db, subnetId, ip, fields = {}) {
       hostname || null,
       mac_address || null,
       is_online || 0,
+      ...(is_online ? [observed_at || null] : []),
       last_seen_mac || null,
       is_rogue || 0,
       rogue_reason || null,
       last_scanned_at || null,
+      ...(hasActivity ? [observed_at || null] : []),
       detection_source || null,
       allocation_state || 'unassigned',
       allocation_source_type || null,
@@ -308,20 +338,20 @@ export function upsert(db, subnetId, ip, fields = {}) {
  * Mark an IP as online. Sets is_online=1, last_seen_at, first_seen_at (if unset).
  * UPDATE only, does not create rows for unknown IPs.
  */
-export function markOnline(db, subnetId, ip, { mac, source } = {}) {
+export function markOnline(db, subnetId, ip, { mac, source, observedAt } = {}) {
   const existing = db
     .prepare('SELECT id, is_online FROM ip_addresses WHERE subnet_id = ? AND ip_address = ?')
     .get(subnetId, ip);
   if (!existing) return { changes: 0 };
 
+  const seen = seenStamps(observedAt);
   const updates = [
     'is_online = 1',
-    "last_seen_at = datetime('now')",
-    "first_seen_at = COALESCE(first_seen_at, datetime('now'))",
+    ...seen.updates,
     'offline_since_at = NULL',
     "updated_at = datetime('now')",
   ];
-  const params = [];
+  const params = [...seen.params];
 
   if (mac) {
     updates.push('last_seen_mac = ?');
@@ -381,7 +411,13 @@ export function recordPassiveActivity(
   db,
   subnetId,
   ip,
-  { mac, source = 'passive', createRogue = false, rogueReason = PASSIVE_ROGUE_REASON } = {},
+  {
+    mac,
+    source = 'passive',
+    createRogue = false,
+    rogueReason = PASSIVE_ROGUE_REASON,
+    observedAt,
+  } = {},
 ) {
   const existing = db
     .prepare(
@@ -392,7 +428,7 @@ export function recordPassiveActivity(
   const claimed = addressClaim(existing);
 
   if (existing) {
-    const result = markOnline(db, subnetId, ip, { mac, source });
+    const result = markOnline(db, subnetId, ip, { mac, source, observedAt });
     return result;
   }
 
@@ -407,6 +443,7 @@ export function recordPassiveActivity(
     detection_source: source,
     allocation_state: 'unassigned',
     allocation_source_type: null,
+    observed_at: observedAt,
   });
 
   emit(db, newId, subnetId, ip, 'online', { source });
@@ -414,6 +451,43 @@ export function recordPassiveActivity(
     emit(db, newId, subnetId, ip, 'rogue_detected', { newValue: rogueReason, source });
   }
   return { changes: 1, lastInsertRowid: newId };
+}
+
+/**
+ * Does the row already hold newer word than a sighting made at `observedAt`
+ * (SQL time)? It does when the address was seen at or after that time, or
+ * was decided offline at or after it: an older sighting adds nothing to the
+ * first and must not undo the second.
+ */
+export function sightingSuperseded(db, subnetId, ip, observedAt) {
+  return Boolean(
+    db
+      .prepare(
+        `SELECT 1 FROM ip_addresses
+         WHERE subnet_id = ? AND ip_address = ?
+           AND (datetime(last_seen_at) >= datetime(?)
+             OR (is_online = 0 AND datetime(offline_since_at) >= datetime(?)))`,
+      )
+      .get(subnetId, ip, observedAt, observedAt),
+  );
+}
+
+/**
+ * A sighting too old to say the address is in use now: it moves last_seen_at
+ * forward on a row that exists, and changes nothing else. No row is made, the
+ * online state stays as it is, and no event is recorded.
+ */
+export function noteEarlierSighting(db, subnetId, ip, observedAt) {
+  return db
+    .prepare(
+      `UPDATE ip_addresses SET
+         last_seen_at = ?,
+         first_seen_at = COALESCE(first_seen_at, ?),
+         updated_at = datetime('now')
+       WHERE subnet_id = ? AND ip_address = ?
+         AND (last_seen_at IS NULL OR datetime(last_seen_at) < datetime(?))`,
+    )
+    .run(observedAt, observedAt, subnetId, ip, observedAt);
 }
 
 /**

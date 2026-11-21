@@ -84,6 +84,8 @@ export const TABLES = {
   // Classified key by key, below.
   settings: estate('key', { hooks: [DNS, DHCP, RESOLVER] }),
   subnets: estate('id', { hooks: [DNS, DHCP] }),
+  // How far into each member's measurements this controller has stored.
+  sync_collected_marks: host,
   // The change log itself and this box's place in it (sync/log.js).
   // What the controller last heard from an instance is the controller's own.
   // Its addresses are in the DNS servers DHCP hands out.

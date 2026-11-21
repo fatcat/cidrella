@@ -4,41 +4,44 @@ import { queryRaw } from '../db/duckdb.js';
 const router = Router();
 
 // Pre-defined named queries, no arbitrary SQL accepted.
+// Every one reads this box's own queries (instance_id IS NULL): the sidecar
+// scores the clients this box answers. On a controller dns_queries also holds
+// its members' rows (sync/collected-streams.js), which are not its to score.
 // Each entry: { sql, paramMap } where paramMap transforms the request body into ordered params.
 const ALLOWED_QUERIES = {
   // ─── Dashboard queries ────────────────────────────────
   'top-clients': {
     sql: `SELECT client_ip, COUNT(*) AS query_count
           FROM dns_queries
-          WHERE ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
+          WHERE instance_id IS NULL AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
           GROUP BY client_ip ORDER BY query_count DESC LIMIT ?`,
     paramMap: (b) => [b.hours ?? 24, b.limit ?? 20],
   },
   'top-domains': {
     sql: `SELECT domain, COUNT(*) AS query_count
           FROM dns_queries
-          WHERE ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
+          WHERE instance_id IS NULL AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
           GROUP BY domain ORDER BY query_count DESC LIMIT ?`,
     paramMap: (b) => [b.hours ?? 24, b.limit ?? 20],
   },
   'query-volume': {
     sql: `SELECT time_bucket(INTERVAL '5 minutes', ts) AS bucket, COUNT(*) AS query_count
           FROM dns_queries
-          WHERE ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
+          WHERE instance_id IS NULL AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
           GROUP BY bucket ORDER BY bucket`,
     paramMap: (b) => [b.hours ?? 24],
   },
   'action-breakdown': {
     sql: `SELECT action, COUNT(*) AS count
           FROM dns_queries
-          WHERE ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
+          WHERE instance_id IS NULL AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
           GROUP BY action ORDER BY count DESC`,
     paramMap: (b) => [b.hours ?? 24],
   },
   'top-blocked': {
     sql: `SELECT domain, COUNT(*) AS block_count
           FROM dns_queries
-          WHERE action LIKE 'blocked%'
+          WHERE instance_id IS NULL AND action LIKE 'blocked%'
             AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')
           GROUP BY domain ORDER BY block_count DESC LIMIT ?`,
     paramMap: (b) => [b.hours ?? 24, b.limit ?? 20],
@@ -48,43 +51,43 @@ const ALLOWED_QUERIES = {
   'anomaly-active-clients': {
     sql: `SELECT DISTINCT client_ip
           FROM dns_queries
-          WHERE ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')`,
+          WHERE instance_id IS NULL AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' hours')`,
     paramMap: (b) => [b.hours ?? 24],
   },
   'anomaly-client-history-hours': {
     sql: `SELECT EXTRACT(EPOCH FROM (MAX(ts) - MIN(ts))) / 3600.0 AS hours
-          FROM dns_queries WHERE client_ip = ?`,
+          FROM dns_queries WHERE instance_id IS NULL AND client_ip = ?`,
     paramMap: (b) => [b.client_ip],
   },
   'anomaly-client-window-events': {
     sql: `SELECT ts, domain, query_type, response_code, action, resolved_ip
           FROM dns_queries
-          WHERE client_ip = ? AND ts >= CAST(? AS TIMESTAMP) AND ts < CAST(? AS TIMESTAMP)
+          WHERE instance_id IS NULL AND client_ip = ? AND ts >= CAST(? AS TIMESTAMP) AND ts < CAST(? AS TIMESTAMP)
           ORDER BY ts`,
     paramMap: (b) => [b.client_ip, b.window_start, b.window_end],
   },
   'anomaly-client-window-domains': {
     sql: `SELECT DISTINCT domain
           FROM dns_queries
-          WHERE client_ip = ? AND ts >= CAST(? AS TIMESTAMP) AND ts < CAST(? AS TIMESTAMP)`,
+          WHERE instance_id IS NULL AND client_ip = ? AND ts >= CAST(? AS TIMESTAMP) AND ts < CAST(? AS TIMESTAMP)`,
     paramMap: (b) => [b.client_ip, b.window_start, b.window_end],
   },
   'anomaly-client-historical-domains': {
     sql: `SELECT DISTINCT domain
           FROM dns_queries
-          WHERE client_ip = ? AND ts >= CAST(? AS TIMESTAMP) - INTERVAL (CAST(? AS INTEGER) || ' days') AND ts < CAST(? AS TIMESTAMP)`,
+          WHERE instance_id IS NULL AND client_ip = ? AND ts >= CAST(? AS TIMESTAMP) - INTERVAL (CAST(? AS INTEGER) || ' days') AND ts < CAST(? AS TIMESTAMP)`,
     paramMap: (b) => [b.client_ip, b.window_start, b.lookback_days ?? 7, b.window_start],
   },
   'anomaly-client-training-range': {
     sql: `SELECT MIN(ts) AS min_ts, MAX(ts) AS max_ts
           FROM dns_queries
-          WHERE client_ip = ? AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' days')`,
+          WHERE instance_id IS NULL AND client_ip = ? AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' days')`,
     paramMap: (b) => [b.client_ip, b.lookback_days ?? 7],
   },
   'anomaly-client-domain-first-seen': {
     sql: `SELECT DISTINCT domain, MIN(ts) AS first_seen
           FROM dns_queries
-          WHERE client_ip = ? AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' days')
+          WHERE instance_id IS NULL AND client_ip = ? AND ts >= NOW() - INTERVAL (CAST(? AS INTEGER) || ' days')
           GROUP BY domain`,
     paramMap: (b) => [b.client_ip, b.lookback_days ?? 7],
   },

@@ -9,6 +9,10 @@ import { getSetting } from './init.js';
 
 let instance = null;
 let connection = null;
+// Members' rows go in on a connection of their own: a batch and its mark are
+// one transaction, which the flush on the main connection must stay out of.
+let ingest = null;
+let ingestQueue = Promise.resolve();
 let buffer = [];
 let flushTimer = null;
 let pruneTimer = null;
@@ -54,9 +58,31 @@ export function initAnalyticsDb(dataDir) {
     // SQLite database managed by numbered migrations.
     // ede is the answer's Extended DNS Error code and failure its cause
     // (utils/dns-ede.js failureCause), both null on an answer that worked.
-    for (const column of ['dnssec_supported BOOLEAN', 'ede INTEGER', 'failure VARCHAR']) {
+    // instance_id is the member a row came up from, NULL for a query this box
+    // answered itself (every row on a single box, and every row from before
+    // the column). seq numbers this box's own rows in the order they were
+    // stored, which is how a member knows what it has sent up; a row's ts is
+    // when the query was answered, and a row can be stored late.
+    for (const column of [
+      'dnssec_supported BOOLEAN',
+      'ede INTEGER',
+      'failure VARCHAR',
+      'instance_id VARCHAR',
+      'seq BIGINT',
+    ]) {
       await connection.run(`ALTER TABLE dns_queries ADD COLUMN IF NOT EXISTS ${column}`);
     }
+    await connection.run('CREATE SEQUENCE IF NOT EXISTS dns_queries_seq');
+    // How far into each member's rows this box has stored (the controller's
+    // side of sync/collected-streams.js).
+    await connection.run(`
+      CREATE TABLE IF NOT EXISTS collected_marks (
+        instance_id VARCHAR NOT NULL,
+        epoch VARCHAR NOT NULL,
+        position BIGINT NOT NULL
+      )
+    `);
+    ingest = await instance.connect();
 
     // Start periodic flush
     flushTimer = setInterval(() => flushQueries(), ANALYTICS_FLUSH_INTERVAL_MS);
@@ -117,7 +143,9 @@ const QUERY_COLUMNS = [
   ['ede', 'ede'],
   ['failure', 'failure'],
 ];
-const QUERY_TUPLE = `(${QUERY_COLUMNS.map(() => '?').join(', ')})`;
+const QUERY_COLUMN_NAMES = QUERY_COLUMNS.map(([column]) => column).join(', ');
+const QUERY_PLACEHOLDERS = QUERY_COLUMNS.map(() => '?').join(', ');
+const QUERY_TUPLE = `(${QUERY_PLACEHOLDERS}, nextval('dns_queries_seq'))`;
 
 // Flush buffered queries to DuckDB using batched multi-row INSERT
 export function flushQueries() {
@@ -133,13 +161,15 @@ export function flushQueries() {
     for (const [, field] of QUERY_COLUMNS) params.push(row[field]);
   }
 
-  const columns = QUERY_COLUMNS.map(([column]) => column).join(', ');
-  const sql = `INSERT INTO dns_queries (${columns}) VALUES ${placeholders.join(', ')}`;
+  const sql = `INSERT INTO dns_queries (${QUERY_COLUMN_NAMES}, seq) VALUES ${placeholders.join(', ')}`;
 
   return connection
     .run(sql, params)
     .catch((err) => console.error('[analytics] Flush error:', err.message));
 }
+
+/** Every instance's rows: the filter that filters nothing. */
+export const EVERY_INSTANCE = Object.freeze({ and: '', params: [] });
 
 // Validated range-to-interval mapping, only allows known safe values
 const VALID_INTERVALS = new Map();
@@ -169,49 +199,58 @@ function safeRowForJson(row) {
   return out;
 }
 
+// Every range query below takes `instance` last: whose rows to count, from
+// readInstanceFilter (sync/instance-filter.js). Every instance's by default.
+// These are counts over the stored queries themselves, so every instance
+// together is one honest count.
+
+// This box's own rows: what the anomaly evidence reads, as the sidecar that
+// scored the window did (routes/internal-analytics.js).
+const OWN = 'instance_id IS NULL';
+
 // Generic top-N query by column (no action filter)
-function queryTopBy(column, range, limit = 20) {
+function queryTopBy(column, range, limit = 20, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT ${column}, COUNT(*) as count
      FROM dns_queries
-     WHERE ts >= NOW() - INTERVAL '${interval}'
+     WHERE ts >= NOW() - INTERVAL '${interval}'${instance.and}
      GROUP BY ${column}
      ORDER BY count DESC
      LIMIT ?`,
-    [limit],
+    [...instance.params, limit],
   );
 }
 
 // Generic top-N query by column filtered by action
-function queryTopByAction(column, range, action, limit = 10) {
+function queryTopByAction(column, range, action, limit = 10, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT ${column}, COUNT(*) as count
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
-       AND action = ?
+       AND action = ?${instance.and}
      GROUP BY ${column}
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit],
+    [action, ...instance.params, limit],
   );
 }
 
 // Top clients by query count
-export function queryTopClients(range, limit = 20) {
-  return queryTopBy('client_ip', range, limit);
+export function queryTopClients(range, limit = 20, instance) {
+  return queryTopBy('client_ip', range, limit, instance);
 }
 
 // Top queried domains
-export function queryTopDomains(range, limit = 20) {
-  return queryTopBy('domain', range, limit);
+export function queryTopDomains(range, limit = 20, instance) {
+  return queryTopBy('domain', range, limit, instance);
 }
 
 // Most-requested domains whose successful answers were proven insecure by
 // the validating resolver. NULL means no conclusion was possible (for
 // example, validation was disabled), so it is deliberately excluded.
-export function queryTopDomainsWithoutDnssec(range, limit = 10) {
+export function queryTopDomainsWithoutDnssec(range, limit = 10, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT domain, COUNT(*) as count
@@ -219,88 +258,93 @@ export function queryTopDomainsWithoutDnssec(range, limit = 10) {
      WHERE ts >= NOW() - INTERVAL '${interval}'
        AND action = 'allowed'
        AND response_code = 'NOERROR'
-       AND dnssec_supported = FALSE
+       AND dnssec_supported = FALSE${instance.and}
      GROUP BY domain
      ORDER BY count DESC, domain ASC
      LIMIT ?`,
-    [limit],
+    [...instance.params, limit],
   );
 }
 
 // The names whose answers failed most, with the cause and the EDE code seen
 // most for each (utils/dns-ede.js).
-export function queryFailedDomains(range, limit = 10) {
+export function queryFailedDomains(range, limit = 10, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT domain, COUNT(*) as count, mode(failure) as failure, mode(ede) as ede
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
-       AND failure IS NOT NULL
+       AND failure IS NOT NULL${instance.and}
      GROUP BY domain
      ORDER BY count DESC, domain ASC
      LIMIT ?`,
-    [limit],
+    [...instance.params, limit],
   );
 }
 
 // Top clients filtered by action
-export function queryTopClientsByAction(range, action, limit = 10) {
-  return queryTopByAction('client_ip', range, action, limit);
+export function queryTopClientsByAction(range, action, limit = 10, instance) {
+  return queryTopByAction('client_ip', range, action, limit, instance);
 }
 
 // Top domains filtered by action
-export function queryTopDomainsByAction(range, action, limit = 10) {
-  return queryTopByAction('domain', range, action, limit);
+export function queryTopDomainsByAction(range, action, limit = 10, instance) {
+  return queryTopByAction('domain', range, action, limit, instance);
 }
 
 // Top block reasons (category slugs or country codes) for a given action
-export function queryTopBlockReasons(range, action, limit = 10) {
+export function queryTopBlockReasons(range, action, limit = 10, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT block_reason, COUNT(*) as count
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
        AND action = ?
-       AND block_reason IS NOT NULL
+       AND block_reason IS NOT NULL${instance.and}
      GROUP BY block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit],
+    [action, ...instance.params, limit],
   );
 }
 
 // Top client/domain pairs for a given action
-export function queryTopClientDomainPairsByAction(range, action, limit = 20) {
+export function queryTopClientDomainPairsByAction(
+  range,
+  action,
+  limit = 20,
+  instance = EVERY_INSTANCE,
+) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT client_ip, domain, block_reason, COUNT(*) as count
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
-       AND action = ?
+       AND action = ?${instance.and}
      GROUP BY client_ip, domain, block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [action, limit],
+    [action, ...instance.params, limit],
   );
 }
 
 // Top blocked domains
-export function queryTopBlocked(range, limit = 20) {
+export function queryTopBlocked(range, limit = 20, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT domain, action, block_reason, COUNT(*) as count
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
-       AND action != 'allowed'
+       AND action != 'allowed'${instance.and}
      GROUP BY domain, action, block_reason
      ORDER BY count DESC
      LIMIT ?`,
-    [limit],
+    [...instance.params, limit],
   );
 }
 
 // Query volume over time (bucketed)
-export function queryVolume(range, interval = '5m') {
+export function queryVolume(range, interval = '5m', instance = EVERY_INSTANCE) {
   const rangeInterval = rangeToInterval(range);
   const bucketInterval = rangeToInterval(interval);
   return queryRaw(
@@ -309,36 +353,38 @@ export function queryVolume(range, interval = '5m') {
             COUNT(*) FILTER (WHERE action = 'allowed') as allowed,
             COUNT(*) FILTER (WHERE action != 'allowed') as blocked
      FROM dns_queries
-     WHERE ts >= NOW() - INTERVAL '${rangeInterval}'
+     WHERE ts >= NOW() - INTERVAL '${rangeInterval}'${instance.and}
      GROUP BY bucket
      ORDER BY bucket`,
+    instance.params,
   );
 }
 
 // Action breakdown (counts per action type)
-export function queryActionBreakdown(range) {
+export function queryActionBreakdown(range, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT action, COUNT(*) as count
      FROM dns_queries
-     WHERE ts >= NOW() - INTERVAL '${interval}'
+     WHERE ts >= NOW() - INTERVAL '${interval}'${instance.and}
      GROUP BY action
      ORDER BY count DESC`,
+    instance.params,
   );
 }
 
 // Domains queried by a specific client
-export function queryClientDomains(clientIp, range, limit = 50) {
+export function queryClientDomains(clientIp, range, limit = 50, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT domain, COUNT(*) as count
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
-       AND client_ip = ?
+       AND client_ip = ?${instance.and}
      GROUP BY domain
      ORDER BY count DESC
      LIMIT ?`,
-    [clientIp, limit],
+    [clientIp, ...instance.params, limit],
   );
 }
 
@@ -361,6 +407,7 @@ export function queryClientWindowEvidence(clientIp, windowStart, windowEnd, limi
      WHERE client_ip = ?
        AND ts >= CAST(? AS TIMESTAMP)
        AND ts < CAST(? AS TIMESTAMP)
+       AND ${OWN}
      GROUP BY domain, query_type, response_code, action
      ORDER BY count DESC, domain
      LIMIT ?`,
@@ -385,6 +432,7 @@ export function queryClientWindowDomains(clientIp, windowStart, windowEnd, cap =
      WHERE client_ip = ?
        AND ts >= CAST(? AS TIMESTAMP)
        AND ts < CAST(? AS TIMESTAMP)
+       AND ${OWN}
      GROUP BY domain
      ORDER BY count DESC, domain
      LIMIT ?`,
@@ -402,9 +450,10 @@ export function queryClientNewDomains(clientIp, windowStart, windowEnd, lookback
      WHERE w.client_ip = ?
        AND w.ts >= CAST(? AS TIMESTAMP)
        AND w.ts < CAST(? AS TIMESTAMP)
+       AND w.${OWN}
        AND NOT EXISTS (
          SELECT 1 FROM dns_queries h
-          WHERE h.client_ip = w.client_ip AND h.domain = w.domain
+          WHERE h.client_ip = w.client_ip AND h.domain = w.domain AND h.${OWN}
             AND h.ts >= CAST(? AS TIMESTAMP) - INTERVAL (CAST(? AS INTEGER) || ' days')
             AND h.ts < CAST(? AS TIMESTAMP))
      GROUP BY w.domain
@@ -426,33 +475,113 @@ export function queryClientWindowSummary(clientIp, windowStart, windowEnd) {
      FROM dns_queries
      WHERE client_ip = ?
        AND ts >= CAST(? AS TIMESTAMP)
-       AND ts < CAST(? AS TIMESTAMP)`,
+       AND ts < CAST(? AS TIMESTAMP)
+       AND ${OWN}`,
     [clientIp, windowStart, windowEnd],
   ).then((rows) => rows[0] || null);
 }
 
 // Clients that queried a specific domain
-export function queryDomainClients(domain, range, limit = 50) {
+export function queryDomainClients(domain, range, limit = 50, instance = EVERY_INSTANCE) {
   const interval = rangeToInterval(range);
   return queryRaw(
     `SELECT client_ip, COUNT(*) as count
      FROM dns_queries
      WHERE ts >= NOW() - INTERVAL '${interval}'
-       AND domain = ?
+       AND domain = ?${instance.and}
      GROUP BY client_ip
      ORDER BY count DESC
      LIMIT ?`,
-    [domain, limit],
+    [domain, ...instance.params, limit],
   );
 }
 
-// Prune old data based on retention setting
+/** How many days of queries this box keeps (the analytics_retention_days setting). */
+export function analyticsRetentionDays() {
+  return Math.max(1, Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7));
+}
+
+const UPLOAD_COLUMNS = `seq, ${QUERY_COLUMN_NAMES}`;
+
+/**
+ * This box's own rows stored after `seq`, oldest first, each an array in
+ * UPLOAD_COLUMNS order with ts as an ISO string: what a member sends up
+ * (sync/collected-streams.js).
+ */
+export async function readOwnQueriesAfter(seq, limit) {
+  if (!connection) return [];
+  const reader = await connection.runAndReadAll(
+    `SELECT ${UPLOAD_COLUMNS} FROM dns_queries
+     WHERE ${OWN} AND seq > ? ORDER BY seq LIMIT ?`,
+    [seq, limit],
+  );
+  return reader.getRowObjectsJS().map((row) => [
+    Number(row.seq),
+    row.ts instanceof Date ? row.ts.toISOString() : String(row.ts),
+    ...QUERY_COLUMNS.slice(1).map(([column]) => {
+      const value = row[column];
+      return typeof value === 'bigint' ? Number(value) : value;
+    }),
+  ]);
+}
+
+/** The newest seq this box has given one of its own rows, 0 with none. */
+export async function ownQueriesHead() {
+  const rows = await queryRaw(`SELECT max(seq) AS head FROM dns_queries WHERE ${OWN}`);
+  return rows[0]?.head || 0;
+}
+
+/**
+ * Store a member's rows. `accept(position)` is handed how far into this
+ * member's rows the store already is (0 for a new epoch) and returns
+ * { rows, position }: the rows to store, each an array of values in
+ * QUERY_COLUMNS order, and the new position. The rows and the mark commit
+ * together, so a batch that arrives twice is stored once. One batch at a
+ * time. Resolves what accept returned.
+ */
+export function storeMemberQueries(instanceId, epoch, accept) {
+  const run = async () => {
+    if (!ingest) throw new Error('The analytics database is not open.');
+    const reader = await ingest.runAndReadAll(
+      'SELECT epoch, position FROM collected_marks WHERE instance_id = ?',
+      [instanceId],
+    );
+    const mark = reader.getRowObjectsJS()[0];
+    const accepted = accept(mark && mark.epoch === epoch ? Number(mark.position) : 0);
+    await ingest.run('BEGIN TRANSACTION');
+    try {
+      // In pieces: one statement's parameters are bounded.
+      for (let i = 0; i < accepted.rows.length; i += 500) {
+        const piece = accepted.rows.slice(i, i + 500);
+        await ingest.run(
+          `INSERT INTO dns_queries (${QUERY_COLUMN_NAMES}, instance_id) VALUES ${piece
+            .map(() => `(${QUERY_PLACEHOLDERS}, ?)`)
+            .join(', ')}`,
+          piece.flatMap((row) => [...row, instanceId]),
+        );
+      }
+      await ingest.run('DELETE FROM collected_marks WHERE instance_id = ?', [instanceId]);
+      await ingest.run(
+        'INSERT INTO collected_marks (instance_id, epoch, position) VALUES (?, ?, ?)',
+        [instanceId, epoch, accepted.position],
+      );
+      await ingest.run('COMMIT');
+    } catch (err) {
+      await ingest.run('ROLLBACK').catch(() => {});
+      throw err;
+    }
+    return accepted;
+  };
+  const result = ingestQueue.then(run);
+  ingestQueue = result.catch(() => {});
+  return result;
+}
+
+// Prune old data based on retention setting. Members' rows on the controller
+// go by the same rule as its own.
 export function pruneOldData() {
   if (!connection) return Promise.resolve();
-  const days = Math.max(
-    1,
-    Math.min(365, parseInt(getSetting('analytics_retention_days'), 10) || 7),
-  );
+  const days = analyticsRetentionDays();
   const interval = rangeToInterval(`${days}d`) || `${days} DAYS`;
   return connection
     .run(`DELETE FROM dns_queries WHERE ts < NOW() - INTERVAL '${interval}'`)
@@ -470,6 +599,15 @@ export async function closeAnalyticsDb() {
     pruneTimer = null;
   }
 
+  if (ingest) {
+    await ingestQueue;
+    try {
+      ingest.closeSync();
+    } catch (err) {
+      console.error('[analytics] Close error:', err.message);
+    }
+    ingest = null;
+  }
   if (connection) {
     await flushQueries();
     try {

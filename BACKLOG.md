@@ -62,8 +62,19 @@ apply that only renders (ADR 006). Phase 1 (the change log) is done too, 2026-11
 `sync_log` and its generated triggers, dataset identity, `exportChanges`/`applyChanges` and a
 loopback test. Phase 2 (member mode, DNS only) is done too, 2026-11-21: sync identity, pairing,
 the sync loop, the write gate, guard triggers, first-run join and the Instances page. Phase 3 (clients find every member) is done, 2026-11-21: a scope's DNS
-servers option serves every DNS-serving instance (`utils/instance-dns.js`). Next is phase 4, facts
-and analytics. Left open by phase 3:
+servers option serves every DNS-serving instance (`utils/instance-dns.js`). Phase 4 (facts and
+analytics) is done, 2026-11-21: `sync/remote-sink.js`, `sync/collected-upload.js`, the
+`?instance=` filter. Next is phase 5, DHCP on a member. Left open by phase 4:
+- The anomaly sidecar reads this box's query rows only (`instance_id IS NULL`), so nobody scores a
+  member's clients. Scoring them on the controller needs the model to treat each instance's
+  clients as its own population, or one model per instance.
+- The Resolution Map and Anomalies pages have no instance filter.
+- Rows of a removed member stay in All until they age out and cannot be chosen alone.
+- A member's rogue DHCP events and daemon events are not sent up.
+- A member with a wrong clock: outbox times are corrected by the clock it sends; collected rows
+  (metrics, queries) keep the member's timestamps.
+
+Left open by phase 3:
 - NS records per instance (PowerDNS stack) are not generated. Each instance needs a name in
   every zone, which is naming policy under the canonical IP model gate, and NS only matters where
   a parent zone delegates to CIDRella. The maintainer's call: what the names are.
@@ -78,7 +89,6 @@ Left open by phase 2:
 - `DATA_DIR/sync/` (the identity key, the member's credential) is not carried by a backup, so a
   box rebuilt from a backup gets a new identity and must be paired again. Carrying it would let
   a backup restored on a second box clone the identity. Decide in phase 7.
-- A member drops what it observes until the remote sink of phase 4; only audit rows are sent up.
 - The first-run "set up or join" answer is not stored, so a first run resumed before the
   two-factor step asks again.
 Every install is a member; one is also the controller and owns all writes; other members sync a

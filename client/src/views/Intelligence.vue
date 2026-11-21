@@ -10,8 +10,11 @@
       lede="What the filters let through, what they stopped, and which devices and domains were on each side."
       track="intelligence"
       :range="selectedRange"
+      :instance="instance"
+      :instances="instances"
       :loading="store.loading"
       @update:range="onRange"
+      @update:instance="onInstance"
       @refresh="refreshAll"
     />
 
@@ -225,6 +228,7 @@ import { computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
 import StatusDot from '../components/StatusDot.vue';
 import WorkspaceHead from '../components/WorkspaceHead.vue';
+import { useInstanceFilter } from '../composables/useInstanceFilter.js';
 import SeriesChart from '../components/SeriesChart.vue';
 import StackedBar from '../components/StackedBar.vue';
 import TopList from '../components/TopList.vue';
@@ -443,6 +447,10 @@ async function onRange(value) {
   store.setRange(value);
   await store.fetchIntelligence(value, { rangeOnly: true });
 }
+
+const { instance, instances, onInstance } = useInstanceFilter(() =>
+  store.fetchIntelligence(selectedRange.value, { rangeOnly: true }),
+);
 
 onMounted(refreshAll);
 useAutoRefresh(refreshAll);

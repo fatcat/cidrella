@@ -42,6 +42,18 @@ again unless the maintainer reopens one.
 - **Fix:** On a member, refuse the sign-in itself with "Set your password on X first.", or show
   that on the forced-password screen in place of the form.
 
+#### SQLTIME-DUP-01: Four private copies of the SQL timestamp helper
+
+**low**, confirmed in the code (2026-11-21). `server/src/models/session.js`,
+`server/src/auth/tokens.js`, `server/src/routes/anomalies.js`, `server/src/utils/backup.js`
+
+- **What happens:** Each file turns a time into SQLite's `YYYY-MM-DD HH:MM:SS` with its own
+  function. `server/src/utils/sql-time.js` (`sqlTime`) is the shared one since phase 4 of the
+  instances work.
+- **Why:** Each was written before a shared helper existed.
+- **Fix:** Import `sqlTime` in the four files, after checking each copy rounds and rejects bad
+  input the same way.
+
 ---
 
 ## Will not fix

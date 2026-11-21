@@ -789,6 +789,26 @@ already hold on a single box.
   network when it has one (`utils/instance-dns.js`). Other resolvers a person
   listed stay where they are, a list naming no instance is served as it is,
   and nothing stored changes. A change to the instances re-renders DHCP.
+- **A member reports what it observes.** Its facts sink is the remote one
+  (`sync/remote-sink.js`): the clients its DNS proxy hears are held per
+  address and written to `sync_outbox` every 30 seconds as one row, a DHCP
+  fingerprint as a row of its own, and `sendOutbox` carries them with the
+  audit rows. The controller applies each through the same functions its own
+  sink calls (`sync/member-facts.js`), as of the time the member observed
+  it, read by the member's clock. A sighting older than the stale window, or
+  older than what the row already holds, only moves `last_seen_at` forward:
+  it never brings an address online, makes a row or a rogue. Leases are not
+  sent until DHCP runs on a member.
+- **Collected data goes up with its instance.** A member uploads new rows of
+  the metrics tables and of DuckDB `dns_queries` from a cursor
+  (`sync/collected-upload.js` to `POST /api/sync/collected/:stream`). The
+  controller stores them under the member's instance id (NULL is the box's
+  own rows) and keeps a high-water mark per instance and stream, so a batch
+  sent twice counts once. Analytics reads take `?instance=`
+  (`sync/instance-filter.js`): all by default, sums added up, and figures
+  that cannot be merged (p95, CPU, memory) left out of a merged minute and
+  offered per instance instead. The anomaly sidecar reads the box's own
+  rows only.
 
 ## Security and Operations Boundaries
 

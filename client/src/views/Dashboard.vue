@@ -10,8 +10,11 @@
       lede="What is running, what is answering, and what needs a decision. Everything here links to where you act on it."
       track="dashboard"
       :range="selectedRange"
+      :instance="instance"
+      :instances="instances"
       :loading="store.loading"
       @update:range="onRange"
+      @update:instance="onInstance"
       @refresh="refreshAll"
     />
 
@@ -138,7 +141,12 @@ import { computed, onMounted } from 'vue';
 import { RouterLink } from 'vue-router';
 import { useDashboardStore } from '../stores/dashboard.js';
 import { rangeLabel as rangeLabelOf } from '../utils/chart-config.js';
-import { proxyPerfFigures, summarizeProxyPerf } from '../utils/proxy-perf.js';
+import {
+  figuresAcrossInstances,
+  proxyPerfFigures,
+  summarizeProxyPerf,
+} from '../utils/proxy-perf.js';
+import { useInstanceFilter } from '../composables/useInstanceFilter.js';
 import { serviceChips } from '../utils/service-chips.js';
 import { formatNumber } from '../utils/format.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
@@ -247,7 +255,13 @@ const attentionNote = computed(() => {
 
 // Resolution: the shared summary of the proxy performance minute rows.
 const summary = computed(() => summarizeProxyPerf(store.proxyPerf || []));
-const figures = computed(() => proxyPerfFigures(summary.value));
+// With every instance together the p95 is the highest instance's own.
+const figures = computed(() =>
+  figuresAcrossInstances(
+    proxyPerfFigures(summary.value),
+    store.perInstance ? store.proxyPerfByInstance || [] : [],
+  ),
+);
 const resolutionNote = computed(
   () => `${rangeLabel.value} · ${formatNumber(summary.value.queries)} queries`,
 );
@@ -362,6 +376,10 @@ async function onRange(value) {
   store.setRange(value);
   await store.fetchHealthBoard(value, { rangeOnly: true });
 }
+
+const { instance, instances, onInstance } = useInstanceFilter(() =>
+  store.fetchHealthBoard(selectedRange.value, { rangeOnly: true }),
+);
 
 onMounted(refreshAll);
 useAutoRefresh(refreshAll);

@@ -11,8 +11,11 @@
       lede="How fast the resolver answers, how often the cache saves a trip upstream, and what the DNS proxy process costs the box."
       track="performance"
       :range="selectedRange"
+      :instance="instance"
+      :instances="instances"
       :loading="store.loading"
       @update:range="onRange"
+      @update:instance="onInstance"
       @refresh="refreshAll"
     />
 
@@ -85,7 +88,7 @@
       <section class="panel" aria-label="Upstream latency">
         <div class="panel-head">
           <h2>Upstream latency</h2>
-          <span class="panel-note">p95 of each provider's slowest address</span>
+          <span class="panel-note">{{ upstreamLatencyNote }}</span>
         </div>
         <div class="panel-body" data-track="performance-resolver-latency">
           <SeriesChart
@@ -127,8 +130,8 @@
         </div>
         <div class="panel-body">
           <SeriesChart
-            :rows="latencyRows"
-            :series="LATENCY_SERIES"
+            :rows="latencyChart.rows"
+            :series="latencyChart.series"
             :range="selectedRange"
             :stacked="false"
             unit="ms"
@@ -173,8 +176,8 @@
         <div>
           <FigureCard v-bind="figures.cpu" :series="[]" />
           <SeriesChart
-            :rows="cpuRows"
-            :series="CPU_SERIES"
+            :rows="cpuChart.rows"
+            :series="cpuChart.series"
             :range="selectedRange"
             :stacked="false"
             unit="%"
@@ -184,8 +187,8 @@
         <div>
           <FigureCard v-bind="figures.memory" :series="[]" />
           <SeriesChart
-            :rows="rows"
-            :series="MEMORY_SERIES"
+            :rows="memoryChart.rows"
+            :series="memoryChart.series"
             :range="selectedRange"
             :stacked="false"
             unit=" MB"
@@ -202,9 +205,15 @@ import { computed, onMounted } from 'vue';
 import { useDashboardStore } from '../stores/dashboard.js';
 import { rangeLabel as rangeLabelOf } from '../utils/chart-config.js';
 import { formatNumber } from '../utils/format.js';
-import { proxyPerfFigures, summarizeProxyPerf } from '../utils/proxy-perf.js';
+import {
+  figuresAcrossInstances,
+  instanceChart,
+  proxyPerfFigures,
+  summarizeProxyPerf,
+} from '../utils/proxy-perf.js';
 import { serviceChips } from '../utils/service-chips.js';
 import { useAutoRefresh } from '../composables/useAutoRefresh.js';
+import { useInstanceFilter } from '../composables/useInstanceFilter.js';
 import '../assets/analytics-workspace.css';
 import StatusDot from '../components/StatusDot.vue';
 import WorkspaceHead from '../components/WorkspaceHead.vue';
@@ -272,7 +281,13 @@ const CPU_SERIES = [{ key: 'cpu', label: 'CPU', color: 'info', aggregate: 'avg',
 const summary = computed(() => summarizeProxyPerf(rows.value));
 const forwarder = computed(() => summarizeForwarder(store.forwarder || []));
 const upstreamLatencySeries = computed(() => providerLatencySeries(forwarder.value.providers));
-const figures = computed(() => proxyPerfFigures(summary.value));
+// Every instance together: a p95, a CPU share and a memory size are one
+// proxy's own, so each instance keeps its series and the figure is the
+// highest of them.
+const byInstance = computed(() => (store.perInstance ? store.proxyPerfByInstance || [] : []));
+const figures = computed(() =>
+  figuresAcrossInstances(proxyPerfFigures(summary.value), byInstance.value),
+);
 const chips = computed(() => serviceChips(store.services));
 
 // The latency series are stored in microseconds; the chart wants the same
@@ -289,6 +304,25 @@ const latencyRows = computed(() =>
 );
 const cpuRows = computed(() =>
   rows.value.map((r, i) => ({ ts: r.ts, cpu: summary.value.series.cpu[i] })),
+);
+const latencyChart = computed(() => {
+  if (!store.perInstance) return { rows: latencyRows.value, series: LATENCY_SERIES };
+  const p95 = instanceChart(byInstance.value, 'latency_p95', { scale: ms, label: 'p95' });
+  const at = new Map(p95.rows.map((r) => [r.ts, r]));
+  return {
+    rows: latencyRows.value.map((r) => ({ ...r, ...at.get(r.ts) })),
+    series: [LATENCY_SERIES[0], ...p95.series, LATENCY_SERIES[2]],
+  };
+});
+const cpuChart = computed(() =>
+  store.perInstance
+    ? instanceChart(byInstance.value, 'cpu_percent')
+    : { rows: cpuRows.value, series: CPU_SERIES },
+);
+const memoryChart = computed(() =>
+  store.perInstance
+    ? instanceChart(byInstance.value, 'rss_mb', { label: 'RSS', base: { summary: 'latest' } })
+    : { rows: rows.value, series: MEMORY_SERIES },
 );
 
 const rangeLabel = computed(() => rangeLabelOf(selectedRange.value));
@@ -312,11 +346,17 @@ const note = computed(
       summary.value.minutes,
     )} samples`,
 );
-const processNote = computed(() =>
-  cores.value > 1
-    ? `The DNS proxy process · CPU is of one core, the host has ${cores.value} · heap sits inside RSS`
-    : 'The DNS proxy process · heap sits inside RSS',
+const upstreamLatencyNote = computed(() =>
+  store.perInstance
+    ? "p95 of each provider's slowest address on any instance"
+    : "p95 of each provider's slowest address",
 );
+const processNote = computed(() => {
+  if (store.perInstance) return "Each instance's DNS proxy process · CPU is of one core";
+  return cores.value > 1
+    ? `The DNS proxy process · CPU is of one core, the host has ${cores.value} · heap sits inside RSS`
+    : 'The DNS proxy process · heap sits inside RSS';
+});
 
 function refreshAll() {
   return store.track(() =>
@@ -333,6 +373,8 @@ async function onRange(value) {
   store.setRange(value);
   await refreshAll();
 }
+
+const { instance, instances, onInstance } = useInstanceFilter(refreshAll);
 
 onMounted(refreshAll);
 useAutoRefresh(refreshAll);

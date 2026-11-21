@@ -779,6 +779,19 @@ export function observePassiveActivity(db, subnetId, ip, options = {}) {
   return IpAddress.recordPassiveActivity(db, subnetId, ip, { ...options, createRogue });
 }
 
+/**
+ * A sighting made at `observedAt` (SQL time) that no longer says the address
+ * is in use: too old, or older than what the row already holds. Only
+ * last_seen_at moves, and only forward.
+ */
+export function observeEarlierSighting(db, subnetId, ip, observedAt) {
+  return IpAddress.noteEarlierSighting(db, subnetId, ip, observedAt);
+}
+
+export function sightingSuperseded(db, subnetId, ip, observedAt) {
+  return IpAddress.sightingSuperseded(db, subnetId, ip, observedAt);
+}
+
 export function observeScanResult(db, subnetId, ip, result) {
   return IpAddress.updateFromScan(db, subnetId, ip, result);
 }
@@ -1165,7 +1178,7 @@ export function observeNeighbor(
   db,
   subnetId,
   ip,
-  { interfaceId, mac, rogueAllowed = true, source = 'neighbor_discovery' } = {},
+  { interfaceId, mac, rogueAllowed = true, source = 'neighbor_discovery', observedAt } = {},
 ) {
   const identityIp = lifecycleIdentityIp(ip, interfaceId);
   const existing = IpAddress.findBySubnetAndIp(db, subnetId, identityIp);
@@ -1177,6 +1190,7 @@ export function observeNeighbor(
     is_rogue: isRogue ? 1 : 0,
     rogue_reason: isRogue ? 'Neighbor Discovery from unassigned address' : null,
     detection_source: source,
+    observed_at: observedAt,
   });
 }
 
@@ -1207,6 +1221,8 @@ export function observeIpv6Presence(
     policy = null,
     source = 'neighbor_discovery',
     now = Date.now(),
+    // When it was seen (SQL time), for a sighting another instance made.
+    observedAt,
   } = {},
 ) {
   if (/^fe[89ab]/i.test(ip)) {
@@ -1227,6 +1243,7 @@ export function observeIpv6Presence(
     mac,
     rogueAllowed: mode === 'stateful' && !isLocalAddress(ip),
     source,
+    observedAt,
   });
 }
 

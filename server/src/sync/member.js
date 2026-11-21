@@ -12,7 +12,12 @@ import path from 'path';
 import { getHttpsPort } from '../utils/http-server.js';
 import { syncRequest } from '../utils/sync-client.js';
 import { APP_VERSION } from '../utils/version.js';
-import { SETUP_STATE_KEY, setSetupState, upsertSettingWithConflict } from '../models/setting.js';
+import {
+  SETUP_STATE_KEY,
+  deleteSetting,
+  setSetupState,
+  upsertSettingWithConflict,
+} from '../models/setting.js';
 import { ownInstanceId, ownInstanceName, parseJoinToken } from '../models/sync-instance.js';
 import { refreshAllEnabled } from '../utils/blocklist.js';
 import {
@@ -28,6 +33,7 @@ import { applyChanges, parseChanges, SyncError } from './changes.js';
 import { syncFingerprint } from './identity.js';
 import { ensureSyncTriggers, MEMBER, readSyncState, syncStatus, writeSyncState } from './log.js';
 import { controllerOf } from './mode.js';
+import { flushSeen } from './remote-sink.js';
 
 const CREDENTIAL_FILE = 'credential';
 const WAIT_SECONDS = 25;
@@ -39,7 +45,7 @@ const PAUSED_RETRY_MS = 60_000;
 const syncDirOf = (db) => path.join(path.dirname(db.name), 'sync');
 
 // The credential the controller issued this member, or null.
-function readCredential(db) {
+export function readCredential(db) {
   try {
     return fs.readFileSync(path.join(syncDirOf(db), CREDENTIAL_FILE), 'utf8').trim() || null;
   } catch {
@@ -223,7 +229,7 @@ export async function joinController(
       db.transaction(() => {
         db.prepare("DELETE FROM sync_state WHERE key IN ('mode', 'controller')").run();
         for (const [key, value] of was) {
-          if (value === null) db.prepare('DELETE FROM settings WHERE key = ?').run(key);
+          if (value === null) deleteSetting(db, key);
           else upsertSettingWithConflict(db, key, value);
         }
       })();
@@ -290,6 +296,8 @@ export async function sendOutbox(db) {
   const controller = controllerOf(db);
   const credential = readCredential(db);
   if (!controller || !credential) return 0;
+  // The clients heard since the last flush go with this round.
+  flushSeen(db);
   const forget = db.prepare('DELETE FROM sync_outbox WHERE id = ?');
   let sent = 0;
   for (;;) {
@@ -315,7 +323,8 @@ export async function sendOutbox(db) {
       method: 'POST',
       path: '/api/sync/outbox',
       credential,
-      body: { rows },
+      // This box's clock, so the controller can read the times in the rows by its own.
+      body: { rows, now: Date.now() },
     });
     // One row the controller will never read: let it go, or it blocks the rest.
     if (response.status === 413 && rows.length === 1) {
@@ -325,7 +334,7 @@ export async function sendOutbox(db) {
     }
     const taken = response.status === 200 ? jsonBody(response).taken : null;
     if (!Array.isArray(taken) || taken.length === 0) {
-      throw new Error(`The controller answered ${response.status} to this member's audit rows.`);
+      throw new Error(`The controller answered ${response.status} to this member's outbox.`);
     }
     db.transaction(() => taken.forEach((id) => forget.run(id)))();
     sent += taken.length;

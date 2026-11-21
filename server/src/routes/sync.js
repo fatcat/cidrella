@@ -15,10 +15,11 @@ import { recordAudit } from '../services/audit.js';
 import { AUDIT_OUTBOX_KIND, insertAuditRow } from '../models/audit-log.js';
 import { exportChanges, needsSnapshot } from '../sync/changes.js';
 import { syncHead, syncStatus } from '../sync/log.js';
-import { isMember } from '../sync/mode.js';
+import { applyMemberFact, isMemberFact } from '../sync/member-facts.js';
+import { sqlTime } from '../utils/sql-time.js';
+import { controllerOnly, requireMember } from '../sync/require-member.js';
 import {
   addMember,
-  memberForCredential,
   noteContact,
   ownInstanceId,
   ownInstanceName,
@@ -41,13 +42,7 @@ const joinLimiter = rateLimit({
   message: { error: 'Too many join attempts. Wait a few minutes.', code: 'rate_limited' },
 });
 
-// Every answer here comes from the controller. A member says who that is.
-router.use((req, res, next) => {
-  if (!isMember()) return next();
-  res
-    .status(409)
-    .json({ error: 'This instance is a member, not the controller.', code: 'not_controller' });
-});
+router.use(controllerOnly);
 
 const isUuid = (value) => /^[0-9a-f-]{36}$/.test(String(value || ''));
 const isFingerprint = (value) => /^[0-9a-f]{64}$/.test(String(value || ''));
@@ -122,20 +117,7 @@ router.post('/join', joinLimiter, (req, res) => {
 });
 
 // Everything below is a member's, by its credential.
-router.use((req, res, next) => {
-  const header = req.headers.authorization || '';
-  const member = header.startsWith('Bearer ')
-    ? memberForCredential(getDb(), header.slice(7))
-    : null;
-  if (!member) {
-    return res.status(401).json({
-      error: 'This credential is not one this controller issued.',
-      code: 'unknown_member',
-    });
-  }
-  req.member = member;
-  next();
-});
+router.use(requireMember);
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
@@ -208,20 +190,28 @@ router.get('/changes', async (req, res) => {
 });
 
 const MAX_OUTBOX_ROWS = 500;
-const sqlTime = (iso) => {
-  const time = new Date(iso);
-  return Number.isNaN(time.getTime()) ? null : time.toISOString().slice(0, 19).replace('T', ' ');
-};
 
 /**
  * POST /api/sync/outbox { rows: [{ id, kind, payload }] }
- * What a member has to tell the controller: its audit rows today. Answers the
- * ids it took, which the member then forgets. A row is a member's word, so
- * it is written as that member's: the origin names it.
+ * What a member has to tell the controller: its audit rows, and what it
+ * observed (the clients its DNS proxy heard, DHCP fingerprints), which
+ * sync/member-facts.js applies. Answers the ids it took, which the member
+ * then forgets. An audit row is a member's word, so it is written as that
+ * member's: the origin names it.
  */
 router.post('/outbox', (req, res) => {
   const db = getDb();
   const rows = Array.isArray(req.body?.rows) ? req.body.rows.slice(0, MAX_OUTBOX_ROWS) : [];
+  // The member says what time it thinks it is: its rows' times are moved by
+  // the difference, so a member with a wrong clock still reports the present.
+  // A few seconds of travel is not a wrong clock.
+  const theirs = Number(req.body?.now);
+  const off = Number.isFinite(theirs) ? Date.now() - theirs : 0;
+  const skew = Math.abs(off) > 5000 ? off : 0;
+  const memberTime = (iso) => {
+    const time = Date.parse(iso);
+    return Number.isNaN(time) ? null : sqlTime(Math.min(time + skew, Date.now()));
+  };
   const taken = [];
   const userExists = db.prepare('SELECT 1 FROM users WHERE id = ?');
   const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : null);
@@ -231,6 +221,14 @@ router.post('/outbox', (req, res) => {
     if (!Number.isInteger(row?.id)) continue;
     taken.push(row.id);
     const payload = row.payload;
+    if (isMemberFact(row.kind)) {
+      try {
+        applyMemberFact(db, row.kind, payload, skew);
+      } catch (err) {
+        console.warn(`[sync] dropped a ${row.kind} row from ${req.member.name}: ${err.message}`);
+      }
+      continue;
+    }
     if (row.kind !== AUDIT_OUTBOX_KIND || !payload || typeof payload.action !== 'string') continue;
     try {
       const userId = Number.isInteger(payload.userId) ? payload.userId : null;
@@ -245,7 +243,7 @@ router.post('/outbox', (req, res) => {
         origin: `member:${req.member.name}`.slice(0, 255),
         source: text(payload.source, 100),
         sourceIp: text(payload.sourceIp, 64),
-        at: sqlTime(payload.at),
+        at: memberTime(payload.at),
       });
     } catch (err) {
       console.warn(`[sync] dropped an audit row from ${req.member.name}: ${err.message}`);

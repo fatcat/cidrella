@@ -151,6 +151,10 @@ export const RANGE_OPTIONS = [
   { label: 'Last 1 week', value: '1w' },
 ];
 
+// The instance select's choice for every instance together (WorkspaceHead,
+// stores/dashboard.js); any other choice is an instance's id.
+export const ALL_INSTANCES = 'all';
+
 // The range as a panel note reads it: "last 4 hours", "last week".
 export function rangeLabel(value) {
   return (RANGE_OPTIONS.find((o) => o.value === value)?.label || 'Last 24 hours')

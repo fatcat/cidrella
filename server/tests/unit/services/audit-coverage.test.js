@@ -36,6 +36,7 @@ const ALLOWED = new Map(
     "routes.js POST '/totp/setup'": 'starts enrolment; enabling it is recorded',
     "routes.js POST '/activity'": 'keeps a session alive',
     "sync.js POST '/outbox'": 'writes the audit rows a member sends',
+    "sync-collected.js POST '/:stream'": 'stores the measurements a member sends, once a minute',
     "routes.js PUT '/preferences'": 'one user’s display preferences',
   }),
 );

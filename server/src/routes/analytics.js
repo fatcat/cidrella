@@ -20,6 +20,7 @@ import { resolutionSince } from '../utils/resolution-feed.js';
 import { isGeoipLoaded } from '../utils/dns-proxy.js';
 import { cityTableInfo } from '../utils/geo-cities.js';
 import { parseMapHome } from '../utils/validation.js';
+import { filterableInstances, readInstanceFilter } from '../sync/instance-filter.js';
 
 const router = Router();
 
@@ -43,10 +44,12 @@ function analyticsRoute(queryFn, { enrich = false, fixedAction = null, defaultLi
           .status(400)
           .json({ error: `Invalid range. Must be one of: ${VALID_RANGES.join(', ')}` });
       }
+      const instance = readInstanceFilter(req, res);
+      if (!instance) return;
       const parsedLimit = parseInt(limit, 10) || parseInt(defaultLimit, 10);
       let rows = fixedAction
-        ? await queryFn(range, fixedAction, parsedLimit)
-        : await queryFn(range, parsedLimit);
+        ? await queryFn(range, fixedAction, parsedLimit, instance)
+        : await queryFn(range, parsedLimit, instance);
       if (enrich) rows = enrichWithHostnames(rows);
       res.json(rows);
     } catch (err) {
@@ -61,10 +64,22 @@ function parseRangeAndLimit(req, res) {
     res.status(400).json({ error: `Invalid range. Must be one of: ${VALID_RANGES.join(', ')}` });
     return null;
   }
-  return { range, limit: parseInt(limit, 10) || 50 };
+  const instance = readInstanceFilter(req, res);
+  if (!instance) return null;
+  return { range, limit: parseInt(limit, 10) || 50, instance };
 }
 
 const auth = requirePerm('analytics:read');
+
+// Every range read below takes ?instance=: absent or `all` counts every
+// instance's queries together, an instance id counts that instance's alone.
+
+// GET /api/analytics/instances: the instances a read can be filtered by,
+// [{ instance_id, name, is_self }]. For the filter itself, so it asks for no
+// more than the analytics do.
+router.get('/instances', auth, (req, res) => {
+  res.json(filterableInstances());
+});
 
 // GET /api/analytics/top-clients?range=24h&limit=20
 router.get('/top-clients', auth, analyticsRoute(queryTopClients, { enrich: true }));
@@ -92,7 +107,9 @@ router.get('/query-volume', auth, async (req, res) => {
         .status(400)
         .json({ error: `Invalid range. Must be one of: ${VALID_RANGES.join(', ')}` });
     }
-    const rows = await queryVolume(range, interval);
+    const instance = readInstanceFilter(req, res);
+    if (!instance) return;
+    const rows = await queryVolume(range, interval, instance);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -109,7 +126,9 @@ router.get('/action-breakdown', auth, async (req, res) => {
         .status(400)
         .json({ error: `Invalid range. Must be one of: ${VALID_RANGES.join(', ')}` });
     }
-    const rows = await queryActionBreakdown(range);
+    const instance = readInstanceFilter(req, res);
+    if (!instance) return;
+    const rows = await queryActionBreakdown(range, instance);
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -122,7 +141,12 @@ router.get('/client/:ip/domains', auth, async (req, res) => {
   try {
     const parsed = parseRangeAndLimit(req, res);
     if (!parsed) return;
-    const rows = await queryClientDomains(req.params.ip, parsed.range, parsed.limit);
+    const rows = await queryClientDomains(
+      req.params.ip,
+      parsed.range,
+      parsed.limit,
+      parsed.instance,
+    );
     res.json(rows);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -135,7 +159,12 @@ router.get('/domain/:name/clients', auth, async (req, res) => {
   try {
     const parsed = parseRangeAndLimit(req, res);
     if (!parsed) return;
-    const rows = await queryDomainClients(req.params.name, parsed.range, parsed.limit);
+    const rows = await queryDomainClients(
+      req.params.name,
+      parsed.range,
+      parsed.limit,
+      parsed.instance,
+    );
     res.json(enrichWithHostnames(rows));
   } catch (err) {
     res.status(500).json({ error: err.message });

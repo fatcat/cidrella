@@ -4,6 +4,8 @@ import {
   formatMs,
   proxyPerfFigures,
   summarizeProxyPerf,
+  instanceChart,
+  figuresAcrossInstances,
 } from '../../../src/utils/proxy-perf.js';
 
 const row = (i, extra = {}) => ({
@@ -136,5 +138,42 @@ describe('formatMs', () => {
     expect(formatMs(9.96)).toBe(10);
     expect(formatMs(18.4)).toBe(18);
     expect(formatMs(null)).toBeNull();
+  });
+});
+
+describe('per-instance figures', () => {
+  const groups = [
+    { instance_id: 'a', name: 'ns1', rows: [{ ts: 60, query_count: 5, latency_p95: 4000 }] },
+    {
+      instance_id: 'b',
+      name: 'ns2',
+      rows: [
+        { ts: 60, query_count: 5, latency_p95: 9000 },
+        { ts: 120, query_count: 5, latency_p95: null },
+      ],
+    },
+  ];
+
+  it('draws one series per instance, a gap where an instance has no figure', () => {
+    const chart = instanceChart(groups, 'latency_p95', {
+      scale: (v) => v && v / 1000,
+      label: 'p95',
+    });
+    expect(chart.rows).toEqual([
+      { ts: 60, 'latency_p95:a': 4, 'latency_p95:b': 9 },
+      { ts: 120, 'latency_p95:b': null },
+    ]);
+    expect(chart.series.map((s) => [s.key, s.label])).toEqual([
+      ['latency_p95:a', 'p95 ns1'],
+      ['latency_p95:b', 'p95 ns2'],
+    ]);
+  });
+
+  it('leaves the figures alone with no per-instance rows, and says so with no samples', () => {
+    const figures = proxyPerfFigures(summarizeProxyPerf([]));
+    expect(figuresAcrossInstances(figures, [])).toBe(figures);
+    const across = figuresAcrossInstances(figures, groups);
+    expect(across.p95).toMatchObject({ value: 9, sub: 'highest of 2 instances: ns2' });
+    expect(across.cpu).toMatchObject({ value: null, sub: 'no samples in this range' });
   });
 });

@@ -1,13 +1,23 @@
 import { defineStore } from 'pinia';
-import { ref, reactive, toRefs } from 'vue';
+import { computed, ref, reactive, toRefs } from 'vue';
 import api from '../api/client.js';
 import { loadJson, saveJson } from '../utils/storage.js';
+import { ALL_INSTANCES } from '../utils/chart-config.js';
+import { useFeaturesStore } from './features.js';
 
 const METRIC_CONFIG = [
   { key: 'timeseries', url: '/metrics/timeseries' },
   { key: 'blocklistHits', url: '/metrics/blocklist-hits' },
   { key: 'geoipHits', url: '/metrics/geoip-hits' },
   { key: 'proxyPerf', url: '/metrics/proxy-perf' },
+  // Each instance's own minute rows, for the figures that belong to one proxy
+  // (its p95, CPU and memory). Read only with every instance selected.
+  {
+    key: 'proxyPerfByInstance',
+    url: '/metrics/proxy-perf',
+    params: { by: 'instance' },
+    perInstance: true,
+  },
   { key: 'forwarder', url: '/metrics/forwarder' },
   { key: 'dnsFailures', url: '/metrics/dns-failures' },
   { key: 'topClients', url: '/analytics/top-clients', params: { limit: 10 } },
@@ -63,6 +73,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     blocklistHits: [],
     geoipHits: [],
     proxyPerf: [],
+    proxyPerfByInstance: [],
     forwarder: [],
     dnsFailures: [],
     topClients: [],
@@ -110,12 +121,60 @@ export const useDashboardStore = defineStore('dashboard', () => {
     saveJson('cidrella_analytics_range', value);
   }
 
+  // Whose measurements the analytics pages show, once this controller has
+  // members: every instance together, or one of them. A single box has no
+  // filter and sends no instance with its reads.
+  const features = useFeaturesStore();
+  const instanceFilterOn = computed(() => features.instance.members > 0);
+  const selectedInstance = ref(loadJson('cidrella_analytics_instance', ALL_INSTANCES));
+  const instances = ref([]);
+  // Every instance together: the figures one proxy owns are read per instance.
+  const perInstance = computed(
+    () => instanceFilterOn.value && selectedInstance.value === ALL_INSTANCES,
+  );
+
+  function setInstance(value) {
+    selectedInstance.value = value;
+    saveJson('cidrella_analytics_instance', value);
+  }
+
+  // The instances to choose from, read once for a given number of members. A
+  // remembered choice that is no longer one of them falls back to all.
+  let instancesFor = null;
+  let instancesRead = Promise.resolve();
+  function loadInstances() {
+    if (instancesFor !== features.instance.members) {
+      instancesFor = features.instance.members;
+      instancesRead = api.get('/analytics/instances').then(
+        (res) => {
+          instances.value = res.data;
+          const known = res.data.some((i) => i.instance_id === selectedInstance.value);
+          if (selectedInstance.value !== ALL_INSTANCES && !known) setInstance(ALL_INSTANCES);
+        },
+        () => {
+          instancesFor = null;
+        },
+      );
+    }
+    return instancesRead;
+  }
+  const instanceParams = () =>
+    instanceFilterOn.value && selectedInstance.value !== ALL_INSTANCES
+      ? { instance: selectedInstance.value }
+      : {};
+
   async function fetchMetric(key, range = '24h') {
     const cfg = METRIC_CONFIG.find((c) => c.key === key);
     if (!cfg) return;
-    const extra = typeof cfg.params === 'function' ? cfg.params(range) : cfg.params;
+    // Nothing to wait for on a single box: its reads go out at once.
+    if (instanceFilterOn.value) await loadInstances();
     const request = (metricRequests[key] = (metricRequests[key] || 0) + 1);
-    const res = await api.get(cfg.url, { params: { range, ...extra } });
+    if (cfg.perInstance && !perInstance.value) {
+      metrics[key] = [];
+      return metrics[key];
+    }
+    const extra = typeof cfg.params === 'function' ? cfg.params(range) : cfg.params;
+    const res = await api.get(cfg.url, { params: { range, ...extra, ...instanceParams() } });
     if (request === metricRequests[key]) metrics[key] = res.data;
     return res.data;
   }
@@ -136,7 +195,10 @@ export const useDashboardStore = defineStore('dashboard', () => {
   const fetchTimeseries = (range) => fetchMetric('timeseries', range);
   const fetchBlocklistHits = (range) => fetchMetric('blocklistHits', range);
   const fetchGeoipHits = (range) => fetchMetric('geoipHits', range);
-  const fetchProxyPerf = (range) => fetchMetric('proxyPerf', range);
+  const fetchProxyPerf = (range) =>
+    Promise.all([fetchMetric('proxyPerf', range), fetchMetric('proxyPerfByInstance', range)]).then(
+      ([rows]) => rows,
+    );
   const fetchForwarder = (range) => fetchMetric('forwarder', range);
   const fetchDnsFailures = (range) => fetchMetric('dnsFailures', range);
   const fetchTopClients = (range) => fetchMetric('topClients', range);
@@ -169,7 +231,7 @@ export const useDashboardStore = defineStore('dashboard', () => {
     return track(async () => {
       const rangeSources = [
         settle('timeseries', fetchMetric('timeseries', range)),
-        settle('proxyPerf', fetchMetric('proxyPerf', range)),
+        settle('proxyPerf', fetchProxyPerf(range)),
         settle('topClients', fetchMetric('topClients', range)),
         settle('topDomains', fetchMetric('topDomains', range)),
       ];
@@ -268,6 +330,11 @@ export const useDashboardStore = defineStore('dashboard', () => {
     track,
     selectedRange,
     setRange,
+    instanceFilterOn,
+    selectedInstance,
+    instances,
+    perInstance,
+    setInstance,
     fetchMetric,
     health,
     fetchHealthBoard,

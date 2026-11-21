@@ -72,6 +72,7 @@ import { startDhcpNameSync } from './services/dhcp-lease-ingest.js';
 import { pruneTombstones } from './sync/log.js';
 import { memberSink, setFactsSink } from './sync/facts.js';
 import { ensureSyncIdentity, syncSecureContext } from './sync/identity.js';
+import { startCollectedUpload } from './sync/collected-upload.js';
 import { startMemberSync } from './sync/member.js';
 import { isMember } from './sync/mode.js';
 import { memberWriteGate } from './sync/write-gate.js';
@@ -301,8 +302,7 @@ async function main() {
   queueRegen('regenerate_dns');
 
   // A member holds a copy of the data of record: its controller repairs it,
-  // and what this box observes is not written here (the remote sink that
-  // sends it to the controller comes with phase 4 of the plan).
+  // and what this box observes is sent to it, not written here.
   const member = isMember();
   const syncIdentity = ensureSyncIdentity(DATA_DIR);
   if (member) {
@@ -389,8 +389,10 @@ async function main() {
   // 3. Start schedulers
   startBlocklistScheduler();
   startGeoipScheduler();
-  if (member) startMemberSync(getDb());
-  else startControllerJobs(getDb());
+  if (member) {
+    startMemberSync(getDb());
+    startCollectedUpload(getDb());
+  } else startControllerJobs(getDb());
 
   // Start MAC vendor database auto-refresh (every 24h)
   startVendorScheduler();
@@ -533,6 +535,8 @@ async function main() {
 
   // What instances say to each other, by a member's credential or a join
   // token rather than a user's session.
+  const { default: collectedRoutes } = await import('./routes/sync-collected.js');
+  app.use('/api/sync/collected', collectedRoutes);
   const { default: syncRoutes } = await import('./routes/sync.js');
   app.use('/api/sync', syncRoutes);
 

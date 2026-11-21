@@ -271,7 +271,13 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `memberWriteGate` and `MEMBER_ALLOWED` in `sync/write-gate.js` (a write route a member may
   serve is listed there with its reason; unlisted is refused), `insertAuditRow` in
   `models/audit-log.js` (on a member the row waits in `sync_outbox`), `memberSink` in
-  `sync/facts.js`, tests' `makeMember` in `tests/helpers/member-mode.js` (a member's guards
+  `sync/facts.js` (the remote sink, `sync/remote-sink.js`; the controller applies what it sends
+  with `applyMemberFact` in `sync/member-facts.js`, and a new kind of fact gets a kind in both),
+  `controllerOnly` and `requireMember` in `sync/require-member.js` (every route a member calls),
+  `sync/collected-streams.js` (the metrics and query rows a member uploads: a new collected table
+  gets a stream there), `readInstanceFilter` in `sync/instance-filter.js` (every analytics read's
+  `?instance=`; own rows are `instance_id IS NULL`), client `useInstanceFilter`, `sqlTime` in
+  `utils/sql-time.js`, tests' `makeMember` in `tests/helpers/member-mode.js` (a member's guards
   refuse `INSERT OR IGNORE` and upserts on the data of record too, whatever the values:
   `tests/integration/member-tripwire.test.js` runs a member's own work against them, and work
   a member starts by itself gets a line there), client `utils/instances.js` (the one wording
