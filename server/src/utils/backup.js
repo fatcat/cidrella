@@ -717,7 +717,10 @@ async function takePreRestoreSnapshot(db) {
  * check admits, whatever schema it is at. Throws with code
  * RESTORE_DHCP_CHOICE_FAILED; the caller aborts before touching DATA_DIR.
  *
- * Returns true when anything was written.
+ * Every restore also marks the database as a new dataset (sync/log.js
+ * forgetDataset), whatever it was called with.
+ *
+ * Returns true when a choice, an audit row or a carry-over was written.
  */
 export const RESTORE_CARRYOVER_KEY = 'restore_carryover';
 
@@ -726,7 +729,6 @@ export function stampRestoredSettings(
   { dhcpEnabled = null, restoredBy = null, manifest = null, carryover = null } = {},
 ) {
   const hasChoice = dhcpEnabled !== null && dhcpEnabled !== undefined;
-  if (!hasChoice && !restoredBy && !carryover) return false;
   let staged;
   try {
     staged = new Database(stagedDbPath);
@@ -778,7 +780,7 @@ export function stampRestoredSettings(
       }
     });
     stamp();
-    return true;
+    return Boolean(hasChoice || restoredBy || carryover);
   } catch (cause) {
     const err = new Error(
       `Restore refused: could not record the restore in the restored database (${cause.message}). ` +

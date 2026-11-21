@@ -323,6 +323,23 @@ describe('restore-time DHCP choice (stampRestoredSettings contract)', () => {
     expect(auditRows(p)).toEqual([]);
   });
 
+  it('marks the restored database as a new dataset, whatever it was called with', () => {
+    const p = stagedDb('dataset.db', [['dhcp_enabled', 'true']]);
+    const seed = new Database(p);
+    seed.exec("CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
+    seed.prepare("INSERT INTO sync_state VALUES ('dataset', 'from-the-backup'), ('epoch', '3')").run();
+    seed.close();
+    const state = () => {
+      const db = new Database(p, { readonly: true });
+      const rows = db.prepare('SELECT key, value FROM sync_state ORDER BY key').all();
+      db.close();
+      return rows;
+    };
+
+    expect(stampRestoredSettings(p, {})).toBe(false);
+    expect(state()).toEqual([{ key: 'epoch', value: '3' }]);
+  });
+
   it('records the restore in the restored audit log, attributed to the restoring user', () => {
     const p = stagedDb('audit.db', [['dhcp_enabled', 'true']]);
     expect(
