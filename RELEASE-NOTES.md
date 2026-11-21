@@ -19,8 +19,14 @@ members that keep serving DNS and DHCP from a synced copy.
 
 ### Known issues
 
-- **In development.** A second CIDRella can join as a member and serve DNS from a copy of the
-  data, and can serve DHCP, but it cannot become the controller yet.
+- **In development.** Members, DHCP on a member and promotion are built; version skew, restore
+  on a controller with members and the upgrade guide are not done.
+- After a member is promoted because the controller died, nobody serves DHCP if the old
+  controller did. Move DHCP to an instance and use **Start without the old leases**.
+- A promoted member takes no backups until you switch them on: it was told not to when it
+  joined. The same holds for a controller that handed its role over.
+- An old controller that clients can still reach, but the other instances cannot, keeps
+  taking changes and serving DHCP after a forced promotion until one of them reaches it.
 - After DHCP moves to another instance, DHCPv6 clients rebind instead of renewing: the new
   server has its own DUID. DHCPv4 clients renew as usual.
 - Rogue DHCPv6 detection can flag the member that serves DHCP, which answers from a link-local
@@ -51,6 +57,17 @@ members that keep serving DNS and DHCP from a synced copy.
   gone for good, **Start without the old leases** starts the new one with the leases the
   controller last heard about. The new instance must be where the clients can reach it: the same
   segments, or the relays pointed at it.
+- **Changing the controller.** On the controller, **Make controller** beside a member hands the
+  role over: changes are refused on both for the few seconds it takes, the member takes over,
+  and the old controller restarts as its member. On a member, **Promote this instance** is for
+  when the controller is gone for good: it asks you to type the instance's name and shows when
+  it last synced, since changes made on the old controller after that are lost. The other
+  members follow the new controller within about a minute. DHCP stays on the instance that
+  serves it.
+- **An old controller that comes back** stops taking changes when it hears of the new one, and
+  says so on its Instances page and in the header. It keeps a copy of its database and a report
+  of the changes the new controller never received, both of which you can keep, and offers
+  **Rejoin as a member** with a join token from the new controller.
 - **DHCP clients are given every instance.** Where a scope's DNS servers option names
   CIDRella, clients get the controller and every member, so they keep resolving when one is
   away. Other resolvers you listed stay in the list, and a scope pointed elsewhere is untouched.

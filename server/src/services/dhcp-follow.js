@@ -118,6 +118,8 @@ async function followOnce(db) {
   // applies when it ends; following waits for it.
   if (switchInProgress()) throw new Error('a server switch is running');
   const state = dhcpState(db);
+  // A controller that was replaced has nobody to hand its leases to.
+  if (state.fenced) return agree(db);
   if (state.member && state.handoverFrom === state.self) return handOver(db, state);
   if (state.here && !state.handoverFrom) {
     if (state.term !== 0 && state.readyTerm !== state.term) return takeOver(db, state);

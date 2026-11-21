@@ -6,6 +6,11 @@
  * turns this box into a member. Following is one request at a time: ask for
  * what is missing, wait on the controller when nothing is, apply what comes,
  * and tell the DNS proxy what changed under it.
+ *
+ * The controller can change (services/controller-promotion.js). A member
+ * notices because the one it follows says so, stops answering, or is outbid
+ * by another instance at a higher epoch, and then follows the new one
+ * (sync/find-controller.js) from the cursor it has.
  */
 import fs from 'fs';
 import path from 'path';
@@ -29,18 +34,38 @@ import {
   loadGeoipRules,
   refreshProxyConfig,
 } from '../utils/dns-proxy.js';
+import { recordAudit } from '../services/audit.js';
 import { applyChanges, parseChanges, SyncError } from './changes.js';
+import {
+  callController,
+  doubtIn,
+  answerEpoch,
+  FENCED,
+  jsonBody,
+  lineageEpoch,
+  NOT_CONTROLLER,
+  onControllerDoubt,
+  STALE_EPOCH,
+} from './controller-call.js';
 import { CREDENTIAL_FILE, readCredential, syncDirOf } from './credential.js';
 import { dhcpStateChanged } from './dhcp-active.js';
+import { findController } from './find-controller.js';
 import { syncFingerprint } from './identity.js';
 import { ensureSyncTriggers, MEMBER, readSyncState, syncStatus, writeSyncState } from './log.js';
 import { controllerOf } from './mode.js';
+import { fencedState, setFenced } from './promotion-state.js';
+import { restartSoon } from './restart.js';
 import { flushSeen } from './remote-sink.js';
 
 const WAIT_SECONDS = 25;
 const RETRY_MIN_MS = 5_000;
 const RETRY_MAX_MS = 60_000;
 const PAUSED_RETRY_MS = 60_000;
+// A forced promotion is noticed within this long even while the controller
+// this member follows still answers.
+const SEARCH_INTERVAL_MS = 60_000;
+// Rounds the controller may fail to answer before the member asks around.
+const SEARCH_AFTER_FAILURES = 3;
 
 export { readCredential };
 
@@ -60,30 +85,12 @@ export class JoinError extends Error {
   }
 }
 
-const jsonBody = (response) => {
-  try {
-    return JSON.parse(response.body.toString('utf8'));
-  } catch {
-    return {};
-  }
-};
-
-// One request to the controller, as this member.
-function ask(db, controller, { path: requestPath, credential, timeoutMs }) {
-  return syncRequest({
-    address: controller.address,
-    port: controller.port,
-    fingerprint: controller.fingerprint,
-    path: requestPath,
-    credential,
-    timeoutMs,
-  });
-}
-
 function changesPath(db, { wait = 0 } = {}) {
   const local = syncStatus(db);
   const query = new URLSearchParams({
     schema: local.schema,
+    // The epoch this copy is from: the controller reads the cursor by it.
+    epoch: local.epoch,
     version: APP_VERSION,
     wait,
     // Where this box answers DNS, for the list DHCP clients are given.
@@ -97,25 +104,21 @@ function changesPath(db, { wait = 0 } = {}) {
   return `/api/sync/changes?${query}`;
 }
 
-// The exit a successful join ends with: the process comes back as a member
-// (systemd and s6 restart it), with none of a controller's jobs running.
-function restartSoon() {
-  setTimeout(() => {
-    console.log('Joined a controller, exiting to restart as a member');
-    process.exit(0);
-  }, 500);
-}
+// What says who this box follows, or that it was replaced as the controller.
+const STANDING = ['mode', 'controller', 'fenced', 'epoch'];
 
 /**
  * Join the controller at `address`:`port` with a join token. Everything this
  * box holds of the data of record is replaced by the controller's. Throws
  * JoinError; nothing here has changed when it does. `restart` is what runs
- * once the box is a member.
+ * once the box is a member. A new install joins this way, and so does a
+ * controller that was replaced and fenced: it stays fenced when the join
+ * fails.
  */
 export async function joinController(
   db,
   { address, port = 443, token },
-  { restart = restartSoon } = {},
+  { restart = () => restartSoon('Joined a controller') } = {},
 ) {
   const parsed = parseJoinToken(token);
   if (!parsed) {
@@ -170,6 +173,9 @@ export async function joinController(
   // box takes itself off again and stays what it was.
   const credentialPath = path.join(syncDirOf(db), CREDENTIAL_FILE);
   const was = new Map();
+  const standing = db
+    .prepare(`SELECT key, value FROM sync_state WHERE key IN (${STANDING.map(() => '?')})`)
+    .all(...STANDING);
   const pinned = {
     ...controller,
     // The address, port and fingerprint are the ones this box checked, never
@@ -178,8 +184,12 @@ export async function joinController(
     name: String(answer.controller?.name || controller.address).slice(0, 255),
   };
   try {
-    db.prepare("DELETE FROM sync_state WHERE key = 'cursor'").run();
-    const response = await ask(db, controller, {
+    // This box starts over as a copy of that controller: what it held, and
+    // the epoch it was at, count for nothing there. (No epoch is sent with
+    // the request either: the fencing rule is for instances of one estate.)
+    db.prepare("DELETE FROM sync_state WHERE key IN ('cursor', 'epoch')").run();
+    const response = await syncRequest({
+      ...controller,
       path: changesPath(db),
       credential: answer.credential,
       timeoutMs: 10 * 60_000,
@@ -214,11 +224,16 @@ export async function joinController(
       writeSyncState(db, 'controller', JSON.stringify(pinned));
     })();
     applyChanges(db, changes);
+    // A box that was replaced as the controller follows the new one now.
+    if (fencedState(db)) setFenced(db, null);
   } catch (err) {
     // Whatever the undo itself runs into, the box still leaves the list.
     try {
       db.transaction(() => {
-        db.prepare("DELETE FROM sync_state WHERE key IN ('mode', 'controller')").run();
+        db.prepare(`DELETE FROM sync_state WHERE key IN (${STANDING.map(() => '?')})`).run(
+          ...STANDING,
+        );
+        for (const { key, value } of standing) writeSyncState(db, key, value);
         for (const [key, value] of was) {
           if (value === null) deleteSetting(db, key);
           else upsertSettingWithConflict(db, key, value);
@@ -287,9 +302,7 @@ const OUTBOX_BYTES = 60_000;
 
 /** Send what waits in the outbox to the controller. Returns how many it took. */
 export async function sendOutbox(db) {
-  const controller = controllerOf(db);
-  const credential = readCredential(db);
-  if (!controller || !credential) return 0;
+  if (!controllerOf(db) || !readCredential(db)) return 0;
   // The clients heard since the last flush go with this round.
   flushSeen(db);
   const forget = db.prepare('DELETE FROM sync_outbox WHERE id = ?');
@@ -312,11 +325,9 @@ export async function sendOutbox(db) {
       }
       rows.push({ id: row.id, kind: row.kind, payload });
     }
-    const response = await syncRequest({
-      ...controller,
+    const response = await callController(db, {
       method: 'POST',
       path: '/api/sync/outbox',
-      credential,
       // This box's clock, so the controller can read the times in the rows by its own.
       body: { rows, now: Date.now() },
     });
@@ -345,55 +356,122 @@ export function memberSyncStatus(db) {
 /**
  * Ask the controller once and apply what comes. Resolves 'current' when this
  * copy is at the head. Throws on anything else, with `code` 'paused' when the
- * two sides run different schemas.
+ * two sides run different schemas, and 'fenced', 'not_controller' or
+ * 'stale_epoch' when the instance asked is not the controller to follow.
  */
 export async function syncOnce(db, { wait = 0 } = {}) {
-  const controller = controllerOf(db);
-  const credential = readCredential(db);
-  if (!controller || !credential) {
-    throw new Error('This member has lost its controller’s details. Join it again.');
-  }
-  const response = await ask(db, controller, {
+  const response = await callController(db, {
     path: changesPath(db, { wait }),
-    credential,
     timeoutMs: (wait + 60) * 1000,
   });
-  if (response.status === 204) return 'current';
+  const lost = doubtIn(db, response);
+  if (lost) {
+    const err = new Error(
+      lost === STALE_EPOCH
+        ? 'The controller this member follows has been replaced by a newer one.'
+        : jsonBody(response).error || 'The instance this member follows is not the controller.',
+    );
+    err.code = lost;
+    throw err;
+  }
+  if (response.status === 204) {
+    // Nothing to send means the controller read this cursor as one of its
+    // own: this copy is of its epoch now.
+    const epoch = answerEpoch(response);
+    if (epoch !== null && epoch > lineageEpoch(db)) writeSyncState(db, 'epoch', epoch);
+    return 'current';
+  }
   if (response.status !== 200) {
     const body = jsonBody(response);
     const err = new Error(body.error || `The controller answered ${response.status}.`);
     err.code = body.code === 'schema_mismatch' ? 'paused' : body.code;
     throw err;
   }
+  let delta = false;
   try {
-    const result = applyChanges(db, parseChanges(response.body));
+    const changes = parseChanges(response.body);
+    delta = !changes.header.snapshot;
+    const result = applyChanges(db, changes);
     reloadFor(db, result.tables);
     if (result.snapshot) console.log(`[sync] took a snapshot: ${result.rows} rows`);
   } catch (err) {
+    if (err instanceof SyncError && err.code === 'schema') err.code = 'paused';
     // What this copy holds does not line up with the controller: start over.
-    if (err instanceof SyncError && err.code === 'restart') {
+    // So does a delta that would not go in for any other reason: the same
+    // delta would fail the same way every round, and a snapshot does not
+    // depend on what is here.
+    else if ((err instanceof SyncError && err.code === 'restart') || delta) {
       db.prepare("DELETE FROM sync_state WHERE key = 'cursor'").run();
     }
-    if (err instanceof SyncError && err.code === 'schema') err.code = 'paused';
     throw err;
   }
   return 'current';
 }
 
+// Answers that mean "ask around now", not "try again later".
+const LOST_CONTROLLER = new Set([FENCED, NOT_CONTROLLER, STALE_EPOCH, 'unknown_member']);
+
+/**
+ * Look for the controller to follow and follow it when it is another
+ * instance (sync/find-controller.js). Resolves the new controller, or null.
+ * The audit row waits in the outbox, which goes to the new controller.
+ */
+export async function followNewController(db) {
+  const before = controllerOf(db);
+  const found = await findController(db);
+  if (!found) return null;
+  recordAudit({
+    db,
+    action: 'instance_followed_controller',
+    entityType: 'instance',
+    source: 'sync',
+    details: {
+      from: before?.name ?? null,
+      to: found.name,
+      to_instance_id: found.instance_id,
+      epoch: found.epoch,
+    },
+  });
+  return found;
+}
+
 /**
  * Follow the controller until stopped. Keeps serving what it has whatever
- * happens: a controller that is away is retried, and one on another version
- * is waited for. Returns the stop.
+ * happens: a controller that is away is retried, one on another version is
+ * waited for, and one that has been replaced is left for the new one.
+ * `onCurrent(db)` runs after every round that left this copy current; when
+ * it resolves true the following ends (the box took over as the controller).
+ * Returns the stop.
  */
-export function startMemberSync(db) {
+export function startMemberSync(db, { onCurrent = null } = {}) {
   let stopped = false;
   let retryMs = RETRY_MIN_MS;
   let timer = null;
+  let failures = 0;
+  let looking = null;
   status = { state: 'starting', last_sync_at: null, last_error: null };
   const pause = (ms) =>
     new Promise((resolve) => {
       timer = setTimeout(resolve, ms);
     });
+  // One search at a time, whoever asks for it.
+  const look = () => {
+    if (stopped) return Promise.resolve(null);
+    looking ||= followNewController(db)
+      .catch((err) => {
+        console.warn(`[sync] could not look for the controller: ${err.message}`);
+        return null;
+      })
+      .finally(() => {
+        looking = null;
+      });
+    return looking;
+  };
+  const undoubt = onControllerDoubt((which) => {
+    if (which === db) void look();
+  });
+  const searchTimer = setInterval(() => void look(), SEARCH_INTERVAL_MS);
+  searchTimer.unref?.();
 
   (async () => {
     while (!stopped) {
@@ -402,15 +480,29 @@ export function startMemberSync(db) {
         // what it missed, not the controller's next change.
         await syncOnce(db, { wait: status.state === 'current' ? WAIT_SECONDS : 0 });
         await sendOutbox(db).catch((err) => console.warn(`[sync] ${err.message}`));
+        if (stopped) break;
         status = { state: 'current', last_sync_at: new Date().toISOString(), last_error: null };
         retryMs = RETRY_MIN_MS;
+        failures = 0;
+        if (onCurrent && (await onCurrent(db))) break;
       } catch (err) {
+        if (stopped) break;
         // Another version, or taken off the controller's list: neither mends itself.
         const paused = err.code === 'paused' || err.code === 'unknown_member';
         if (status.last_error !== err.message) console.warn(`[sync] ${err.message}`);
         const state = err.code === 'paused' ? 'paused' : 'offline';
         status = { ...status, state, last_error: err.message };
-        if (stopped) break;
+        failures++;
+        // Replaced, or silent for a few rounds: another instance may be the
+        // controller now. Found, it is asked at once.
+        if (LOST_CONTROLLER.has(err.code) || failures >= SEARCH_AFTER_FAILURES) {
+          if (await look()) {
+            failures = 0;
+            retryMs = RETRY_MIN_MS;
+            status = { ...status, state: 'starting' };
+            continue;
+          }
+        }
         await pause(paused ? PAUSED_RETRY_MS : retryMs);
         retryMs = Math.min(RETRY_MAX_MS, retryMs * 2);
       }
@@ -420,6 +512,8 @@ export function startMemberSync(db) {
   return () => {
     stopped = true;
     clearTimeout(timer);
+    clearInterval(searchTimer);
+    undoubt();
     status = null;
   };
 }

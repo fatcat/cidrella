@@ -6,7 +6,15 @@
 
      One instance serves DHCP at a time. The controller's view moves it to a
      member and back; while the old one still owes its leases the page says so
-     and re-reads the list until the move is done. -->
+     and re-reads the list until the move is done.
+
+     The controller can change, and a person decides it. The controller's view
+     hands the role to a member (Make controller): both stop taking changes,
+     the member takes over and this instance restarts as a member of it. A
+     member whose controller is gone for good promotes itself. A controller
+     that comes back to find itself replaced takes no changes, and is rejoined
+     to the new one as a member (components/instances/FencedPanel.vue). After
+     each of these the box restarts and the page goes to sign-in. -->
 <template>
   <div class="content-card">
     <EmptyState
@@ -19,7 +27,16 @@
       <div class="card-header">
         <h3>Instances</h3>
         <Button
-          v-if="isController"
+          v-if="canPromoteSelf"
+          label="Promote this instance"
+          severity="danger"
+          outlined
+          size="small"
+          data-track="instances-promote-self"
+          @click="promotingSelf = true"
+        />
+        <Button
+          v-if="canAct"
           label="Add member"
           icon="pi pi-plus"
           size="small"
@@ -29,12 +46,19 @@
         />
       </div>
 
-      <p v-if="isController" class="field-help intro">
+      <p v-if="awaiting" class="status-line" data-track="instances-restarting">
+        <StatusDot kind="warn" label="Restarting" />
+        <span>{{ restartingText(awaiting) }}</span>
+      </p>
+
+      <FencedPanel v-if="fenced && !awaiting" :fenced="fenced" @rejoined="onRejoined" />
+
+      <p v-if="isController && !fenced" class="field-help intro">
         This instance is the controller: it owns the data, and changes are made here. A member holds
         a read-only copy, kept in sync, and keeps serving DNS when the controller is away.
       </p>
 
-      <section v-if="state?.mode === 'member'" class="following" data-track="instances-following">
+      <section v-if="state?.mode === 'member' && !fenced" class="following" data-track="instances-following">
         <p>
           This instance is a member of <strong>{{ state.controller?.name }}</strong>
           <span v-if="controllerAddress" class="mono muted"> ({{ controllerAddress }})</span>. It
@@ -49,7 +73,20 @@
         </p>
       </section>
 
-      <p v-if="handover" class="dhcp-moving" data-track="instances-dhcp-handover">
+      <p v-if="promoHandover" class="status-line" data-track="instances-promote-handover">
+        <StatusDot kind="warn" label="Handing over" />
+        <span>{{ promotionLine }}</span>
+        <Button
+          label="Cancel handover"
+          severity="warn"
+          text
+          size="small"
+          data-track="instances-promote-cancel"
+          @click="cancelling = true"
+        />
+      </p>
+
+      <p v-if="handover" class="status-line" data-track="instances-dhcp-handover">
         <StatusDot kind="warn" label="DHCP is moving" />
         <span>{{ handoverLine }}</span>
         <Button
@@ -100,9 +137,18 @@
             />
           </template>
         </Column>
-        <Column v-if="isController" header="">
+        <Column v-if="canAct" header="">
           <template #body="{ data }">
             <div class="action-buttons row-actions">
+              <Button
+                v-if="data.can_promote"
+                label="Make controller"
+                severity="secondary"
+                text
+                size="small"
+                data-track="instances-promote"
+                @click="promoting = data"
+              />
               <Button
                 v-if="data.can_take_dhcp"
                 label="Move DHCP here"
@@ -242,6 +288,88 @@
         If {{ handoverEnds.from }} is still running, two DHCP servers will answer on the network.
       </p>
     </ConfirmDialog>
+
+    <ConfirmDialog
+      :visible="promoting !== null"
+      :header="`Make ${promoting?.name} the controller?`"
+      severity="warn"
+      confirm-label="Make controller"
+      width="34rem"
+      :loading="promoteBusy"
+      data-track="instances-promote-dialog"
+      confirm-track="instances-promote-confirm"
+      cancel-track="instances-promote-dismiss"
+      @update:visible="(v) => !v && !promoteBusy && (promoting = null)"
+      @confirm="promote"
+    >
+      <p>{{ promoting?.name }} becomes the controller, and this instance becomes a member of it.</p>
+      <p>
+        No changes can be made on either until it is done, usually a few seconds. DHCP stays on the
+        instance that serves it now.
+      </p>
+      <p>This instance restarts, and you sign in again.</p>
+      <p>
+        If {{ promoting?.name }} stops answering partway, this instance stays frozen until you
+        cancel the handover. Cancelling at the wrong moment can leave this instance replaced anyway.
+      </p>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      :visible="cancelling"
+      :header="`Cancel the handover to ${promotionTarget}?`"
+      severity="warn"
+      confirm-label="Cancel handover"
+      cancel-label="Keep waiting"
+      width="32rem"
+      :loading="cancelBusy"
+      data-track="instances-promote-cancel-dialog"
+      confirm-track="instances-promote-cancel-confirm"
+      cancel-track="instances-promote-cancel-dismiss"
+      @update:visible="(v) => !v && !cancelBusy && (cancelling = false)"
+      @confirm="cancelPromotion"
+    >
+      <p>
+        This instance takes changes again. If {{ promotionTarget }} has already taken over, the
+        cancel comes too late: this instance is replaced, and you rejoin it as a member.
+      </p>
+    </ConfirmDialog>
+
+    <ConfirmDialog
+      :visible="promotingSelf"
+      :header="`Make ${selfName} the controller?`"
+      confirm-label="Promote this instance"
+      width="36rem"
+      :type-to-confirm="selfName"
+      :disabled="!lastSyncAt"
+      :loading="promoteSelfBusy"
+      data-track="instances-promote-self-dialog"
+      confirm-track="instances-promote-self-confirm"
+      cancel-track="instances-promote-self-cancel"
+      @update:visible="(v) => !v && !promoteSelfBusy && (promotingSelf = false)"
+      @confirm="promoteSelf"
+    >
+      <p>Do this only when {{ oldController }} is switched off or gone for good.</p>
+      <p v-if="lastSyncAt" data-track="instances-promote-self-sync">
+        The data here is from the last sync, {{ formatDateTime(lastSyncAt) }} ({{
+          formatRelativeTime(lastSyncAt)
+        }}). Changes made on {{ oldController }} after that are not here and will not come back by
+        themselves.
+      </p>
+      <p v-else data-track="instances-promote-self-sync">
+        This instance has not synced yet, so it has no data to take over with. It cannot be
+        promoted.
+      </p>
+      <p>The other members follow this instance within about a minute.</p>
+      <p>
+        DHCP is not started here automatically. If {{ oldController }} served DHCP, start it from
+        this page afterwards.
+      </p>
+      <p>
+        If {{ oldController }} is in fact still running and clients can reach it, two controllers
+        exist until it hears about this one.
+      </p>
+      <p>This instance restarts, and you sign in again.</p>
+    </ConfirmDialog>
   </div>
 </template>
 
@@ -256,10 +384,12 @@ import Message from '../../ui/Message.js';
 import ConfirmDialog from '../../components/ConfirmDialog.vue';
 import EmptyState from '../../components/EmptyState.vue';
 import StatusDot from '../../components/StatusDot.vue';
+import FencedPanel from '../../components/instances/FencedPanel.vue';
 import api from '../../api/client.js';
 import { useToast } from '../../ui/useToast.js';
 import { useAuthStore } from '../../stores/auth.js';
 import { useFeatures } from '../../composables/useFeatures.js';
+import { useSignInAgain } from '../../composables/useSignInAgain.js';
 import { apiError, EMPTY_CELL } from '../../utils/format.js';
 import { formatDateTime, formatRelativeTime } from '../../utils/dateFormat.js';
 import {
@@ -270,6 +400,8 @@ import {
   handoverText,
   handoverWaited,
   lastSyncText,
+  promotionText,
+  restartingText,
   syncState,
 } from '../../utils/instances.js';
 import { formatHostPort } from '@shared/address.js';
@@ -277,6 +409,7 @@ import { formatHostPort } from '@shared/address.js';
 const auth = useAuthStore();
 const toast = useToast();
 const features = useFeatures();
+const signInAgain = useSignInAgain();
 
 // GET /api/instances, null until the first read answers.
 const state = ref(null);
@@ -284,6 +417,24 @@ const loading = ref(false);
 const rows = computed(() => state.value?.instances || []);
 // Only what the server says is a controller offers the controller's actions.
 const isController = computed(() => state.value?.mode === 'controller');
+// A change of controller. A server that says nothing about it predates it:
+// no handover, not replaced, and none of the controls.
+const promotion = computed(() => state.value?.promotion || null);
+const promoHandover = computed(() => promotion.value?.handover || null);
+const fenced = computed(() => {
+  if (promotion.value?.fenced) return promotion.value.fenced;
+  // The list could not be read, but the features say it.
+  const self = features.instance.value;
+  return self?.fenced ? { by_name: self.fenced_by || null, since: null, report: false } : null;
+});
+// Set once this box was told to restart as something else:
+// `{ mode, reason, name }`, the mode it comes back in and what the sign-in
+// page then says (utils/session.js).
+const awaiting = ref(null);
+// The controller's own actions: not while it hands over, and not once replaced.
+const canAct = computed(
+  () => isController.value && !promoHandover.value && !fenced.value && !awaiting.value,
+);
 const emptyText = computed(() =>
   state.value ? 'No instance is listed.' : 'The list of instances could not be read.',
 );
@@ -343,8 +494,9 @@ function removeTitle(row) {
   return row.dhcp ? `Move DHCP to another instance before removing ${row.name}` : 'Remove';
 }
 
-// While a handover is pending the line counts the wait and the list is read
-// again every few seconds; both stop when it clears or the page is left.
+// While something is pending (DHCP moving, the controller handing over, this
+// box restarting) one timer counts the wait and reads again every few
+// seconds; it stops when all of it clears or the page is left.
 const TICK_MS = 1000;
 const POLL_EVERY_TICKS = 5;
 const FORCE_AFTER_SECONDS = 60;
@@ -356,29 +508,165 @@ function stopTicker() {
   clearInterval(ticker);
   ticker = null;
 }
-watch(
-  () => handover.value !== null,
-  (pending) => {
-    stopTicker();
-    if (!pending) {
-      forcing.value = false;
-      return;
-    }
-    now.value = Date.now();
-    ticks = 0;
-    ticker = setInterval(() => {
-      now.value = Date.now();
-      ticks += 1;
-      if (ticks % POLL_EVERY_TICKS === 0) void load({ quiet: true });
-    }, TICK_MS);
-  },
+const pending = computed(
+  () => handover.value !== null || promoHandover.value !== null || awaiting.value !== null,
 );
+watch(pending, (on) => {
+  stopTicker();
+  if (!on) return;
+  now.value = Date.now();
+  ticks = 0;
+  ticker = setInterval(() => {
+    now.value = Date.now();
+    ticks += 1;
+    if (ticks % POLL_EVERY_TICKS === 0) void poll();
+  }, TICK_MS);
+});
+watch(handover, (value) => {
+  if (!value) forcing.value = false;
+});
+watch(promoHandover, (value) => {
+  if (!value) cancelling.value = false;
+});
+
+// What this box is expected to come back as: what an action here asked for,
+// or a member of the instance the controller is handing over to.
+const awaited = computed(
+  () =>
+    awaiting.value ||
+    (promoHandover.value
+      ? { mode: 'member', reason: 'joined', name: promoHandover.value.to_name || null }
+      : null),
+);
+// A request failed for want of a server: the restart has begun.
+let wentAway = false;
+let polling = false;
+
+async function poll() {
+  if (polling) return;
+  polling = true;
+  try {
+    if (awaited.value && (await arrived())) return;
+    if (!awaiting.value) await load({ quiet: true });
+  } finally {
+    polling = false;
+  }
+}
+
+// Has this box come back as what it was to become? Requests fail for a few
+// seconds while it restarts; that is expected, and the next turn asks again.
+// When it answers in the new mode the session here is for the box it was, so
+// the page goes to sign-in and says why.
+async function arrived() {
+  const want = awaited.value;
+  let instance;
+  try {
+    instance = (await api.get('/features', { ownSessionEnd: true })).data?.instance;
+  } catch (err) {
+    const status = err.response?.status;
+    // Back, with the session gone: only a restart does that mid-wait.
+    if (status === 401 && (awaiting.value || wentAway)) return leave(want, null);
+    if (!status || status >= 500) wentAway = true;
+    return false;
+  }
+  const mode = instance?.mode === 'member' ? 'member' : 'controller';
+  if (mode !== want.mode) return false;
+  return leave(want, instance?.controller_name);
+}
+
+function leave(want, name) {
+  stopTicker();
+  void signInAgain(want.reason, want.mode === 'member' ? name || want.name || null : null);
+  return true;
+}
+
 onBeforeUnmount(stopTicker);
 
 const handoverLine = computed(() => handoverText(handover.value, rows.value, now.value));
 const canForce = computed(
   () => isController.value && handoverWaited(handover.value, now.value) > FORCE_AFTER_SECONDS,
 );
+
+const promotionLine = computed(() => promotionText(promoHandover.value, now.value));
+const promotionTarget = computed(() => promoHandover.value?.to_name || 'the new controller');
+
+// Make controller: hand the role to a member, from the controller's view.
+const promoting = ref(null);
+const promoteBusy = ref(false);
+
+async function promote() {
+  const row = promoting.value;
+  promoteBusy.value = true;
+  let started = false;
+  try {
+    const { data } = await api.post(`/instances/${row.id}/promote`);
+    // Shown at once: this box may restart before the list can be read again.
+    const handing = data?.handover || {
+      to_instance_id: row.instance_id,
+      to_name: row.name,
+      since: new Date().toISOString(),
+    };
+    state.value = { ...state.value, promotion: { ...state.value?.promotion, handover: handing } };
+    started = true;
+  } catch (err) {
+    fail('Controller not changed', err);
+  } finally {
+    promoteBusy.value = false;
+    promoting.value = null;
+    await Promise.all([load({ quiet: started }), features.reload()]);
+  }
+}
+
+const cancelling = ref(false);
+const cancelBusy = ref(false);
+
+async function cancelPromotion() {
+  cancelBusy.value = true;
+  try {
+    await api.post('/instances/promote/cancel');
+    toast.add({ severity: 'success', summary: 'Handover cancelled', life: 4000 });
+  } catch (err) {
+    fail('Handover not cancelled', err);
+  } finally {
+    cancelBusy.value = false;
+    cancelling.value = false;
+    await Promise.all([load({ quiet: true }), features.reload()]);
+  }
+}
+
+// Promote this instance: a member takes over from a controller that is gone.
+// Offered only by a server that knows how.
+const canPromoteSelf = computed(
+  () =>
+    state.value?.mode === 'member' && Boolean(promotion.value) && !fenced.value && !awaiting.value,
+);
+const selfName = computed(() => state.value?.self?.name || 'this instance');
+const oldController = computed(() => state.value?.controller?.name || 'the controller');
+// The data a promoted member has is from its last sync.
+const lastSyncAt = computed(
+  () => features.instance.value?.sync?.last_sync_at || state.value?.sync?.last_sync_at || null,
+);
+const promotingSelf = ref(false);
+const promoteSelfBusy = ref(false);
+
+async function promoteSelf() {
+  promoteSelfBusy.value = true;
+  try {
+    await api.post('/instances/promote-self', { confirm: true });
+    awaiting.value = { mode: 'controller', reason: 'promoted', name: null };
+  } catch (err) {
+    fail('Not promoted', err);
+    await load();
+  } finally {
+    promoteSelfBusy.value = false;
+    promotingSelf.value = false;
+  }
+}
+
+// A replaced controller was rejoined to the new one and is restarting.
+function onRejoined(name) {
+  awaiting.value = { mode: 'member', reason: 'joined', name };
+}
 
 const moving = ref(null);
 const moveBusy = ref(false);
@@ -490,7 +778,7 @@ async function removeMember() {
   align-items: center;
   gap: 0.75rem;
 }
-.dhcp-moving {
+.status-line {
   display: flex;
   align-items: center;
   gap: 0.5rem;

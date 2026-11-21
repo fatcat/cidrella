@@ -513,7 +513,7 @@ const opsTitle = computed(() => {
 });
 
 // Controller or member. A single box (a controller with no members) has no
-// chip. A member's sync state moves, so its chip follows the 60 s poll.
+// chip. What the chip says moves, so it follows the 60 s poll.
 const features = useFeatures();
 const modeChip = computed(() => instanceChip(features.instance.value));
 function goToInstances() {
@@ -783,7 +783,9 @@ onMounted(() => {
     fetchHealth();
     refreshScanHeader();
     fetchAnomalySummary();
-    if (features.isMember.value) void features.reload();
+    // Whatever the chip says can change under an open page: a member's sync,
+    // a controller that is handing over or was replaced.
+    if (modeChip.value) void features.reload();
   }, 60000);
   window.addEventListener('ipam:stats-changed', fetchHealth);
   window.addEventListener('ipam:scan-started', refreshScanHeader);

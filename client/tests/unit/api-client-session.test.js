@@ -49,6 +49,13 @@ describe('API client on 401', () => {
     expect(onUnauthorized).not.toHaveBeenCalled();
   });
 
+  it('leaves a 401 to a caller that says it expects the session may be gone', async () => {
+    const waiting = failure('/features', 401, { error: 'Invalid token' });
+    waiting.config.ownSessionEnd = true;
+    await expect(rejected(waiting)).rejects.toBeTruthy();
+    expect(onUnauthorized).not.toHaveBeenCalled();
+  });
+
   it('leaves a failed sign-in to the sign-in page', async () => {
     await expect(rejected(failure('/auth/login', 401, {}))).rejects.toBeTruthy();
     expect(onUnauthorized).not.toHaveBeenCalled();

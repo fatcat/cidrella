@@ -8,11 +8,15 @@ import {
   behindText,
   dhcpServer,
   dhcpState,
+  fencedText,
   handoverNames,
   handoverText,
   handoverWaited,
   instanceChip,
   lastSyncText,
+  promotionText,
+  replacedBy,
+  restartingText,
   syncState,
 } from '../../../src/utils/instances.js';
 import { EMPTY_CELL } from '../../../src/utils/format.js';
@@ -171,5 +175,73 @@ describe('DHCP wording', () => {
     expect(
       instanceChip({ mode: 'controller', members: 2, sync: null, serves_dhcp: true }).title,
     ).toBe('Controller of 2 members');
+  });
+});
+
+describe('a change of controller', () => {
+  const controller = (extra) => ({
+    mode: 'controller',
+    controller_name: null,
+    members: 2,
+    ...extra,
+  });
+
+  it('the chip says a controller was replaced, by name when it knows one', () => {
+    const named = instanceChip(controller({ fenced: true, fenced_by: 'ns2' }));
+    expect(named).toMatchObject({ label: 'Replaced by ns2', tone: 'err', state: 'Replaced' });
+    expect(named.title).toBe(
+      'Replaced by ns2. This instance takes no changes.\nRejoin it as a member under Settings > System > Instances.',
+    );
+    expect(instanceChip(controller({ fenced: true })).label).toBe('Replaced by another controller');
+    // Shown whatever the member count says: its list is out of date.
+    expect(instanceChip(controller({ fenced: true, members: 0 })).tone).toBe('err');
+    expect(replacedBy(null)).toBe('Replaced by another controller');
+  });
+
+  it('the chip says a controller is handing over, and to which member', () => {
+    const chip = instanceChip(controller({ handover_to: 'ns2' }));
+    expect(chip).toMatchObject({ label: 'Handing over to ns2', tone: 'warn', state: 'Frozen' });
+    expect(chip.title).toBe(
+      'ns2 is becoming the controller. No changes can be made until it is done.',
+    );
+  });
+
+  it('the chip is as before for a server that says neither', () => {
+    expect(instanceChip(controller({})).label).toBe('Controller');
+    expect(instanceChip(controller({ fenced: false, handover_to: null })).label).toBe('Controller');
+    expect(instanceChip({ ...member(null), handover_to: 'ns3' }).label).toBe('Member of ns1');
+  });
+
+  it('says what replaced a controller and since when, in two sentences', () => {
+    const text = fencedText({ by_name: 'ns2', since: '2026-11-21T11:00:00Z', report: true });
+    expect(text).toMatch(
+      /^ns2 replaced this instance as the controller\. This instance has taken no changes since .+, and its data is out of date\.$/,
+    );
+    expect(fencedText({ by_name: null, since: null })).toBe(
+      'Another instance replaced this instance as the controller. This instance takes no changes, and its data is out of date.',
+    );
+  });
+
+  it('counts the wait of a handover of the controller role', () => {
+    const handover = { to_instance_id: 'i-m2', to_name: 'ns2', since: '2026-11-21T11:59:15Z' };
+    expect(promotionText(handover)).toBe(
+      'Handing over to ns2. Waiting for it to catch up and take over, 45 seconds so far.',
+    );
+    expect(promotionText({ ...handover, since: '2026-11-21T11:57:00Z' })).toContain(
+      '3 minutes so far',
+    );
+    expect(promotionText({ since: '2026-11-21T12:00:00Z' })).toContain(
+      'Handing over to the new controller.',
+    );
+  });
+
+  it('says what this box is restarting as', () => {
+    expect(restartingText({ mode: 'controller' })).toBe(
+      'Restarting as the controller. The sign-in page opens when it is back.',
+    );
+    expect(restartingText({ mode: 'member', name: 'ns2' })).toBe(
+      'Restarting as a member of ns2. The sign-in page opens when it is back.',
+    );
+    expect(restartingText({ mode: 'member', name: null })).toContain('Restarting as a member.');
   });
 });

@@ -837,6 +837,49 @@ already hold on a single box.
   that cannot be merged (p95, CPU, memory) left out of a merged minute and
   offered per instance instead. The anomaly sidecar reads the box's own
   rows only.
+- **The controller can change, by an admin's hand.** No election.
+  `services/controller-promotion.js` holds every step and
+  `sync/promotion-state.js` the host state. The estate has an **epoch**, a
+  number that goes up by one at every promotion. Every request from one
+  instance to another carries the highest epoch the caller knows
+  (`x-cidrella-epoch`) and the controller it follows (`x-cidrella-controller`),
+  set in one place, `sync/controller-call.js`; every answer carries the
+  controller's.
+  - *Forced* (`POST /api/instances/promote-self`, on a member, when the
+    controller is gone): in one transaction the member takes epoch + 1,
+    controller mode, the log triggers and its own row as the controller's, and
+    remembers the head it took over at (`epoch_base`). It then takes in its own
+    outbox and keeps telling the old controller (`POST /api/sync/fence`, a 0600
+    notice file in `DATA_DIR/sync/` until it is heard).
+  - *Coordinated* (`POST /api/instances/:id/promote`, on the controller): the
+    controller writes the estate setting `controller_handover_to` and freezes
+    (every write answers `controller_handover`). The named member sees the
+    setting in its copy, which means it holds everything, promotes itself and
+    calls `POST /api/sync/handover-done` with a credential minted for the old
+    controller, which becomes its member. `POST /api/instances/promote/cancel`
+    unfreezes; it cannot know whether the member already took over.
+  - *Fencing*: a controller that hears a higher epoch from an instance on its
+    list saves its database (`snapshots/pre-demotion/`), writes
+    `sync/divergence-report.json` (every change above the last cursor the new
+    controller reached), and becomes **a member with no controller**
+    (`fenced` in `sync_state`). So every member rule holds without a second
+    set of checks: the write gate, the guard triggers, no controller jobs, no
+    DHCP. `POST /api/instances/rejoin` joins it to the new controller with a
+    join token, like a first-run join.
+  - *Members find the controller* by asking every instance on their list
+    `GET /api/sync/hello` (`sync/find-controller.js`) and following the
+    highest epoch, when the one they follow says it is fenced, is not a
+    controller, answers a lower epoch, or has not answered three rounds.
+  - *A cursor only means something within an epoch.* A member's copy is
+    carried on from its cursor when it is of the controller's epoch, or of the
+    epoch before with a cursor at or below `epoch_base`; otherwise it is sent
+    everything. A delta that will not go in also ends in a snapshot.
+  - `dhcp_active_instance` absent means "the controller" only until the first
+    promotion, which writes it: DHCP does not move with the controller role.
+  - Not closable without a witness, and said where the choice is made: an old
+    controller cut off from the instances but reachable by clients keeps
+    taking changes and serving until one of them reaches it; two members
+    forced at once land on the same epoch.
 
 ## Security and Operations Boundaries
 

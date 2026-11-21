@@ -41,6 +41,11 @@ describe('sign-out reasons', () => {
     );
   });
 
+  it('says a promoted member is now the controller', () => {
+    rememberSignOut('promoted');
+    expect(takeSignOutMessage()).toBe('This CIDRella is now the controller. Sign in again.');
+  });
+
   it('says nothing when nothing ended a session', () => {
     expect(takeSignOutMessage()).toBeNull();
   });

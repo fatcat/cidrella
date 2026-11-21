@@ -2,10 +2,31 @@
 // members, which hold a synced read-only copy of it. One place for the sync
 // state words and tones, the header chip, and how far behind a member is, so
 // the header and Settings > Instances say the same thing. Also which instance
-// serves DHCP: exactly one does, and an admin can move it.
+// serves DHCP: exactly one does, and an admin can move it. And a change of
+// controller: a handover in progress, and a controller that was replaced.
 
-import { formatRelativeTime } from './dateFormat.js';
+import { formatDateTime, formatRelativeTime } from './dateFormat.js';
 import { countOf, EMPTY_CELL } from './format.js';
+
+// What a server that says nothing about instances is: one box, as before 0.7.0.
+export function singleBox() {
+  return {
+    mode: 'controller',
+    controller_name: null,
+    members: 0,
+    sync: null,
+    serves_dhcp: true,
+    fenced: false,
+    fenced_by: null,
+    handover_to: null,
+  };
+}
+
+/** A controller that takes no changes: replaced, or handing over to a member. */
+export function isFrozen(instance) {
+  if (instance?.fenced) return true;
+  return instance?.mode !== 'member' && Boolean(instance?.handover_to);
+}
 
 // A member's sync state, from GET /api/features and GET /api/instances.
 const SYNC_STATES = {
@@ -46,6 +67,25 @@ const SERVES_DHCP_HERE = 'This instance serves DHCP';
  */
 export function instanceChip(instance) {
   if (!instance) return null;
+  // A replaced controller reports as a member with no controller: ask this first.
+  if (instance.fenced) {
+    const label = replacedBy(instance.fenced_by);
+    return {
+      label,
+      tone: 'err',
+      state: 'Replaced',
+      title: `${label}. This instance takes no changes.\nRejoin it as a member under Settings > System > Instances.`,
+    };
+  }
+  if (instance.mode !== 'member' && instance.handover_to) {
+    const label = `Handing over to ${instance.handover_to}`;
+    return {
+      label,
+      tone: 'warn',
+      state: 'Frozen',
+      title: `${instance.handover_to} is becoming the controller. No changes can be made until it is done.`,
+    };
+  }
   if (instance.mode === 'member') {
     const state = syncState(instance.sync);
     const label = instance.controller_name ? `Member of ${instance.controller_name}` : 'Member';
@@ -114,6 +154,45 @@ export function handoverNames(handover, rows) {
   };
 }
 
+/** "Replaced by ns2", or by a controller this instance cannot name. */
+export function replacedBy(name) {
+  return name ? `Replaced by ${name}` : 'Replaced by another controller';
+}
+
+/**
+ * What happened to a controller that was replaced, and since when, from the
+ * `promotion.fenced` of GET /api/instances. Two sentences.
+ */
+export function fencedText(fenced) {
+  const who = fenced?.by_name || 'Another instance';
+  const when = formatDateTime(fenced?.since);
+  const since =
+    when === EMPTY_CELL
+      ? 'This instance takes no changes'
+      : `This instance has taken no changes since ${when}`;
+  return `${who} replaced this instance as the controller. ${since}, and its data is out of date.`;
+}
+
+/** "Handing over to ns2. Waiting for it to catch up and take over, 12 seconds so far." */
+export function promotionText(handover, now = Date.now()) {
+  const to = handover?.to_name || 'the new controller';
+  return `Handing over to ${to}. Waiting for it to catch up and take over, ${waitedWords(handoverWaited(handover, now))} so far.`;
+}
+
+/** What the page says between a restart being asked for and the box answering again. */
+export function restartingText(awaiting) {
+  const role =
+    awaiting?.mode === 'member'
+      ? `a member${awaiting.name ? ` of ${awaiting.name}` : ''}`
+      : 'the controller';
+  return `Restarting as ${role}. The sign-in page opens when it is back.`;
+}
+
+// "45 seconds", then whole minutes.
+function waitedWords(seconds) {
+  return seconds < 60 ? countOf(seconds, 'second') : countOf(Math.floor(seconds / 60), 'minute');
+}
+
 /** Whole seconds a handover has waited at `now` (ms); 0 for a time ahead. */
 export function handoverWaited(handover, now = Date.now()) {
   const since = Date.parse(handover?.since);
@@ -123,8 +202,6 @@ export function handoverWaited(handover, now = Date.now()) {
 /** "DHCP is moving to ns2. Waiting for ns1 to hand over its leases, 45 seconds so far." */
 export function handoverText(handover, rows, now = Date.now()) {
   const { from, to } = handoverNames(handover, rows);
-  const seconds = handoverWaited(handover, now);
-  const waited =
-    seconds < 60 ? countOf(seconds, 'second') : countOf(Math.floor(seconds / 60), 'minute');
+  const waited = waitedWords(handoverWaited(handover, now));
   return `DHCP is moving to ${to}. Waiting for ${from} to hand over its leases, ${waited} so far.`;
 }

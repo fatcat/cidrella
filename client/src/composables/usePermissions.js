@@ -1,6 +1,7 @@
 import { computed } from 'vue';
 import { storeToRefs } from 'pinia';
 import { useAuthStore } from '../stores/auth.js';
+import { useFeatures } from './useFeatures.js';
 
 /**
  * Permission checks backed only by capabilities projected by the server.
@@ -11,13 +12,18 @@ import { useAuthStore } from '../stores/auth.js';
  * admin wildcard, so a control gated on one is off for an admin too. What
  * acts on this box alone (interfaces, certificate, updates, logs, the
  * Instances page) is gated on `isAdmin`, which a member leaves as it is.
+ *
+ * A controller that takes no changes is read-only in the same way: one that
+ * was replaced by another controller, and one handing over to a member. The
+ * account is not marked there, so that comes from the feature read.
  */
 export function usePermissions() {
   const auth = useAuthStore();
   const { permissions, isAdmin, user } = storeToRefs(auth);
   // Read off the store, not through storeToRefs: a server older than 0.7.0
   // sends no flag, and that reads as not read-only.
-  const readOnly = computed(() => auth.readOnly === true);
+  const features = useFeatures();
+  const readOnly = computed(() => auth.readOnly === true || features.frozen?.value === true);
   const permissionSet = computed(() => new Set(permissions.value));
 
   function can(permission) {

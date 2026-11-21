@@ -13,41 +13,15 @@
     </div>
 
     <form id="first-run-join" @submit.prevent="submit">
-      <div class="fr-field">
-        <label for="fr-join-address">Controller address</label>
-        <InputText
-          id="fr-join-address"
-          v-model="address"
-          :disabled="joining"
-          autocomplete="off"
-          spellcheck="false"
-          class="fr-mono"
-        />
-        <span class="fr-help">The name or IP address you open the controller at.</span>
-      </div>
-      <div class="fr-field fr-gap">
-        <label for="fr-join-port">Port</label>
-        <InputNumber
-          v-model="port"
-          input-id="fr-join-port"
-          :min="1"
-          :max="65535"
-          :use-grouping="false"
-          :disabled="joining"
-        />
-        <span class="fr-help">The controller's HTTPS port.</span>
-      </div>
-      <div class="fr-field fr-gap">
-        <label for="fr-join-token">Join token</label>
-        <InputText
-          id="fr-join-token"
-          v-model="token"
-          :disabled="joining"
-          autocomplete="off"
-          spellcheck="false"
-          class="fr-mono"
-        />
-      </div>
+      <JoinTargetFields
+        v-model:address="address"
+        v-model:port="port"
+        v-model:token="token"
+        id-prefix="fr-join"
+        track="first-run-join"
+        :disabled="joining"
+        first-run
+      />
     </form>
 
     <div class="fr-note warn">
@@ -95,39 +69,28 @@
 
 <script setup>
 import { computed, ref } from 'vue';
-import { useRouter } from 'vue-router';
 import Button from '../../ui/Button.js';
 import Checkbox from '../../ui/Checkbox.js';
-import InputNumber from '../../ui/InputNumber.js';
-import InputText from '../../ui/InputText.js';
 import Message from '../../ui/Message.js';
 import StatusDot from '../StatusDot.vue';
+import JoinTargetFields from '../instances/JoinTargetFields.vue';
 import api from '../../api/client.js';
-import { useAuthStore } from '../../stores/auth.js';
-import { useFeaturesStore } from '../../stores/features.js';
+import { useJoinTarget } from '../../composables/useJoinTarget.js';
+import { useSignInAgain } from '../../composables/useSignInAgain.js';
 import { useSetupStore } from '../../stores/setup.js';
 import { apiError } from '../../utils/format.js';
 
 const emit = defineEmits(['back']);
-const router = useRouter();
-const auth = useAuthStore();
-const features = useFeaturesStore();
 const setup = useSetupStore();
+const signInAgain = useSignInAgain();
 
-const address = ref('');
-const port = ref(443);
-const token = ref('');
+const { address, port, token, blocker: targetBlocker, body } = useJoinTarget();
 const understood = ref(false);
 const joining = ref(false);
 const error = ref('');
 
-const portOk = computed(
-  () => Number.isInteger(port.value) && port.value >= 1 && port.value <= 65535,
-);
 const blocker = computed(() => {
-  if (!address.value.trim()) return "Enter the controller's address.";
-  if (!portOk.value) return 'Enter a port from 1 to 65535.';
-  if (!token.value.trim()) return 'Enter the join token.';
+  if (targetBlocker.value) return targetBlocker.value;
   if (!understood.value) return 'Confirm that this box is replaced.';
   return '';
 });
@@ -137,17 +100,11 @@ async function submit() {
   joining.value = true;
   error.value = '';
   try {
-    const { data } = await api.post('/setup/join', {
-      address: address.value.trim(),
-      port: port.value,
-      token: token.value.trim(),
-    });
+    const { data } = await api.post('/setup/join', body());
     // The controller's accounts replaced this box's, so the session here
     // speaks for an account that is gone. The sign-in page says what happened.
-    auth.logout('joined', data?.controller?.name || null);
-    features.reset();
     setup.reset();
-    router.push({ name: 'Login' });
+    await signInAgain('joined', data?.controller?.name || null);
   } catch (err) {
     error.value = apiError(err);
   } finally {

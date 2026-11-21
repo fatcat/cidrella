@@ -357,6 +357,7 @@
 <script setup>
 import { ref, computed, onMounted, onUnmounted } from 'vue';
 import { apiError } from '../utils/format.js';
+import { saveBlob } from '../utils/download.js';
 import Button from '../ui/Button.js';
 import ProgressBar from '../ui/ProgressBar.js';
 import ToggleSwitch from '../ui/ToggleSwitch.js';
@@ -576,14 +577,7 @@ async function downloadLifecycleReport() {
       updateStatus.value?.lifecycle_migration_report_download ||
       '/version/ip-lifecycle-migration-report';
     const res = await api.get(endpoint.replace(/^\/api/, ''), { responseType: 'blob' });
-    const url = URL.createObjectURL(res.data);
-    const link = document.createElement('a');
-    link.href = url;
-    link.download = 'ip-lifecycle-migration-report.json';
-    document.body.appendChild(link);
-    link.click();
-    link.remove();
-    URL.revokeObjectURL(url);
+    saveBlob(res.data, 'ip-lifecycle-migration-report.json');
   } catch (err) {
     toast.add({
       severity: 'error',

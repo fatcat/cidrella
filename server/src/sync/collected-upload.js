@@ -8,12 +8,18 @@
  * box's own retention like any other, so an outage longer than the retention
  * loses the oldest of them. That is accepted: they are measurements, not
  * data of record.
+ *
+ * When the controller changes, the cursors stay: the new controller has none
+ * of this box's rows and no mark for it, takes the rows after the cursor,
+ * and answers the last of them as its position. Nothing is sent twice. The
+ * rows from before the change stay on the old controller, which is where
+ * that history is lost on a forced promotion.
  */
 import crypto from 'crypto';
-import { syncRequest } from '../utils/sync-client.js';
 import { MAX_BATCH_ROWS, STREAMS } from './collected-streams.js';
+import { callController } from './controller-call.js';
+import { readCredential } from './credential.js';
 import { readSyncState, writeSyncState } from './log.js';
-import { readCredential } from './member.js';
 import { controllerOf } from './mode.js';
 
 const UPLOAD_INTERVAL_MS = 60_000;
@@ -40,7 +46,7 @@ function fitting(rows) {
   let bytes = 0;
   let n = 0;
   for (const row of rows) {
-    bytes += JSON.stringify(row).length + 1;
+    bytes += Buffer.byteLength(JSON.stringify(row)) + 1;
     if (n > 0 && bytes > COLLECTED_BYTES) break;
     n++;
   }
@@ -49,7 +55,7 @@ function fitting(rows) {
 
 // Send one stream's waiting rows. Returns how many the controller holds now
 // that it did not before the call.
-async function uploadStream(db, stream, target, deadline) {
+async function uploadStream(db, stream, deadline) {
   let sent = 0;
   while (Date.now() < deadline) {
     const cursor = Number(readSyncState(db, cursorKey(stream))) || 0;
@@ -65,13 +71,17 @@ async function uploadStream(db, stream, target, deadline) {
       return sent;
     }
     const last = rows.at(-1)[0];
-    const response = await syncRequest({
-      ...target.controller,
+    const response = await callController(db, {
       method: 'POST',
       path: `/api/sync/collected/${stream.name}`,
-      credential: target.credential,
       body: { epoch: epochOf(db, stream), rows },
     });
+    // One row the controller will never read: pass it, or it blocks the stream.
+    if (response.status === 413 && rows.length === 1) {
+      console.warn(`[sync] skipped a ${stream.name} row too large to send`);
+      writeSyncState(db, cursorKey(stream), last);
+      continue;
+    }
     let position = null;
     try {
       position =
@@ -102,13 +112,11 @@ async function uploadStream(db, stream, target, deadline) {
  * reached or refuses; nothing is lost, the cursors stay where they were.
  */
 export async function uploadCollectedOnce(db, { budgetMs = ROUND_BUDGET_MS } = {}) {
-  const controller = controllerOf(db);
-  const credential = readCredential(db);
-  if (!controller || !credential) return 0;
+  if (!controllerOf(db) || !readCredential(db)) return 0;
   const deadline = Date.now() + budgetMs;
   let sent = 0;
   for (const stream of STREAMS) {
-    sent += await uploadStream(db, stream, { controller, credential }, deadline);
+    sent += await uploadStream(db, stream, deadline);
   }
   return sent;
 }

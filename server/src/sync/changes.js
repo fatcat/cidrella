@@ -188,9 +188,10 @@ const quoteName = (name) => `"${String(name).replaceAll('"', '""')}"`;
 
 /**
  * Make `db` match what parseChanges read. One transaction; nothing changes if
- * it throws. Refuses (SyncError) a different schema version ('schema'), and a
- * delta that does not start at this copy's cursor or belongs to another
- * dataset ('restart': ask again without a cursor). Queues the applies the
+ * it throws. Refuses (SyncError) a different schema version ('schema'),
+ * changes from an epoch before this copy's ('stale_epoch'), and a delta that
+ * does not start at this copy's cursor or belongs to another dataset
+ * ('restart': ask again without a cursor). Queues the applies the
  * changed tables call for. Returns { snapshot, rows, head, tables }.
  */
 export function applyChanges(db, { header, changes }) {
@@ -199,6 +200,14 @@ export function applyChanges(db, { header, changes }) {
     throw new SyncError(
       'schema',
       `The changes are for schema ${header.schema} and this database is at ${local.schema}`,
+    );
+  }
+  // A controller at a lower epoch than this copy has been replaced
+  // (docs/REDUNDANCY-PLAN.md, section 7): nothing of it is taken.
+  if (header.epoch < local.epoch) {
+    throw new SyncError(
+      'stale_epoch',
+      `The changes are from epoch ${header.epoch} and this copy is of epoch ${local.epoch}`,
     );
   }
   const cursor = readSyncState(db, 'cursor');

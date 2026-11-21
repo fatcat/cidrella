@@ -5,7 +5,7 @@
  */
 import crypto from 'crypto';
 import os from 'os';
-import { readSyncState, writeSyncState } from '../sync/log.js';
+import { readSyncState, syncHead, syncStatus, writeSyncState } from '../sync/log.js';
 import { canonicalizeIp } from '../utils/address.js';
 
 export const JOIN_TOKEN_MINUTES = 15;
@@ -14,6 +14,10 @@ const CREDENTIAL_PREFIX = 'cs1';
 // A member not heard from for this long no longer holds the change log's
 // tombstones back: when it returns it starts over from a snapshot.
 const QUIET_MEMBER_DAYS = 30;
+// A member asks for changes at least every 25 seconds while it is in contact.
+export const CURRENT_MS = 90_000;
+// How many changes behind the head a member may be and still count as following.
+const FOLLOWING_GAP = 2000;
 
 const sha256 = (text) => crypto.createHash('sha256').update(text).digest('hex');
 const newSecret = () => crypto.randomBytes(32).toString('base64url');
@@ -198,6 +202,67 @@ export function addMember(db, { instanceId, name, address, port, fingerprint, ve
   return `${CREDENTIAL_PREFIX}_${secret}`;
 }
 
+/** A new credential and the hash it is stored as: { credential, hash }. */
+export function mintCredential() {
+  const secret = newSecret();
+  return { credential: `${CREDENTIAL_PREFIX}_${secret}`, hash: sha256(secret) };
+}
+
+/**
+ * Why `row` (a sync_instances row of a member) cannot be handed something
+ * that needs it to be following this controller right now: `{ code, error }`
+ * with `schema_mismatch` or `not_current`, or null when it is. `rule` ends
+ * the sentence about contact with what was asked for.
+ */
+export function followingRefusal(db, row, rule) {
+  if (row.schema_version !== null && row.schema_version !== syncStatus(db).schema) {
+    return {
+      code: 'schema_mismatch',
+      error:
+        `${row.name} runs ${row.version || 'another version'}, not the controller's. ` +
+        'Update it to the same version first.',
+    };
+  }
+  const heard = Date.parse(row.last_contact_at || '');
+  if (Number.isNaN(heard) || Date.now() - heard > CURRENT_MS) {
+    return {
+      code: 'not_current',
+      error:
+        `${row.name} has not been in contact for the last ${CURRENT_MS / 1000} seconds. ` + rule,
+    };
+  }
+  // In contact is not following: its cursor must be near the head. The head
+  // moves with every lease, so a member asking every few seconds is allowed
+  // to be a little behind.
+  const cursor = db.prepare('SELECT cursor FROM sync_instances WHERE id = ?').get(row.id)?.cursor;
+  if (cursor === null || cursor === undefined || syncHead(db) - cursor > FOLLOWING_GAP) {
+    return {
+      code: 'not_current',
+      error: `${row.name} is in contact but has not caught up with the controller. ` + rule,
+    };
+  }
+  return null;
+}
+
+/**
+ * This box becomes the controller in the list: its row is the controller's,
+ * and the row of the controller it replaces becomes a member's, reachable at
+ * the address this box knew it by. `grantHash` is the hash of a credential
+ * made for that instance to come back with (a handover), or null when it has
+ * to join again (a forced promotion). The caller holds the transaction.
+ */
+export function takeControllerRow(db, { former, grantHash = null }) {
+  const self = ownInstanceId(db);
+  db.prepare(
+    `UPDATE sync_instances SET is_controller = 0, credential_hash = ?,
+       address = COALESCE(?, address), port = COALESCE(?, port)
+     WHERE is_controller = 1 AND instance_id IS NOT ?`,
+  ).run(grantHash, former?.address ?? null, former?.port ?? null, self);
+  db.prepare(
+    'UPDATE sync_instances SET is_controller = 1, credential_hash = NULL WHERE instance_id = ?',
+  ).run(self);
+}
+
 /** The member a credential belongs to, or null. */
 export function memberForCredential(db, credential) {
   const match = /^cs1_([\w-]{20,})$/.exec(String(credential || ''));
@@ -212,6 +277,18 @@ export function memberForCredential(db, credential) {
       )
       .all()
       .find((row) => crypto.timingSafeEqual(Buffer.from(row.credential_hash), given)) || null
+  );
+}
+
+/** The member with this instance_id as the fencing rule needs it, or null. */
+export function memberByInstanceId(db, instanceId) {
+  return (
+    db
+      .prepare(
+        `SELECT id, instance_id, name, cursor FROM sync_instances
+         WHERE instance_id = ? AND is_controller = 0`,
+      )
+      .get(instanceId) || null
   );
 }
 

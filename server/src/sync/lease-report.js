@@ -9,11 +9,9 @@
  * and this copy has not heard yet, so the member stops reporting until its
  * settings change, and asks again after REFUSED_RETRY_MS in case they never do.
  */
-import { syncRequest } from '../utils/sync-client.js';
-import { readCredential } from './credential.js';
+import { callController, jsonBody } from './controller-call.js';
 import { dhcpState, holdsDhcp } from './dhcp-active.js';
 import { LEASE_REPORT_TYPE, NOT_DHCP_ACTIVE, packReport } from './lease-wire.js';
-import { controllerOf } from './mode.js';
 
 export const RETRY_MS = 30_000;
 const REFUSED_RETRY_MS = 10 * 60_000;
@@ -70,27 +68,14 @@ function failed(message) {
 }
 
 async function post(db, body) {
-  const controller = controllerOf(db);
-  const credential = readCredential(db);
-  if (!controller || !credential) {
-    throw new Error('This member has lost its controller’s details. Join it again.');
-  }
-  const response = await syncRequest({
-    ...controller,
+  const response = await callController(db, {
     method: 'POST',
     path: '/api/sync/leases',
-    credential,
     headers: { 'content-type': LEASE_REPORT_TYPE },
     body: packReport(body),
     timeoutMs: REPORT_TIMEOUT_MS,
   });
-  let answer = {};
-  try {
-    answer = JSON.parse(response.body.toString('utf8')) || {};
-  } catch {
-    /* not an answer */
-  }
-  return { status: response.status, answer };
+  return { status: response.status, answer: jsonBody(response) };
 }
 
 const count = (value) => (Number.isSafeInteger(value) && value >= 0 ? value : 0);

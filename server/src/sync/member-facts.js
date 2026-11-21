@@ -30,8 +30,36 @@ const macOrNull = (value) =>
 // not the value.
 const text = (value, max) => (typeof value === 'string' && value.length <= max ? value : null);
 
-function applySeen(db, payload, skew = 0) {
+// New address rows one member's sightings may make in an hour. Every row is
+// data of record and goes out to every member, and an IPv6 network never
+// runs out of addresses to name.
+export const NEW_ROWS_PER_HOUR = 2000;
+const HOUR_MS = 3_600_000;
+const budgets = new Map();
+
+function mayAddRow(member, now = Date.now()) {
+  let budget = budgets.get(member);
+  if (!budget || now - budget.since >= HOUR_MS) {
+    budget = { since: now, used: 0 };
+    budgets.set(member, budget);
+  }
+  if (budget.used >= NEW_ROWS_PER_HOUR) {
+    if (!budget.warned) {
+      console.warn(`[sync] ${member} named more new addresses than an hour allows; the rest wait`);
+      budget.warned = true;
+    }
+    return false;
+  }
+  budget.used++;
+  return true;
+}
+
+/** Tests start each case with a full allowance. */
+export const resetNewRowBudgets = () => budgets.clear();
+
+function applySeen(db, payload, skew = 0, member = '') {
   const list = Array.isArray(payload?.seen) ? payload.seen.slice(0, SEEN_PER_ROW) : [];
+  const known = db.prepare('SELECT 1 FROM ip_addresses WHERE ip_address = ? LIMIT 1');
   let applied = 0;
   db.transaction(() => {
     for (const entry of list) {
@@ -39,7 +67,11 @@ function applySeen(db, payload, skew = 0) {
         const given = text(entry?.ip, 64);
         // No zone id: a link-local sighting has no meaning off its link.
         if (!given || !parseIp(given, { zoneId: false }) || !Number.isFinite(entry.at)) continue;
-        localSink.clientSeen(db, canonicalizeIp(given), {
+        const ip = canonicalizeIp(given);
+        // An address the estate already knows always gets its sighting; one
+        // it does not would become a new row, and those are rationed.
+        if (!known.get(ip) && !mayAddRow(member)) continue;
+        localSink.clientSeen(db, ip, {
           createRogue: entry.rogue === 1,
           source: 'passive',
           observedAt: entry.at + skew,
@@ -81,6 +113,6 @@ export const isMemberFact = (kind) => Object.hasOwn(APPLY, kind);
 
 /** Apply one fact row. Returns how many observations it recorded; may throw. */
 /** `skew`: how far the controller's clock is ahead of the member's, in ms. */
-export function applyMemberFact(db, kind, payload, skew = 0) {
-  return APPLY[kind](db, payload, skew);
+export function applyMemberFact(db, kind, payload, skew = 0, member = '') {
+  return APPLY[kind](db, payload, skew, member);
 }

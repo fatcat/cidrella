@@ -288,7 +288,24 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   may be on a member), `activeBackendLeases` in `models/dhcp-lease.js`, `readCredential` in
   `sync/credential.js`, `instanceAddressSet` in `models/sync-instance.js` (every address an
   instance is known by), client `utils/instances.js` (the one wording
-  for sync state, which instance serves DHCP, the header chip and how far behind), `useFeatures().instance`/`isMember`,
+  for sync state, which instance serves DHCP, the header chip, how far behind, and the wording
+  of a handover, a restart and a replaced controller), `useFeatures().instance`/`isMember`/`frozen`
+  (`frozen`: a controller that is replaced or handing over; `usePermissions` treats it as
+  read-only), `components/instances/FencedPanel.vue`, `composables/useJoinTarget.js` with
+  `components/instances/JoinTargetFields.vue` (the controller a box joins: first run and
+  rejoin), `composables/useSignInAgain.js` (leave for sign-in after the box changed what it
+  is), `saveBlob` in `utils/download.js` (every file the browser saves from a Blob), the
+  `ownSessionEnd` request option in `api/client.js` (a poll that expects its session to end),
+  server `services/controller-promotion.js` (every step of a change of controller: `promoteSelf`,
+  `startHandover`, `cancelHandover`, `receiveFence`, `receiveHandoverDone`, `fenceSelf`,
+  `promotionView`; nothing else writes the epoch or the mode of a running estate),
+  `sync/promotion-state.js` (`fencedState`, `handoverFreeze`, the takeover notice),
+  `callController`/`callInstance` in `sync/controller-call.js` (every request from one instance
+  to another after the join: they carry the epoch, so never call `syncRequest` directly for
+  one), `findController` in `sync/find-controller.js`, `isFenced` and `handoverTarget` in
+  `sync/mode.js`, `followingRefusal` in `models/sync-instance.js` (is a member following closely
+  enough to be given DHCP or the controller role), `takeOutboxRows` in `sync/outbox-intake.js`,
+  tests' `tests/helpers/instances.js` (several instances serving routes in one process),
   `readOnly` in the auth store and `usePermissions` (`can()` refuses every `:write` on a
   member),
   `onDhcpRendered` in

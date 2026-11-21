@@ -68,6 +68,45 @@ again unless the maintainer reopens one.
 - **Fix:** Have each instance report its DHCPv6 server DUID (and move the DUID with DHCP, see
   BACKLOG.md), and trust an advertisement carrying a known instance's DUID.
 
+#### DHCP-READY-TERM-01: The "leases loaded" mark is a bare term number
+
+**low**, read in the code, not reproduced (review of 425eadb, 2026-11-21).
+`server/src/sync/dhcp-active.js` (`dhcp_ready_term`), `server/src/services/dhcp-follow.js`
+
+- **What happens:** A member served DHCP at term 1. The controller is restored from a backup
+  taken at term 0 and DHCP is moved to that member again before it has applied the restored
+  state: the new term is 1 again, the member's mark already says 1, so it skips importing the
+  leases and serves from whatever its server has on disk. Its next report replaces the
+  controller's lease table with that set. The window is narrow.
+- **Why:** The mark is not tied to the dataset the term belongs to.
+- **Fix:** Store it as `dataset:term`, or delete it when a snapshot from a new dataset is applied
+  and on join.
+
+#### COLLECTED-EPOCH-DUP-01: A new upload epoch stores rows the controller already holds
+
+**low**, reproduced (2026-11-21). `server/src/sync/collected-streams.js`,
+`server/src/routes/sync-collected.js`
+
+- **What happens:** After a member is restored or rolled back, the rows between its restored
+  cursor and its head (about a minute of metrics) are uploaded again under a new epoch and stored
+  a second time, so that minute counts double with All instances. A hostile member can repeat it
+  at will.
+- **Why:** The high-water mark is per epoch and nothing makes a member's row unique.
+- **Fix:** A unique index on the member rows of each metrics table (`instance_id`, `ts` and the
+  key column) with `INSERT OR IGNORE`.
+
+#### LEASE-MAC-FORMS-01: A member's DHCPv4 lease with an unusual hardware address is dropped
+
+**low**, read in the code (2026-11-21). `server/src/sync/lease-intake.js` (`cleanLease`)
+
+- **What happens:** dnsmasq writes hardware types other than Ethernet as `tt-xx:xx:...`. The
+  controller's own lease path passes that through to the lifecycle rules; a member's report drops
+  the lease, so the controller treats a live lease as released. A DHCPv4 lease with no MAC at
+  all is accepted, and would be written as the word `null` into a dnsmasq lease file at a later
+  handover.
+- **Why:** The validator accepts six colon-separated octets or nothing.
+- **Fix:** Require a MAC on a DHCPv4 lease and accept the forms the adapters emit.
+
 ---
 
 ## Will not fix

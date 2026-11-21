@@ -11,6 +11,7 @@ const { dhcpState, holdsDhcp, markDhcpReady, quiesceDhcp, servesDhcpHere } =
 const { roleSwitchedOff } = await import('../../../src/utils/role-switches.js');
 const { ownInstanceId } = await import('../../../src/models/sync-instance.js');
 const { deleteSetting, upsertSetting } = await import('../../../src/models/setting.js');
+const { setFenced } = await import('../../../src/sync/promotion-state.js');
 
 const OTHER = '11111111-2222-4333-8444-555555555555';
 let db;
@@ -33,6 +34,7 @@ beforeEach(() => {
     deleteSetting(db, key);
   }
   markDhcpReady(db, null);
+  setFenced(db, null);
   upsertSetting(db, 'dhcp_enabled', 'true');
 });
 
@@ -128,6 +130,18 @@ describe('a member', () => {
     deleteSetting(db, 'dhcp_handover_from');
     expect(serves()).toBe(true);
     given({ active: OTHER, term: 3 });
+    expect(serves()).toBe(false);
+  });
+});
+
+describe('a controller that was replaced', () => {
+  it('serves none and holds none, though its copy of the settings names it', () => {
+    given({ active: self, term: 1, ready: 1 });
+    makeMember(db);
+    expect(serves()).toBe(true);
+    setFenced(db, { epoch: 2, by_instance_id: OTHER, by_name: 'ctl-2', since: 'now' });
+    expect(dhcpState(db)).toMatchObject({ fenced: true, here: false });
+    expect(holdsDhcp(db)).toBe(false);
     expect(serves()).toBe(false);
   });
 });

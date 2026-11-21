@@ -2,7 +2,8 @@
  * A member never changes the data of record (docs/REDUNDANCY-PLAN.md, section
  * 3; ADR 006). This is the server's say on that: on a member every API request
  * that is not a read is refused, unless it is listed here as one that only
- * touches this box or only reads.
+ * touches this box or only reads. The same list holds for a controller that
+ * has been fenced, and for one frozen while it hands over (section 7).
  *
  * Refused is the default, so a new write route needs no entry: it earns one
  * only when it writes no estate table and no estate settings key
@@ -11,12 +12,12 @@
  * line; this is the one that answers with a sentence a person can act on.
  */
 import { ipv6Enabled } from '../utils/ipv6-support.js';
-import { isMember, memberRefusal } from './mode.js';
+import { MEMBER_READ_ONLY, writeRefusal } from './mode.js';
 import { SETTINGS } from './registry.js';
 
 const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
 
-export const MEMBER_READ_ONLY = 'member_read_only';
+export { MEMBER_READ_ONLY };
 
 const isHostSetting = (key) => Object.hasOwn(SETTINGS, key) && SETTINGS[key] === 'host';
 
@@ -161,10 +162,14 @@ export function memberAllows(req) {
 
 /**
  * Mount after authMiddleware and actorMiddleware, ahead of every API router.
- * On a controller it does nothing.
+ * On a controller it does nothing, unless that controller is handing over to
+ * a member: then it takes what a member takes and refuses the rest, so the
+ * member it hands to has everything. A fenced controller is a member here
+ * (sync/mode.js). The refusal says which of the three it is.
  */
 export function memberWriteGate(req, res, next) {
   if (READS.has(req.method) || !req.path.startsWith('/api/')) return next();
-  if (!isMember() || memberAllows(req)) return next();
-  res.status(409).json({ error: memberRefusal(), code: MEMBER_READ_ONLY });
+  const refusal = writeRefusal();
+  if (!refusal || memberAllows(req)) return next();
+  res.status(409).json(refusal);
 }

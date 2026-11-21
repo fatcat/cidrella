@@ -9,6 +9,7 @@ vi.mock('../../../src/api/client.js', () => ({
 
 const { useAuthStore } = await import('../../../src/stores/auth.js');
 const { usePermissions } = await import('../../../src/composables/usePermissions.js');
+const { useFeaturesStore } = await import('../../../src/stores/features.js');
 
 beforeEach(() => {
   setActivePinia(createPinia());
@@ -94,6 +95,32 @@ describe('server-projected permissions', () => {
     const access = usePermissions();
     expect(access.can('dns:read')).toBe(true);
     expect(access.can('dns:write')).toBe(false);
+  });
+
+  it.each([
+    ['replaced by another controller', { fenced: true }],
+    ['handing over to a member', { handover_to: 'ns2' }],
+  ])('on a controller %s denies every write, for an admin too', async (_what, flags) => {
+    get.mockResolvedValue({
+      data: { role: 'admin', permissions: ['*'], is_admin: true, read_only: false },
+    });
+    const auth = useAuthStore();
+    await auth.fetchUser();
+    const access = usePermissions();
+    expect(access.can('subnets:write')).toBe(true);
+
+    const features = useFeaturesStore();
+    features.set({ instance: { mode: 'controller', members: 1, ...flags } });
+    expect(access.readOnly.value).toBe(true);
+    expect(access.isAdmin.value).toBe(true);
+    expect(access.can('subnets:read')).toBe(true);
+    expect(access.can('subnets:write')).toBe(false);
+    expect(access.canAny('dns:write', 'dns:read')).toBe(true);
+
+    // The handover was cancelled, or the features were read again.
+    features.set({ instance: { mode: 'controller', members: 1 } });
+    expect(access.readOnly.value).toBe(false);
+    expect(access.can('subnets:write')).toBe(true);
   });
 
   it('writes are allowed where the server does not say read-only', async () => {

@@ -1,8 +1,10 @@
 /**
- * What instances say to each other (docs/REDUNDANCY-PLAN.md, sections 2 and
- * 5). Mounted ahead of the sign-in middleware: a member presents its own
- * credential, not a user's session, and a box that is joining presents a join
- * token. Only the controller answers.
+ * What instances say to each other (docs/REDUNDANCY-PLAN.md, sections 2, 5
+ * and 7). Mounted ahead of the sign-in middleware: an instance presents its
+ * own credential, not a user's session, and a box that is joining presents a
+ * join token. Only the controller answers, except for `hello`, which every
+ * instance answers so a member can find the controller, and the two notices
+ * a controller that was replaced is sent.
  */
 import express, { Router } from 'express';
 import rateLimit from 'express-rate-limit';
@@ -12,15 +14,22 @@ import { APP_VERSION } from '../utils/version.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { runDbTask } from '../utils/db-worker/index.js';
 import { recordAudit } from '../services/audit.js';
-import { AUDIT_OUTBOX_KIND, insertAuditRow } from '../models/audit-log.js';
 import { exportChanges, needsSnapshot } from '../sync/changes.js';
 import { syncHead, syncStatus } from '../sync/log.js';
-import { applyMemberFact, isMemberFact } from '../sync/member-facts.js';
-import { sqlTime } from '../utils/sql-time.js';
-import { controllerOnly, requireMember } from '../sync/require-member.js';
+import { instanceMode, isFenced, isMember } from '../sync/mode.js';
+import { epochBase } from '../sync/promotion-state.js';
+import { fenceSelf, receiveFence, receiveHandoverDone } from '../services/controller-promotion.js';
+import { takeOutboxRows } from '../sync/outbox-intake.js';
+import { controllerOnly, epochGate, requireMember } from '../sync/require-member.js';
 import { acceptLeaseReport } from '../sync/lease-intake.js';
-import { LEASE_REPORT_TYPE, MAX_REPORT_BYTES, unpackReport } from '../sync/lease-wire.js';
+import {
+  LEASE_REPORT_TYPE,
+  MAX_REPORT_BYTES,
+  NOT_DHCP_ACTIVE,
+  unpackReport,
+} from '../sync/lease-wire.js';
 import { followDhcp } from '../services/dhcp-follow.js';
+import { clearHandover, dhcpState, dhcpStateChanged } from '../sync/dhcp-active.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
 import {
   addMember,
@@ -44,6 +53,51 @@ const joinLimiter = rateLimit({
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Too many join attempts. Wait a few minutes.', code: 'rate_limited' },
+});
+
+// The fencing rule (sync/require-member.js) is a controller's: a member that
+// hears a higher epoch has nothing to give up.
+const fencing = epochGate(fenceSelf);
+const fencingOnController = (req, res, next) => (isMember() ? next() : fencing(req, res, next));
+
+/**
+ * GET /api/sync/hello: who this instance is and whether it is the controller,
+ * `{ instance_id, name, mode, epoch, dataset }` with `mode` one of
+ * 'controller', 'member' or 'fenced'. Answered in every mode, to a caller
+ * that presents a credential of this estate (requireMember says how a member
+ * checks one).
+ */
+router.get('/hello', requireMember, fencingOnController, (req, res) => {
+  const db = getDb();
+  const status = syncStatus(db);
+  res.json({
+    instance_id: ownInstanceId(db),
+    name: ownInstanceName(db),
+    mode: isFenced(db) ? 'fenced' : instanceMode(),
+    epoch: status.epoch,
+    dataset: status.dataset,
+  });
+});
+
+const notice = (body) => ({
+  epoch: Number(body?.epoch),
+  base: Number(body?.base),
+  credential: body?.credential,
+});
+
+// POST /api/sync/fence { epoch }: a member took over without this
+// controller's help and says so. Recorded by receiveFence.
+router.post('/fence', requireMember, (req, res) => {
+  const outcome = receiveFence(getDb(), req.member, notice(req.body).epoch);
+  res.status(outcome.status).json(outcome.body);
+});
+
+// POST /api/sync/handover-done { epoch, base, credential }: the member this
+// controller handed over to has taken over, and gives it the credential to
+// follow with. Recorded by receiveHandoverDone.
+router.post('/handover-done', requireMember, (req, res) => {
+  const outcome = receiveHandoverDone(getDb(), req.member, notice(req.body));
+  res.status(outcome.status).json(outcome.body);
 });
 
 router.use(controllerOnly);
@@ -120,16 +174,23 @@ router.post('/join', joinLimiter, (req, res) => {
   }
 });
 
-// Everything below is a member's, by its credential.
-router.use(requireMember);
+// Everything below is a member's, by its credential, and subject to the
+// fencing rule.
+router.use(requireMember, fencing);
 
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * GET /api/sync/changes?dataset=&since=&schema=&version=&wait=
+ * GET /api/sync/changes?dataset=&epoch=&since=&schema=&version=&wait=
  * What the member is missing, gzip, as sync/changes.js writes it. With `wait`
  * and nothing to send, holds the request until something changes or the wait
  * runs out (204).
+ *
+ * `epoch` is the epoch the member's copy is from. A cursor means the same
+ * thing here only when that is this controller's epoch, or the one before it
+ * with the cursor no further than where this box took over (`epoch_base`):
+ * past that point the member holds changes of the old controller that this
+ * one never had. Any other copy is sent everything.
  */
 router.get('/changes', async (req, res) => {
   const db = getDb();
@@ -141,9 +202,15 @@ router.get('/changes', async (req, res) => {
   if (since !== null && !Number.isSafeInteger(since)) {
     return res.status(400).json({ error: 'since must be a number.', code: 'bad_request' });
   }
+  // A member from before the epoch was sent has only ever followed this one.
+  const lineage = req.query.epoch === undefined ? local.epoch : Number(req.query.epoch);
+  const base = epochBase(db);
+  const sameLine =
+    lineage === local.epoch ||
+    (lineage === local.epoch - 1 && since !== null && base !== null && since <= base);
   // A cursor counts only where it could be true: it decides which deletes
   // the log may forget.
-  const believable = dataset === local.dataset && since !== null && since <= local.head;
+  const believable = sameLine && dataset === local.dataset && since !== null && since <= local.head;
   noteContact(db, req.member.id, { cursor: believable ? since : null, version, schema });
   if (typeof req.query.addr === 'string') {
     const addresses = req.query.addr.slice(0, 2048).split(',').filter(Boolean);
@@ -176,17 +243,17 @@ router.get('/changes', async (req, res) => {
   });
   const waitUntil =
     Date.now() + Math.min(MAX_WAIT_SECONDS, Math.max(0, Number(req.query.wait) || 0)) * 1000;
-  const snapshot = needsSnapshot(local, { dataset, since });
+  const snapshot = !sameLine || needsSnapshot(local, { dataset, since });
   if (!snapshot) {
     while (syncHead(db) === since && Date.now() < waitUntil && !closed) await wait(WAIT_POLL_MS);
     if (closed) return;
     if (syncHead(db) === since) return res.status(204).end();
   }
-  // A snapshot reads every row: off the event loop, on a connection of its own.
   // A snapshot reads and compresses every row: off the event loop, on a
-  // connection of its own.
+  // connection of its own. No cursor is passed: the export decides between
+  // a snapshot and a delta by it, and this one is a snapshot.
   const payload = snapshot
-    ? Buffer.from(await runDbTask('syncExport', { dbPath: db.name, dataset, since }))
+    ? Buffer.from(await runDbTask('syncExport', { dbPath: db.name, dataset: null, since: null }))
     : zlib.gzipSync(exportChanges(db, { dataset, since }));
   res.set('Content-Type', 'application/x-ndjson');
   res.set('Content-Encoding', 'gzip');
@@ -212,47 +279,11 @@ router.post('/outbox', (req, res) => {
   const theirs = Number(req.body?.now);
   const off = Number.isFinite(theirs) ? Date.now() - theirs : 0;
   const skew = Math.abs(off) > 5000 ? off : 0;
-  const memberTime = (iso) => {
-    const time = Date.parse(iso);
-    return Number.isNaN(time) ? null : sqlTime(Math.min(time + skew, Date.now()));
-  };
-  const taken = [];
-  const userExists = db.prepare('SELECT 1 FROM users WHERE id = ?');
-  const text = (value, max) => (typeof value === 'string' ? value.slice(0, max) : null);
-  // Every row is taken, whatever it holds: one the controller cannot write
-  // is dropped with a line in the log, so it never holds up the rest.
-  for (const row of rows) {
-    if (!Number.isInteger(row?.id)) continue;
-    taken.push(row.id);
-    const payload = row.payload;
-    if (isMemberFact(row.kind)) {
-      try {
-        applyMemberFact(db, row.kind, payload, skew);
-      } catch (err) {
-        console.warn(`[sync] dropped a ${row.kind} row from ${req.member.name}: ${err.message}`);
-      }
-      continue;
-    }
-    if (row.kind !== AUDIT_OUTBOX_KIND || !payload || typeof payload.action !== 'string') continue;
-    try {
-      const userId = Number.isInteger(payload.userId) ? payload.userId : null;
-      insertAuditRow(db, {
-        // The user may have been removed since.
-        userId: userId !== null && userExists.get(userId) ? userId : null,
-        action: payload.action.slice(0, 100),
-        entityType: text(payload.entityType, 100),
-        entityId: ['string', 'number'].includes(typeof payload.entityId) ? payload.entityId : null,
-        details: payload.details ?? null,
-        actor: text(payload.actor, 255),
-        origin: `member:${req.member.name}`.slice(0, 255),
-        source: text(payload.source, 100),
-        sourceIp: text(payload.sourceIp, 64),
-        at: memberTime(payload.at),
-      });
-    } catch (err) {
-      console.warn(`[sync] dropped an audit row from ${req.member.name}: ${err.message}`);
-    }
-  }
+  const taken = takeOutboxRows(db, rows, {
+    name: req.member.name,
+    instanceId: req.member.instance_id,
+    skew,
+  });
   noteContact(db, req.member.id);
   res.json({ taken });
 });
@@ -265,13 +296,31 @@ router.post('/outbox', (req, res) => {
  * that lost DHCP, which ends its handover. The body is read here, past the
  * app's JSON parser, which leaves this content type alone.
  */
+const unpacking = new Set();
 router.post(
   '/leases',
   express.raw({ type: LEASE_REPORT_TYPE, limit: MAX_REPORT_BYTES }),
   async (req, res) => {
     const db = getDb();
     noteContact(db, req.member.id);
-    const outcome = acceptLeaseReport(db, req.member, unpackReport(req.body));
+    // Only the instance whose leases could count is read at all, and one
+    // report of its at a time: unpacking is the costly part.
+    const state = dhcpState(db);
+    const mine = req.member.instance_id;
+    if ((mine !== state.active && mine !== state.handoverFrom) || unpacking.has(mine)) {
+      return res.status(409).json({
+        error: 'This instance does not serve DHCP.',
+        code: NOT_DHCP_ACTIVE,
+      });
+    }
+    unpacking.add(mine);
+    let report;
+    try {
+      report = await unpackReport(req.body);
+    } finally {
+      unpacking.delete(mine);
+    }
+    const outcome = acceptLeaseReport(db, req.member, report);
     // A host with filtering off is keyed by MAC; its new address takes effect now.
     if (outcome.status === 200) loadFilteringOverrides();
     if (outcome.cleared) {
@@ -292,7 +341,21 @@ router.post(
 // POST /api/sync/leave: a member that could not finish joining takes itself
 // off the list, so its row does not hold the change log's deletes back.
 router.post('/leave', (req, res) => {
-  removeMember(getDb(), req.member.id);
+  const db = getDb();
+  const state = dhcpState(db);
+  // Its leases are the leases: it stays on the list until DHCP is moved.
+  if (req.member.instance_id === state.active) {
+    return res.status(409).json({
+      error: 'This instance serves DHCP. Move DHCP to another instance first.',
+      code: 'dhcp_active',
+    });
+  }
+  removeMember(db, req.member.id);
+  // It owed its last leases: nobody will send them now, so the new one starts.
+  if (req.member.instance_id === state.handoverFrom) {
+    clearHandover(db);
+    dhcpStateChanged(db);
+  }
   queueRegen('regenerate_dhcp');
   recordAudit({
     action: 'instance_left',

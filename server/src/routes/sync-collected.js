@@ -10,11 +10,12 @@
 import express, { Router } from 'express';
 import { getDb } from '../db/init.js';
 import { acceptBatch, MAX_BATCH_ROWS, streamNamed } from '../sync/collected-streams.js';
-import { controllerOnly, requireMember } from '../sync/require-member.js';
+import { controllerOnly, epochGate, requireMember } from '../sync/require-member.js';
+import { fenceSelf } from '../services/controller-promotion.js';
 
 const router = Router();
 router.use(controllerOnly);
-router.use(requireMember);
+router.use(requireMember, epochGate(fenceSelf));
 // For a server that has not parsed the body already. Behind the app's own
 // parser its limit stands, and the member batches under that (COLLECTED_BYTES
 // in sync/collected-upload.js).

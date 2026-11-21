@@ -30,7 +30,7 @@ const { afterCommitMiddleware } = await import('../../src/utils/after-commit.js'
 const { ensureSyncIdentity } = await import('../../src/sync/identity.js');
 const { joinController, syncOnce } = await import('../../src/sync/member.js');
 const { readCredential } = await import('../../src/sync/credential.js');
-const { writeSyncState } = await import('../../src/sync/log.js');
+const { syncHead, writeSyncState } = await import('../../src/sync/log.js');
 const { createJoinToken, ensureOwnInstance, ownInstanceId } =
   await import('../../src/models/sync-instance.js');
 const { upsertSetting } = await import('../../src/models/setting.js');
@@ -134,7 +134,17 @@ async function catchUp(box) {
   await followDhcp(box.db);
 }
 const admin = () => request(app);
-const move = (row) => admin().post(`/api/instances/${row}/dhcp`);
+// A member's sync loop asks every few seconds, which is how the controller
+// knows a member is following. These tests step each sync by hand, so the
+// controller is told the members are at its head before a move is asked for.
+const reportIn = () =>
+  controller
+    .prepare('UPDATE sync_instances SET cursor = ? WHERE is_controller = 0')
+    .run(syncHead(controller));
+const move = async (row) => {
+  reportIn();
+  return admin().post(`/api/instances/${row}/dhcp`);
+};
 // The leases the controller holds as active. One a report no longer lists
 // stays in the table, expired, for the offline window (replaceLeases).
 const stored = () =>
@@ -237,6 +247,7 @@ afterEach(() => {
 
 describe('moving DHCP from the controller to a member', () => {
   it('reports one instance serving, the controller, before anything moves', async () => {
+    reportIn();
     const list = (await admin().get('/api/instances')).body;
     expect(list.dhcp).toEqual({
       active_instance_id: ownInstanceId(controller),
@@ -279,6 +290,17 @@ describe('moving DHCP from the controller to a member', () => {
     expect(audits('dhcp_instance_move_refused').map((row) => JSON.parse(row.details).code)).toEqual(
       ['already_active', 'not_current', 'schema_mismatch'],
     );
+  });
+
+  it('refuses a member that is in contact but has not caught up', async () => {
+    const behind = controller.prepare('UPDATE sync_instances SET cursor = ? WHERE id = ?');
+    for (const cursor of [null, syncHead(controller) - 100_000]) {
+      behind.run(cursor, a.row);
+      const response = await admin().post(`/api/instances/${a.row}/dhcp`);
+      expect(response.status).toBe(409);
+      expect(response.body.code).toBe('not_current');
+      expect(response.body.error).toMatch(/has not caught up/);
+    }
   });
 
   it('moves nothing when the controller cannot read its own final leases', async () => {
@@ -334,6 +356,20 @@ describe('moving DHCP from the controller to a member', () => {
     backend.seedLeases([v4('10.9.0.199', mac('99'))]);
     await syncLeasesNow(controller);
     expect(stored().map((row) => row.ip_address)).toEqual(['10.9.0.110', 'fd00:9::110']);
+  });
+
+  it('does not let the member that serves DHCP take itself off the list', async () => {
+    const response = await syncRequest({
+      address: '127.0.0.1',
+      port,
+      fingerprint: identity.fingerprint,
+      method: 'POST',
+      path: '/api/sync/leave',
+      credential: readCredential(a.db),
+    });
+    expect(response.status).toBe(409);
+    expect(JSON.parse(response.body.toString('utf8')).code).toBe('dhcp_active');
+    expect(controller.prepare('SELECT 1 FROM sync_instances WHERE id = ?').get(a.row)).toBeTruthy();
   });
 
   it('refuses to remove the member that serves DHCP', async () => {

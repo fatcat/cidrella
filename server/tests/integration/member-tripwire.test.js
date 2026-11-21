@@ -3,7 +3,8 @@
  * of record. The work a member's process runs (defaults at boot, the change
  * log check, the lease sync, the proxy's client reports, the DNS and DHCP
  * applies, taking DHCP over and reporting its leases, an audit row, the
- * blocklist bookkeeping) is run here on a member's
+ * blocklist bookkeeping, looking for a new controller and checking whether
+ * it was named for a handover) is run here on a member's
  * database, whose guards refuse any such write: none may throw, and the data
  * of record must be what it was.
  */
@@ -32,6 +33,8 @@ const { servesDhcpHere } = await import('../../src/sync/dhcp-active.js');
 const { stopLeaseReports } = await import('../../src/sync/lease-report.js');
 const { ownInstanceId } = await import('../../src/models/sync-instance.js');
 const { upsertSetting } = await import('../../src/models/setting.js');
+const { followNewController } = await import('../../src/sync/member.js');
+const { takeOverIfNamed } = await import('../../src/services/controller-promotion.js');
 
 let db;
 let tmpDir;
@@ -110,6 +113,10 @@ describe('a member’s own work', () => {
     recordAudit({ action: 'tripwire_tested', entityType: 'test' });
     ensureCategoryRows(db);
     recountBlocklistDomains(db);
+    // The controller can change: a member asks around for it, and checks
+    // whether the controller named it to take over. Neither is the case here.
+    expect(await followNewController(db)).toBeNull();
+    expect(await takeOverIfNamed(db)).toBe(false);
 
     expect(estate()).toEqual(before);
     expect(db.prepare("SELECT kind FROM sync_outbox WHERE kind = 'audit'").all()).toHaveLength(1);

@@ -1,7 +1,13 @@
 # Controller and members: redundant CIDRella instances
 
-Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 5 are done on `dev/0.7.0`
-(2026-11-21); phases 6 and 7 are not started. Phase 5 (DHCP on a member) differs from section 7
+Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 6 are done on `dev/0.7.0`
+(2026-11-21); phase 7 is not started. Phase 6 (promotion) differs from section 7 in these ways:
+a fenced controller runs as a member with no controller, so the member rules apply to it
+unchanged; there is no marker file, the handover is the estate setting `controller_handover_to`
+plus a host freeze flag; a coordinated handover does not move DHCP, which stays where it was;
+a member's cursor is honored across a promotion only up to the head the new controller took
+over at (`epoch_base`); and the old controller is told by a notice the new one keeps retrying.
+Phase 5 (DHCP on a member) differs from section 7
 in three ways: there is no marker file, since the settings plus `dhcp_ready_term` on each box are
 the state and boot redoes a step cut short; leases are handed over through the replicated
 `dhcp_leases` table, not a snapshot directory; and the old instance's final report is a third

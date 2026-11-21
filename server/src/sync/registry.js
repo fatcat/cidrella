@@ -131,6 +131,10 @@ export const SETTINGS = {
   blocklist_redirect_ip: ESTATE,
   blocklist_redirect_ip6: ESTATE,
   blocklist_update_schedule: ESTATE,
+  // A handover of the controller to the member named, and when it began
+  // (services/controller-promotion.js). The member acts on it, so it travels.
+  controller_handover_since: ESTATE,
+  controller_handover_to: ESTATE,
   default_gateway_position: ESTATE,
   default_lease_time: ESTATE,
   default_scan_enabled: ESTATE,

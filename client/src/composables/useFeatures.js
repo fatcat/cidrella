@@ -1,13 +1,8 @@
 import { computed } from 'vue';
 import { useFeaturesStore } from '../stores/features.js';
+import { singleBox } from '../utils/instances.js';
 
-const SINGLE_BOX = Object.freeze({
-  mode: 'controller',
-  controller_name: null,
-  members: 0,
-  sync: null,
-  serves_dhcp: true,
-});
+const SINGLE_BOX = Object.freeze(singleBox());
 
 /**
  * Read the feature switches from a component.
@@ -22,7 +17,9 @@ const SINGLE_BOX = Object.freeze({
  * unsupported.
  *
  * `instance` is what this box is (stores/features.js) and `isMember` whether
- * it follows a controller. With no store it reads as a single box.
+ * it follows a controller. `frozen` is a controller that takes no changes:
+ * one that was replaced, or one handing over to a member. With no store it
+ * reads as a single box.
  */
 export function useFeatures() {
   let store = null;
@@ -36,6 +33,7 @@ export function useFeatures() {
     ipv6: computed(() => (store ? store.ipv6 : false)),
     instance: computed(() => (store ? store.instance : SINGLE_BOX)),
     isMember: computed(() => (store ? store.isMember : false)),
+    frozen: computed(() => (store ? store.frozen : false)),
     supports: (id) => entry(id)?.supported === true,
     reason: (id) => entry(id)?.reason ?? null,
     reload: () => (store ? store.load() : Promise.resolve()),

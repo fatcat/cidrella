@@ -314,6 +314,21 @@ describe('a member', () => {
     box.db.prepare('DELETE FROM schema_version WHERE version = ?').run(LATEST_MIGRATION + 1);
   });
 
+  it('starts over from a snapshot when a delta will not go in', async () => {
+    await syncOnce(box.db);
+    // This copy's log holds a number the controller is about to use for
+    // another change: the delta fails the same way however often it is tried.
+    box.db
+      .prepare("INSERT INTO sync_log (seq, tbl, pk, op) VALUES (?, 'settings', 'stray', 'u')")
+      .run(syncStatus(controller).head + 1);
+    setSetting('map_home', '6,1');
+    await expect(syncOnce(box.db)).rejects.toThrow(/UNIQUE/);
+    expect(box.db.prepare("SELECT 1 FROM sync_state WHERE key = 'cursor'").get()).toBeUndefined();
+    await syncOnce(box.db);
+    expect(estate(box.db)).toEqual(estate(controller));
+    expect(box.db.prepare("SELECT 1 FROM sync_log WHERE pk = 'stray'").get()).toBeUndefined();
+  });
+
   it('starts over from a snapshot when the controller starts a new dataset', async () => {
     const { startNewDataset } = await import('../../src/sync/log.js');
     startNewDataset(controller);

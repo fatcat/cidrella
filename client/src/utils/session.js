@@ -21,6 +21,8 @@ const MESSAGES = {
     name
       ? `This CIDRella is now a member of ${name}. Sign in with an account from ${name}.`
       : 'This CIDRella is now a member. Sign in with an account from its controller.',
+  // A member was promoted and restarted as the controller.
+  promoted: () => 'This CIDRella is now the controller. Sign in again.',
 };
 
 /** Why a 401 ended the session: the server's SESSION_ENDED reason, else revoked. */

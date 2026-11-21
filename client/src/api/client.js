@@ -55,7 +55,14 @@ api.interceptors.response.use(
     } catch {
       /* store may not be ready */
     }
-    if (error.response?.status === 401 && !error.config?.url?.includes('/auth/login')) {
+    // `ownSessionEnd` on a request: the caller expects the session may be gone
+    // (a box that restarted with another controller's accounts) and says why
+    // by itself.
+    if (
+      error.response?.status === 401 &&
+      !error.config?.url?.includes('/auth/login') &&
+      !error.config?.ownSessionEnd
+    ) {
       // Only a 401 for the token this browser holds now ends anything. A poll
       // still in flight when the user signed out, or sent before they signed
       // in again, answers for a session that is already gone.

@@ -9,7 +9,7 @@
  * See REVIEW.md, duplicate-logic audit #44.
  */
 import { describe, it, expect } from 'vitest';
-import { countOf, formatBytes, EMPTY_CELL } from '../../../src/utils/format.js';
+import { apiError, countOf, formatBytes, EMPTY_CELL } from '../../../src/utils/format.js';
 
 describe('formatBytes', () => {
   it('expresses sizes below a megabyte, which the HeaderBar copy could not', () => {
@@ -57,4 +57,17 @@ describe('countOf', () => {
   it('formats the count with locale separators', () => {
     expect(countOf(1024, 'network')).toBe(`${(1024).toLocaleString()} networks`);
   });
+});
+
+describe('apiError on a refused write', () => {
+  it.each(['member_read_only', 'controller_fenced', 'controller_handover'])(
+    "shows the server's sentence for %s as it is",
+    (code) => {
+      const err = {
+        message: 'Request failed with status code 409',
+        response: { status: 409, data: { error: 'ns2 is now the controller.', code } },
+      };
+      expect(apiError(err)).toBe('ns2 is now the controller.');
+    },
+  );
 });

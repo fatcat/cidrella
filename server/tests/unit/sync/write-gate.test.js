@@ -7,6 +7,7 @@ import { makeController, makeMember } from '../../helpers/member-mode.js';
 
 const { default: request } = await import('supertest');
 const { memberWriteGate, MEMBER_ALLOWED } = await import('../../../src/sync/write-gate.js');
+const { setFenced, setHandoverFreeze } = await import('../../../src/sync/promotion-state.js');
 
 let tmpDir;
 let db;
@@ -28,7 +29,11 @@ beforeAll(async () => {
   app.use((req, res) => res.json({ reached: true }));
 });
 
-afterEach(() => makeController(db));
+afterEach(() => {
+  makeController(db);
+  setFenced(db, null);
+  setHandoverFreeze(db, null);
+});
 afterAll(() => cleanupTestDb(tmpDir));
 
 const send = (method, path, body) => request(app)[method.toLowerCase()](path).send(body);
@@ -184,6 +189,41 @@ describe('on a member', () => {
       (await send('PUT', '/api/setup/state', { done: true, password_policy: { min_length: 12 } }))
         .status,
     ).toBe(409);
+  });
+});
+
+describe('on a controller that is handing over', () => {
+  it('refuses what a member refuses, naming the member it hands to', async () => {
+    setHandoverFreeze(db, { to_instance_id: 'x', to_name: 'ctl-2', since: 'now' });
+    const refused = await send('POST', '/api/subnets', {});
+    expect(refused.status).toBe(409);
+    expect(refused.body).toEqual({
+      error: 'The controller is being handed over to ctl-2.',
+      code: 'controller_handover',
+    });
+    // Reads, the handover's own routes and what only touches this box go through.
+    expect((await send('GET', '/api/subnets')).body).toEqual({ reached: true });
+    expect((await send('POST', '/api/instances/promote/cancel')).body).toEqual({ reached: true });
+    expect((await send('PUT', '/api/settings/https_port', {})).body).toEqual({ reached: true });
+    expect((await send('PUT', '/api/settings/map_home', {})).status).toBe(409);
+  });
+});
+
+describe('on a controller that was replaced', () => {
+  it('refuses a write, naming who took over and what to do', async () => {
+    // A fenced controller runs as a member that follows nobody (sync/mode.js).
+    makeMember(db);
+    db.prepare("DELETE FROM sync_state WHERE key = 'controller'").run();
+    setFenced(db, { epoch: 2, by_instance_id: 'x', by_name: 'ctl-2', since: 'now' });
+    const refused = await send('DELETE', '/api/dns/zones/3');
+    expect(refused.status).toBe(409);
+    expect(refused.body.code).toBe('controller_fenced');
+    expect(refused.body.error).toBe(
+      'ctl-2 took over as the controller, so this CIDRella no longer takes changes. ' +
+        'Make them there, or join it from Settings > System > Instances.',
+    );
+    expect((await send('POST', '/api/instances/rejoin', {})).body).toEqual({ reached: true });
+    expect((await send('GET', '/api/subnets')).body).toEqual({ reached: true });
   });
 });
 

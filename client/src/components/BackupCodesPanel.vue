@@ -47,6 +47,7 @@ import StatusDot from './StatusDot.vue';
 import { ref } from 'vue';
 import Button from '../ui/Button.js';
 import Checkbox from '../ui/Checkbox.js';
+import { saveBlob } from '../utils/download.js';
 
 // One-time display of backup codes, with copy, download and the "I saved
 // them" confirmation. Used by the first-run wizard and Settings > Access.
@@ -75,13 +76,7 @@ async function copyCodes() {
 }
 
 function downloadCodes() {
-  const blob = new Blob([codesText()], { type: 'text/plain' });
-  const url = URL.createObjectURL(blob);
-  const a = document.createElement('a');
-  a.href = url;
-  a.download = 'cidrella-backup-codes.txt';
-  a.click();
-  URL.revokeObjectURL(url);
+  saveBlob(new Blob([codesText()], { type: 'text/plain' }), 'cidrella-backup-codes.txt');
 }
 </script>
 

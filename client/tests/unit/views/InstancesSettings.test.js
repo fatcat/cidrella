@@ -12,7 +12,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
 import { computed, h, inject, provide, ref } from 'vue';
 
-const { auth, api, toast, features } = vi.hoisted(() => ({
+const { auth, api, toast, features, signInAgain } = vi.hoisted(() => ({
+  signInAgain: vi.fn(() => Promise.resolve()),
   auth: { isAdmin: true },
   api: { get: vi.fn(), post: vi.fn(), delete: vi.fn() },
   toast: { add: vi.fn() },
@@ -22,6 +23,18 @@ vi.mock('../../../src/stores/auth.js', () => ({ useAuthStore: () => auth }));
 vi.mock('../../../src/api/client.js', () => ({ default: api }));
 vi.mock('../../../src/ui/useToast.js', () => ({ useToast: () => toast }));
 vi.mock('../../../src/composables/useFeatures.js', () => ({ useFeatures: () => features }));
+vi.mock('../../../src/composables/useSignInAgain.js', () => ({
+  useSignInAgain: () => signInAgain,
+}));
+// The replaced controller's panel has its own test; here it only reports a rejoin.
+vi.mock('../../../src/components/instances/FencedPanel.vue', () => ({
+  default: {
+    props: ['fenced'],
+    emits: ['rejoined'],
+    template:
+      '<section class="fenced-stub" :data-by="fenced.by_name" :data-report="String(fenced.report)"><button class="rejoined" @click="$emit(\'rejoined\', \'ns2\')">rejoin</button></section>',
+  },
+}));
 vi.mock('../../../src/ui/Button.js', () => ({
   default: {
     props: ['label', 'disabled', 'loading'],
@@ -79,10 +92,10 @@ vi.mock('../../../src/ui/Column.js', () => ({
 }));
 vi.mock('../../../src/components/ConfirmDialog.vue', () => ({
   default: {
-    props: ['visible', 'header', 'severity', 'confirmLabel', 'typeToConfirm'],
+    props: ['visible', 'header', 'severity', 'confirmLabel', 'typeToConfirm', 'disabled'],
     emits: ['confirm', 'update:visible'],
     template:
-      '<div v-if="visible" class="confirm" :data-severity="severity || \'danger\'" :data-typed="typeToConfirm"><h2>{{ header }}</h2><slot /><button class="go" @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
+      '<div v-if="visible" class="confirm" :data-severity="severity || \'danger\'" :data-typed="typeToConfirm"><h2>{{ header }}</h2><slot /><button class="go" :disabled="disabled" @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
   },
 }));
 
@@ -621,6 +634,454 @@ describe('on a member', () => {
       'ns1 runs 0.7.1 and this instance 0.7.0. Update this instance.',
     );
     w.unmount();
+  });
+});
+
+// Changing the controller. GET /instances and GET /features answer apart.
+function serve(instances, featuresAnswer = () => ({ data: { instance: { mode: 'controller' } } })) {
+  api.get.mockImplementation((url) =>
+    url === '/features'
+      ? Promise.resolve().then(featuresAnswer)
+      : Promise.resolve({ data: typeof instances === 'function' ? instances() : instances }),
+  );
+}
+const listReads = () => api.get.mock.calls.filter(([url]) => url === '/instances').length;
+const featureReads = () => api.get.mock.calls.filter(([url]) => url === '/features').length;
+const timers = () => {
+  vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
+  vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
+};
+const withPromotion = (base, promotion, rows = base.instances) => ({
+  ...base,
+  promotion: { handover: null, fenced: null, ...promotion },
+  instances: rows,
+});
+const PROMOTABLE = withPromotion(CONTROLLER, {}, [
+  controllerRow(),
+  memberRow(2, { can_promote: true }),
+  memberRow(3, { behind: 3, can_promote: false }),
+]);
+const handingOver = (since) =>
+  withPromotion(CONTROLLER, { handover: { to_instance_id: 'i-m2', to_name: 'ns2', since } }, [
+    controllerRow(),
+    memberRow(2, { can_promote: false }),
+  ]);
+const MEMBER_CAN_PROMOTE = withPromotion(MEMBER, {});
+
+describe('Make controller, on the controller', () => {
+  beforeEach(timers);
+
+  it('is offered only on the rows the server allows', async () => {
+    const w = await mountPage(PROMOTABLE);
+    const actions = cells(w, '');
+    expect(actions[0]).not.toContain('Make controller');
+    expect(actions[1]).toContain('Make controller');
+    expect(actions[2]).not.toContain('Make controller');
+    expect(w.find('[data-track="instances-promote-self"]').exists()).toBe(false);
+    expect(w.find('.fenced-stub').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('asks first in plain words, then starts the handover and shows it pending', async () => {
+    serve(PROMOTABLE);
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    api.post.mockResolvedValue({
+      data: { handover: { to_instance_id: 'i-m2', to_name: 'ns2', since: '2026-11-21T12:00:00Z' } },
+    });
+    await w.find('[data-track="instances-promote"]').trigger('click');
+    const dialog = w.find('.confirm');
+    expect(dialog.attributes('data-severity')).toBe('warn');
+    expect(dialog.attributes('data-typed')).toBeFalsy();
+    expect(dialog.text()).toContain('Make ns2 the controller?');
+    expect(dialog.text()).toContain(
+      'ns2 becomes the controller, and this instance becomes a member of it.',
+    );
+    expect(dialog.text()).toContain('No changes can be made on either until it is done');
+    expect(dialog.text()).toContain('DHCP stays on the instance that serves it now.');
+    expect(dialog.text()).toContain('This instance restarts, and you sign in again.');
+    expect(dialog.text()).toContain('this instance stays frozen until you cancel the handover');
+    expect(dialog.text()).toContain('can leave this instance replaced anyway');
+    expect(api.post).not.toHaveBeenCalled();
+
+    // The list still says nothing of it: the answer to the request shows it.
+    await dialog.find('.go').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/instances/2/promote');
+    expect(features.reload).toHaveBeenCalled();
+    expect(toast.add).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it('keeps the pending line when the list cannot be read after the request', async () => {
+    serve(PROMOTABLE);
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    api.post.mockResolvedValue({
+      data: { handover: { to_instance_id: 'i-m2', to_name: 'ns2', since: '2026-11-21T12:00:00Z' } },
+    });
+    await w.find('[data-track="instances-promote"]').trigger('click');
+    api.get.mockRejectedValue(new Error('Network Error'));
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-track="instances-promote-handover"]').text()).toContain(
+      'Handing over to ns2.',
+    );
+    expect(toast.add).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it.each(['not_current', 'schema_mismatch', 'handover_pending', 'dhcp_moving'])(
+    "shows the server's words when it refuses with %s",
+    async (code) => {
+      const w = await mountPage(PROMOTABLE);
+      api.post.mockRejectedValue({
+        response: { status: 409, data: { error: 'ns2 is 3 changes behind.', code } },
+      });
+      await w.find('[data-track="instances-promote"]').trigger('click');
+      await w.find('.confirm .go').trigger('click');
+      await flushPromises();
+      expect(toast.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          severity: 'error',
+          summary: 'Controller not changed',
+          detail: 'ns2 is 3 changes behind.',
+        }),
+      );
+      expect(w.find('.confirm').exists()).toBe(false);
+      expect(w.find('[data-track="instances-promote-handover"]').exists()).toBe(false);
+      w.unmount();
+    },
+  );
+});
+
+describe('while the controller hands over', () => {
+  beforeEach(timers);
+
+  it('names the target and the wait, drops the controller actions, and reads again on one timer', async () => {
+    serve(handingOver('2026-11-21T11:59:48Z'));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    const line = w.find('[data-track="instances-promote-handover"]');
+    expect(line.text()).toContain(
+      'Handing over to ns2. Waiting for it to catch up and take over, 12 seconds so far.',
+    );
+    expect(line.find('.cid-status-dot').classes()).toContain('sd-warn');
+    expect(w.find('[data-track="instances-add-member"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-remove"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-promote"]').exists()).toBe(false);
+    expect(listReads()).toBe(1);
+
+    await vi.advanceTimersByTimeAsync(3000);
+    expect(line.text()).toContain('15 seconds so far');
+    expect(listReads()).toBe(1);
+    await vi.advanceTimersByTimeAsync(2000);
+    expect(listReads()).toBe(2);
+    expect(featureReads()).toBe(1);
+    expect(signInAgain).not.toHaveBeenCalled();
+
+    // Cancelled from elsewhere: the line goes and the reads stop.
+    serve(PROMOTABLE);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(w.find('[data-track="instances-promote-handover"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-add-member"]').exists()).toBe(true);
+    const reads = api.get.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.get.mock.calls.length).toBe(reads);
+    w.unmount();
+  });
+
+  it('shares the timer with a DHCP move', async () => {
+    const both = {
+      ...movingSince('2026-11-21T11:59:50Z'),
+      promotion: {
+        handover: { to_instance_id: 'i-m2', to_name: 'ns2', since: '2026-11-21T11:59:50Z' },
+        fenced: null,
+      },
+    };
+    serve(both);
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    expect(w.find('[data-track="instances-dhcp-handover"]').exists()).toBe(true);
+    expect(w.find('[data-track="instances-promote-handover"]').exists()).toBe(true);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(listReads()).toBe(2);
+    w.unmount();
+  });
+
+  it('waits calmly while this instance restarts, then goes to sign-in as a member of the new controller', async () => {
+    serve(handingOver('2026-11-21T11:59:58Z'));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+
+    // Restarting: nothing answers.
+    api.get.mockRejectedValue(new Error('Network Error'));
+    await vi.advanceTimersByTimeAsync(10_000);
+    expect(toast.add).not.toHaveBeenCalled();
+    expect(signInAgain).not.toHaveBeenCalled();
+    expect(w.find('[data-track="instances-promote-handover"]').exists()).toBe(true);
+
+    // Back, as a member.
+    serve(handingOver('2026-11-21T11:59:58Z'), () => ({
+      data: { instance: { mode: 'member', controller_name: 'ns2' } },
+    }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).toHaveBeenCalledTimes(1);
+    expect(signInAgain).toHaveBeenCalledWith('joined', 'ns2');
+    expect(api.get).toHaveBeenLastCalledWith('/features', { ownSessionEnd: true });
+    const reads = api.get.mock.calls.length;
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.get.mock.calls.length).toBe(reads);
+    w.unmount();
+  });
+
+  it('takes a session that is gone after the restart as the arrival', async () => {
+    serve(handingOver('2026-11-21T11:59:58Z'));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    const gone = { response: { status: 401, data: { error: 'Unauthorized' } } };
+
+    // A 401 before anything went away is an ordinary ended session, not this.
+    serve(handingOver('2026-11-21T11:59:58Z'), () => Promise.reject(gone));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).not.toHaveBeenCalled();
+
+    api.get.mockRejectedValue(new Error('Network Error'));
+    await vi.advanceTimersByTimeAsync(5000);
+    api.get.mockRejectedValue(gone);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).toHaveBeenCalledWith('joined', 'ns2');
+    w.unmount();
+  });
+
+  it('Cancel handover states the race, then cancels and reads again', async () => {
+    serve(handingOver('2026-11-21T11:59:48Z'));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    api.post.mockResolvedValue({ data: { handover: null } });
+    await w.find('[data-track="instances-promote-cancel"]').trigger('click');
+    const dialog = w.find('.confirm');
+    expect(dialog.attributes('data-severity')).toBe('warn');
+    expect(dialog.text()).toContain('Cancel the handover to ns2?');
+    expect(dialog.text()).toContain(
+      'This instance takes changes again. If ns2 has already taken over, the cancel comes too late: this instance is replaced, and you rejoin it as a member.',
+    );
+    serve(PROMOTABLE);
+    await dialog.find('.go').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/instances/promote/cancel');
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: 'success', summary: 'Handover cancelled' }),
+    );
+    expect(w.find('[data-track="instances-promote-handover"]').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it("shows the server's words when there is no handover left to cancel", async () => {
+    serve(handingOver('2026-11-21T11:59:48Z'));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    api.post.mockRejectedValue({
+      response: { status: 409, data: { error: 'No handover is pending.', code: 'no_handover' } },
+    });
+    await w.find('[data-track="instances-promote-cancel"]').trigger('click');
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({
+        severity: 'error',
+        summary: 'Handover not cancelled',
+        detail: 'No handover is pending.',
+      }),
+    );
+    w.unmount();
+  });
+});
+
+describe('Promote this instance, on a member', () => {
+  beforeEach(() => {
+    timers();
+    features.instance = computed(() => ({
+      mode: 'member',
+      members: 0,
+      sync: { state: 'offline', last_sync_at: '2026-11-21T11:30:00Z' },
+    }));
+  });
+
+  it('is offered on a member whose server knows how, and never on the controller', async () => {
+    const w = await mountPage(MEMBER_CAN_PROMOTE);
+    expect(w.find('[data-track="instances-promote-self"]').text()).toBe('Promote this instance');
+    expect(w.find('[data-track="instances-promote"]').exists()).toBe(false);
+    w.unmount();
+    const older = await mountPage(MEMBER);
+    expect(older.find('[data-track="instances-promote-self"]').exists()).toBe(false);
+    older.unmount();
+    const controller = await mountPage(PROMOTABLE);
+    expect(controller.find('[data-track="instances-promote-self"]').exists()).toBe(false);
+    controller.unmount();
+  });
+
+  it('is gated on this instance name and says when its data is from and what is lost', async () => {
+    const w = await mountPage(MEMBER_CAN_PROMOTE);
+    await w.find('[data-track="instances-promote-self"]').trigger('click');
+    const dialog = w.find('.confirm');
+    expect(dialog.attributes('data-severity')).toBe('danger');
+    expect(dialog.attributes('data-typed')).toBe('ns2');
+    expect(dialog.text()).toContain('Make ns2 the controller?');
+    expect(dialog.text()).toContain('Do this only when ns1 is switched off or gone for good.');
+    const sync = dialog.find('[data-track="instances-promote-self-sync"]').text();
+    expect(sync).toContain('The data here is from the last sync,');
+    expect(sync).toContain('(30m ago)');
+    expect(sync).toContain(
+      'Changes made on ns1 after that are not here and will not come back by themselves.',
+    );
+    expect(dialog.text()).toContain(
+      'The other members follow this instance within about a minute.',
+    );
+    expect(dialog.text()).toContain(
+      'DHCP is not started here automatically. If ns1 served DHCP, start it from this page afterwards.',
+    );
+    expect(dialog.text()).toContain(
+      'If ns1 is in fact still running and clients can reach it, two controllers exist until it hears about this one.',
+    );
+    expect(dialog.find('.go').attributes('disabled')).toBeUndefined();
+    expect(api.post).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it('cannot be confirmed by a member that never synced', async () => {
+    features.instance = computed(() => ({ mode: 'member', members: 0, sync: null }));
+    const w = await mountPage({ ...MEMBER_CAN_PROMOTE, sync: { state: 'starting' } });
+    await w.find('[data-track="instances-promote-self"]').trigger('click');
+    expect(w.find('.confirm').text()).toContain('This instance has not synced yet');
+    expect(w.find('.confirm .go').attributes('disabled')).toBeDefined();
+    w.unmount();
+  });
+
+  it('promotes, says it is restarting, and goes to sign-in once it answers as the controller', async () => {
+    serve(MEMBER_CAN_PROMOTE, () => ({ data: { instance: { mode: 'member' } } }));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    api.post.mockResolvedValue({ data: { restarting: true } });
+    await w.find('[data-track="instances-promote-self"]').trigger('click');
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/instances/promote-self', { confirm: true });
+    expect(w.find('[data-track="instances-restarting"]').text()).toContain(
+      'Restarting as the controller. The sign-in page opens when it is back.',
+    );
+    expect(w.find('[data-track="instances-promote-self"]').exists()).toBe(false);
+
+    // Still the member it was, then away, then back as the controller.
+    const lists = listReads();
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(featureReads()).toBe(1);
+    api.get.mockRejectedValue(new Error('Network Error'));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).not.toHaveBeenCalled();
+    serve(MEMBER_CAN_PROMOTE, () => ({ data: { instance: { mode: 'controller', members: 1 } } }));
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).toHaveBeenCalledWith('promoted', null);
+    // The list is not read while the box restarts.
+    expect(listReads()).toBe(lists);
+    expect(toast.add).not.toHaveBeenCalled();
+    w.unmount();
+  });
+
+  it.each(['not_member', 'handover_pending', 'never_synced'])(
+    "shows the server's words when it refuses with %s",
+    async (code) => {
+      const w = await mountPage(MEMBER_CAN_PROMOTE);
+      api.post.mockRejectedValue({
+        response: { status: 409, data: { error: 'The controller is handing over.', code } },
+      });
+      await w.find('[data-track="instances-promote-self"]').trigger('click');
+      await w.find('.confirm .go').trigger('click');
+      await flushPromises();
+      expect(toast.add).toHaveBeenCalledWith(
+        expect.objectContaining({
+          severity: 'error',
+          summary: 'Not promoted',
+          detail: 'The controller is handing over.',
+        }),
+      );
+      expect(w.find('[data-track="instances-restarting"]').exists()).toBe(false);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(signInAgain).not.toHaveBeenCalled();
+      w.unmount();
+    },
+  );
+});
+
+describe('a controller that was replaced', () => {
+  beforeEach(timers);
+  const FENCED = withPromotion(CONTROLLER, {
+    fenced: { by_name: 'ns2', epoch: 4, since: '2026-11-21T11:00:00Z', report: true },
+  });
+
+  it('shows the replaced panel in place of the controller actions', async () => {
+    const w = await mountPage(FENCED);
+    const panel = w.find('.fenced-stub');
+    expect(panel.attributes('data-by')).toBe('ns2');
+    expect(panel.attributes('data-report')).toBe('true');
+    expect(w.find('[data-track="instances-add-member"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-remove"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-promote"]').exists()).toBe(false);
+    expect(w.text()).not.toContain('This instance is the controller');
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(api.get).toHaveBeenCalledTimes(1);
+    w.unmount();
+  });
+
+  it('believes the features when the list cannot be read', async () => {
+    features.instance = computed(() => ({ mode: 'controller', members: 1, fenced: true }));
+    api.get.mockRejectedValue(new Error('Network Error'));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    expect(w.find('.fenced-stub').attributes('data-report')).toBe('false');
+    w.unmount();
+  });
+
+  it('after a rejoin says it is restarting, then goes to sign-in as a member', async () => {
+    serve(FENCED);
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    await w.find('.fenced-stub .rejoined').trigger('click');
+    expect(w.find('.fenced-stub').exists()).toBe(false);
+    expect(w.find('[data-track="instances-restarting"]').text()).toContain(
+      'Restarting as a member of ns2. The sign-in page opens when it is back.',
+    );
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).not.toHaveBeenCalled();
+
+    // The new controller's accounts replaced the ones here: the session is gone.
+    api.get.mockRejectedValue({ response: { status: 401, data: { error: 'Unauthorized' } } });
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).toHaveBeenCalledWith('joined', 'ns2');
+    w.unmount();
+  });
+});
+
+describe('an older server, which says nothing about changing the controller', () => {
+  it('shows none of it, on the controller or on a member', async () => {
+    timers();
+    for (const state of [CONTROLLER, MEMBER]) {
+      const w = await mountPage(state);
+      for (const track of [
+        'instances-promote',
+        'instances-promote-self',
+        'instances-promote-handover',
+        'instances-promote-cancel',
+        'instances-restarting',
+      ]) {
+        expect(w.find(`[data-track="${track}"]`).exists()).toBe(false);
+      }
+      expect(w.find('.fenced-stub').exists()).toBe(false);
+      await vi.advanceTimersByTimeAsync(30_000);
+      expect(api.get).toHaveBeenCalledTimes(1);
+      w.unmount();
+      api.get.mockClear();
+    }
   });
 });
 

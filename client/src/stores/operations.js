@@ -1,5 +1,6 @@
 import { defineStore } from 'pinia';
 import { ref } from 'vue';
+import { saveBlob } from '../utils/download.js';
 import api from '../api/client.js';
 
 export const useOperationsStore = defineStore('operations', () => {
@@ -32,14 +33,7 @@ export const useOperationsStore = defineStore('operations', () => {
 
   async function downloadBackup(id, filename) {
     const res = await api.get(`/operations/backups/${id}/download`, { responseType: 'blob' });
-    const url = URL.createObjectURL(res.data);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = filename || 'backup.tar.gz';
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    saveBlob(res.data, filename || 'backup.tar.gz');
   }
 
   // `dhcp` is 'enabled' or 'disabled': whether this appliance serves DHCP

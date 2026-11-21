@@ -1,6 +1,7 @@
 import { defineStore } from 'pinia';
 import { computed, ref } from 'vue';
 import api from '../api/client.js';
+import { isFrozen, singleBox } from '../utils/instances.js';
 
 /**
  * Feature switches the UI reads before rendering: the IPv6 switch, which
@@ -11,7 +12,9 @@ import api from '../api/client.js';
  *
  * The same read says what this instance is: the controller, which owns the
  * data, or a member holding a synced read-only copy of a controller's. A
- * single box is a controller with no members.
+ * single box is a controller with no members. A controller can also be
+ * frozen: replaced by another one (fenced), or handing the role to a member.
+ * It takes no changes then, which usePermissions reads as read-only.
  */
 export const useFeaturesStore = defineStore('features', () => {
   const ipv6 = ref(false);
@@ -19,6 +22,7 @@ export const useFeaturesStore = defineStore('features', () => {
   const backend = ref({});
   const instance = ref(singleBox());
   const isMember = computed(() => instance.value.mode === 'member');
+  const frozen = computed(() => isFrozen(instance.value));
   const loaded = ref(false);
 
   function set(payload) {
@@ -44,13 +48,8 @@ export const useFeaturesStore = defineStore('features', () => {
     loaded.value = false;
   }
 
-  return { ipv6, backend, instance, isMember, loaded, load, set, reset };
+  return { ipv6, backend, instance, isMember, frozen, loaded, load, set, reset };
 });
-
-// What a server that says nothing about instances is: one box, as before 0.7.0.
-function singleBox() {
-  return { mode: 'controller', controller_name: null, members: 0, sync: null, serves_dhcp: true };
-}
 
 function readInstance(raw) {
   if (!raw) return singleBox();
@@ -63,5 +62,9 @@ function readInstance(raw) {
     // Whether this box answers DHCP. A server that does not say predates
     // moving DHCP, when the controller always served it.
     serves_dhcp: typeof raw.serves_dhcp === 'boolean' ? raw.serves_dhcp : mode === 'controller',
+    // A server that says nothing of these predates changing the controller.
+    fenced: raw.fenced === true,
+    fenced_by: raw.fenced_by || null,
+    handover_to: raw.handover_to || null,
   };
 }

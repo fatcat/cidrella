@@ -88,13 +88,20 @@ describe('cleanLease', () => {
 });
 
 describe('the wire format', () => {
-  it('round-trips a report, and reads anything else as nothing', () => {
+  it('round-trips a report, and reads anything else as nothing', async () => {
     const body = { term: 3, leases: [v4, v6] };
-    expect(unpackReport(packReport(body))).toEqual(body);
-    expect(unpackReport(Buffer.from('not gzip'))).toBeNull();
-    expect(unpackReport(packReport([v4]))).toBeNull();
-    expect(unpackReport({ term: 3 })).toBeNull();
-    expect(unpackReport(Buffer.alloc(0))).toBeNull();
+    expect(await unpackReport(packReport(body))).toEqual(body);
+    expect(await unpackReport(Buffer.from('not gzip'))).toBeNull();
+    expect(await unpackReport(packReport([v4]))).toBeNull();
+    expect(await unpackReport({ term: 3 })).toBeNull();
+    expect(await unpackReport(Buffer.alloc(0))).toBeNull();
+  });
+
+  it('reads nothing from a small body that unpacks to a great deal', async () => {
+    const zlib = await import('zlib');
+    const bomb = zlib.gzipSync(`{"term":1,"leases":[${'[],'.repeat(20_000_000)}[]]}`);
+    expect(bomb.length).toBeLessThan(200_000);
+    expect(await unpackReport(bomb)).toBeNull();
   });
 });
 

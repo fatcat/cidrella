@@ -66,7 +66,23 @@ servers option serves every DNS-serving instance (`utils/instance-dns.js`). Phas
 analytics) is done, 2026-11-21: `sync/remote-sink.js`, `sync/collected-upload.js`, the
 `?instance=` filter. Phase 5 (DHCP on a member) is done,
 2026-11-21: `sync/dhcp-active.js`, `services/dhcp-move.js`, `services/dhcp-follow.js`,
-`POST /api/sync/leases`. Next is phase 6, promotion. Left open by phase 5:
+`POST /api/sync/leases`. Phase 6 (promotion) is done, 2026-11-21:
+`services/controller-promotion.js`, `sync/promotion-state.js`, `sync/find-controller.js`,
+`sync/controller-call.js`. Next is phase 7, hardening. Left open by phase 6:
+- A restore brings the backup's `sync_state` with it (mode, epoch, fenced, handover,
+  `epoch_base`): a backup from before a promotion lowers the controller's epoch or brings back
+  member mode. Phase 7 must decide what a restore keeps.
+- Two members forced at once land on the same epoch; members pick the lowest instance id and
+  neither controller fences. Needs a tiebreak both sides apply.
+- A frozen controller's own writers (lease ingest, liveness) keep writing during a handover, so
+  the old controller usually takes a snapshot after it, not a delta.
+- A member that joined after the promoted box's last sync is unknown to the new controller and
+  must join again.
+- The Restarting line on the Instances page has no timeout, and a controller on another page
+  learns it is frozen or replaced only on the next features read (60 s).
+- Not run on two real hosts: the local check used two processes on one machine.
+
+Left open by phase 5:
 - The DHCPv6 server DUID does not move with DHCP, so DHCPv6 clients rebind. Carrying it needs the
   DUID in the data of record and both adapters taking one.
 - Imported leases carry the stored effective name (ADR 005), not the name the client asked for.

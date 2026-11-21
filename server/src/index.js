@@ -75,11 +75,15 @@ import { memberSink, setFactsSink } from './sync/facts.js';
 import { ensureSyncIdentity, syncSecureContext } from './sync/identity.js';
 import { startCollectedUpload } from './sync/collected-upload.js';
 import { startMemberSync } from './sync/member.js';
-import { isMember } from './sync/mode.js';
+import { isFenced, isMember } from './sync/mode.js';
+import { takeOwnOutbox } from './sync/outbox-intake.js';
+import { startTakeoverNotices, takeOverIfNamed } from './services/controller-promotion.js';
 import { memberWriteGate } from './sync/write-gate.js';
 import {
   ensureOwnInstance,
   lowestMemberCursor,
+  ownInstanceId,
+  ownInstanceName,
   setOwnDnsAddresses,
 } from './models/sync-instance.js';
 import { syncServerDnsDefault } from './models/dhcp-option.js';
@@ -190,6 +194,17 @@ function repairEstateAtBoot(db) {
 
   // Sync server IP into DNS Servers default
   syncServerDnsDefault(db);
+
+  // What this box queued for its controller while it was a member, when it
+  // has since taken over as the controller itself: nobody else will ask for
+  // it (services/controller-promotion.js takes it in at the takeover; this
+  // is for a box that died in between).
+  try {
+    const taken = takeOwnOutbox(db, { name: ownInstanceName(db), instanceId: ownInstanceId(db) });
+    if (taken > 0) console.log(`Took in ${taken} row(s) queued before this box was the controller`);
+  } catch (err) {
+    console.warn('Outbox intake skipped:', err?.message || err);
+  }
 }
 
 function pruneAuditLog() {
@@ -396,9 +411,19 @@ async function main() {
   startBlocklistScheduler();
   startGeoipScheduler();
   if (member) {
-    startMemberSync(getDb());
-    startCollectedUpload(getDb());
-  } else startControllerJobs(getDb());
+    // A controller that was replaced follows nobody until it is joined to
+    // the new one: it has no controller to ask and nothing to send.
+    if (!isFenced(getDb())) {
+      // A member the controller names for a handover takes over once it has
+      // everything (services/controller-promotion.js).
+      startMemberSync(getDb(), { onCurrent: takeOverIfNamed });
+      startCollectedUpload(getDb());
+    }
+  } else {
+    startControllerJobs(getDb());
+    // A box that took over as the controller tells the one it replaced.
+    startTakeoverNotices(getDb());
+  }
 
   // Start MAC vendor database auto-refresh (every 24h)
   startVendorScheduler();

@@ -34,7 +34,9 @@ const DAY_MS = 86_400_000;
 const AHEAD_MS = DAY_MS;
 
 const BAD = Symbol('bad');
-const MAX_COUNT = Number.MAX_SAFE_INTEGER;
+// More than one box answers in a minute, and small enough that no retention
+// window of rows can overflow a sum.
+const MAX_COUNT = 1_000_000_000;
 
 // One checker per kind of value: the value as stored, or BAD.
 const whole = (max) => (v) => (Number.isSafeInteger(v) && v >= 0 && v <= max ? v : BAD);

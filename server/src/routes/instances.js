@@ -3,6 +3,7 @@
  * sees and manages them (docs/REDUNDANCY-PLAN.md, section 8).
  */
 import { Router } from 'express';
+import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/init.js';
 import { requireRole } from '../auth/roles.js';
@@ -12,8 +13,19 @@ import { APP_VERSION } from '../utils/version.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { syncFingerprint } from '../sync/identity.js';
 import { syncHead } from '../sync/log.js';
-import { controllerOf, instanceMode, isMember, memberRefusal } from '../sync/mode.js';
-import { memberSyncStatus } from '../sync/member.js';
+import { controllerOf, instanceMode, isFenced, isMember, writeRefusal } from '../sync/mode.js';
+import { joinController, JoinError, memberSyncStatus } from '../sync/member.js';
+import {
+  cancelHandover,
+  divergenceReportPath,
+  ensurePreDemotionSnapshot,
+  promoteRefusal,
+  promoteSelf,
+  PromotionError,
+  promotionRestart,
+  promotionView,
+  startHandover,
+} from '../services/controller-promotion.js';
 import { clearHandover, dhcpState, dhcpStateChanged } from '../sync/dhcp-active.js';
 import {
   DhcpMoveError,
@@ -36,11 +48,13 @@ router.use(requireRole('admin'));
 
 const fingerprintOf = (db) => syncFingerprint(path.dirname(db.name));
 
-// What only the controller does. A member says so, in the words of every
-// other write it refuses.
+// What only a controller that takes changes does. A member, a controller
+// that was replaced and one frozen for a handover each say so, in the words
+// of every other write they refuse (sync/write-gate.js).
 function controllerOnly(req, res, next) {
-  if (!isMember()) return next();
-  res.status(409).json({ error: memberRefusal(), code: 'member_read_only' });
+  const refusal = writeRefusal();
+  if (!refusal) return next();
+  res.status(409).json(refusal);
 }
 
 // GET /api/instances
@@ -68,13 +82,17 @@ router.get('/', (req, res) => {
     sync: memberSyncStatus(db),
     // Which instance serves DHCP, and a move that is not finished.
     dhcp: dhcpView(db, dhcp),
+    // A handover of the controller that is not finished, and whether this
+    // box was replaced as the controller.
+    promotion: promotionView(db),
     instances: listInstances(db).map((row) => ({
       id: row.id,
       instance_id: row.instance_id,
       name: row.name,
       // A member knows where its controller is; the controller's own row does not say.
-      address: member && row.is_controller ? controller.address : row.address,
-      port: member && row.is_controller ? controller.port : row.port,
+      // A box that was replaced follows nobody.
+      address: member && row.is_controller && controller ? controller.address : row.address,
+      port: member && row.is_controller && controller ? controller.port : row.port,
       is_controller: row.is_controller === 1,
       is_self: row.instance_id === self,
       serves_dns: row.serves_dns === 1,
@@ -87,6 +105,8 @@ router.get('/', (req, res) => {
       dhcp: dhcpRole(dhcp, row),
       // Only the controller moves DHCP.
       can_take_dhcp: !member && moveRefusal(db, row, dhcp) === null,
+      // Only the controller hands itself over.
+      can_promote: !member && promoteRefusal(db, row) === null,
     })),
   });
 });
@@ -131,6 +151,117 @@ router.post('/:id/dhcp', controllerOnly, async (req, res) => {
     res.json(await moveDhcp(getDb(), Number(req.params.id)));
   } catch (err) {
     sendMoveError(res, err);
+  }
+});
+
+// A refused promotion step answers its reason; anything else is the error handler's.
+function sendPromotionError(res, err) {
+  if (!(err instanceof PromotionError)) throw err;
+  res.status(err.status).json({ error: err.message, code: err.code });
+}
+
+// POST /api/instances/promote/cancel: call off a handover of the controller.
+router.post('/promote/cancel', (req, res) => {
+  try {
+    // Recorded by cancelHandover.
+    cancelHandover(getDb());
+    res.json({ handover: null });
+  } catch (err) {
+    sendPromotionError(res, err);
+  }
+});
+
+// POST /api/instances/promote-self { confirm: true }: on a member, take over
+// as the controller without the old one's help. It is dead or cut off.
+router.post('/promote-self', async (req, res) => {
+  if (req.body?.confirm !== true) {
+    return res.status(400).json({
+      error: 'Confirm that the controller is off or cannot be reached.',
+      code: 'confirm_required',
+    });
+  }
+  try {
+    // Recorded by promoteSelf, in the transaction that makes this box the controller.
+    await promoteSelf(getDb());
+    res.json({ restarting: true });
+  } catch (err) {
+    sendPromotionError(res, err);
+  }
+});
+
+// POST /api/instances/rejoin { address, port, token }: on a controller that
+// was replaced, join the new controller. Everything here is replaced by the
+// new controller's data; the copy saved when this box was fenced stays.
+let rejoining = false;
+router.post('/rejoin', async (req, res) => {
+  const db = getDb();
+  if (!isFenced(db)) {
+    return res.status(409).json({
+      error: 'Only a controller that was replaced joins this way.',
+      code: 'not_fenced',
+    });
+  }
+  const { address, token } = req.body || {};
+  const port = req.body?.port === undefined ? 443 : Number(req.body.port);
+  if (typeof address !== 'string' || !address.trim() || address.length > 255) {
+    return res.status(400).json({ error: 'Enter the controller’s address.', code: 'unreachable' });
+  }
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    return res.status(400).json({ error: 'The port must be 1 to 65535.', code: 'unreachable' });
+  }
+  if (rejoining) {
+    return res.status(400).json({ error: 'A join is already running.', code: 'join_running' });
+  }
+  rejoining = true;
+  try {
+    try {
+      ensurePreDemotionSnapshot(db);
+    } catch (err) {
+      return res.status(400).json({
+        error:
+          `This database could not be copied aside before it is replaced: ${err.message}. ` +
+          'Nothing has changed. The snapshots directory under the data directory must be ' +
+          'writable by the cidrella service user and have room for a copy of the database.',
+        code: 'snapshot_failed',
+      });
+    }
+    const joined = await joinController(
+      db,
+      { address, port, token },
+      { restart: () => promotionRestart('Joined the new controller') },
+    );
+    // This box is a member now, so the row waits for its controller.
+    recordAudit({
+      action: 'instance_rejoined_controller',
+      entityType: 'instance',
+      details: { controller: joined.controller.name, address: address.trim(), port },
+    });
+    res.json({ ...joined, restarting: true });
+  } catch (err) {
+    if (!(err instanceof JoinError)) throw err;
+    res.status(400).json({ error: err.message, code: err.code });
+  } finally {
+    rejoining = false;
+  }
+});
+
+// GET /api/instances/divergence-report: what this box held that the
+// controller which replaced it never received, as a file.
+router.get('/divergence-report', (req, res) => {
+  const file = divergenceReportPath(getDb());
+  if (!fs.existsSync(file)) {
+    return res.status(404).json({ error: 'There is no divergence report on this instance.' });
+  }
+  res.download(file, 'cidrella-divergence-report.json');
+});
+
+// POST /api/instances/:id/promote: hand the controller over to this member.
+router.post('/:id/promote', (req, res) => {
+  try {
+    // Recorded by startHandover, a refusal included.
+    res.json({ handover: startHandover(getDb(), Number(req.params.id)) });
+  } catch (err) {
+    sendPromotionError(res, err);
   }
 });
 

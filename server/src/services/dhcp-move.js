@@ -23,14 +23,13 @@ import { DEFAULTS } from '../config/defaults.js';
 import { readSetting, upsertSetting } from '../models/setting.js';
 import { settingValue } from '../models/setting-value.js';
 import { clearHandover, dhcpState, quiesceDhcp } from '../sync/dhcp-active.js';
-import { syncStatus } from '../sync/log.js';
+import { followingRefusal } from '../models/sync-instance.js';
+import { writeRefusal } from '../sync/mode.js';
 import { holdHooks } from '../utils/after-commit.js';
 import { recordAudit } from './audit.js';
 import { applyDhcpServing, followDhcp } from './dhcp-follow.js';
 import { holdLeaseSync, syncLeasesNow } from './dhcp-lease-sync.js';
 
-// A member asks for changes at least every 25 seconds while it is in contact.
-const CURRENT_MS = 90_000;
 const SETTLE_ATTEMPTS = 5;
 
 /** A move that was refused: `status` and `code` are what the API answers. */
@@ -70,12 +69,19 @@ export function dhcpRole(state, row) {
 
 let moving = false;
 
+/** Whether DHCP is between two instances: a move running, or a handover owed. */
+export const dhcpMoving = (db) => moving || Boolean(dhcpState(db).handoverFrom);
+
 /**
  * Why DHCP cannot move to `row` (a sync_instances row) right now:
  * `{ code, error }`, or null when it can.
  */
 export function moveRefusal(db, row, state = dhcpState(db)) {
   if (moving) return { code: 'handover_pending', error: 'A DHCP move is already running.' };
+  // One change of who does what at a time: the member taking over the
+  // controller has to find DHCP where the controller it follows left it.
+  const frozen = writeRefusal(db);
+  if (frozen) return frozen;
   if (state.handoverFrom) {
     const from = nameOf(db, state.handoverFrom) || 'the instance that had it';
     return {
@@ -98,31 +104,19 @@ export function moveRefusal(db, row, state = dhcpState(db)) {
     }
     return null;
   }
-  if (row.schema_version !== null && row.schema_version !== syncStatus(db).schema) {
-    return {
-      code: 'schema_mismatch',
-      error:
-        `${row.name} runs ${row.version || 'another version'}, not the controller's. ` +
-        'Update it to the same version first.',
-    };
-  }
-  const heard = Date.parse(row.last_contact_at || '');
-  if (Number.isNaN(heard) || Date.now() - heard > CURRENT_MS) {
-    return {
-      code: 'not_current',
-      error:
-        `${row.name} has not been in contact for the last ${CURRENT_MS / 1000} seconds. ` +
-        'DHCP can only move to an instance that is following the controller.',
-    };
-  }
-  return null;
+  return followingRefusal(
+    db,
+    row,
+    'DHCP can only move to an instance that is following the controller.',
+  );
 }
 
 const instanceRow = (db, id) =>
   Number.isInteger(id)
     ? db
         .prepare(
-          `SELECT id, instance_id, name, is_controller, version, schema_version, last_contact_at
+          `SELECT id, instance_id, name, is_controller, version, schema_version, last_contact_at,
+             cursor
            FROM sync_instances WHERE id = ?`,
         )
         .get(id)

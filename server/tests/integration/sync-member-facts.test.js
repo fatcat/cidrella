@@ -413,4 +413,38 @@ describe('a row a member should not have sent', () => {
         .get().n,
     ).toBe(500);
   });
+  it('rations the new addresses one member may name in an hour, and still records known ones', async () => {
+    const { NEW_ROWS_PER_HOUR, resetNewRowBudgets } =
+      await import('../../src/sync/member-facts.js');
+    resetNewRowBudgets();
+    const rows = () =>
+      controller
+        .prepare("SELECT count(*) AS n FROM ip_addresses WHERE ip_address LIKE 'fd00:77::a:%'")
+        .get().n;
+    const at = Date.now();
+    const total = NEW_ROWS_PER_HOUR + 500;
+    for (let start = 0; start < total; start += 500) {
+      queue(SEEN_KIND, {
+        seen: Array.from({ length: 500 }, (_, i) => ({
+          ip: `fd00:77::a:${(start + i).toString(16)}`,
+          at,
+          rogue: 1,
+        })),
+      });
+    }
+    await sendOutbox(box.db);
+    expect(rows()).toBeLessThanOrEqual(NEW_ROWS_PER_HOUR);
+
+    // One it already holds is not a new row: its sighting still lands.
+    expect(address('fd00:77::a:0')).toBeDefined();
+    controller
+      .prepare(
+        "UPDATE ip_addresses SET last_seen_at = '2020-01-01 00:00:00' WHERE ip_address = 'fd00:77::a:0'",
+      )
+      .run();
+    queue(SEEN_KIND, { seen: [{ ip: 'fd00:77::a:0', at: Date.now() }] });
+    await sendOutbox(box.db);
+    expect(address('fd00:77::a:0').last_seen_at > '2020-01-02').toBe(true);
+    resetNewRowBudgets();
+  });
 });
