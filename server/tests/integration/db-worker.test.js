@@ -42,7 +42,9 @@ describe('runDbTask', () => {
   it('writes a backup copy that is whole and carries no feed domains', async () => {
     const copyPath = path.join(fs.mkdtempSync(path.join(tmpDir, 'copy-')), 'cidrella.db');
     // A write still in the WAL is in the copy: VACUUM INTO reads it.
-    db.prepare("INSERT OR REPLACE INTO settings (key, value) VALUES ('worker_probe', 'in-wal')").run();
+    db.prepare(
+      "INSERT OR REPLACE INTO settings (key, value) VALUES ('worker_probe', 'in-wal')",
+    ).run();
     await runDbTask('backupCopy', { dbPath: db.name, copyPath });
     const copy = new Database(copyPath, { readonly: true });
     try {
@@ -51,8 +53,9 @@ describe('runDbTask', () => {
       expect(
         copy.prepare("SELECT value FROM settings WHERE key = 'worker_probe'").get()?.value,
       ).toBe('in-wal');
-      expect(copy.prepare("SELECT enabled FROM blocklist_categories WHERE slug = 'worker-ads'").get())
-        .toEqual({ enabled: 1 });
+      expect(
+        copy.prepare("SELECT enabled FROM blocklist_categories WHERE slug = 'worker-ads'").get(),
+      ).toEqual({ enabled: 1 });
     } finally {
       copy.close();
     }

@@ -36,19 +36,31 @@ describe('getNtpStatus', () => {
 
   it('parses disabled + unsynchronized', async () => {
     vi.mocked(execFileSync).mockReturnValue('no\nno\n');
-    expect(await getNtpStatus()).toEqual({ available: true, ntpEnabled: false, synchronized: false });
+    expect(await getNtpStatus()).toEqual({
+      available: true,
+      ntpEnabled: false,
+      synchronized: false,
+    });
   });
 
   it('parses enabled but not yet synchronized', async () => {
     vi.mocked(execFileSync).mockReturnValue('yes\nno\n');
-    expect(await getNtpStatus()).toEqual({ available: true, ntpEnabled: true, synchronized: false });
+    expect(await getNtpStatus()).toEqual({
+      available: true,
+      ntpEnabled: true,
+      synchronized: false,
+    });
   });
 
   it('reports unavailable when timedatectl is missing/errors', async () => {
     vi.mocked(execFileSync).mockImplementation(() => {
       throw new Error('ENOENT');
     });
-    expect(await getNtpStatus()).toEqual({ available: false, ntpEnabled: false, synchronized: false });
+    expect(await getNtpStatus()).toEqual({
+      available: false,
+      ntpEnabled: false,
+      synchronized: false,
+    });
   });
 });
 

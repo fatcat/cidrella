@@ -49,8 +49,8 @@
     @confirm="remove"
   >
     <p>
-      Delete <strong>{{ rangeType?.name }}</strong
-      >? A type that is still assigned to ranges cannot be deleted.
+      Delete <strong>{{ rangeType?.name }}</strong>? A type that is still assigned to ranges cannot
+      be deleted.
     </p>
     <p v-if="error" class="workspace-range-error" role="alert">{{ error }}</p>
   </ConfirmDialog>

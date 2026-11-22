@@ -19,7 +19,9 @@ beforeAll(async () => {
   vi.spyOn(console, 'log').mockImplementation(() => {});
   // Enough rows that a copy on the main thread would hold the loop for
   // well over the limit below.
-  const insert = db.prepare('INSERT INTO audit_log (action, entity_type, details) VALUES (?, ?, ?)');
+  const insert = db.prepare(
+    'INSERT INTO audit_log (action, entity_type, details) VALUES (?, ?, ?)',
+  );
   const filler = 'x'.repeat(400);
   db.transaction(() => {
     for (let i = 0; i < 300_000; i++) insert.run('event_loop_test', 'test', filler);

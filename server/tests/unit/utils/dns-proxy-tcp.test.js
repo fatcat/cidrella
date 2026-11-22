@@ -11,7 +11,13 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 }));
 
 import { frameTcpMessage, extractTcpMessages } from '../../../src/utils/dns-wire.js';
-import { relayQueryOverTcp, createNxdomainResponse, createBlockedResponse, getQueryOpt, classifyDnssecSupport } from '../../../src/dns-proxy/server.js';
+import {
+  relayQueryOverTcp,
+  createNxdomainResponse,
+  createBlockedResponse,
+  getQueryOpt,
+  classifyDnssecSupport,
+} from '../../../src/dns-proxy/server.js';
 
 const stubServers = [];
 afterAll(() => {

@@ -114,10 +114,13 @@
         :key="`${link.subnetId}|${link.address}`"
         class="related-button"
         data-track="workspace-address-host-link"
-        @click="emit('navigate', { view: 'addresses', subnetId: link.subnetId, address: link.address })"
+        @click="
+          emit('navigate', { view: 'addresses', subnetId: link.subnetId, address: link.address })
+        "
       >
         <i :class="link.otherFamily ? 'pi pi-arrow-right-arrow-left' : 'pi pi-sitemap'" /><span
-          ><strong class="mono">{{ link.address }}</strong><small>{{ link.note }}</small></span
+          ><strong class="mono">{{ link.address }}</strong
+          ><small>{{ link.note }}</small></span
         ><i class="pi pi-chevron-right" />
       </button>
       <small v-if="host.temporary_count" class="muted">
@@ -262,8 +265,9 @@
         >
           <span class="event-marker" :class="eventTone(event.event_type)"><i /></span>
           <div>
-            <strong>{{ eventLabel(event.event_type) }}</strong
-            ><small>{{ eventDetail(event) || 'State recorded' }}</small>
+            <strong>{{ eventLabel(event.event_type) }}</strong><small>{{
+              eventDetail(event) || 'State recorded'
+            }}</small>
           </div>
           <time>{{ formatEventTime(event.created_at) }}</time>
         </div>

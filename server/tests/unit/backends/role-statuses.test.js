@@ -41,7 +41,9 @@ describe('roleStatuses', () => {
     // dnsmasq fills all three: off only once DNS and DHCP both are.
     const one = createFakeBackend({ name: 'dnsmasq' });
     expect((await roleStatuses(() => one, dhcpOff)).dns.off).toBe(false);
-    expect((await roleStatuses(() => one, { switchedOff: (role) => role !== 'ra' })).dns.off).toBe(true);
+    expect((await roleStatuses(() => one, { switchedOff: (role) => role !== 'ra' })).dns.off).toBe(
+      true,
+    );
     expect((await roleStatuses(() => one)).dns.off).toBe(false);
   });
 });

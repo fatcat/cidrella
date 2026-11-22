@@ -83,8 +83,16 @@ describe('applyZones reload behavior', () => {
       }),
     );
 
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['reload', 'cidrella-dnsmasq'], expect.anything());
-    expect(execFileSync).not.toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['reload', 'cidrella-dnsmasq'],
+      expect.anything(),
+    );
+    expect(execFileSync).not.toHaveBeenCalledWith(
+      'systemctl',
+      ['restart', 'cidrella-dnsmasq'],
+      expect.anything(),
+    );
   });
 
   it('restarts dnsmasq for conf-dir CNAME changes', async () => {
@@ -104,7 +112,11 @@ describe('applyZones reload behavior', () => {
     expect(
       fs.readFileSync(path.join(tmpDir, 'dnsmasq', 'conf.d', 'zone-10.conf'), 'utf-8'),
     ).toContain('cname=checker.the-mcnultys.org,container-host.the-mcnultys.org');
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['restart', 'cidrella-dnsmasq'],
+      expect.anything(),
+    );
   });
 
   it('does not append the zone twice for legacy fully-qualified CNAME names', async () => {
@@ -173,14 +185,22 @@ describe('zones answer their own names', () => {
         '',
       ].join('\n'),
     );
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['restart', 'cidrella-dnsmasq'],
+      expect.anything(),
+    );
   });
 
   it('leaves dnsmasq alone when the local zones are unchanged', async () => {
     await applyZones(makeDb());
     vi.clearAllMocks();
     await applyZones(makeDb());
-    expect(execFileSync).not.toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
+    expect(execFileSync).not.toHaveBeenCalledWith(
+      'systemctl',
+      ['restart', 'cidrella-dnsmasq'],
+      expect.anything(),
+    );
   });
 
   it('removes the file, and restarts, once no zone is local', async () => {
@@ -189,7 +209,11 @@ describe('zones answer their own names', () => {
     vi.clearAllMocks();
     await applyZones(makeDb({ zone: { forward_unknown: 1 } }));
     expect(localZones()).toBeNull();
-    expect(execFileSync).toHaveBeenCalledWith('systemctl', ['restart', 'cidrella-dnsmasq'], expect.anything());
+    expect(execFileSync).toHaveBeenCalledWith(
+      'systemctl',
+      ['restart', 'cidrella-dnsmasq'],
+      expect.anything(),
+    );
   });
 });
 

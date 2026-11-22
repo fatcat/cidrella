@@ -136,7 +136,9 @@
         <StatusDot kind="warn" label="Backups off" />
         <span>
           Backups are switched off on this controller. Switch them on under
-          <RouterLink :to="BACKUP_SETTINGS">Settings &gt; Maintenance &gt; Backup &amp; Restore</RouterLink>.
+          <RouterLink :to="BACKUP_SETTINGS"
+            >Settings &gt; Maintenance &gt; Backup &amp; Restore</RouterLink
+          >.
         </span>
       </p>
 

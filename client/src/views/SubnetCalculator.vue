@@ -28,9 +28,7 @@
           <span class="lbl">Total IPs:</span>
           {{ formatAddressCount(parent.size_text) }}
         </div>
-        <div>
-          <span class="lbl">Usable:</span> {{ formatAddressCount(parent.usable_text) }}
-        </div>
+        <div><span class="lbl">Usable:</span> {{ formatAddressCount(parent.usable_text) }}</div>
         <div>
           <span class="lbl">Range:</span> {{ parent.firstUsable }} – {{ parent.lastUsable }}
         </div>

@@ -45,7 +45,9 @@ beforeEach(() => {
 describe('applyDhcp', () => {
   let stopListening;
   beforeEach(() => {
-    stopListening = onDhcpRendered((given) => calls.push(given === db ? 'sync' : 'sync without db'));
+    stopListening = onDhcpRendered((given) =>
+      calls.push(given === db ? 'sync' : 'sync without db'),
+    );
   });
   afterEach(() => stopListening());
 
@@ -101,11 +103,17 @@ describe('applyAtBoot', () => {
   it('forces the DNS service when its config changed, and only checks the others', async () => {
     recordActivate(fake.current);
     fake.dhcpService = recordActivate(createFakeBackend({ name: 'kea' }));
-    expect(await applyAtBoot(db, { preflight: false })).toEqual({ fake: 'restarted', kea: 'unchanged' });
+    expect(await applyAtBoot(db, { preflight: false })).toEqual({
+      fake: 'restarted',
+      kea: 'unchanged',
+    });
     expect(fake.current.activate).toHaveBeenCalledWith({ force: true });
     expect(fake.dhcpService.activate).toHaveBeenCalledWith({ force: false });
     // Nothing changed the second time.
-    expect(await applyAtBoot(db, { preflight: false })).toEqual({ fake: 'unchanged', kea: 'unchanged' });
+    expect(await applyAtBoot(db, { preflight: false })).toEqual({
+      fake: 'unchanged',
+      kea: 'unchanged',
+    });
   });
 
   it('renders but starts or restarts nothing in an update preflight', async () => {

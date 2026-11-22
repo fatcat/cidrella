@@ -8,9 +8,8 @@ import { describe, it, expect, afterEach, vi } from 'vitest';
 const { unitCommand } = vi.hoisted(() => ({ unitCommand: vi.fn() }));
 vi.mock('../../../src/utils/privileged.js', () => ({ unitCommand }));
 
-const { restartProxyProcess, PROXY_UNIT } = await import(
-  '../../../src/services/dns-proxy-supervisor.js'
-);
+const { restartProxyProcess, PROXY_UNIT } =
+  await import('../../../src/services/dns-proxy-supervisor.js');
 
 afterEach(() => {
   vi.unstubAllEnvs();
@@ -34,7 +33,9 @@ describe('restartProxyProcess', () => {
     unitCommand.mockResolvedValue({ ok: false, code: null, stdout: '', stderr: 'helper down' });
     const error = vi.spyOn(console, 'error').mockImplementation(() => {});
     await restartProxyProcess(null);
-    expect(error.mock.calls.flat().join(' ')).toMatch(/Could not start the DNS proxy unit.*helper down/);
+    expect(error.mock.calls.flat().join(' ')).toMatch(
+      /Could not start the DNS proxy unit.*helper down/,
+    );
   });
 
   it('leaves the start to s6, and to the client in development', async () => {

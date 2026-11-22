@@ -428,7 +428,9 @@ describe('change log loopback', () => {
 
   it('does for the copy’s own tables what a delete’s foreign keys ask', () => {
     const user = source
-      .prepare("INSERT INTO users (username, password_hash, role) VALUES ('leaver', 'x', 'readonly')")
+      .prepare(
+        "INSERT INTO users (username, password_hash, role) VALUES ('leaver', 'x', 'readonly')",
+      )
       .run().lastInsertRowid;
     source.prepare("INSERT INTO blocklist_categories (slug) VALUES ('gone-list')").run();
     sync(copy);

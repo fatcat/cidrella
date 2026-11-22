@@ -56,7 +56,9 @@ describe('GET /api/blocklists/stats', () => {
   });
 
   it('counts again when a category is switched off', async () => {
-    const res = await request(app).put(`/api/blocklists/categories/${second}`).send({ enabled: false });
+    const res = await request(app)
+      .put(`/api/blocklists/categories/${second}`)
+      .send({ enabled: false });
     expect(res.status).toBe(200);
     await vi.waitFor(async () => expect((await stats()).body.total_domains).toBe(20));
   });

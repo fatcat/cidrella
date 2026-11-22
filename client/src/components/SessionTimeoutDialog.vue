@@ -13,9 +13,9 @@
     </p>
     <p v-else class="session-timeout-text">
       Every session ends 24 hours after sign-in. This one ends at
-      <strong>{{ endsAt }}</strong
-      >, in <strong class="mono">{{ clock(expirySecondsLeft) }}</strong
-      >. Sign in again now so nothing you are working on is lost when it does.
+      <strong>{{ endsAt }}</strong>, in
+      <strong class="mono">{{ clock(expirySecondsLeft) }}</strong>. Sign in again now so nothing you
+      are working on is lost when it does.
     </p>
     <template #footer>
       <template v-if="idleWarning">

@@ -132,7 +132,9 @@
           <HostTable
             v-if="hostsMode"
             :hosts="hostRows"
-            :selected-address="selectedRowView === 'addresses' ? (selectedRow?.address ?? null) : null"
+            :selected-address="
+              selectedRowView === 'addresses' ? (selectedRow?.address ?? null) : null
+            "
             @open-address="openCanonicalAddress"
           />
           <AddressGrid

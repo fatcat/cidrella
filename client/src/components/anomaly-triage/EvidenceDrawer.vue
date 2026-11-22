@@ -79,9 +79,9 @@
         <div>
           <strong>Device fingerprint changed</strong>
           {{ timeAgo(detail.fingerprint.changed_at) }}, previously identified as
-          <b>{{ detail.fingerprint.previous_value }}</b
-          >, now <b>{{ detail.fingerprint.new_value }}</b
-          >. The physical device behind this address may have changed, including MAC spoofing.
+          <b>{{ detail.fingerprint.previous_value }}</b>, now
+          <b>{{ detail.fingerprint.new_value }}</b>. The physical device behind this address may
+          have changed, including MAC spoofing.
         </div>
       </div>
 

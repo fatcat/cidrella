@@ -575,8 +575,7 @@
       @confirm="doDeleteZone"
     >
       <p>
-        Delete zone <strong>{{ deletingZone?.name }}</strong
-        >?
+        Delete zone <strong>{{ deletingZone?.name }}</strong>?
       </p>
       <p v-if="deletingZone?.record_count > 0" class="warn-text">
         This will permanently delete {{ deletingZone.record_count }} DNS record(s).
@@ -592,8 +591,7 @@
       @confirm="doDeleteRecord"
     >
       <p>
-        Delete {{ deletingRecord?.record_type }} record <strong>{{ deletingRecord?.name }}</strong
-        >?
+        Delete {{ deletingRecord?.record_type }} record <strong>{{ deletingRecord?.name }}</strong>?
       </p>
     </ConfirmDialog>
 

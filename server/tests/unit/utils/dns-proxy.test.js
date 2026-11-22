@@ -16,8 +16,22 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { getDb } from '../../../src/db/init.js';
-import { getProxyStatus, resetStats, isProxyBypassed, loadBlocklist, loadAllowlist } from '../../../src/utils/dns-proxy.js';
-import { lookupCountry, getBlockedDelta, getAndResetCountryHits, getAndResetPerformanceMetrics, getAndResetBlocklistHits, evaluateInboundPolicy, noteAnswer } from '../../../src/dns-proxy/server.js';
+import {
+  getProxyStatus,
+  resetStats,
+  isProxyBypassed,
+  loadBlocklist,
+  loadAllowlist,
+} from '../../../src/utils/dns-proxy.js';
+import {
+  lookupCountry,
+  getBlockedDelta,
+  getAndResetCountryHits,
+  getAndResetPerformanceMetrics,
+  getAndResetBlocklistHits,
+  evaluateInboundPolicy,
+  noteAnswer,
+} from '../../../src/dns-proxy/server.js';
 import dnsPacket from 'dns-packet';
 import { edeOption } from '../../../src/utils/dns-ede.js';
 

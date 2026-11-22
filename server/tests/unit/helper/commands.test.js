@@ -147,7 +147,10 @@ function polkitDecides() {
   const rules = [];
   const Result = { YES: 'yes', NOT_HANDLED: 'not handled' };
   vm.runInNewContext(
-    fs.readFileSync(new URL('../../../../scripts/polkit/49-cidrella.rules', import.meta.url), 'utf8'),
+    fs.readFileSync(
+      new URL('../../../../scripts/polkit/49-cidrella.rules', import.meta.url),
+      'utf8',
+    ),
     { polkit: { addRule: (fn) => rules.push(fn), Result } },
   );
   return (user, id, details = {}) => {

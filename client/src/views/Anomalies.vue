@@ -152,10 +152,9 @@
             <div>
               <strong>Device fingerprint changed</strong>
               {{ timeAgo(store.fingerprintChanges[0].changed_at) }} — previously identified as
-              <b>{{ store.fingerprintChanges[0].previous_value }}</b
-              >, now <b>{{ store.fingerprintChanges[0].new_value }}</b
-              >. This can mean the physical device behind this address changed, including MAC
-              spoofing.
+              <b>{{ store.fingerprintChanges[0].previous_value }}</b>, now
+              <b>{{ store.fingerprintChanges[0].new_value }}</b>. This can mean the physical device
+              behind this address changed, including MAC spoofing.
             </div>
           </div>
 

@@ -312,10 +312,7 @@ import api from '../api/client.js';
 import { resolveHostname, placeholderForType } from '../utils/resolveHostname.js';
 import { networkOptionFills } from '@shared/dhcp-network-options.js';
 import { leaseSeconds } from '@shared/lease-time.js';
-import {
-  ADDRESS_LIFETIME_ROW,
-  leaseTimeSeconds,
-} from '../composables/useDhcpOptionCatalog.js';
+import { ADDRESS_LIFETIME_ROW, leaseTimeSeconds } from '../composables/useDhcpOptionCatalog.js';
 import { apiError, EMPTY_CELL } from '../utils/format.js';
 import DiscardPrompt from '../views/networks-workspace/dialogs/DiscardPrompt.vue';
 import { useDiscardGuard } from '../views/networks-workspace/composables/useDiscardGuard.js';

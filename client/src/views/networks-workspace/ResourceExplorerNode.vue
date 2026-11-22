@@ -27,14 +27,16 @@
       <span class="network-copy">
         <strong>
           <template v-for="(part, index) in highlight(node.name || node.cidr)" :key="index">
-            <mark v-if="part.match">{{ part.text }}</mark
-            ><template v-else>{{ part.text }}</template>
+            <mark v-if="part.match">{{ part.text }}</mark><template v-else>{{
+              part.text
+            }}</template>
           </template>
         </strong>
         <small>
           <template v-for="(part, index) in highlight(node.cidr)" :key="index">
-            <mark v-if="part.match">{{ part.text }}</mark
-            ><template v-else>{{ part.text }}</template>
+            <mark v-if="part.match">{{ part.text }}</mark><template v-else>{{
+              part.text
+            }}</template>
           </template>
           <template v-if="!node.allocatable"> · {{ coverageText }}</template>
         </small>

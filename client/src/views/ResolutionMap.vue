@@ -33,20 +33,16 @@
 
       <div class="hud stats" aria-label="Last minute">
         <div class="stat">
-          <b>{{ formatNumber(kinds.answer) }}</b
-          ><span>answers</span>
+          <b>{{ formatNumber(kinds.answer) }}</b><span>answers</span>
         </div>
         <div class="stat">
-          <b>{{ formatNumber(summary.countries) }}</b
-          ><span>countries</span>
+          <b>{{ formatNumber(summary.countries) }}</b><span>countries</span>
         </div>
         <div class="stat geo">
-          <b>{{ formatNumber(kinds.geoip) }}</b
-          ><span>GeoIP blocks</span>
+          <b>{{ formatNumber(kinds.geoip) }}</b><span>GeoIP blocks</span>
         </div>
         <div class="stat shield">
-          <b>{{ formatNumber(kinds.blocklist) }}</b
-          ><span>blocklist blocks</span>
+          <b>{{ formatNumber(kinds.blocklist) }}</b><span>blocklist blocks</span>
         </div>
         <small>last minute</small>
       </div>

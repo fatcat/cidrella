@@ -9,7 +9,8 @@ vi.mock('../../../src/backends/index.js', () => ({
 }));
 
 const { queryLogPath } = await import('../../../src/utils/query-log.js');
-const { writeQueryLine, setQueryLogPath, resetQueryLogWriter } = await import('../../../src/utils/query-log-writer.js');
+const { writeQueryLine, setQueryLogPath, resetQueryLogWriter } =
+  await import('../../../src/utils/query-log-writer.js');
 
 // What the proxy facade does with the path: hand it to the writer.
 const bindQueryLog = () => setQueryLogPath(queryLogPath());

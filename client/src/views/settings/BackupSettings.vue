@@ -95,8 +95,8 @@
           <small id="backup-name-help" class="field-help">
             Dates and times are UTC.
             <template v-if="!nameTemplateError && !nameTemplateUnique">
-              Without both <span class="mono" v-pre>{{date}}</span> and
-              <span class="mono" v-pre>{{time}}</span>, a counter (-00 to -FF) is added, so up to
+              Without both <span class="mono" v-pre>{{ date }}</span> and
+              <span class="mono" v-pre>{{ time }}</span>, a counter (-00 to -FF) is added, so up to
               256 backups can share this name.
             </template>
           </small>
@@ -207,8 +207,7 @@
       @confirm="doDeleteBackup"
     >
       <p>
-        Delete backup <strong>{{ deletingBackup?.filename }}</strong
-        >?
+        Delete backup <strong>{{ deletingBackup?.filename }}</strong>?
       </p>
     </ConfirmDialog>
 

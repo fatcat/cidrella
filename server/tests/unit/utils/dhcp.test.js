@@ -22,7 +22,8 @@ beforeAll(async () => {
   db = setup.db;
   tmpDir = setup.tmpDir;
   ({ syncDhcpDnsRecords, replaceLeases } = await import('../../../src/models/dhcp-lease.js'));
-  ({ OFFLINE_RETIREMENT_MS: WINDOW } = await import('../../../src/services/ip-lifecycle-service.js'));
+  ({ OFFLINE_RETIREMENT_MS: WINDOW } =
+    await import('../../../src/services/ip-lifecycle-service.js'));
 
   db.prepare(
     `
@@ -266,7 +267,9 @@ describe('lease history', () => {
     });
     const v6Row = () =>
       db
-        .prepare("SELECT id, expires_at, last_seen FROM dhcp_leases WHERE ip_address = '2001:db8:63::10'")
+        .prepare(
+          "SELECT id, expires_at, last_seen FROM dhcp_leases WHERE ip_address = '2001:db8:63::10'",
+        )
         .get();
     const expiry = inHours(1);
     replaceLeases(db, [v6(expiry), lease('10.0.1.64', 'aa:bb:cc:00:00:65', expiry)]);
@@ -311,8 +314,7 @@ describe('syncDhcpDnsRecords', () => {
       db.prepare("SELECT updated_at FROM dns_records WHERE name = 'stamped'").get().updated_at;
     const set = (when) =>
       db.prepare("UPDATE dns_records SET updated_at = ? WHERE name = 'stamped'").run(when);
-    const minutesAgo = (m) =>
-      db.prepare("SELECT datetime('now', ?) t").get(`-${m} minutes`).t;
+    const minutesAgo = (m) => db.prepare("SELECT datetime('now', ?) t").get(`-${m} minutes`).t;
 
     const recent = minutesAgo(10);
     set(recent);

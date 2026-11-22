@@ -313,8 +313,7 @@
       data-track="dialog-scan-network"
     >
       <p>
-        This will send ARP probes to all usable IPs in <strong>{{ subnet?.cidr }}</strong
-        >.
+        This will send ARP probes to all usable IPs in <strong>{{ subnet?.cidr }}</strong>.
       </p>
       <template #footer>
         <Button label="Cancel" severity="secondary" @click="showScanConfirm = false" />
@@ -403,8 +402,7 @@
       <p>This range overlaps with existing ranges:</p>
       <ul>
         <li v-for="o in overlapDetails" :key="o.id">
-          <strong>{{ o.type }}</strong
-          >: {{ o.start_ip }} – {{ o.end_ip }}
+          <strong>{{ o.type }}</strong>: {{ o.start_ip }} – {{ o.end_ip }}
         </li>
       </ul>
       <p>
@@ -428,8 +426,7 @@
       <p>The selected addresses overlap existing Network Range Types:</p>
       <ul>
         <li v-for="o in rangeTypeOverlapDetails" :key="o.id">
-          <strong>{{ o.type }}</strong
-          >: {{ o.start_ip }} – {{ o.end_ip }}
+          <strong>{{ o.type }}</strong>: {{ o.start_ip }} – {{ o.end_ip }}
         </li>
       </ul>
       <p>

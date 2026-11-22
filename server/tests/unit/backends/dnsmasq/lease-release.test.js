@@ -21,7 +21,11 @@ describe('routeInterfaceForIp', () => {
     execFileSync.mockReturnValue('10.0.1.23 via 10.0.1.1 dev eth0 src 10.0.1.2\n');
 
     expect(await routeInterfaceForIp('10.0.1.23')).toBe('eth0');
-    expect(execFileSync).toHaveBeenCalledWith('ip', ['route', 'get', '10.0.1.23'], expect.anything());
+    expect(execFileSync).toHaveBeenCalledWith(
+      'ip',
+      ['route', 'get', '10.0.1.23'],
+      expect.anything(),
+    );
   });
 
   it('returns null for invalid addresses and missing routes', async () => {
@@ -37,7 +41,8 @@ describe('releaseDnsmasqLease', () => {
   it('sends an exact DHCPRELEASE request without a shell', async () => {
     execFileSync.mockReturnValueOnce('10.0.1.23 dev br0 src 10.0.1.1\n').mockReturnValueOnce('');
 
-    expect(await releaseDnsmasqLease({
+    expect(
+      await releaseDnsmasqLease({
         ip: '10.0.1.23',
         mac: 'aa:bb:cc:dd:ee:23',
         clientId: 'client-23',
@@ -51,7 +56,8 @@ describe('releaseDnsmasqLease', () => {
   });
 
   it('skips unsafe identities and reports a missing utility', async () => {
-    expect(await releaseDnsmasqLease({
+    expect(
+      await releaseDnsmasqLease({
         ip: '10.0.1.23;reboot',
         mac: 'aa:bb:cc:dd:ee:23',
       }),
@@ -65,7 +71,8 @@ describe('releaseDnsmasqLease', () => {
         error.code = 'ENOENT';
         throw error;
       });
-    expect(await releaseDnsmasqLease({
+    expect(
+      await releaseDnsmasqLease({
         ip: '10.0.1.23',
         mac: 'aa:bb:cc:dd:ee:23',
       }),
@@ -80,14 +87,20 @@ describe('releaseDnsmasqLease for DHCPv6', () => {
     execFileSync
       .mockReturnValueOnce('fd00:a::1600 dev eth0 src fd00:a::2\n')
       .mockReturnValueOnce('');
-    expect(await releaseDnsmasqLease({
+    expect(
+      await releaseDnsmasqLease({
         ip: 'fd00:a::1600',
         dhcpVersion: 6,
         duid: '00:01:00:01:cc:dd:ee:ff:11:22',
         iaid: 12345,
       }),
     ).toEqual({ released: true, interface: 'eth0' });
-    expect(execFileSync).toHaveBeenNthCalledWith(1, 'ip', ['-6', 'route', 'get', 'fd00:a::1600'], expect.anything());
+    expect(execFileSync).toHaveBeenNthCalledWith(
+      1,
+      'ip',
+      ['-6', 'route', 'get', 'fd00:a::1600'],
+      expect.anything(),
+    );
     expect(execFileSync).toHaveBeenLastCalledWith(
       'dhcp_release6',
       [
@@ -111,7 +124,8 @@ describe('releaseDnsmasqLease for DHCPv6', () => {
     serverDuid.value = null;
     try {
       execFileSync.mockReturnValueOnce('fd00:a::1600 dev eth0 src fd00:a::2\n');
-      expect(await releaseDnsmasqLease({
+      expect(
+        await releaseDnsmasqLease({
           ip: 'fd00:a::1600',
           dhcpVersion: 6,
           duid: '00:01:00:01:cc:dd:ee:ff:11:22',

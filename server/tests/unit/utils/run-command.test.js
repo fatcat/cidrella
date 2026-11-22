@@ -9,7 +9,10 @@ const node = process.execPath;
 
 describe('runCommand', () => {
   it('resolves the output of a command that succeeds', async () => {
-    const { stdout, stderr } = await runCommand(node, ['-e', 'console.log("hi"); console.error("e")']);
+    const { stdout, stderr } = await runCommand(node, [
+      '-e',
+      'console.log("hi"); console.error("e")',
+    ]);
     expect(stdout).toBe('hi\n');
     expect(stderr).toBe('e\n');
   });

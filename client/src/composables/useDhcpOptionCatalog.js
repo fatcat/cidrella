@@ -41,7 +41,8 @@ export function useDhcpOptionCatalog(family) {
 
   const rows = computed(() => {
     const byGroup = new Map();
-    const entries = Number(family()) === 6 ? [ADDRESS_LIFETIME_ROW, ...catalog.value] : catalog.value;
+    const entries =
+      Number(family()) === 6 ? [ADDRESS_LIFETIME_ROW, ...catalog.value] : catalog.value;
     for (const opt of entries) {
       const name = opt.group || 'Common';
       if (!byGroup.has(name)) byGroup.set(name, []);

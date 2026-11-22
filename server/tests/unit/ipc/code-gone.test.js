@@ -94,34 +94,37 @@ describe('codeGone', () => {
   });
 });
 
-describe.each(['cidrella-dns-proxy', 'cidrella-helper'])('the %s unit and the exit status', (name) => {
-  const unit = fs.readFileSync(
-    new URL(`../../../../scripts/systemd/${name}.service`, import.meta.url),
-    'utf8',
-  );
-  const statuses = (key) =>
-    unit
-      .match(new RegExp(`^${key}=(.*)$`, 'm'))[1]
-      .trim()
-      .split(/\s+/)
-      .map(Number);
-
-  it('does not restart it when its code is gone', () => {
-    expect(statuses('RestartPreventExitStatus')).toContain(CODE_GONE_EXIT);
-  });
-
-  it('counts it as a clean stop, not a failed unit', () => {
-    expect(statuses('SuccessExitStatus')).toContain(CODE_GONE_EXIT);
-  });
-
-  it('still restarts on the exit the web app asks for', () => {
-    expect(statuses('RestartPreventExitStatus')).not.toContain(0);
-  });
-
-  it('does not start where the release has no such process', () => {
-    const process = name.replace('cidrella-', '');
-    expect(unit).toMatch(
-      new RegExp(`^ConditionPathExists=/opt/cidrella/server/src/${process}/main\\.js$`, 'm'),
+describe.each(['cidrella-dns-proxy', 'cidrella-helper'])(
+  'the %s unit and the exit status',
+  (name) => {
+    const unit = fs.readFileSync(
+      new URL(`../../../../scripts/systemd/${name}.service`, import.meta.url),
+      'utf8',
     );
-  });
-});
+    const statuses = (key) =>
+      unit
+        .match(new RegExp(`^${key}=(.*)$`, 'm'))[1]
+        .trim()
+        .split(/\s+/)
+        .map(Number);
+
+    it('does not restart it when its code is gone', () => {
+      expect(statuses('RestartPreventExitStatus')).toContain(CODE_GONE_EXIT);
+    });
+
+    it('counts it as a clean stop, not a failed unit', () => {
+      expect(statuses('SuccessExitStatus')).toContain(CODE_GONE_EXIT);
+    });
+
+    it('still restarts on the exit the web app asks for', () => {
+      expect(statuses('RestartPreventExitStatus')).not.toContain(0);
+    });
+
+    it('does not start where the release has no such process', () => {
+      const process = name.replace('cidrella-', '');
+      expect(unit).toMatch(
+        new RegExp(`^ConditionPathExists=/opt/cidrella/server/src/${process}/main\\.js$`, 'm'),
+      );
+    });
+  },
+);

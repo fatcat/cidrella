@@ -182,8 +182,7 @@
       @confirm="doDeleteRangeType"
     >
       <p>
-        Delete Network Range Type <strong>{{ deletingRangeType?.name }}</strong
-        >?
+        Delete Network Range Type <strong>{{ deletingRangeType?.name }}</strong>?
       </p>
     </ConfirmDialog>
   </div>

@@ -64,7 +64,12 @@ describe('the socket mode', () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'proxy-ipc-'));
     const socketPath = path.join(dir, 'h.sock');
     const before = process.umask();
-    const server = createIpcServer({ socketPath, name: 'helper', mode: 0o660, onMessage: () => {} });
+    const server = createIpcServer({
+      socketPath,
+      name: 'helper',
+      mode: 0o660,
+      onMessage: () => {},
+    });
     await server.listen();
     expect(fs.statSync(socketPath).mode & 0o777).toBe(0o660);
     expect(process.umask()).toBe(before);

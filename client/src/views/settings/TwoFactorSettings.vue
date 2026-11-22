@@ -6,9 +6,8 @@
     <div class="setting-group">
       <h3>Two-factor sign-in</h3>
       <p class="field-help">
-        Applies to <strong>{{ auth.user?.username }}</strong
-        >. With it on, signing in takes the password and a six-digit code from an authenticator app.
-        Each account sets up its own.
+        Applies to <strong>{{ auth.user?.username }}</strong>. With it on, signing in takes the
+        password and a six-digit code from an authenticator app. Each account sets up its own.
       </p>
 
       <div v-if="status === null" class="muted">Loading</div>

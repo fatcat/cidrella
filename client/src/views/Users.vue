@@ -330,8 +330,7 @@
       :style="{ width: '24rem' }"
     >
       <p>
-        Reset password for <strong>{{ resettingUser?.username }}</strong
-        >?
+        Reset password for <strong>{{ resettingUser?.username }}</strong>?
       </p>
       <p class="text-sm muted">
         A new random password will be generated. The user will be required to change it on next
@@ -357,8 +356,7 @@
       @confirm="deleteUser"
     >
       <p>
-        Delete user <strong>{{ deletingUser?.username }}</strong
-        >?
+        Delete user <strong>{{ deletingUser?.username }}</strong>?
       </p>
       <p class="text-sm muted">This action cannot be undone.</p>
     </ConfirmDialog>

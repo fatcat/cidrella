@@ -465,8 +465,7 @@
     @confirm="executeDeleteFolder"
   >
     <p>
-      Delete folder <strong>{{ deletingFolder?.name }}</strong
-      >?
+      Delete folder <strong>{{ deletingFolder?.name }}</strong>?
     </p>
     <p
       v-if="deletingFolder?.subnet_count > 0"
@@ -1088,8 +1087,7 @@
   >
     <template v-if="dialogNetworkData">
       <p>
-        Delete <strong>{{ dialogNetworkData.cidr }}</strong
-        >?
+        Delete <strong>{{ dialogNetworkData.cidr }}</strong>?
       </p>
       <p v-if="dialogNetworkData.child_count > 0" class="warn-text">
         This network has {{ dialogNetworkData.child_count }} children that will also be affected.
@@ -1115,8 +1113,7 @@
   >
     <template v-if="dialogNetworkData">
       <p>
-        Deallocate <strong>{{ dialogNetworkData.cidr }}</strong
-        >?
+        Deallocate <strong>{{ dialogNetworkData.cidr }}</strong>?
       </p>
       <p>The network block stays as unallocated space.</p>
       <DeallocationImpact :preview="deallocationPreview" :error="deallocationPreviewError" />
@@ -1144,8 +1141,7 @@
       <p class="merge-result-cidr">{{ mergePreview.merged_cidr }}</p>
       <div v-if="mergePreview.plan?.targets?.[0]?.gateway" class="merge-info">
         Gateway policy <strong>{{ mergePreview.plan.targets[0].gateway.policy }}</strong> resolves
-        to <strong>{{ mergePreview.plan.targets[0].gateway.address || 'no gateway' }}</strong
-        >.
+        to <strong>{{ mergePreview.plan.targets[0].gateway.address || 'no gateway' }}</strong>.
       </div>
       <div v-if="mergePreview.plan?.targets?.[0]?.scopes?.length" class="merge-info">
         The result will receive default DHCP pool

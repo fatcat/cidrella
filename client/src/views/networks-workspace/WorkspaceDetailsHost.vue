@@ -31,8 +31,7 @@
       <div class="details-status">
         <span class="detail-orb" :class="row.online || 'unknown'"><i :class="icon" /></span>
         <div>
-          <strong>{{ heading }}</strong
-          ><small>{{ subheading }}</small>
+          <strong>{{ heading }}</strong><small>{{ subheading }}</small>
         </div>
       </div>
       <dl>

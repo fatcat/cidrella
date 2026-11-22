@@ -326,8 +326,10 @@ describe('restore-time DHCP choice (stampRestoredSettings contract)', () => {
   it('marks the restored database as a new dataset, whatever it was called with', () => {
     const p = stagedDb('dataset.db', [['dhcp_enabled', 'true']]);
     const seed = new Database(p);
-    seed.exec("CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)");
-    seed.prepare("INSERT INTO sync_state VALUES ('dataset', 'from-the-backup'), ('epoch', '3')").run();
+    seed.exec('CREATE TABLE sync_state (key TEXT PRIMARY KEY, value TEXT NOT NULL)');
+    seed
+      .prepare("INSERT INTO sync_state VALUES ('dataset', 'from-the-backup'), ('epoch', '3')")
+      .run();
     seed.close();
     const state = () => {
       const db = new Database(p, { readonly: true });

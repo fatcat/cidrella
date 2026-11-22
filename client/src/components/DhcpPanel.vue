@@ -424,8 +424,7 @@
       @confirm="doDeleteScope"
     >
       <p>
-        Delete DHCP scope for <strong>{{ deletingScope?.subnet_cidr }}</strong
-        >?
+        Delete DHCP scope for <strong>{{ deletingScope?.subnet_cidr }}</strong>?
       </p>
       <p class="text-sm muted">The underlying DHCP Scope range will be kept.</p>
     </ConfirmDialog>

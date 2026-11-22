@@ -268,13 +268,13 @@ export default [
         'error',
         {
           selector:
-            "ImportDeclaration[source.value=/^(node:)?child_process$/] > ImportSpecifier[imported.name=/^(execSync|execFileSync|spawnSync)$/]",
+            'ImportDeclaration[source.value=/^(node:)?child_process$/] > ImportSpecifier[imported.name=/^(execSync|execFileSync|spawnSync)$/]',
           message:
             'A synchronous child process blocks the event loop DNS answers on. Use runCommand (utils/run-command.js).',
         },
         {
           selector:
-            "MemberExpression[property.name=/^(execSync|execFileSync|spawnSync)$/][object.name=/^(child_?[pP]rocess|cp)$/]",
+            'MemberExpression[property.name=/^(execSync|execFileSync|spawnSync)$/][object.name=/^(child_?[pP]rocess|cp)$/]',
           message:
             'A synchronous child process blocks the event loop DNS answers on. Use runCommand (utils/run-command.js).',
         },

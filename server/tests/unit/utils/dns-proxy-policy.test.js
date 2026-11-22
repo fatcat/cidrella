@@ -16,8 +16,18 @@ vi.mock('../../../src/db/duckdb.js', () => ({
 
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { getDb } from '../../../src/db/init.js';
-import { loadBlocklist, loadAllowlist, loadGeoipRules, loadGeoipAllowlist, loadFilteringOverrides } from '../../../src/utils/dns-proxy.js';
-import { evaluateInboundPolicy, evaluateResolvedPolicy, filteringBypass } from '../../../src/dns-proxy/server.js';
+import {
+  loadBlocklist,
+  loadAllowlist,
+  loadGeoipRules,
+  loadGeoipAllowlist,
+  loadFilteringOverrides,
+} from '../../../src/utils/dns-proxy.js';
+import {
+  evaluateInboundPolicy,
+  evaluateResolvedPolicy,
+  filteringBypass,
+} from '../../../src/dns-proxy/server.js';
 import { setHostFiltering } from '../../../src/models/filtering-exemption.js';
 
 let tmpDir;
