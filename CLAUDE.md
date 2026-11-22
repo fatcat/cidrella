@@ -70,7 +70,7 @@ DNSSEC through CIDRella's forwarder. Run it as root or `cidrella` on a host with
 repository), ports 5300, 5353, 5356 and 8053 free on loopback, and outbound DNS to
 `PDNS_LIVE_UPSTREAM` (9.9.9.9 by default).
 
-CI (`.github/workflows/ci.yml`) runs lint + both test suites + the client build + the
+CI (`.github/workflows/ci.yml`) runs lint + the format check + both test suites + the client build + the
 release-version guard on every push to main; CodeQL runs taint-flow security analysis.
 SonarQube Cloud (project `fatcat_cidrella`, configured in `sonar-project.properties`) runs in
 its own workflow, `.github/workflows/sonar.yml`: on a pull request to main and on demand (Run
@@ -487,7 +487,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `.vue` `.css`. Markdown, JSON, YAML and HTML are in `.prettierignore` so hand-formatted
   prose and machine-parsed files keep the shape their consumers expect, notably the
   `## vX.Y.Z — YYYY-MM-DD` headings that `build-releases-manifest.js` parses.
-  - Run `npm run format` to sweep, `npm run format:check` to verify.
+  - Run `npm run format` to sweep, `npm run format:check` to verify. CI runs the check
+    (added 2026-11-22, after 29 files had drifted with nothing checking them).
   - The reason for the original rule was blame, and that is handled by
     `.git-blame-ignore-revs` instead. Git uses it via
     `git config blame.ignoreRevsFile .git-blame-ignore-revs`, GitHub honors it with no
