@@ -141,6 +141,38 @@ again unless the maintainer reopens one.
 - **Fix:** Start no sync-facing work (the sync routes, controller jobs) on a boot whose
   carry-over failed, and say so on the Instances page.
 
+#### MEMBER-DHCP-SWITCH-WORDING-01: A member's refused DHCP switch gets the generic sentence
+
+**low**, seen on two hosts with 0.7.0-pre.1 (2026-11-22). `server/src/sync/write-gate.js` (the
+`estate` check of `PUT /api/interfaces/config`)
+
+- **What happens:** On a member, saving Interfaces with `dhcp_enabled: true` answers "This is a
+  member of <controller>. Make changes there." The interfaces in the same request are refused
+  with it. Nothing says the DHCP switch is the reason, or that Move DHCP here is the way.
+- **Fix:** A sentence of its own for that case: "The controller decides which instance serves
+  DHCP. Use Move DHCP here on its Instances page."
+
+#### PROMOTE-LAST-CONTACT-01: The dead controller's row says "just now" after a forced promotion
+
+**low**, seen on two hosts with 0.7.0-pre.1 (2026-11-22). `takeControllerRow` in
+`server/src/services/controller-promotion.js`
+
+- **What happens:** After Promote this instance, the old controller's row on the new
+  controller shows Last contact "just now" though it has not answered. The takeover stamps
+  `last_contact_at` so a later contact can be told from none (P6 fix), and the page shows the
+  stamp as a contact.
+- **Fix:** Keep the stamp in the takeover notice alone, or show "Not heard from since the
+  takeover" while the notice for that instance is pending.
+
+#### JOIN-SIGNIN-EARLY-01: The first-run join may open the sign-in page before the box is back
+
+**low**, seen once, not reproduced (2026-11-22). `client/src/views/FirstRun.vue` (join step)
+
+- **What happens:** After Join, a scripted sign-in sent the moment the sign-in page opened was
+  refused: the service restarts five seconds after it exits (systemd `RestartSec`). A person
+  typing a password is slower than that, so it may never show.
+- **Fix:** Check that the join step waits for `/api/health` as the promotion paths do.
+
 #### MEMBER-BACKUP-DELETE-01: A box that became a member cannot delete its old backup archives
 
 **low**, read in the code (2026-11-22). `server/src/sync/write-gate.js`
