@@ -17,31 +17,6 @@ SCENARIO_DESCRIPTION="Install CANDIDATE_VERSION, switch dnsmasq to PowerDNS + Ke
 
 # A password that satisfies the default policy, for the harness admin.
 HARNESS_PASSWORD="Harness-Stack-Switch-1"
-TOKEN_FILE=/tmp/stack-token
-
-api() {
-  local method="$1" path="$2" body="${3:-}"
-  local args=(-sk --max-time 180 -X "$method" -H "Authorization: Bearer $(cat "$TOKEN_FILE")")
-  [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -d "$body")
-  curl "${args[@]}" "$(cidrella_base_url)/api$path"
-}
-
-json_field() {
-  python3 -c 'import json,sys; v=json.load(sys.stdin)
-for k in sys.argv[1].split("."): v=v[k] if isinstance(v,dict) else v[int(k)]
-print(v)' "$1"
-}
-
-wait_healthy() {
-  local tries=0
-  rm -f /tmp/cidrella-base-url
-  until curl -skf "$(cidrella_base_url)/api/health" >/dev/null 2>&1; do
-    rm -f /tmp/cidrella-base-url
-    tries=$((tries + 1))
-    [ "$tries" -ge 30 ] && { echo "CIDRella never became healthy" >&2; return 1; }
-    sleep 2
-  done
-}
 
 # One A query under home.arpa, a reserved zone CIDRella always answers
 # locally, sent to the DNS backend's internal port on loopback (5353 behind
@@ -71,16 +46,7 @@ scenario_setup() {
   install_release_tag "$CANDIDATE_VERSION" || return 1
   wait_healthy || return 1
 
-  # Sign in as admin: reset to a one-time password, then change it.
-  local once token
-  once=$(cidrella-reset-password admin | awk '/New password:/{print $3}')
-  token=$(curl -sk -H 'Content-Type: application/json' \
-    -d "{\"username\":\"admin\",\"password\":\"$once\"}" \
-    "$(cidrella_base_url)/api/auth/login" | json_field token) || return 1
-  printf '%s' "$token" > "$TOKEN_FILE"
-  token=$(api POST /auth/change-password \
-    "{\"current_password\":\"$once\",\"new_password\":\"$HARNESS_PASSWORD\"}" | json_field token) || return 1
-  printf '%s' "$token" > "$TOKEN_FILE"
+  harness_sign_in "$HARNESS_PASSWORD"
 }
 
 scenario_run() {

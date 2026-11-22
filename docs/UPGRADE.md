@@ -1,6 +1,6 @@
 # CIDRella Upgrade and Recovery Guide
 
-This document covers installing, updating, rolling back, and recovering a CIDRella installation on a Debian/Ubuntu system (native or LXC).
+This document covers installing, updating, rolling back, and recovering a CIDRella installation on a Debian/Ubuntu system (native or LXC), and [running more than one instance](#running-more-than-one-instance).
 
 If CIDRella is down and you are reading this, jump to [Emergency Recovery](#emergency-recovery).
 
@@ -175,6 +175,24 @@ Operators can inspect the sanitized outcome and lifecycle cleanup counts at
 `GET /api/health/deep` from localhost or `GET /api/metrics/ip-lifecycle` with
 the `analytics:read` permission. These endpoints do not expose the report's IP,
 hostname, or record details.
+
+#### Instances in v0.7.0
+
+v0.7.0 lets CIDRella run as more than one instance. Upgrading a single box needs nothing
+from you: it becomes a controller with no members and looks as it did. **Settings > System >
+Instances** is new and lists the one box. No header chip appears until there is a member.
+
+`min_from` is 0.6.4. An older install updates to 0.6.4 first, then to 0.7.0.
+
+`cidrella-rollback` after the update restores the database from before it, which has no
+instances in it. If you need to roll back to 0.6.4, do it before you add a member, not after.
+A controller rolled back with members paired no longer knows them, and updating it to 0.7.0
+again does not bring them back. The members keep answering DNS from their copies meanwhile.
+The way out is to promote a member (see [Changing the controller](#changing-the-controller)),
+then reinstall the rolled-back box and join it as a member. `cidrella-rollback` does not warn
+you about this.
+
+To add a second box, read [Running more than one instance](#running-more-than-one-instance).
 
 ### Triggering from the API
 
@@ -602,6 +620,277 @@ Download it off-host before you start the upgrade. The rollback snapshot is stor
 
 ---
 
+## Running more than one instance
+
+From v0.7.0 several CIDRella installs can share one set of data. One is the **controller**:
+it owns the data and every change is made there. The others are **members**: each holds a
+copy that follows the controller within seconds, answers DNS from it, and keeps answering
+when the controller is away. One instance serves DHCP at a time, and it can be a member.
+
+Nothing here happens by itself. A person adds a member, moves DHCP and changes the
+controller. Read [Limits](#limits) before you rely on it.
+
+Everything below is done on **Settings > System > Instances**, as an administrator.
+
+### What you need
+
+- A second install of the **same version** as the controller, native or Docker. A join
+  between different versions is refused, with a message to update both to the same version.
+- A new install. Only a box whose first-run setup is not finished can join, and joining
+  replaces everything on it.
+- Every instance able to reach every other on its HTTPS port (443 or 8443, the port you
+  open the web UI on). Day to day the members call the controller. After a change of
+  controller the others call the new one, at the address it joined from. So no NAT between
+  them: the controller records the address a member's join came from.
+- The member on the client segments it is to serve. A DNS server has to be reachable by its
+  clients, and a DHCP server has to be on the clients' segments or have the relays pointed
+  at it. CIDRella cannot check this.
+
+Instances do not use the web certificate to trust each other. Each has its own sync
+certificate, made once and kept under `sync/` in the data directory, and a join token
+carries the controller's fingerprint. Replacing or resetting the web certificate breaks
+nothing.
+
+### Adding a member
+
+1. On the controller, click **Add member**. A join token appears. It works once and lasts
+   15 minutes.
+2. Install CIDRella on the new box and sign in. After you replace the one-time password,
+   the first run asks what to do with the box: choose **Join an existing CIDRella**.
+3. Enter the **Controller address** (the name or IP address you open the controller at),
+   its **Port** and the **Join token**, tick **Replace everything on this box with the
+   controller's data**, and click **Join**.
+
+The box takes a full copy, restarts as a member, and sends you to the sign-in page. Sign in
+with an account from the controller: the accounts that were on the box are gone.
+
+The controller's list now shows the member with its version, **Last contact** and **Sync**
+(Current, or how many changes behind). The header of every instance names its part:
+Controller, or Member of the controller's name with its sync state.
+
+To remove a member, use the trash button in its row. It stops receiving changes and keeps
+serving DNS from the copy it has, which goes out of date from then on, so switch it off or
+reinstall it. A member that serves DHCP cannot be removed: move DHCP away first.
+
+### What a member does and does not do
+
+A member:
+
+- Answers DNS from its copy, and keeps doing so while the controller is away.
+- Is handed to DHCP clients as a DNS server. Where a scope's DNS servers option names
+  CIDRella, clients get the controller and every member. Other resolvers you listed stay
+  in the list, and a scope pointed elsewhere is untouched.
+- Shows the same pages, read-only. A change is refused with a message naming the
+  controller.
+- Is signed in to with the controller's accounts, two-factor included, also while the
+  controller is down.
+- Sends the controller its query log, its performance figures and the clients it hears.
+  The Dashboard, Performance and Intelligence pages on the controller gain an instance
+  select once there is a member.
+- Keeps what is about the box itself, and lets you change it there: interfaces and ports,
+  the web certificate, which DNS and DHCP servers it runs, its own update, its logs.
+
+A member does not:
+
+- Take changes to networks, DNS, DHCP, users or shared settings. Make them on the controller.
+- Take backups. It does not own the data, its backup schedule is switched off when it
+  joins, and a manual backup or a restore is refused.
+- Scan, or run rogue detection. Those stay on the controller's host, so they see the
+  controller's segments only.
+- Get its clients scored by anomaly detection. Only the controller's own clients are.
+- Serve DHCP unless DHCP was moved to it. Its own DHCP switch under Interfaces is still
+  shown and decides nothing: switching it on there is refused.
+
+While the controller is away, a new DHCP client served by a member gets its lease as usual.
+Its DNS name appears when the controller is back, since the controller writes those records.
+
+### A member is as sensitive as the controller
+
+A member holds the whole copy: every network and record, and every account with its
+password hash and two-factor secret. That is what lets you sign in to it while the
+controller is down. Give it the same protection as the controller: the same network
+exposure, the same people with shell access, the same care with its disk and its snapshots.
+
+### DHCP on a member
+
+The **DHCP** column shows which instance serves. To move it, click **Move DHCP here** in the
+row of the instance that should take over, and confirm.
+
+- The instance that had DHCP stops and hands its leases over, and the new one starts with
+  them. DHCP stops for a moment. Clients keep their leases.
+- The move is refused unless the target runs the controller's version, was in contact in
+  the last 90 seconds and has caught up. Moving DHCP back to the controller also needs DHCP
+  switched on under its Interfaces settings.
+- The new instance must be where the clients can reach it: the same segments, or the relays
+  pointed at it.
+- A member that serves DHCP keeps serving while the controller is away.
+- DHCPv4 clients renew as usual. DHCPv6 clients rebind instead of renewing: the new server
+  has its own DUID.
+- Rogue DHCPv6 detection can flag the member that serves DHCP, because it answers from a
+  link-local address the controller does not know. Add it under authorized servers.
+
+**Start without the old leases.** While a move waits for the old instance to hand over, the
+page says **DHCP is moving**. If the old instance is gone for good it never will. After a
+minute the page offers **Start without the old leases**, which asks you to type the old
+instance's name. Know what it costs:
+
+- The new instance starts with the leases the controller last heard about. A lease the old
+  instance gave after that is unknown to the new one, so it may offer that address to
+  another client.
+- If the old instance is in fact still running, two DHCP servers answer on the network.
+
+Use it only when the old instance is switched off or cut off for good.
+
+### Updating instances
+
+Every instance must run the same version. Each one is updated by itself, the usual way
+(`cidrella-update`, **Install Update** on its own Updates page, or a new image for Docker).
+The Instances page on the controller lists each member's version.
+
+While a member and the controller run versions with different database schemas:
+
+- Sync pauses. The member's header and Instances page say **Sync is paused: this instance
+  and the controller run different versions**.
+- Both keep serving DNS, and whichever serves DHCP keeps serving it. The member answers
+  from the copy it had when sync paused, so changes made on the controller do not reach it.
+- **Move DHCP here** and **Make controller** are refused for that member, and a new box on
+  another version cannot join.
+- The member asks again every minute. Once both run the same version it takes a full copy
+  from the controller and carries on. Nothing is merged, and nothing needs restarting.
+
+CIDRella treats both orders alike: a mismatch pauses sync whichever side is newer. Update
+the controller first, then each member, one at a time, without a long gap. The reasons:
+
+- The members sit on the old copy while you check the new version on the controller, where
+  changes are made. If the update is bad you have changed one box, and the members still
+  answer from data the old version wrote.
+- The controller cannot hand DHCP or its role to a member on another version, so do not
+  leave the set split. Finish the members before you make changes they need.
+- Updating one member at a time keeps the others answering clients while each restarts.
+
+Do not change the controller or move DHCP in the middle of an update round.
+
+### Changing the controller
+
+There are two ways, for two situations.
+
+**Make controller: a planned change, both boxes up.** On the controller, click **Make
+controller** in the member's row.
+
+- The member must run the same version, be in contact and have caught up.
+- No changes can be made on either box until it is done, usually a few seconds. The member
+  takes over, and the old controller restarts as its member. You sign in again.
+- No change you made is lost: the member takes over only once its copy holds the handover
+  itself, and so everything before it. DHCP stays on the instance that serves it.
+- If the member stops answering partway, the old controller stays frozen until you click
+  **Cancel handover**. Cancelling can come too late: if the member had already taken over,
+  the old controller is replaced and you rejoin it (next section).
+
+**Promote this instance: the controller is gone for good.** On a member, click **Promote
+this instance**. It asks you to type the instance's name and shows when it last synced.
+
+- Do this only when the old controller is switched off or gone for good. The member asks
+  every other instance first, and the promotion is refused while one of them answers as the
+  controller.
+- The data is as of the last sync. Changes made on the old controller after that are not
+  on this box and do not come back by themselves.
+- A member that has never synced cannot be promoted.
+- The box restarts as the controller and you sign in again. The other members find it and
+  follow it within about a minute.
+- A member that joined after this box's last sync is unknown to it. Make a join token on
+  the new controller, then on that member's Instances page open **Join a controller again**
+  and enter it.
+- Analytics history is not part of the copy. Each instance keeps its own, and what the old
+  controller had gathered from the members stays on the old box.
+
+After either one:
+
+- **DHCP does not move with the controller role and is not started automatically.** It
+  stays on the instance that served it. If the dead controller was the one serving DHCP,
+  nobody serves it now: click **Move DHCP here** on an instance, wait for **Start without
+  the old leases**, and use it. To start it on the new controller itself, first switch DHCP
+  on under its Interfaces settings: it was off while the box was a member.
+- **Check the backup schedule on the new controller.** **Make controller** carries the old
+  controller's schedule over. After **Promote this instance** the schedule is off, since
+  the box was a member and the old controller could not be asked: the Instances page says
+  so until you set one under **Settings > Maintenance > Backup & Restore**. A controller
+  that handed its role over has its own schedule switched off.
+- Scanning and rogue detection now run from the new controller's host and see its segments.
+
+### An old controller that comes back
+
+A controller that was replaced by **Promote this instance** learns it when the new
+controller, or a member that follows it, reaches it. From then on:
+
+- It takes no changes and stops serving DHCP. It keeps answering DNS from what it has,
+  which is out of date.
+- Its header says **Replaced by** the new controller, and its Instances page says the same
+  with the time it stopped taking changes.
+- It saves a copy of its database as it was, in `snapshots/pre-demotion/` under the data
+  directory (`/var/lib/cidrella/snapshots/pre-demotion/` on a native install).
+- If it held changes the new controller never received, **Download report of changes not
+  received** gives you the list as a JSON file. Nothing merges them: enter the ones you
+  want again on the new controller, by hand.
+
+To bring it back in, make a join token on the new controller (**Add member**), then on the
+old box fill in **Rejoin as a member**: the new controller's address, port and the token.
+Everything on the box is replaced by the new controller's data, accounts included. Download
+the report first. The database copy stays where it is.
+
+If the instance that replaced it is gone (it was promoted by mistake and then lost, say),
+**Take the controller back** on the old box makes it the controller again. It is refused
+while any other instance answers as the controller. Changes made on the other one in the
+meantime are lost unless that box comes back.
+
+### Backups and restore
+
+- **Take backups on the controller.** It owns the data. Members take none, and neither
+  does a controller that was replaced or is in the middle of a handover.
+- **A restore is done on the controller.** Every member then takes a full copy of what was
+  restored. There is nothing to restore on a member: if its copy is in doubt, it is
+  replaced from the controller.
+- **A restore keeps the box's present instance list, epoch and DHCP assignment.** A backup
+  brings back the data as it was. It does not bring back who the controller was, which
+  instances existed or which one served DHCP when the backup was taken.
+- **A dead controller is recovered by promoting a member, not by restoring a backup onto a
+  new box.** A backup does not carry the box's sync identity, so a new box restored from it
+  is not the controller the members know, and the members hold newer data than any backup.
+  Promote a member, then install the replacement box and join it as a member.
+- A backup is still your way back from a mistake: a deleted zone, a bad import. Restore it
+  on the controller.
+- Keep backups off the host, as before.
+
+### Limits
+
+**There is no automatic failover.** When the controller dies, the members keep serving DNS
+and the instance that serves DHCP keeps serving it. Nobody takes changes until you promote
+a member, and if the dead box served DHCP nobody serves that until you start it elsewhere.
+
+Two situations end with two controllers, and CIDRella cannot close either without a third
+party to break the tie, which it does not have.
+
+1. **The old controller is alive, but only the clients can reach it.** You promote a member
+   because the controller looks dead from where you sit. It is in fact running, cut off
+   from the other instances but not from its clients. Until an instance reaches it, it
+   keeps taking changes, and keeps serving DHCP if it did. If you also started DHCP
+   elsewhere with **Start without the old leases**, two DHCP servers answer.
+   *What to do:* before you promote, make sure the old controller is off. Power it down or
+   unplug it; do not go by the web UI not loading. If you find it running afterwards, let
+   it reach the new controller or shut it down. Once it hears of the new controller it
+   stops and writes its report.
+2. **Two members are promoted while they cannot reach each other.** A promotion is refused
+   when another instance already answers as the controller, but two members cut off from
+   each other cannot know. Both become controllers and neither gives way to the other.
+   *What to do:* promote from one place, one person, one member. If it happens anyway,
+   choose the one to keep. Nothing on the other's pages rejoins it: reinstall it and join
+   it as a new member, after copying off anything changed only there.
+
+A planned change with **Make controller** has a smaller gap of the same kind: a handover
+cancelled at the moment the member takes over leaves the old controller replaced. It then
+says so and offers **Rejoin as a member**, so nothing is left in doubt.
+
+---
+
 ## DNS chicken-and-egg
 
 Many CIDRella deployments use CIDRella itself as the host's DNS resolver via `/etc/resolv.conf` pointing at `127.0.0.1` or the host's own IP. This creates a problem during updates: if CIDRella is stopped, the host cannot resolve names, including `registry.npmjs.org`, `api.github.com`, or `npm.duckdb.org`.
@@ -736,6 +1025,8 @@ The minisign signature on the downloaded tarball does not match the public key a
 | `/var/lib/cidrella/analytics.duckdb` | DuckDB analytics database (DNS queries, metrics) |
 | `/var/lib/cidrella/snapshots/pre-update/` | Database snapshot taken by last update (restored by `cidrella-rollback`) |
 | `/var/lib/cidrella/snapshots/pre-restore/` | Safety snapshot taken before last backup restore (manual recovery only) |
+| `/var/lib/cidrella/snapshots/pre-demotion/` | Copy of the database a controller saved when another instance replaced it (v0.7.0+) |
+| `/var/lib/cidrella/sync/` | This instance's sync certificate and, on a member, its credential (v0.7.0+). Not in backups. |
 | `/var/lib/cidrella/backups/` | Daily full backups |
 | `/var/lib/cidrella/dnsmasq/` | dnsmasq config, hosts files, lease file |
 | `/var/lib/cidrella/update-status.json` | Current update progress (read by UI) |

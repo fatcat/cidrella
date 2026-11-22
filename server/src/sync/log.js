@@ -126,12 +126,15 @@ export function dropSyncTriggers(db) {
   for (const { name } of installedTriggers(db)) db.exec(`DROP TRIGGER ${name}`);
 }
 
+/** Whether `db` has sync_state at all. A database from before instances (a 0.6.x backup) has not. */
+export const hasSyncState = (db) =>
+  Boolean(
+    db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_state'").get(),
+  );
+
 /** The mode stored in `db`. A database from before instances is a controller's. */
 export function storedMode(db) {
-  const hasState = db
-    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_state'")
-    .get();
-  return hasState && readSyncState(db, 'mode') === MEMBER ? MEMBER : CONTROLLER;
+  return hasSyncState(db) && readSyncState(db, 'mode') === MEMBER ? MEMBER : CONTROLLER;
 }
 
 /**
@@ -216,10 +219,7 @@ export function startNewDataset(db) {
 
 /** Make `db` start a new dataset at its next boot. A restore does this to the database it brings in. */
 export function forgetDataset(db) {
-  const hasState = db
-    .prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'sync_state'")
-    .get();
-  if (hasState) db.prepare("DELETE FROM sync_state WHERE key = 'dataset'").run();
+  if (hasSyncState(db)) db.prepare("DELETE FROM sync_state WHERE key = 'dataset'").run();
 }
 
 /**

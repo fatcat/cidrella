@@ -3,7 +3,6 @@
  * sees and manages them (docs/REDUNDANCY-PLAN.md, section 8).
  */
 import { Router } from 'express';
-import fs from 'fs';
 import path from 'path';
 import { getDb } from '../db/init.js';
 import { requireRole } from '../auth/roles.js';
@@ -13,9 +12,10 @@ import { APP_VERSION } from '../utils/version.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { syncFingerprint } from '../sync/identity.js';
 import { syncHead } from '../sync/log.js';
-import { controllerOf, instanceMode, isFenced, isMember, writeRefusal } from '../sync/mode.js';
+import { controllerOf, instanceMode, isMember, writeRefusal } from '../sync/mode.js';
 import { joinController, JoinError, memberSyncStatus } from '../sync/member.js';
 import {
+  backupsOff,
   cancelHandover,
   divergenceReportPath,
   ensurePreDemotionSnapshot,
@@ -85,6 +85,9 @@ router.get('/', (req, res) => {
     // A handover of the controller that is not finished, and whether this
     // box was replaced as the controller.
     promotion: promotionView(db),
+    // Nobody takes scheduled backups: the role changed hands and the
+    // schedule did not come along.
+    backups_off: backupsOff(db),
     instances: listInstances(db).map((row) => ({
       id: row.id,
       instance_id: row.instance_id,
@@ -172,7 +175,11 @@ router.post('/promote/cancel', (req, res) => {
 });
 
 // POST /api/instances/promote-self { confirm: true }: on a member, take over
-// as the controller without the old one's help. It is dead or cut off.
+// as the controller without the old one's help. It is dead or cut off. On a
+// controller that was replaced, take the role back: the instance that took
+// over is gone. Refused (`controller_reachable`) while any instance answers
+// as a controller. Answers which instance DHCP is named on and whether it
+// answered: `dhcp: { active_instance_id, name, reachable }`.
 router.post('/promote-self', async (req, res) => {
   if (req.body?.confirm !== true) {
     return res.status(400).json({
@@ -182,22 +189,27 @@ router.post('/promote-self', async (req, res) => {
   }
   try {
     // Recorded by promoteSelf, in the transaction that makes this box the controller.
-    await promoteSelf(getDb());
-    res.json({ restarting: true });
+    const { dhcp } = await promoteSelf(getDb());
+    res.json({ restarting: true, dhcp });
   } catch (err) {
     sendPromotionError(res, err);
   }
 });
 
-// POST /api/instances/rejoin { address, port, token }: on a controller that
-// was replaced, join the new controller. Everything here is replaced by the
-// new controller's data; the copy saved when this box was fenced stays.
+// POST /api/instances/rejoin { address, port, token }: on a member, join
+// another controller. A controller that was replaced joins the new one this
+// way, and so does a member the new controller never heard of (it joined the
+// old one after the new one's last sync, so its credential opens nothing
+// there). Everything here is replaced by that controller's data; a copy of
+// the database is kept first (ensurePreDemotionSnapshot).
 let rejoining = false;
 router.post('/rejoin', async (req, res) => {
   const db = getDb();
-  if (!isFenced(db)) {
+  if (!isMember(db)) {
     return res.status(409).json({
-      error: 'Only a controller that was replaced joins this way.',
+      error:
+        'This instance is the controller. Hand the role to a member first: ' +
+        'only a member joins another controller.',
       code: 'not_fenced',
     });
   }
@@ -248,8 +260,9 @@ router.post('/rejoin', async (req, res) => {
 // GET /api/instances/divergence-report: what this box held that the
 // controller which replaced it never received, as a file.
 router.get('/divergence-report', (req, res) => {
+  // The newest one: an earlier fencing's report stays in DATA_DIR/sync.
   const file = divergenceReportPath(getDb());
-  if (!fs.existsSync(file)) {
+  if (!file) {
     return res.status(404).json({ error: 'There is no divergence report on this instance.' });
   }
   res.download(file, 'cidrella-divergence-report.json');

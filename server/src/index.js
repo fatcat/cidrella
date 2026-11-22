@@ -282,9 +282,11 @@ async function main() {
   // Initialize database
   await initDb(DATA_DIR);
 
-  // A restore parks what the restoring operator must not lose (their
-  // two-factor enrolment) in the restored database; apply it now that the
-  // schema is current. No-op on every boot that did not follow a restore.
+  // A restore parks what the backup must not replace (the operator's
+  // two-factor enrolment; this box's instances, epoch and DHCP assignment,
+  // sync/restore.js) in the restored database; apply it now that the schema
+  // is current, before anything asks which instance this is. No-op on every
+  // boot that did not follow a restore.
   try {
     applyRestoreCarryover(getDb());
   } catch (err) {
@@ -410,10 +412,15 @@ async function main() {
   // 3. Start schedulers
   startBlocklistScheduler();
   startGeoipScheduler();
+  // update.sh's probe runs on a scratch data directory, which makes it a new
+  // single box with nobody to talk to. Should it ever be pointed at a copy
+  // of real data, it still speaks to no other instance: no sync, no upload,
+  // no takeover, no notice (DHCP following is held back above).
+  const speaks = !isPreflightBoot();
   if (member) {
     // A controller that was replaced follows nobody until it is joined to
     // the new one: it has no controller to ask and nothing to send.
-    if (!isFenced(getDb())) {
+    if (speaks && !isFenced(getDb())) {
       // A member the controller names for a handover takes over once it has
       // everything (services/controller-promotion.js).
       startMemberSync(getDb(), { onCurrent: takeOverIfNamed });
@@ -422,7 +429,7 @@ async function main() {
   } else {
     startControllerJobs(getDb());
     // A box that took over as the controller tells the one it replaced.
-    startTakeoverNotices(getDb());
+    if (speaks) startTakeoverNotices(getDb());
   }
 
   // Start MAC vendor database auto-refresh (every 24h)

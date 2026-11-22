@@ -4,11 +4,25 @@
  * in sync_instances. A member answering instead of a controller says so, and
  * so does a controller that has been replaced.
  */
+import path from 'path';
 import { getDb } from '../db/init.js';
 import { memberByInstanceId, memberForCredential } from '../models/sync-instance.js';
-import { CONTROLLER_HEADER, EPOCH_HEADER, FENCED, NOT_CONTROLLER } from './controller-call.js';
+import {
+  CONTROLLER_HEADER,
+  EPOCH_HEADER,
+  EPOCH_LEAP,
+  FENCED,
+  NOT_CONTROLLER,
+} from './controller-call.js';
+import { syncFingerprint } from './identity.js';
+import { IDENTITY_HEADER, provenFingerprint } from './identity-proof.js';
 import { syncStatus } from './log.js';
 import { isFenced, isMember } from './mode.js';
+import { handoverFreeze } from './promotion-state.js';
+
+// How long a controller frozen for a handover waits for the member it named
+// to say it took over, before another instance's word for it is enough.
+const HANDOVER_WAIT_MS = 5 * 60_000;
 
 /** Everything but `hello` under /api/sync comes from the controller. */
 export function controllerOnly(req, res, next) {
@@ -47,6 +61,39 @@ export function requireMember(req, res, next) {
   next();
 }
 
+/**
+ * The caller is an instance on the list, by its credential or, when it sends
+ * none, by its sync identity (sync/identity-proof.js). The second is how a
+ * controller that was replaced asks who the controller is: `req.listed` is
+ * its row, and there is no `req.member`, so nothing a member may do is open
+ * to it. For `GET /api/sync/hello` and `POST /api/sync/fence`: telling a
+ * controller of a higher epoch is what any listed instance may do.
+ */
+export function requireListed(req, res, next) {
+  const proof = req.headers[IDENTITY_HEADER];
+  if (req.headers.authorization || !proof) return requireMember(req, res, next);
+  const db = getDb();
+  let fingerprint = null;
+  try {
+    fingerprint = provenFingerprint(proof, syncFingerprint(path.dirname(db.name)));
+  } catch {
+    /* this box has no sync identity to be asked by */
+  }
+  const listed = fingerprint
+    ? db
+        .prepare('SELECT id, instance_id, name FROM sync_instances WHERE fingerprint = ?')
+        .get(fingerprint)
+    : null;
+  if (!listed) {
+    return res.status(401).json({
+      error: 'This instance is not on the list of this estate.',
+      code: 'unknown_member',
+    });
+  }
+  req.listed = listed;
+  next();
+}
+
 /** The epoch a request names, or null. */
 export function epochOfRequest(req) {
   const epoch = Number(req.headers[EPOCH_HEADER]);
@@ -59,7 +106,16 @@ export function epochOfRequest(req) {
  * higher one means another instance has taken over: this box stops being the
  * controller here and now (`fence`, services/controller-promotion.js) and
  * says so. The request names the instance that took over, which may not be
- * the caller: a member that follows it is enough to fence the old one.
+ * the caller: a member that follows it is enough to fence the old one. The
+ * caller is known by its credential and the named instance only by the
+ * caller's word, so both are handed to `fence`.
+ *
+ * Two requests are not acted on. One naming an epoch no promotion could have
+ * reached is refused. And while this controller is frozen for a handover, a
+ * request that names the member it is handing over to is told to ask around:
+ * that member has taken over and its own notice, which carries the
+ * credential this box comes back with, is on its way. After
+ * HANDOVER_WAIT_MS the caller's word is enough.
  */
 export function epochGate(fence) {
   return (req, res, next) => {
@@ -68,9 +124,28 @@ export function epochGate(fence) {
     res.set(EPOCH_HEADER, String(own));
     const theirs = epochOfRequest(req);
     if (theirs === null || theirs <= own) return next();
+    if (theirs > own + EPOCH_LEAP) {
+      return res.status(400).json({
+        error: `Epoch ${theirs} is too far above this controller’s (${own}) to be true.`,
+        code: 'bad_request',
+      });
+    }
     // The caller follows the instance that took over, and names it.
-    const by = memberByInstanceId(db, String(req.headers[CONTROLLER_HEADER] || ''));
-    fence(db, { epoch: theirs, by });
+    const named = String(req.headers[CONTROLLER_HEADER] || '');
+    const freeze = handoverFreeze(db);
+    if (
+      freeze?.to_instance_id === named &&
+      Date.now() - Date.parse(freeze.since) < HANDOVER_WAIT_MS
+    ) {
+      return res.status(409).json({
+        error:
+          `This controller is handing over to ${freeze.to_name || 'another instance'} ` +
+          'and waits to hear from it.',
+        code: NOT_CONTROLLER,
+      });
+    }
+    const by = memberByInstanceId(db, named);
+    fence(db, { epoch: theirs, by, toldBy: req.member });
     res.status(409).json({
       error:
         `${by?.name || 'Another instance'} is the controller at a newer epoch: ` +

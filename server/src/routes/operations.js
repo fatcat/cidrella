@@ -36,6 +36,7 @@ import { DATA_DIR } from '../config/defaults.js';
 const APP_ERROR_CODES = new Set([
   'BACKUP_INCOMPATIBLE',
   'BACKUP_IN_PROGRESS',
+  'BACKUP_NOT_HERE',
   'BACKUP_TOO_LARGE',
   'BACKUP_TOO_MANY_ENTRIES',
   'INVALID_DATABASE_FILE',
@@ -188,6 +189,10 @@ router.post('/backup', async (req, res) => {
     res.status(201).json(backup);
   } catch (err) {
     if (err.code === 'BACKUP_IN_PROGRESS') return res.status(409).json({ error: err.message });
+    // The write gate answers first; this is the same answer should it not.
+    if (err.code === 'BACKUP_NOT_HERE') {
+      return res.status(409).json({ error: err.message, code: err.reason });
+    }
     res.status(500).json({ error: err.message });
   }
 });
@@ -347,8 +352,13 @@ router.post('/restore', (req, res) => {
         fs.unlinkSync(tmpPath);
       } catch {}
       let status = 400;
-      if (err.code === 'BACKUP_INCOMPATIBLE' || err.code === 'BACKUP_IN_PROGRESS') status = 409;
-      else if (err.code === 'BACKUP_TOO_LARGE') status = 507;
+      if (
+        err.code === 'BACKUP_INCOMPATIBLE' ||
+        err.code === 'BACKUP_IN_PROGRESS' ||
+        err.code === 'BACKUP_NOT_HERE'
+      ) {
+        status = 409;
+      } else if (err.code === 'BACKUP_TOO_LARGE') status = 507;
       else if (err.code === 'BACKUP_TOO_MANY_ENTRIES') status = 413;
       else if (err.code === 'INVALID_DATABASE_FILE') status = 400;
       // Sanitize the response body, subprocess errors from tar/gzip AND

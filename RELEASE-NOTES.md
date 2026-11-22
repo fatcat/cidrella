@@ -19,12 +19,18 @@ members that keep serving DNS and DHCP from a synced copy.
 
 ### Known issues
 
-- **In development.** Members, DHCP on a member and promotion are built; version skew, restore
-  on a controller with members and the upgrade guide are not done.
+- **Not yet run on two separate hosts.** Every check so far used two instances on one machine,
+  with no real DHCP server under a move.
+- A box that is already set up cannot become a member without a reinstall, unless it is a
+  controller that was replaced. That includes a controller rolled back below 0.7.0: its members
+  no longer know it. See docs/UPGRADE.md.
+- A member updated to a newer version before its controller cannot be promoted until it has
+  synced again, so update the controller first.
 - After a member is promoted because the controller died, nobody serves DHCP if the old
   controller did. Move DHCP to an instance and use **Start without the old leases**.
-- A promoted member takes no backups until you switch them on: it was told not to when it
-  joined. The same holds for a controller that handed its role over.
+- A member promoted because the controller died takes no backups until you switch them on: it
+  was told not to when it joined. The Instances page says so. A planned handover carries the
+  backup schedule over.
 - An old controller that clients can still reach, but the other instances cannot, keeps
   taking changes and serving DHCP after a forced promotion until one of them reaches it.
 - After DHCP moves to another instance, DHCPv6 clients rebind instead of renewing: the new
@@ -67,7 +73,14 @@ members that keep serving DNS and DHCP from a synced copy.
 - **An old controller that comes back** stops taking changes when it hears of the new one, and
   says so on its Instances page and in the header. It keeps a copy of its database and a report
   of the changes the new controller never received, both of which you can keep, and offers
-  **Rejoin as a member** with a join token from the new controller.
+  **Rejoin as a member** with a join token from the new controller. If the instance that
+  replaced it is gone, **Take the controller back** undoes the replacement. A promotion is
+  refused while another instance answers as the controller.
+- **A member that lost its controller** (the new one does not know it) can join again from its
+  Instances page with a join token, without a reinstall.
+- **Backups and restore belong to the controller.** A member takes none. A restore brings the
+  data back and keeps the instances, which then each take a full copy. To replace a dead
+  controller, promote a member; do not restore its backup onto a new box.
 - **DHCP clients are given every instance.** Where a scope's DNS servers option names
   CIDRella, clients get the controller and every member, so they keep resolving when one is
   away. Other resolvers you listed stay in the list, and a scope pointed elsewhere is untouched.

@@ -70,13 +70,27 @@ describe('on a member', () => {
       ['POST', '/api/auth/change-password'],
       ['PUT', '/api/auth/preferences'],
       ['POST', '/api/auth/totp/enable'],
-      ['POST', '/api/operations/restore'],
+      ['DELETE', '/api/operations/backups/3'],
       ['POST', '/api/dhcp/scopes/bulk-options/preview'],
       ['POST', '/api/no/such/route'],
     ]) {
       const res = await send(method, path, {});
       expect(res.status, `${method} ${path}`).toBe(409);
       expect(res.body).toEqual(REFUSAL);
+    }
+  });
+
+  it('refuses a backup and a restore with where they are done instead', async () => {
+    makeMember(db);
+    for (const path of ['/api/operations/backup', '/api/operations/restore']) {
+      const res = await send('POST', path, {});
+      expect(res.status, path).toBe(409);
+      expect(res.body).toEqual({
+        code: 'member_read_only',
+        error:
+          'This is a member of ctl-1: it holds a copy of the data, not the record. ' +
+          'Take backups and restore them on ctl-1.',
+      });
     }
   });
 

@@ -173,7 +173,7 @@ beforeAll(async () => {
   enableIpv6(controller);
   upsertSetting(controller, 'dhcp_enabled', 'true');
   identity = ensureSyncIdentity(controllerDir);
-  port = await freePort();
+  port = await freePort({ tcp: true });
   ensureOwnInstance(controller, {
     fingerprint: identity.fingerprint,
     port,
@@ -284,6 +284,9 @@ describe('moving DHCP from the controller to a member', () => {
     const older = await move(a.row);
     expect(older.status).toBe(409);
     expect(older.body.code).toBe('schema_mismatch');
+    expect(older.body.error).toMatch(
+      /^member-a runs .+, not the controller's\. Update it to the same version first\.$/,
+    );
     schema.run(LATEST_MIGRATION, a.row);
 
     expect(dhcpState(controller).term).toBe(0);
@@ -618,7 +621,11 @@ describe('a lease report', () => {
     const pinned = JSON.parse(
       a.db.prepare("SELECT value FROM sync_state WHERE key = 'controller'").get().value,
     );
-    writeSyncState(a.db, 'controller', JSON.stringify({ ...pinned, port: await freePort() }));
+    writeSyncState(
+      a.db,
+      'controller',
+      JSON.stringify({ ...pinned, port: await freePort({ tcp: true }) }),
+    );
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {});
     const retry = vi.fn();
     const forget = onLeaseReportRetry(retry);

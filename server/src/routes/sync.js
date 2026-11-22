@@ -18,9 +18,10 @@ import { exportChanges, needsSnapshot } from '../sync/changes.js';
 import { syncHead, syncStatus } from '../sync/log.js';
 import { instanceMode, isFenced, isMember } from '../sync/mode.js';
 import { epochBase } from '../sync/promotion-state.js';
+import { EPOCH_HEADER, MODE_HEADER } from '../sync/controller-call.js';
 import { fenceSelf, receiveFence, receiveHandoverDone } from '../services/controller-promotion.js';
 import { takeOutboxRows } from '../sync/outbox-intake.js';
-import { controllerOnly, epochGate, requireMember } from '../sync/require-member.js';
+import { controllerOnly, epochGate, requireListed, requireMember } from '../sync/require-member.js';
 import { acceptLeaseReport } from '../sync/lease-intake.js';
 import {
   LEASE_REPORT_TYPE,
@@ -29,7 +30,7 @@ import {
   unpackReport,
 } from '../sync/lease-wire.js';
 import { followDhcp } from '../services/dhcp-follow.js';
-import { clearHandover, dhcpState, dhcpStateChanged } from '../sync/dhcp-active.js';
+import { clearHandover, dhcpState, dhcpStateChanged, servesDhcpHere } from '../sync/dhcp-active.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
 import {
   addMember,
@@ -60,22 +61,50 @@ const joinLimiter = rateLimit({
 const fencing = epochGate(fenceSelf);
 const fencingOnController = (req, res, next) => (isMember() ? next() : fencing(req, res, next));
 
+// The fencing rule goes by a credential. A caller known by its sync identity
+// alone (a controller that was replaced, asking who the controller is) has
+// no say in who the controller is.
+const fencingByCredential = (req, res, next) =>
+  req.member ? fencingOnController(req, res, next) : next();
+
+// Said on every answer to hello, to a caller this box does not know too
+// (MODE_HEADER in sync/controller-call.js).
+function sayMode(req, res, next) {
+  const db = getDb();
+  res.set(MODE_HEADER, isFenced(db) ? 'fenced' : instanceMode());
+  res.set(EPOCH_HEADER, String(syncStatus(db).epoch));
+  next();
+}
+
 /**
  * GET /api/sync/hello: who this instance is and whether it is the controller,
- * `{ instance_id, name, mode, epoch, dataset }` with `mode` one of
- * 'controller', 'member' or 'fenced'. Answered in every mode, to a caller
- * that presents a credential of this estate (requireMember says how a member
- * checks one).
+ * `{ instance_id, name, mode, epoch, dataset, dhcp }` with `mode` one of
+ * 'controller', 'member' or 'fenced'. `dhcp` is which instance serves DHCP as
+ * this box's copy has it (sync/dhcp-active.js): `{ active_instance_id, term,
+ * here, handover_from, handover_since }`, `here` whether this box answers
+ * DHCP now. An instance about to take over as the controller reads it, since
+ * its own copy may be behind. Answered in every mode, to a caller that
+ * presents a credential of this estate (requireMember says how a member
+ * checks one) or proves it is an instance on the list (requireListed). Any
+ * other caller is refused, and told the mode and the epoch in headers.
  */
-router.get('/hello', requireMember, fencingOnController, (req, res) => {
+router.get('/hello', sayMode, requireListed, fencingByCredential, (req, res) => {
   const db = getDb();
   const status = syncStatus(db);
+  const dhcp = dhcpState(db);
   res.json({
     instance_id: ownInstanceId(db),
     name: ownInstanceName(db),
     mode: isFenced(db) ? 'fenced' : instanceMode(),
     epoch: status.epoch,
     dataset: status.dataset,
+    dhcp: {
+      active_instance_id: dhcp.active,
+      term: dhcp.term,
+      here: servesDhcpHere(db),
+      handover_from: dhcp.handoverFrom,
+      handover_since: dhcp.handoverSince,
+    },
   });
 });
 
@@ -87,8 +116,11 @@ const notice = (body) => ({
 
 // POST /api/sync/fence { epoch }: a member took over without this
 // controller's help and says so. Recorded by receiveFence.
-router.post('/fence', requireMember, (req, res) => {
-  const outcome = receiveFence(getDb(), req.member, notice(req.body).epoch);
+// From a member by its credential, or from an instance on the list that proves
+// which one it is (a replaced controller that took the role back holds no
+// credential of this box's).
+router.post('/fence', requireListed, (req, res) => {
+  const outcome = receiveFence(getDb(), req.member || req.listed, notice(req.body).epoch);
   res.status(outcome.status).json(outcome.body);
 });
 
@@ -181,16 +213,20 @@ router.use(requireMember, fencing);
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * GET /api/sync/changes?dataset=&epoch=&since=&schema=&version=&wait=
+ * GET /api/sync/changes?dataset=&epoch=&from=&since=&schema=&version=&wait=
  * What the member is missing, gzip, as sync/changes.js writes it. With `wait`
  * and nothing to send, holds the request until something changes or the wait
  * runs out (204).
  *
- * `epoch` is the epoch the member's copy is from. A cursor means the same
- * thing here only when that is this controller's epoch, or the one before it
- * with the cursor no further than where this box took over (`epoch_base`):
- * past that point the member holds changes of the old controller that this
- * one never had. Any other copy is sent everything.
+ * `epoch` is the epoch the member's copy is from and `from` the instance
+ * whose log it was taken from. A cursor means the same thing here only in
+ * two cases: the copy is of this controller's own log at its own epoch, or
+ * it is of the log this controller carried on from (`epoch_base`: the
+ * controller it took over from, at that controller's epoch) with the cursor
+ * no further than where this box took over. Past that point the member holds
+ * changes of the old controller that this one never had. An epoch number
+ * alone is not enough: two members promoted at once reach the same number
+ * with different logs. Any other copy is sent everything.
  */
 router.get('/changes', async (req, res) => {
   const db = getDb();
@@ -204,10 +240,17 @@ router.get('/changes', async (req, res) => {
   }
   // A member from before the epoch was sent has only ever followed this one.
   const lineage = req.query.epoch === undefined ? local.epoch : Number(req.query.epoch);
+  // A member from before the instance was sent is taken at its epoch's word.
+  const from = typeof req.query.from === 'string' && req.query.from ? req.query.from : null;
   const base = epochBase(db);
-  const sameLine =
-    lineage === local.epoch ||
-    (lineage === local.epoch - 1 && since !== null && base !== null && since <= base);
+  const ownLog = lineage === local.epoch && (from === null || from === ownInstanceId(db));
+  const carriedOn =
+    base !== null &&
+    since !== null &&
+    since <= base.head &&
+    lineage === (base.epoch ?? local.epoch - 1) &&
+    (from === null || base.from === null || from === base.from);
+  const sameLine = ownLog || carriedOn;
   // A cursor counts only where it could be true: it decides which deletes
   // the log may forget.
   const believable = sameLine && dataset === local.dataset && since !== null && since <= local.head;
@@ -294,32 +337,43 @@ router.post('/outbox', (req, res) => {
  * instance that is active at that term (sync/lease-intake.js); anyone else
  * gets 409 `not_dhcp_active`. `final: true` is the last report of a member
  * that lost DHCP, which ends its handover. The body is read here, past the
- * app's JSON parser, which leaves this content type alone.
+ * app's JSON parser, which leaves this content type alone, and only once
+ * leaseGate has let the caller through.
  */
 const unpacking = new Set();
+
+// Ahead of the body: only the instance whose leases could count is read at
+// all, and one report of its at a time. A body is up to MAX_REPORT_BYTES in
+// memory and unpacking is the costly part, so neither is spent on a member
+// that does not serve DHCP or on a second report while the first is in hand.
+function leaseGate(req, res, next) {
+  const db = getDb();
+  noteContact(db, req.member.id);
+  const state = dhcpState(db);
+  const mine = req.member.instance_id;
+  if ((mine !== state.active && mine !== state.handoverFrom) || unpacking.has(mine)) {
+    // The body is let go by as it arrives, kept nowhere, and the answer
+    // follows it: an answer sent while the member is still writing would
+    // reach it as a broken connection.
+    req.on('end', () =>
+      res.status(409).json({ error: 'This instance does not serve DHCP.', code: NOT_DHCP_ACTIVE }),
+    );
+    req.resume();
+    return;
+  }
+  unpacking.add(mine);
+  // Answered, or the member gave up midway: either way its next report may come.
+  res.once('close', () => unpacking.delete(mine));
+  next();
+}
+
 router.post(
   '/leases',
+  leaseGate,
   express.raw({ type: LEASE_REPORT_TYPE, limit: MAX_REPORT_BYTES }),
   async (req, res) => {
     const db = getDb();
-    noteContact(db, req.member.id);
-    // Only the instance whose leases could count is read at all, and one
-    // report of its at a time: unpacking is the costly part.
-    const state = dhcpState(db);
-    const mine = req.member.instance_id;
-    if ((mine !== state.active && mine !== state.handoverFrom) || unpacking.has(mine)) {
-      return res.status(409).json({
-        error: 'This instance does not serve DHCP.',
-        code: NOT_DHCP_ACTIVE,
-      });
-    }
-    unpacking.add(mine);
-    let report;
-    try {
-      report = await unpackReport(req.body);
-    } finally {
-      unpacking.delete(mine);
-    }
+    const report = await unpackReport(req.body);
     const outcome = acceptLeaseReport(db, req.member, report);
     // A host with filtering off is keyed by MAC; its new address takes effect now.
     if (outcome.status === 200) loadFilteringOverrides();

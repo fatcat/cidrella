@@ -161,7 +161,8 @@ export function replacedBy(name) {
 
 /**
  * What happened to a controller that was replaced, and since when, from the
- * `promotion.fenced` of GET /api/instances. Two sentences.
+ * `promotion.fenced` of GET /api/instances. Two sentences, and a third naming
+ * the instance that reported it when that is not the new controller itself.
  */
 export function fencedText(fenced) {
   const who = fenced?.by_name || 'Another instance';
@@ -170,7 +171,20 @@ export function fencedText(fenced) {
     when === EMPTY_CELL
       ? 'This instance takes no changes'
       : `This instance has taken no changes since ${when}`;
-  return `${who} replaced this instance as the controller. ${since}, and its data is out of date.`;
+  const toldBy =
+    fenced?.told_by && fenced.told_by !== fenced.by_name ? ` ${fenced.told_by} reported it.` : '';
+  return `${who} replaced this instance as the controller. ${since}, and its data is out of date.${toldBy}`;
+}
+
+/**
+ * What taking the controller back loses: the changes made on the controller
+ * that replaced this one. '' when neither its name nor the time is known.
+ */
+export function takeBackLossText(fenced) {
+  const when = formatDateTime(fenced?.since);
+  const since = when === EMPTY_CELL ? '' : ` since ${when}`;
+  if (!fenced?.by_name && !since) return '';
+  return `Changes made on ${fenced?.by_name || 'the other controller'}${since} are lost unless it comes back and you enter them again.`;
 }
 
 /** "Handing over to ns2. Waiting for it to catch up and take over, 12 seconds so far." */

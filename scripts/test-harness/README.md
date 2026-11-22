@@ -82,6 +82,18 @@ The runner ships the scenario (plus `lib/scenario-lib.sh`) to the target host vi
 | `capture_file_tail <label> <path> [n]` | Last N lines of a file, truncated to 4KB |
 | `capture_command <label> <shell-command>` | Command output (stdout+stderr), truncated to 4KB |
 
+### Signed-in API calls and database reads
+
+For scenarios that drive CIDRella through its API or read its database (`stack-switch`, `instances-single-box`):
+
+| Helper | Purpose |
+|---|---|
+| `wait_healthy` | Wait up to a minute for `/api/health`, probing the web port again |
+| `harness_sign_in <new-password>` | Reset admin to a one-time password, change it, keep the session token for `api` |
+| `api <method> <path> [json-body]` | One call under `/api` as the harness admin; prints the body |
+| `json_field <dotted.path>` | One field of the JSON on stdin, as Python prints it (`None`, `True`, `False`) |
+| `db_value <sql>` | First column of the first row from the live database, read-only, with the bundled node |
+
 ## Result schema
 
 Every scenario run produces a single JSON object on stdout, also written to `results/<name>-<timestamp>.json`. Fields:
@@ -105,6 +117,7 @@ See `manifest.json` for the full catalog. Brief list:
 - **fresh-install**: Fresh install of the latest release + full post-install state verification. Baseline for every future feature.
 - **secret-file-perms**: Verify v0.4.8+ secret file permission tightening (600 on cidrella.db, certs, etc.).
 - **post-install-hook**: Verify v0.4.9 post-install hook convention: shipped, executable, invoked with correct env contract.
+- **instances-single-box**: What v0.7.0 promises a box that runs alone: a controller with no members, a change log that records writes, a join token, and backups that still work. Needs `--candidate`; add `--from-tag v0.6.4` to get there by an update instead of a fresh install.
 
 ## Adding a new scenario
 

@@ -94,7 +94,7 @@ beforeAll(async () => {
   webCertPath = web.certPath;
   identity = ensureSyncIdentity(dataDir);
 
-  port = await freePort();
+  port = await freePort({ tcp: true });
   process.env.HTTPS_PORT = String(port);
   await new Promise((resolve) => {
     startHttpsServer({
@@ -270,7 +270,7 @@ describe('syncRequest', () => {
   });
 
   it('says unreachable when nothing listens there', async () => {
-    const dead = await freePort();
+    const dead = await freePort({ tcp: true });
     const err = await call({ port: dead }).catch((e) => e);
     expect(err.code).toBe('unreachable');
     expect(err.message).toContain(`127.0.0.1:${dead}`);
@@ -323,7 +323,7 @@ describe('syncRequest', () => {
 
 describe('after a port change', () => {
   it('the new server presents both certificates the same way', async () => {
-    const moved = await freePort();
+    const moved = await freePort({ tcp: true });
     const result = await applyHttpsPortChange(moved);
     expect(result.changed).toBe(true);
     port = moved;
@@ -342,7 +342,7 @@ describe('without a sync identity', () => {
     const cert = path.join(plainDir, 'c.pem');
     fs.copyFileSync(path.join(dataDir, 'certs', 'server.key'), key);
     fs.copyFileSync(path.join(dataDir, 'certs', 'server.crt'), cert);
-    const plainPort = await freePort();
+    const plainPort = await freePort({ tcp: true });
     process.env.HTTPS_PORT = String(plainPort);
     let plain;
     try {

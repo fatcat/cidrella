@@ -137,6 +137,29 @@
       ],
       "expected_duration_sec": 420,
       "requires_fresh_host": true
+    },
+    {
+      "name": "instances-single-box",
+      "file": "scripts/test-harness/scenarios/instances-single-box.sh",
+      "description": "What 0.7.0 promises a box that runs alone. Puts a PUBLISHED candidate (pre-)release (0.7.0+, via --candidate) on the host: a fresh install by default, or an install of FROM_TAG followed by cidrella-update when --from-tag is 0.6.4 or newer (the candidate's min_from). Then, signed in as admin: GET /api/features reports instance mode controller, 0 members, not fenced, no handover; GET /api/instances lists exactly this box, as the controller; sync_state has a dataset and no mode row; PUT /api/settings/map_home makes a row in sync_log; POST /api/instances/join-token returns a well-formed token that carries this box's sync fingerprint, ends within 15 minutes and is stored unused; POST /api/operations/backup writes an archive with a manifest and GET /api/operations/backups lists it.",
+      "catches": [
+        "a single box that comes up as a member, fenced or frozen after an install or an update",
+        "migrations 095 to 098 failing on a database from 0.6.4 (upgrade path only)",
+        "the change log triggers missing after boot, so writes to the data of record are not logged",
+        "a dataset that never starts, or a mode row written on a controller",
+        "the box missing from its own instance list, or listed twice",
+        "join tokens that cannot be made on a new controller, or that name another fingerprint",
+        "the backup refusal for members and replaced controllers hitting a lone controller"
+      ],
+      "does_not_catch": [
+        "anything that needs a second instance: joining, sync, the read-only member, DHCP on a member, changing the controller, a replaced controller (two-host check in BACKLOG.md)",
+        "a restore on a controller, with or without members",
+        "what the Instances page and the header show (no browser)",
+        "the upgrade path unless --from-tag v0.6.4 or newer is passed: the default run is a fresh install",
+        "the Docker image"
+      ],
+      "expected_duration_sec": 300,
+      "requires_fresh_host": true
     }
   ],
   "result_schema": {

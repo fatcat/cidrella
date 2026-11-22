@@ -4,7 +4,9 @@
  * must be exactly what it was when the backup was taken. Every table is
  * compared, not a chosen few, so a new table is covered the day it lands.
  * The only differences allowed are the ones a restore promises to make: its
- * own audit row, the DHCP choice, the two-factor carry-over.
+ * own audit row, the DHCP choice, the two-factor carry-over, and the
+ * instances, epoch and DHCP assignment, which stay the running box's
+ * (tests/integration/restore-instances.test.js has the cases with members).
  *
  * A second case restores a backup taken at schema 54 (0.4.17) and lets the
  * restart migrate it forward.
@@ -308,12 +310,23 @@ describe('backup round trip', () => {
       // The restored database is a new dataset: its change log starts empty.
       'sync_log',
       'sync_state',
+      // The instances are the ones the box had when it restored, not the
+      // backup's. Checked below: nothing joined in between here.
+      'sync_instances',
     ]);
     for (const name of Object.keys(before)) {
       if (promised.has(name)) continue;
       expect(after[name], `table ${name}`).toEqual(before[name]);
     }
     expect(Object.keys(after).sort()).toEqual(Object.keys(before).sort());
+  });
+
+  it('keeps the instances and the epoch the box had when it restored', () => {
+    const state = (dump) =>
+      Object.fromEntries(dump.sync_state.map((row) => Object.values(JSON.parse(row))));
+    expect(after.sync_instances).toEqual(before.sync_instances);
+    expect(state(after).epoch).toBe(state(before).epoch);
+    expect(state(after).mode).toBeUndefined();
   });
 
   it('starts a new dataset, so a copy of the one before the restore starts over', () => {

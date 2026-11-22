@@ -68,19 +68,25 @@ analytics) is done, 2026-11-21: `sync/remote-sink.js`, `sync/collected-upload.js
 2026-11-21: `sync/dhcp-active.js`, `services/dhcp-move.js`, `services/dhcp-follow.js`,
 `POST /api/sync/leases`. Phase 6 (promotion) is done, 2026-11-21:
 `services/controller-promotion.js`, `sync/promotion-state.js`, `sync/find-controller.js`,
-`sync/controller-call.js`. Next is phase 7, hardening. Left open by phase 6:
-- A restore brings the backup's `sync_state` with it (mode, epoch, fenced, handover,
-  `epoch_base`): a backup from before a promotion lowers the controller's epoch or brings back
-  member mode. Phase 7 must decide what a restore keeps.
+`sync/controller-call.js`. Phase 7 (hardening) is done, 2026-11-22: a restore keeps the
+running estate's instances, epoch and DHCP assignment (`sync/restore.js`), only a controller
+takes or restores backups, the fixes from the review of phase 6, `docs/UPGRADE.md` and the
+`instances-single-box` harness scenario. Left open by phases 6 and 7:
 - Two members forced at once land on the same epoch; members pick the lowest instance id and
   neither controller fences. Needs a tiebreak both sides apply.
 - A frozen controller's own writers (lease ingest, liveness) keep writing during a handover, so
   the old controller usually takes a snapshot after it, not a delta.
-- A member that joined after the promoted box's last sync is unknown to the new controller and
-  must join again.
+- A member the new controller does not know sees only "offline" on its page; it learns it
+  should join again only when it tries to promote itself (`findController` knows: `stranger`).
+- A handover that kept a divergence report has no pointer to it in the UI (the download route
+  works on any box; only the replaced controller's panel shows it).
 - The Restarting line on the Instances page has no timeout, and a controller on another page
   learns it is frozen or replaced only on the next features read (60 s).
 - Not run on two real hosts: the local check used two processes on one machine.
+- A box that is already set up cannot become a member without a reinstall: first-run Join
+  needs a new box and Rejoin needs a replaced controller. Offering Rejoin's path to a controller
+  with no members would cover a controller rolled back below 0.7.0 and a standalone box that is
+  to join an estate.
 
 Left open by phase 5:
 - The DHCPv6 server DUID does not move with DHCP, so DHCPv6 clients rebind. Carrying it needs the

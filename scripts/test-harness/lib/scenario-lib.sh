@@ -314,6 +314,70 @@ install_release_tag() {
   yes y | bash /tmp/install.sh --version "${tag#v}" > /tmp/install-output.log 2>&1
 }
 
+# ─── Signed-in API calls and database reads ──────────────
+
+# wait_healthy
+#   Waits up to a minute for /api/health to answer, probing the web port
+#   again on every try (it can change across an install or an update).
+wait_healthy() {
+  local tries=0
+  rm -f /tmp/cidrella-base-url
+  until curl -skf "$(cidrella_base_url)/api/health" >/dev/null 2>&1; do
+    rm -f /tmp/cidrella-base-url
+    tries=$((tries + 1))
+    [ "$tries" -ge 30 ] && { echo "CIDRella never became healthy" >&2; return 1; }
+    sleep 2
+  done
+}
+
+# json_field <dotted.path>
+#   Prints one field of the JSON on stdin, as Python prints it: None for
+#   null, True and False for booleans. A number in the path indexes a list.
+#   Exits nonzero when the path is not there.
+json_field() {
+  python3 -c 'import json,sys; v=json.load(sys.stdin)
+for k in sys.argv[1].split("."): v=v[k] if isinstance(v,dict) else v[int(k)]
+print(v)' "$1"
+}
+
+# The harness admin's session token, written by harness_sign_in.
+HARNESS_TOKEN_FILE=/tmp/cidrella-harness-token
+
+# api <method> <path under /api> [json-body]
+#   One API call as the harness admin. Prints the response body.
+api() {
+  local method="$1" path="$2" body="${3:-}"
+  local args=(-sk --max-time 180 -X "$method" -H "Authorization: Bearer $(cat "$HARNESS_TOKEN_FILE")")
+  [ -n "$body" ] && args+=(-H 'Content-Type: application/json' -d "$body")
+  curl "${args[@]}" "$(cidrella_base_url)/api$path"
+}
+
+# harness_sign_in <new-password>
+#   Signs in as admin for api: resets the account to a one-time password,
+#   then changes it to <new-password>, which must satisfy the password policy.
+harness_sign_in() {
+  local password="$1" once token
+  once=$(cidrella-reset-password admin | awk '/New password:/{print $3}')
+  token=$(curl -sk -H 'Content-Type: application/json' \
+    -d "{\"username\":\"admin\",\"password\":\"$once\"}" \
+    "$(cidrella_base_url)/api/auth/login" | json_field token) || return 1
+  printf '%s' "$token" > "$HARNESS_TOKEN_FILE"
+  token=$(api POST /auth/change-password \
+    "{\"current_password\":\"$once\",\"new_password\":\"$password\"}" | json_field token) || return 1
+  printf '%s' "$token" > "$HARNESS_TOKEN_FILE"
+}
+
+# db_value <sql>
+#   Prints the first column of the first row a query returns from the live
+#   database, opened read-only, or nothing when there is no row. Uses the
+#   bundled node and better-sqlite3: the host has no sqlite3 CLI.
+db_value() {
+  (cd /opt/cidrella/server && SQL="$1" /opt/cidrella/runtime/node/bin/node -e "
+    const db = require('better-sqlite3')('/var/lib/cidrella/cidrella.db', { readonly: true });
+    const row = db.prepare(process.env.SQL).get();
+    console.log(row ? Object.values(row)[0] : '');")
+}
+
 # ─── Capture helpers ─────────────────────────────────────
 
 # capture_file <label> <path>

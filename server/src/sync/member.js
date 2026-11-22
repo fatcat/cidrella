@@ -100,20 +100,29 @@ function changesPath(db, { wait = 0 } = {}) {
   if (cursor !== null && local.dataset) {
     query.set('dataset', local.dataset);
     query.set('since', cursor);
+    // Whose log the cursor counts in: two controllers can share an epoch number.
+    const from = readSyncState(db, COPY_FROM);
+    if (from) query.set('from', from);
   }
   return `/api/sync/changes?${query}`;
 }
 
+// The controller this box's copy was taken from, by instance_id, kept beside
+// the cursor and the epoch: the three together say what the cursor means.
+const COPY_FROM = 'copy_from';
 // What says who this box follows, or that it was replaced as the controller.
 const STANDING = ['mode', 'controller', 'fenced', 'epoch'];
+// Where its copy stood. Put back with the rest only while the copy is untouched.
+const COPY_STANDING = ['cursor', COPY_FROM];
 
 /**
  * Join the controller at `address`:`port` with a join token. Everything this
  * box holds of the data of record is replaced by the controller's. Throws
  * JoinError; nothing here has changed when it does. `restart` is what runs
  * once the box is a member. A new install joins this way, and so does a
- * controller that was replaced and fenced: it stays fenced when the join
- * fails.
+ * controller that was replaced and fenced (it stays fenced when the join
+ * fails) and a member that joins another controller (it stays that member,
+ * with the credential it had).
  */
 export async function joinController(
   db,
@@ -172,10 +181,14 @@ export async function joinController(
   // From here the controller has this box on its list. Whatever fails, the
   // box takes itself off again and stays what it was.
   const credentialPath = path.join(syncDirOf(db), CREDENTIAL_FILE);
+  // A member that joins another controller has one already.
+  const oldCredential = readCredential(db);
   const was = new Map();
+  const kept = [...STANDING, ...COPY_STANDING];
   const standing = db
-    .prepare(`SELECT key, value FROM sync_state WHERE key IN (${STANDING.map(() => '?')})`)
-    .all(...STANDING);
+    .prepare(`SELECT key, value FROM sync_state WHERE key IN (${kept.map(() => '?')})`)
+    .all(...kept);
+  let applied = false;
   const pinned = {
     ...controller,
     // The address, port and fingerprint are the ones this box checked, never
@@ -187,7 +200,7 @@ export async function joinController(
     // This box starts over as a copy of that controller: what it held, and
     // the epoch it was at, count for nothing there. (No epoch is sent with
     // the request either: the fencing rule is for instances of one estate.)
-    db.prepare("DELETE FROM sync_state WHERE key IN ('cursor', 'epoch')").run();
+    db.prepare("DELETE FROM sync_state WHERE key IN ('cursor', 'copy_from', 'epoch')").run();
     const response = await syncRequest({
       ...controller,
       path: changesPath(db),
@@ -224,16 +237,20 @@ export async function joinController(
       writeSyncState(db, 'controller', JSON.stringify(pinned));
     })();
     applyChanges(db, changes);
+    applied = true;
+    if (pinned.instance_id) writeSyncState(db, COPY_FROM, pinned.instance_id);
     // A box that was replaced as the controller follows the new one now.
     if (fencedState(db)) setFenced(db, null);
   } catch (err) {
     // Whatever the undo itself runs into, the box still leaves the list.
     try {
       db.transaction(() => {
-        db.prepare(`DELETE FROM sync_state WHERE key IN (${STANDING.map(() => '?')})`).run(
-          ...STANDING,
-        );
-        for (const { key, value } of standing) writeSyncState(db, key, value);
+        db.prepare(`DELETE FROM sync_state WHERE key IN (${kept.map(() => '?')})`).run(...kept);
+        for (const { key, value } of standing) {
+          // Once the other controller's data is in, the old cursor counts nothing.
+          if (applied && COPY_STANDING.includes(key)) continue;
+          writeSyncState(db, key, value);
+        }
         for (const [key, value] of was) {
           if (value === null) deleteSetting(db, key);
           else upsertSettingWithConflict(db, key, value);
@@ -242,7 +259,8 @@ export async function joinController(
     } catch (undo) {
       console.error(`Could not undo a failed join: ${undo.message}`);
     }
-    fs.rmSync(credentialPath, { force: true });
+    if (oldCredential) fs.writeFileSync(credentialPath, `${oldCredential}\n`, { mode: 0o600 });
+    else fs.rmSync(credentialPath, { force: true });
     await syncRequest({
       ...controller,
       method: 'POST',
@@ -252,10 +270,15 @@ export async function joinController(
     if (err instanceof JoinError) throw err;
     throw new JoinError('unreachable', `The first copy of the data failed: ${err.message}`);
   }
-  // The accounts here are the controller's now: nobody is signed in.
-  db.prepare('DELETE FROM sessions').run();
-  ensureSyncTriggers(db, MEMBER);
-  restart();
+  // The mode has changed: whatever the steps below run into, the process
+  // must not carry on as what it was.
+  try {
+    // The accounts here are the controller's now: nobody is signed in.
+    db.prepare('DELETE FROM sessions').run();
+    ensureSyncTriggers(db, MEMBER);
+  } finally {
+    restart();
+  }
   return { controller: { name: pinned.name } };
 }
 
@@ -360,6 +383,11 @@ export function memberSyncStatus(db) {
  * 'stale_epoch' when the instance asked is not the controller to follow.
  */
 export async function syncOnce(db, { wait = 0 } = {}) {
+  // Whose log the answer is from. The pointer can move while the request waits.
+  const asked = controllerOf(db)?.instance_id;
+  const cursorIsTheirs = () => {
+    if (asked) writeSyncState(db, COPY_FROM, asked);
+  };
   const response = await callController(db, {
     path: changesPath(db, { wait }),
     timeoutMs: (wait + 60) * 1000,
@@ -379,6 +407,7 @@ export async function syncOnce(db, { wait = 0 } = {}) {
     // own: this copy is of its epoch now.
     const epoch = answerEpoch(response);
     if (epoch !== null && epoch > lineageEpoch(db)) writeSyncState(db, 'epoch', epoch);
+    cursorIsTheirs();
     return 'current';
   }
   if (response.status !== 200) {
@@ -392,6 +421,7 @@ export async function syncOnce(db, { wait = 0 } = {}) {
     const changes = parseChanges(response.body);
     delta = !changes.header.snapshot;
     const result = applyChanges(db, changes);
+    cursorIsTheirs();
     reloadFor(db, result.tables);
     if (result.snapshot) console.log(`[sync] took a snapshot: ${result.rows} rows`);
   } catch (err) {

@@ -24,6 +24,7 @@ CIDR stands for Classless Inter-Domain Routing. Read about it [here](https://en.
 * **Analytics**: service status, rogue DHCP servers, rogue hosts, anomalous devices, scope conflicts, DHCP review, host performance, queries per minute, p95 latency, cache hit rate, timeouts, pending, process CPU and memory, and much more.
 * **Blocklists and GeoIP filtering**: Category blocklists, scheduled refresh, and country-based allow/block modes through the DNS proxy.
 * **Anomaly detection**: Observe and notify unusual query volume, new-domain patterns, beaconing, and DGA-like behavior.
+* **More than one instance**: Add members to a controller. The controller owns the data and takes every change; a member holds a synced read-only copy, answers DNS from it, can serve DHCP, and keeps serving both when the controller is away. The controller can be changed, by hand. See [Running more than one instance](docs/UPGRADE.md#running-more-than-one-instance).
 * **Pi-hole import**: Standalone Settings workflow for importing Pi-hole DNS records, CNAMEs, DHCP Reservations, and upstream DNS settings.
 * **Operations and recovery**: Signed native updates, scheduled backups, restore validation, reset-password and reset-web-port tools, log viewing, and audit history.
 * **Certificate management**: Self-signed defaults, certificate upload, RSA/ECDSA CSR generation, and certificate/key validation.
@@ -77,7 +78,7 @@ See [**INSTALL-DOCKER.md**](docs/INSTALL-DOCKER.md) for full details. Note: in-a
 
 ### First run
 
-The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password, optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes (strongly encouraged), choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start.
+The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password, optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes (strongly encouraged), choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start. A new install can instead join an existing CIDRella as a member: see [Running more than one instance](docs/UPGRADE.md#running-more-than-one-instance).
 
 ## Upgrading
 

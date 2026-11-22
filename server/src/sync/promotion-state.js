@@ -5,13 +5,20 @@
  *
  *   fenced           this box was the controller and another instance took
  *                    over at a higher epoch: { epoch, by_instance_id,
- *                    by_name, since }. A fenced box runs as a member with no
- *                    controller (sync/mode.js) until it joins the new one.
+ *                    by_name, told_by_instance_id, told_by, since, snapshot }.
+ *                    `by` is the instance the request named as the controller,
+ *                    `told_by` the one that made the request, `snapshot` the
+ *                    copy of the database saved then. A fenced box runs as a
+ *                    member with no controller (sync/mode.js) until it joins
+ *                    the new one or takes the role back.
  *   handover         this controller is handing over to a member and takes
  *                    no changes meanwhile: { to_instance_id, to_name, since }.
- *   epoch_base       the head of the change log when this box became the
- *                    controller at its epoch. A copy from the epoch before
- *                    can carry on from a cursor up to it, and no further.
+ *   epoch_base       where this controller's log carries on from another:
+ *                    { head, from, epoch }. `head` is the head of the change
+ *                    log when this box became the controller, `from` the
+ *                    instance whose log it copied until then and `epoch` the
+ *                    epoch of that log. A copy of that log at that epoch can
+ *                    carry on from a cursor up to `head`, and no further.
  *
  * And in a 0600 file beside the credential (DATA_DIR/sync/), because it
  * holds credentials and a backup carries the database but not that
@@ -76,9 +83,24 @@ export function setTakeoverNotice(db, value) {
   fs.writeFileSync(noticeFile(db), `${JSON.stringify(value)}\n`, { mode: 0o600 });
 }
 
-/** The head this box became controller at, or null when it never took over. */
+/**
+ * `{ head, from, epoch }` as described above, or null when this box never
+ * took over. `from` and `epoch` are null in a database that stored the head
+ * alone.
+ */
 export function epochBase(db) {
-  const base = Number(readSyncState(db, EPOCH_BASE) ?? NaN);
-  return Number.isSafeInteger(base) ? base : null;
+  let value;
+  try {
+    value = JSON.parse(readSyncState(db, EPOCH_BASE));
+  } catch {
+    return null;
+  }
+  if (typeof value === 'number') value = { head: value };
+  if (!value || !Number.isSafeInteger(value.head)) return null;
+  return {
+    head: value.head,
+    from: typeof value.from === 'string' ? value.from : null,
+    epoch: Number.isSafeInteger(value.epoch) ? value.epoch : null,
+  };
 }
-export const setEpochBase = (db, base) => writeSyncState(db, EPOCH_BASE, base);
+export const setEpochBase = (db, base) => store(db, EPOCH_BASE, base);

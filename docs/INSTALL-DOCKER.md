@@ -28,6 +28,8 @@ docker compose logs cidrella | grep Password
 
 Open `https://<your-server-ip>:8443` and log in. A setup wizard will guide you through initial configuration.
 
+A new install can join an existing CIDRella as a member instead of being set up on its own: after you replace the one-time password, choose **Join an existing CIDRella** and enter the controller's address, port and a join token. Joining replaces the networks, DNS, DHCP, settings and accounts on the new install with the controller's. Both must run the same version. With host networking nothing extra is published: the instances reach each other on the web UI's HTTPS port (8443 here, TCP), in both directions, so allow it between them in the host firewall. Put the container's host on the client segments if the member is to serve DNS or DHCP there. After joining, the web app restarts inside the container as a member; the container itself keeps running. See [Running more than one instance](UPGRADE.md#running-more-than-one-instance).
+
 ## Updating
 
 ```bash

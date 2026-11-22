@@ -15,7 +15,7 @@
  * joins the new controller. `isFenced` tells the two apart.
  */
 import { getDb } from '../db/init.js';
-import { CONTROLLER, MEMBER, readSyncState, storedMode } from './log.js';
+import { CONTROLLER, hasSyncState, MEMBER, readSyncState, storedMode } from './log.js';
 import { fencedState, handoverFreeze } from './promotion-state.js';
 
 export { CONTROLLER, MEMBER, storedMode };
@@ -77,6 +77,46 @@ export function writeRefusal(db = getDb()) {
   if (!handover) return null;
   return {
     error: `The controller is being handed over to ${handover.to_name || 'another instance'}.`,
+    code: CONTROLLER_HANDOVER,
+  };
+}
+
+/**
+ * Why this box takes no backup, schedules none and restores none:
+ * `{ error, code }`, or null on a controller that does. A backup is of the
+ * data of record and a restore replaces it, and only the controller holds
+ * the record: a member holds a copy, a replaced controller holds what was,
+ * and one handing over has stopped changing it. `db` may be a database from
+ * before instances, which is a controller's.
+ */
+export function backupRefusal(db = getDb()) {
+  if (!hasSyncState(db)) return null;
+  const fenced = fencedState(db);
+  if (fenced) {
+    const by = fenced.by_name || 'the new controller';
+    return {
+      error:
+        `${fenced.by_name || 'Another instance'} took over as the controller, so this CIDRella ` +
+        `no longer holds the record. Take backups and restore them on ${by}.`,
+      code: CONTROLLER_FENCED,
+    };
+  }
+  if (storedMode(db) === MEMBER) {
+    const name = controllerOf(db)?.name || 'the controller';
+    return {
+      error:
+        `This is a member of ${name}: it holds a copy of the data, not the record. ` +
+        `Take backups and restore them on ${name}.`,
+      code: MEMBER_READ_ONLY,
+    };
+  }
+  const handover = handoverFreeze(db);
+  if (!handover) return null;
+  const to = handover.to_name || 'another instance';
+  return {
+    error:
+      `The controller is being handed over to ${to}. Cancel the handover first, ` +
+      `or take backups and restore them on ${to} once it has taken over.`,
     code: CONTROLLER_HANDOVER,
   };
 }

@@ -18,6 +18,7 @@ import {
   replacedBy,
   restartingText,
   syncState,
+  takeBackLossText,
 } from '../../../src/utils/instances.js';
 import { EMPTY_CELL } from '../../../src/utils/format.js';
 
@@ -220,6 +221,35 @@ describe('a change of controller', () => {
     expect(fencedText({ by_name: null, since: null })).toBe(
       'Another instance replaced this instance as the controller. This instance takes no changes, and its data is out of date.',
     );
+  });
+
+  it('names the instance that reported the replacement when it is not the new controller', () => {
+    const fenced = { by_name: 'ns2', since: null };
+    expect(fencedText({ ...fenced, told_by: 'ns3' })).toBe(
+      'ns2 replaced this instance as the controller. This instance takes no changes, and its data is out of date. ns3 reported it.',
+    );
+    expect(fencedText({ ...fenced, told_by: 'ns2' })).not.toContain('reported it');
+    expect(fencedText({ ...fenced, told_by: null })).not.toContain('reported it');
+    expect(fencedText({ by_name: null, since: null, told_by: 'ns3' })).toContain(
+      'Another instance replaced this instance as the controller.',
+    );
+    expect(fencedText({ by_name: null, since: null, told_by: 'ns3' })).toMatch(
+      / ns3 reported it\.$/,
+    );
+  });
+
+  it('says what taking the controller back loses, or nothing when it knows neither end', () => {
+    expect(takeBackLossText({ by_name: 'ns2', since: '2026-11-21T11:00:00Z' })).toMatch(
+      /^Changes made on ns2 since .+ are lost unless it comes back and you enter them again\.$/,
+    );
+    expect(takeBackLossText({ by_name: 'ns2', since: null })).toBe(
+      'Changes made on ns2 are lost unless it comes back and you enter them again.',
+    );
+    expect(takeBackLossText({ by_name: null, since: '2026-11-21T11:00:00Z' })).toMatch(
+      /^Changes made on the other controller since .+ are lost unless/,
+    );
+    expect(takeBackLossText({ by_name: null, since: null })).toBe('');
+    expect(takeBackLossText(null)).toBe('');
   });
 
   it('counts the wait of a handover of the controller role', () => {

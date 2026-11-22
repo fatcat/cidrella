@@ -107,6 +107,48 @@ again unless the maintainer reopens one.
 - **Why:** The validator accepts six colon-separated octets or nothing.
 - **Fix:** Require a MAC on a DHCPv4 lease and accept the forms the adapters emit.
 
+#### PROMOTE-NEWER-MEMBER-01: A member updated before its controller cannot be promoted
+
+**medium**, read in the code (2026-11-22). `server/src/services/controller-promotion.js`
+(`promoteSelfRefusal`), `server/src/sync/log.js` (`ensureSyncLog`)
+
+- **What happens:** Update a member to a release with a migration, and the controller dies
+  before the two are on the same version. The member's cursor was forgotten at boot (a migration
+  ran) and it cannot take a snapshot from another schema, so `promote-self` answers
+  `never_synced` for good, though the member holds a complete copy from before its update.
+- **Why:** "Holds a complete copy" is read from the cursor, which a migration clears.
+- **Fix:** Keep a separate mark that the copy was complete before the migration, and let a
+  promotion go ahead on it with the last sync time shown. The upgrade guide says to update the
+  controller first.
+
+#### RESTORE-JOIN-RACE-01: A join during a restore is lost
+
+**low**, read in the code (2026-11-22). `server/src/utils/backup.js`, `server/src/sync/restore.js`
+
+- **What happens:** A member that joins between the moment a restore records the instance list
+  and the process exit (under a second plus the file swap) is not in the restored list: it gets
+  `unknown_member` and must join again. A join token made before a restore is gone after it.
+- **Fix:** Refuse joins while a restore runs.
+
+#### RESTORE-CARRYOVER-FAIL-01: A failed restore carry-over is logged and boot goes on
+
+**low**, read in the code, no input known that triggers it (2026-11-22). `server/src/index.js`
+(the `applyRestoreCarryover` call)
+
+- **What happens:** If the first boot after a restore cannot write back the instance list and
+  the epoch, it logs the error and carries on with the backup's. A lower epoch lets any member
+  fence the controller. The next boot tries again.
+- **Fix:** Start no sync-facing work (the sync routes, controller jobs) on a boot whose
+  carry-over failed, and say so on the Instances page.
+
+#### MEMBER-BACKUP-DELETE-01: A box that became a member cannot delete its old backup archives
+
+**low**, read in the code (2026-11-22). `server/src/sync/write-gate.js`
+
+- **What happens:** `DELETE /api/operations/backups/:id` on a member answers the member
+  sentence. Archives it took as a controller stay until removed by hand; download works.
+- **Fix:** Allow that route on a member: it is about this box's files.
+
 ---
 
 ## Will not fix

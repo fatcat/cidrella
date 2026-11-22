@@ -1,7 +1,9 @@
 <!-- A controller that was replaced: another instance was made the controller
      while this one was away. It takes no changes now. Here an admin downloads
      the report of the changes the new controller never received, and rejoins
-     this instance to the new controller as a member with a join token. -->
+     this instance to the new controller as a member with a join token
+     (RejoinForm.vue). When the instance that replaced it is gone, it can take
+     the controller back instead. -->
 <template>
   <section class="fenced" data-track="instances-fenced">
     <p class="fenced-what">
@@ -30,50 +32,52 @@
       Make a join token on {{ newController }} under Settings &gt; System &gt; Instances &gt; Add
       member. A token works once and lasts 15 minutes.
     </p>
-    <form @submit.prevent="ask">
-      <JoinTargetFields
-        v-model:address="address"
-        v-model:port="port"
-        v-model:token="token"
-        id-prefix="instances-rejoin"
-        track="instances-rejoin"
-        :disabled="busy"
-      />
-      <p v-if="error" class="field-error" data-track="instances-rejoin-error">{{ error }}</p>
-      <div class="rejoin-actions">
-        <Button
-          type="submit"
-          label="Rejoin as a member"
-          size="small"
-          :disabled="!!blocker"
-          :loading="busy"
-          data-track="instances-rejoin-submit"
-        />
-        <span v-if="blocker" class="muted text-sm">{{ blocker }}</span>
-      </div>
-    </form>
+    <RejoinForm
+      :header="fenced.by_name ? `Rejoin as a member of ${fenced.by_name}?` : 'Rejoin as a member?'"
+      @rejoined="(name) => emit('rejoined', name || fenced.by_name || null)"
+    >
+      <template #lost>
+        <p>
+          Changes made here that the new controller never received are not carried over.
+          <template v-if="fenced.report">Download the report first if you need them.</template>
+        </p>
+      </template>
+    </RejoinForm>
+
+    <h4>No other controller?</h4>
+    <p class="field-help">
+      If the instance that replaced this one is gone, this instance can take the controller back.
+    </p>
+    <Button
+      label="Take the controller back"
+      severity="danger"
+      outlined
+      size="small"
+      :loading="takingBack"
+      data-track="instances-take-back"
+      @click="askTakeBack"
+    />
+    <p v-if="takeBackError" class="field-error" data-track="instances-take-back-error">
+      {{ takeBackError }}
+    </p>
 
     <ConfirmDialog
-      :visible="confirming"
-      :header="fenced.by_name ? `Rejoin as a member of ${fenced.by_name}?` : 'Rejoin as a member?'"
-      confirm-label="Rejoin"
-      width="34rem"
-      :loading="busy"
-      data-track="instances-rejoin-dialog"
-      confirm-track="instances-rejoin-confirm"
-      cancel-track="instances-rejoin-cancel"
-      @update:visible="(v) => !v && !busy && (confirming = false)"
-      @confirm="rejoin"
+      :visible="confirmingTakeBack"
+      header="Take the controller back?"
+      confirm-label="Take the controller back"
+      width="36rem"
+      :type-to-confirm="selfName"
+      :loading="takingBack"
+      data-track="instances-take-back-dialog"
+      confirm-track="instances-take-back-confirm"
+      cancel-track="instances-take-back-cancel"
+      @update:visible="(v) => !v && !takingBack && (confirmingTakeBack = false)"
+      @confirm="takeBack"
     >
-      <p>
-        The data on this instance is replaced by the new controller's: networks, DNS, DHCP, settings
-        and every account. A copy of the database as it is now is saved first.
-      </p>
-      <p>
-        Changes made here that the new controller never received are not carried over.
-        <template v-if="fenced.report">Download the report first if you need them.</template>
-      </p>
-      <p>This instance restarts, and you sign in with an account from the new controller.</p>
+      <p>Do this only when no other instance is the controller.</p>
+      <p v-if="lossText">{{ lossText }}</p>
+      <p>The other members follow this instance within about a minute.</p>
+      <p>This instance restarts, and you sign in again.</p>
     </ConfirmDialog>
   </section>
 </template>
@@ -83,21 +87,24 @@ import { computed, ref } from 'vue';
 import Button from '../../ui/Button.js';
 import ConfirmDialog from '../ConfirmDialog.vue';
 import StatusDot from '../StatusDot.vue';
-import JoinTargetFields from './JoinTargetFields.vue';
+import RejoinForm from './RejoinForm.vue';
 import api from '../../api/client.js';
 import { useToast } from '../../ui/useToast.js';
-import { useJoinTarget } from '../../composables/useJoinTarget.js';
 import { saveBlob } from '../../utils/download.js';
 import { apiError } from '../../utils/format.js';
-import { fencedText } from '../../utils/instances.js';
+import { fencedText, takeBackLossText } from '../../utils/instances.js';
 
 const props = defineProps({
-  // `promotion.fenced` of GET /api/instances: { by_name, epoch, since, report }.
+  // `promotion.fenced` of GET /api/instances:
+  // { by_name, told_by, epoch, since, report }.
   fenced: { type: Object, required: true },
+  // This instance's own name, typed to confirm taking the controller back.
+  selfName: { type: String, default: 'this instance' },
 });
-// The rejoin was accepted and this instance is restarting as a member of the
-// named controller.
-const emit = defineEmits(['rejoined']);
+// `rejoined`: the rejoin was accepted and this instance is restarting as a
+// member of the named controller. `took-back`: it is restarting as the
+// controller again. The page waits for the restart either way.
+const emit = defineEmits(['rejoined', 'took-back']);
 const toast = useToast();
 
 const newController = computed(() => props.fenced.by_name || 'the new controller');
@@ -120,28 +127,29 @@ async function downloadReport() {
   }
 }
 
-const { address, port, token, blocker, body } = useJoinTarget();
-const confirming = ref(false);
-const busy = ref(false);
-const error = ref('');
+// Take the controller back: only the server knows whether another controller
+// answers, and it refuses when one does.
+const lossText = computed(() => takeBackLossText(props.fenced));
+const confirmingTakeBack = ref(false);
+const takingBack = ref(false);
+const takeBackError = ref('');
 
-function ask() {
-  if (blocker.value || busy.value) return;
-  error.value = '';
-  confirming.value = true;
+function askTakeBack() {
+  takeBackError.value = '';
+  confirmingTakeBack.value = true;
 }
 
-async function rejoin() {
-  busy.value = true;
+async function takeBack() {
+  takingBack.value = true;
   try {
-    const { data } = await api.post('/instances/rejoin', body());
-    emit('rejoined', data?.controller?.name || props.fenced.by_name || null);
+    await api.post('/instances/promote-self', { confirm: true });
+    emit('took-back');
   } catch (err) {
-    // The refusal stays beside the form, which is where it is put right.
-    error.value = apiError(err);
+    // The refusal stays under the button, as the rejoin's does by its form.
+    takeBackError.value = apiError(err);
   } finally {
-    busy.value = false;
-    confirming.value = false;
+    takingBack.value = false;
+    confirmingTakeBack.value = false;
   }
 }
 </script>
@@ -159,13 +167,5 @@ async function rejoin() {
 }
 .fenced h4 {
   margin: 1.25rem 0 0.25rem;
-}
-.fenced form {
-  margin-top: 0.75rem;
-}
-.rejoin-actions {
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
 }
 </style>

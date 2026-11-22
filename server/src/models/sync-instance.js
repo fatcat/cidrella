@@ -143,6 +143,44 @@ export function listInstances(db) {
     .all();
 }
 
+// Every column, the credential hash included. Never sent to a client.
+const ALL_COLUMNS = [
+  'id',
+  'instance_id',
+  'name',
+  'address',
+  'port',
+  'fingerprint',
+  'credential_hash',
+  'is_controller',
+  'serves_dns',
+  'dns_addresses',
+  'created_at',
+  'last_contact_at',
+  'version',
+  'schema_version',
+];
+
+/** The whole list as stored, for replaceInstances to put back (sync/restore.js). */
+export function exportInstances(db) {
+  return db.prepare(`SELECT ${ALL_COLUMNS.join(', ')} FROM sync_instances ORDER BY id`).all();
+}
+
+/**
+ * Make the list exactly `rows`, as exportInstances gave them: same ids, names,
+ * addresses and credential hashes. Every cursor starts empty, since the data
+ * the rows now sit in is not the data those cursors counted. The caller holds
+ * the transaction.
+ */
+export function replaceInstances(db, rows) {
+  db.prepare('DELETE FROM sync_instances').run();
+  const insert = db.prepare(
+    `INSERT INTO sync_instances (${ALL_COLUMNS.join(', ')})
+     VALUES (${ALL_COLUMNS.map((column) => `@${column}`).join(', ')})`,
+  );
+  for (const row of rows) insert.run(row);
+}
+
 export function countMembers(db) {
   return db.prepare('SELECT count(*) AS n FROM sync_instances WHERE is_controller = 0').get().n;
 }
@@ -249,15 +287,19 @@ export function followingRefusal(db, row, rule) {
  * and the row of the controller it replaces becomes a member's, reachable at
  * the address this box knew it by. `grantHash` is the hash of a credential
  * made for that instance to come back with (a handover), or null when it has
- * to join again (a forced promotion). The caller holds the transaction.
+ * to join again (a forced promotion). `at` (ISO) goes in as that row's last
+ * contact: a member row never heard from holds the change log's deletes back
+ * for good (lowestMemberCursor), and one that fell silent at `at` does for
+ * QUIET_MEMBER_DAYS. The caller holds the transaction.
  */
-export function takeControllerRow(db, { former, grantHash = null }) {
+export function takeControllerRow(db, { former, grantHash = null, at = null }) {
   const self = ownInstanceId(db);
   db.prepare(
     `UPDATE sync_instances SET is_controller = 0, credential_hash = ?,
-       address = COALESCE(?, address), port = COALESCE(?, port)
+       address = COALESCE(?, address), port = COALESCE(?, port),
+       last_contact_at = COALESCE(?, last_contact_at)
      WHERE is_controller = 1 AND instance_id IS NOT ?`,
-  ).run(grantHash, former?.address ?? null, former?.port ?? null, self);
+  ).run(grantHash, former?.address ?? null, former?.port ?? null, at, self);
   db.prepare(
     'UPDATE sync_instances SET is_controller = 1, credential_hash = NULL WHERE instance_id = ?',
   ).run(self);

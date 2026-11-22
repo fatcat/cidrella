@@ -24,9 +24,18 @@ export const EPOCH_HEADER = 'x-cidrella-epoch';
 // or the caller's own when it is the controller. A controller fenced by a
 // member's request learns from it who replaced it.
 export const CONTROLLER_HEADER = 'x-cidrella-controller';
+// On every answer to `hello`, a refusal included: 'controller', 'member' or
+// 'fenced'. With the epoch it is all an instance tells a caller it does not
+// know, and what a member the controller never heard of needs to learn that
+// there is a controller before it takes the role itself.
+export const MODE_HEADER = 'x-cidrella-mode';
 export const FENCED = 'fenced';
 export const NOT_CONTROLLER = 'not_controller';
 export const STALE_EPOCH = 'stale_epoch';
+
+// No estate gets this far above an epoch in one step: each promotion adds one.
+// A request that names more is refused, never stored.
+export const EPOCH_LEAP = 1000;
 
 /** The epoch this box's copy of the data is from. */
 export const lineageEpoch = (db) => Number(readSyncState(db, 'epoch') ?? 1);
@@ -36,6 +45,9 @@ export function knownEpoch(db) {
   const followed = Number(controllerOf(db)?.epoch);
   return Math.max(lineageEpoch(db), Number.isSafeInteger(followed) ? followed : 0);
 }
+
+/** Whether `epoch` is further above this box's own than any promotion could have taken it. */
+export const epochTooFar = (db, epoch) => epoch > lineageEpoch(db) + EPOCH_LEAP;
 
 /** The epoch an answer names, or null. */
 export function answerEpoch(response) {

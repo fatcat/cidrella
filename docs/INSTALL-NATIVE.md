@@ -138,6 +138,8 @@ journalctl -u cidrella --no-pager | grep Password
 
 Open the Web UI URL printed by the installer and log in. Fresh installs use `https://<your-server-ip>` when 443/80 are free, otherwise `https://<your-server-ip>:8443`. A setup wizard will guide you through initial configuration.
 
+A new install can join an existing CIDRella as a member instead of being set up on its own: after you replace the one-time password, choose **Join an existing CIDRella** and enter the controller's address, port and a join token. Joining replaces the networks, DNS, DHCP, settings and accounts on the new box with the controller's. Both boxes must run the same version and reach each other on their HTTPS ports. See [Running more than one instance](UPGRADE.md#running-more-than-one-instance).
+
 ## Updating
 
 ```bash

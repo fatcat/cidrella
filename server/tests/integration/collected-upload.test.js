@@ -16,7 +16,7 @@ import request from 'supertest';
 
 const { setupTestDb, cleanupTestDb } = await import('../helpers/test-db.js');
 const { databaseThrough, LATEST_MIGRATION } = await import('../helpers/migrations.js');
-const { freePort } = await import('../helpers/free-port.js');
+const { listenLocal } = await import('../helpers/free-port.js');
 const { createMultiRouterApp } = await import('../helpers/test-app.js');
 const { default: syncRoutes } = await import('../../src/routes/sync.js');
 const { default: collectedRoutes } = await import('../../src/routes/sync-collected.js');
@@ -59,8 +59,7 @@ beforeAll(async () => {
     { key: fs.readFileSync(identity.keyPath), cert: fs.readFileSync(identity.certPath) },
     app,
   );
-  port = await freePort();
-  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  port = await listenLocal(server);
   api = request(
     createMultiRouterApp([
       { prefix: '/api/metrics', router: metricsRoutes },

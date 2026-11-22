@@ -26,14 +26,27 @@ vi.mock('../../../src/composables/useFeatures.js', () => ({ useFeatures: () => f
 vi.mock('../../../src/composables/useSignInAgain.js', () => ({
   useSignInAgain: () => signInAgain,
 }));
-// The replaced controller's panel has its own test; here it only reports a rejoin.
+// The replaced controller's panel has its own test; here it only reports a
+// rejoin, or that it took the controller back.
 vi.mock('../../../src/components/instances/FencedPanel.vue', () => ({
   default: {
-    props: ['fenced'],
+    props: ['fenced', 'selfName'],
+    emits: ['rejoined', 'took-back'],
+    template:
+      '<section class="fenced-stub" :data-by="fenced.by_name" :data-report="String(fenced.report)" :data-self="selfName"><button class="rejoined" @click="$emit(\'rejoined\', \'ns2\')">rejoin</button><button class="took-back" @click="$emit(\'took-back\')">take back</button></section>',
+  },
+}));
+// The rejoin form is tested through that panel; here it only reports a rejoin.
+vi.mock('../../../src/components/instances/RejoinForm.vue', () => ({
+  default: {
+    props: ['header'],
     emits: ['rejoined'],
     template:
-      '<section class="fenced-stub" :data-by="fenced.by_name" :data-report="String(fenced.report)"><button class="rejoined" @click="$emit(\'rejoined\', \'ns2\')">rejoin</button></section>',
+      '<form class="rejoin-stub" :data-header="header"><button type="button" class="rejoined" @click="$emit(\'rejoined\', \'ns3\')">rejoin</button></form>',
   },
+}));
+vi.mock('vue-router', () => ({
+  RouterLink: { props: ['to'], template: '<a :href="to"><slot /></a>' },
 }));
 vi.mock('../../../src/ui/Button.js', () => ({
   default: {
@@ -326,6 +339,31 @@ const movingSince = (since) =>
     'i-m2',
   );
 const refusal = (code, error) => ({ response: { status: 409, data: { error, code } } });
+
+describe('backups on the controller', () => {
+  it('says when backups are switched off, with the way to the backup settings', async () => {
+    const w = await mountPage({ ...CONTROLLER, backups_off: true });
+    const line = w.find('[data-track="instances-backups-off"]');
+    expect(line.text().replace(/\s+/g, ' ')).toBe(
+      'Backups are switched off on this controller. Switch them on under Settings > Maintenance > Backup & Restore.',
+    );
+    expect(line.find('.cid-status-dot').classes()).toContain('sd-warn');
+    expect(line.find('a').attributes('href')).toBe('/system?area=maintenance&sec=backup');
+    w.unmount();
+  });
+
+  it('says nothing when they are on, on an older server, or on a member', async () => {
+    for (const state of [
+      { ...CONTROLLER, backups_off: false },
+      CONTROLLER,
+      { ...MEMBER, backups_off: true },
+    ]) {
+      const w = await mountPage(state);
+      expect(w.find('[data-track="instances-backups-off"]').exists()).toBe(false);
+      w.unmount();
+    }
+  });
+});
 
 describe('DHCP on the controller', () => {
   it('says which instance serves DHCP and offers the move only where the server allows it', async () => {
@@ -633,6 +671,62 @@ describe('on a member', () => {
     expect(w.find('[data-track="instances-sync-error"]').text()).toBe(
       'ns1 runs 0.7.1 and this instance 0.7.0. Update this instance.',
     );
+    w.unmount();
+  });
+});
+
+describe('Join a controller again, on a member that cannot reach its controller', () => {
+  const OFFLINE = {
+    ...MEMBER,
+    sync: {
+      state: 'offline',
+      last_sync_at: '2026-11-21T09:00:00Z',
+      last_error: 'ns1 does not know this instance.',
+      cursor: 41,
+    },
+  };
+  beforeEach(() => {
+    features.instance = computed(() => ({ mode: 'member', members: 0 }));
+  });
+
+  it('is not offered while the controller answers', async () => {
+    const w = await mountPage(MEMBER);
+    expect(w.find('[data-track="instances-join-again"]').exists()).toBe(false);
+    expect(w.find('.rejoin-stub').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('is closed until asked for, then says what it is for and shows the form', async () => {
+    const w = await mountPage(OFFLINE);
+    const open = w.find('[data-track="instances-join-again"]');
+    expect(open.text()).toBe('Join a controller again');
+    expect(w.find('.rejoin-stub').exists()).toBe(false);
+
+    await open.trigger('click');
+    expect(w.find('[data-track="instances-join-again-form"]').text()).toContain(
+      'Use this when the controller was replaced and the new one does not know this instance. Make a join token on the controller under Settings > System > Instances > Add member.',
+    );
+    // No header of its own: the confirmation names the address entered.
+    expect(w.find('.rejoin-stub').attributes('data-header')).toBeUndefined();
+
+    await open.trigger('click');
+    expect(w.find('.rejoin-stub').exists()).toBe(false);
+    w.unmount();
+  });
+
+  it('after the join says it is restarting, then goes to sign-in as a member', async () => {
+    timers();
+    serve(OFFLINE, () => ({ data: { instance: { mode: 'member', controller_name: 'ns3' } } }));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    await w.find('[data-track="instances-join-again"]').trigger('click');
+    await w.find('.rejoin-stub .rejoined').trigger('click');
+    expect(w.find('[data-track="instances-restarting"]').text()).toContain(
+      'Restarting as a member of ns3. The sign-in page opens when it is back.',
+    );
+    expect(w.find('[data-track="instances-join-again"]').exists()).toBe(false);
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).toHaveBeenCalledWith('joined', 'ns3');
     w.unmount();
   });
 });
@@ -1013,6 +1107,34 @@ describe('Promote this instance, on a member', () => {
   );
 });
 
+describe('Promote this instance, refused because the controller answers', () => {
+  it("shows the server's sentence and stays a member", async () => {
+    timers();
+    features.instance = computed(() => ({
+      mode: 'member',
+      members: 0,
+      sync: { state: 'offline', last_sync_at: '2026-11-21T11:30:00Z' },
+    }));
+    const w = await mountPage(MEMBER_CAN_PROMOTE);
+    const error = 'ns1 is still the controller and answers. Use Make controller on ns1 instead.';
+    api.post.mockRejectedValue({
+      response: { status: 409, data: { error, code: 'controller_reachable' } },
+    });
+    await w.find('[data-track="instances-promote-self"]').trigger('click');
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(toast.add).toHaveBeenCalledWith(
+      expect.objectContaining({ severity: 'error', summary: 'Not promoted', detail: error }),
+    );
+    expect(w.find('.confirm').exists()).toBe(false);
+    expect(w.find('[data-track="instances-restarting"]').exists()).toBe(false);
+    expect(w.find('[data-track="instances-promote-self"]').exists()).toBe(true);
+    await vi.advanceTimersByTimeAsync(30_000);
+    expect(signInAgain).not.toHaveBeenCalled();
+    w.unmount();
+  });
+});
+
 describe('a controller that was replaced', () => {
   beforeEach(timers);
   const FENCED = withPromotion(CONTROLLER, {
@@ -1024,6 +1146,7 @@ describe('a controller that was replaced', () => {
     const panel = w.find('.fenced-stub');
     expect(panel.attributes('data-by')).toBe('ns2');
     expect(panel.attributes('data-report')).toBe('true');
+    expect(panel.attributes('data-self')).toBe('ns1');
     expect(w.find('[data-track="instances-add-member"]').exists()).toBe(false);
     expect(w.find('[data-track="instances-remove"]').exists()).toBe(false);
     expect(w.find('[data-track="instances-promote"]').exists()).toBe(false);
@@ -1058,6 +1181,36 @@ describe('a controller that was replaced', () => {
     api.get.mockRejectedValue({ response: { status: 401, data: { error: 'Unauthorized' } } });
     await vi.advanceTimersByTimeAsync(5000);
     expect(signInAgain).toHaveBeenCalledWith('joined', 'ns2');
+    w.unmount();
+  });
+});
+
+describe('a replaced controller that takes the controller back', () => {
+  it('says it is restarting, waits while it is still replaced, then goes to sign-in', async () => {
+    timers();
+    const FENCED = withPromotion(
+      { ...CONTROLLER, mode: 'member' },
+      { fenced: { by_name: 'ns2', epoch: 4, since: '2026-11-21T11:00:00Z', report: true } },
+    );
+    // Before the restart it still answers as it was: a member, replaced. A
+    // box that reported itself a controller while replaced must not count.
+    let answer = { mode: 'controller', fenced: true };
+    serve(FENCED, () => ({ data: { instance: answer } }));
+    const w = mount(InstancesSettings);
+    await flushPromises();
+    await w.find('.fenced-stub .took-back').trigger('click');
+    expect(w.find('.fenced-stub').exists()).toBe(false);
+    expect(w.find('[data-track="instances-restarting"]').text()).toContain(
+      'Restarting as the controller. The sign-in page opens when it is back.',
+    );
+    await vi.advanceTimersByTimeAsync(5000);
+    answer = { mode: 'member', fenced: true };
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).not.toHaveBeenCalled();
+
+    answer = { mode: 'controller', fenced: false, members: 1 };
+    await vi.advanceTimersByTimeAsync(5000);
+    expect(signInAgain).toHaveBeenCalledWith('promoted', null);
     w.unmount();
   });
 });

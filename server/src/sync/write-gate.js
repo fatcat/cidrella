@@ -12,7 +12,7 @@
  * line; this is the one that answers with a sentence a person can act on.
  */
 import { ipv6Enabled } from '../utils/ipv6-support.js';
-import { MEMBER_READ_ONLY, writeRefusal } from './mode.js';
+import { backupRefusal, MEMBER_READ_ONLY, writeRefusal } from './mode.js';
 import { SETTINGS } from './registry.js';
 
 const READS = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -145,6 +145,10 @@ function matchRoute(pattern, path) {
   return params;
 }
 
+// Refused like any other write, with a sentence of their own: where backups
+// are taken and restored (sync/mode.js backupRefusal).
+const BACKUP_ROUTES = new Set(['/api/operations/backup', '/api/operations/restore']);
+
 /** Whether a member lets this request through. */
 export function memberAllows(req) {
   if (READS.has(req.method)) return true;
@@ -171,5 +175,5 @@ export function memberWriteGate(req, res, next) {
   if (READS.has(req.method) || !req.path.startsWith('/api/')) return next();
   const refusal = writeRefusal();
   if (!refusal || memberAllows(req)) return next();
-  res.status(409).json(refusal);
+  res.status(409).json(BACKUP_ROUTES.has(req.path) ? backupRefusal() : refusal);
 }

@@ -12,7 +12,7 @@ import https from 'https';
 
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../helpers/test-db.js');
 const { databaseThrough, LATEST_MIGRATION } = await import('../helpers/migrations.js');
-const { freePort } = await import('../helpers/free-port.js');
+const { listenLocal } = await import('../helpers/free-port.js');
 const { default: syncRoutes } = await import('../../src/routes/sync.js');
 const { ensureSyncIdentity } = await import('../../src/sync/identity.js');
 const { joinController, sendOutbox } = await import('../../src/sync/member.js');
@@ -41,8 +41,7 @@ beforeAll(async () => {
     { key: fs.readFileSync(identity.keyPath), cert: fs.readFileSync(identity.certPath) },
     app,
   );
-  const port = await freePort();
-  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  const port = await listenLocal(server);
 
   const subnet = controller.prepare(
     `INSERT INTO subnets (cidr, name, network_address, broadcast_address, prefix_length,

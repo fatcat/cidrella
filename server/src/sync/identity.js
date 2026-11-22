@@ -23,7 +23,8 @@ export const SYNC_SERVER_NAME = 'cidrella-sync';
 // About 20 years. Nothing renews it, so it has to outlast the appliance.
 const VALID_DAYS = 7300;
 
-function identityPaths(dataDir) {
+/** Where the identity's key and certificate are kept under `dataDir`. */
+export function identityPaths(dataDir) {
   const dir = path.join(dataDir, 'sync');
   return {
     dir,

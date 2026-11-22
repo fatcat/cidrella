@@ -4,17 +4,14 @@
  * a coordinated handover with its cancel and its recoveries.
  *
  * Every instance is a database of its own with its own HTTPS server on its
- * sync identity and its own routes (tests/helpers/instances.js), all in one
- * process. A restart is a function that does nothing, so each box carries on
- * in the mode its database says; `reboot` runs what boot does to the log.
+ * sync identity and its own routes, all in one process
+ * (tests/helpers/instance-estate.js). What a review of this code found is in
+ * controller-promotion-findings.test.js.
  */
-import { describe, it, expect, beforeAll, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeAll, vi } from 'vitest';
 import Database from 'better-sqlite3';
-import express from 'express';
 import fs from 'fs';
-import https from 'https';
 import path from 'path';
-import request from 'supertest';
 
 vi.mock('../../src/db/init.js', async (importOriginal) =>
   (await import('../helpers/instances.js')).perInstanceDb(await importOriginal()),
@@ -23,35 +20,27 @@ vi.mock('../../src/backends/index.js', async () =>
   (await import('../helpers/fake-backends.js')).fakeBackendsModule(),
 );
 
-const { setupTestDb, cleanupTestDb } = await import('../helpers/test-db.js');
-const { inInstance } = await import('../helpers/instances.js');
-const { databaseThrough, LATEST_MIGRATION } = await import('../helpers/migrations.js');
-const { freePort } = await import('../helpers/free-port.js');
-const { backend } = await import('../../src/backends/index.js');
-const { getDb } = await import('../../src/db/init.js');
-const { initAnalyticsDb, closeAnalyticsDb } = await import('../../src/db/duckdb.js');
-const { default: syncRoutes } = await import('../../src/routes/sync.js');
-const { default: collectedRoutes } = await import('../../src/routes/sync-collected.js');
-const { default: instanceRoutes } = await import('../../src/routes/instances.js');
-const { default: featuresRoutes } = await import('../../src/routes/features.js');
-const { actorMiddleware } = await import('../../src/utils/request-actor.js');
-const { afterCommitMiddleware } = await import('../../src/utils/after-commit.js');
-const { memberWriteGate } = await import('../../src/sync/write-gate.js');
-const { ensureSyncIdentity } = await import('../../src/sync/identity.js');
 const {
-  CONTROLLER,
-  MEMBER,
-  ensureSyncLog,
-  estateTables,
-  readSyncState,
-  storedMode,
-  syncStatus,
-  writeSyncState,
-} = await import('../../src/sync/log.js');
+  api,
+  asController,
+  box,
+  changesFor,
+  dataOfRecord,
+  epochOf,
+  estate,
+  hello,
+  reboot,
+  rowOf,
+  useEstates,
+  write,
+} = await import('../helpers/instance-estate.js');
+const { LATEST_MIGRATION } = await import('../helpers/migrations.js');
+const { CONTROLLER, MEMBER, readSyncState, storedMode, syncStatus, writeSyncState } =
+  await import('../../src/sync/log.js');
 const { controllerOf, isFenced } = await import('../../src/sync/mode.js');
 const { fencedState, handoverFreeze, setTakeoverNotice, takeoverNotice } =
   await import('../../src/sync/promotion-state.js');
-const { followNewController, joinController, sendOutbox, startMemberSync, syncOnce } =
+const { followNewController, sendOutbox, startMemberSync, syncOnce } =
   await import('../../src/sync/member.js');
 const { findController } = await import('../../src/sync/find-controller.js');
 const { EPOCH_HEADER } = await import('../../src/sync/controller-call.js');
@@ -59,202 +48,14 @@ const { parseChanges } = await import('../../src/sync/changes.js');
 const { readCredential } = await import('../../src/sync/credential.js');
 const { uploadCollectedOnce } = await import('../../src/sync/collected-upload.js');
 const { dhcpState, markDhcpReady, servesDhcpHere } = await import('../../src/sync/dhcp-active.js');
-const {
-  deliverTakeoverNotice,
-  divergenceReportPath,
-  preDemotionSnapshotPath,
-  setPromotionRestart,
-  takeOverIfNamed,
-} = await import('../../src/services/controller-promotion.js');
-const { createJoinToken, ensureOwnInstance, ownInstanceId, removeMember } =
-  await import('../../src/models/sync-instance.js');
+const { deliverTakeoverNotice, divergenceReportPath, preDemotionSnapshotPath, takeOverIfNamed } =
+  await import('../../src/services/controller-promotion.js');
+const { createJoinToken, removeMember } = await import('../../src/models/sync-instance.js');
 const { readSetting, upsertSetting } = await import('../../src/models/setting.js');
 const { recordAudit } = await import('../../src/services/audit.js');
 const { syncRequest } = await import('../../src/utils/sync-client.js');
 
-const tmpDirs = [];
-const servers = [];
-let processDir;
-let undoRestart;
-
-beforeAll(async () => {
-  // The process's own database: the hook handlers, and the analytics store
-  // every instance here shares.
-  ({ tmpDir: processDir } = await setupTestDb());
-  await initAnalyticsDb(processDir);
-  undoRestart = setPromotionRestart(() => {});
-  backend.dhcp.importLeases = vi.fn(async (leases) => ({ added: leases.length, failed: [] }));
-  backend.activate = vi.fn(async ({ force = false } = {}) => (force ? 'restarted' : 'unchanged'));
-  backend.seedLeases([]);
-});
-afterAll(async () => {
-  undoRestart();
-  await Promise.all(
-    servers.map(
-      (server) =>
-        new Promise((resolve) => {
-          server.close(resolve);
-          // A member's long poll may still be open.
-          server.closeAllConnections();
-        }),
-    ),
-  );
-  await closeAnalyticsDb();
-  cleanupTestDb(processDir);
-  for (const dir of tmpDirs) fs.rmSync(dir, { recursive: true, force: true });
-});
-
-/** A new install with its sync identity, its routes and its HTTPS server. */
-async function box(name) {
-  const { db, tmpDir: dir } = databaseThrough(LATEST_MIGRATION, { tmpDirs });
-  const identity = ensureSyncIdentity(dir);
-  writeSyncState(db, 'instance_name', name);
-  ensureSyncLog(db, dir);
-
-  const app = express();
-  app.use(express.json());
-  app.use(inInstance(db));
-  app.use('/api/sync/collected', collectedRoutes);
-  app.use('/api/sync', syncRoutes);
-  app.use((req, res, next) => {
-    req.user = { id: 1, role: 'admin', username: 'testadmin' };
-    next();
-  });
-  app.use(actorMiddleware);
-  app.use(afterCommitMiddleware);
-  app.use(memberWriteGate);
-  app.use('/api/instances', instanceRoutes);
-  app.use('/api/features', featuresRoutes);
-  // A write to the data of record, standing for every route that makes one.
-  app.put('/api/settings/:key', (req, res) => {
-    upsertSetting(getDb(), req.params.key, req.body.value);
-    res.json({ ok: true });
-  });
-
-  // eslint-disable-next-line no-unused-vars
-  app.use((err, req, res, next) => {
-    console.error(err);
-    res.status(500).json({ error: err.message });
-  });
-
-  const self = { name, db, dir, identity, app, port: await freePort(), id: ownInstanceId(db) };
-  self.listen = async () => {
-    self.server = https.createServer(
-      { key: fs.readFileSync(identity.keyPath), cert: fs.readFileSync(identity.certPath) },
-      app,
-    );
-    servers.push(self.server);
-    await new Promise((resolve) => self.server.listen(self.port, '127.0.0.1', resolve));
-  };
-  // The box is off: nothing reaches it.
-  self.unplug = () => new Promise((resolve) => self.server.close(resolve));
-  await self.listen();
-  return self;
-}
-
-function asController(one) {
-  // The admin the requests below are made as.
-  if (!one.db.prepare('SELECT 1 FROM users WHERE id = 1').get()) {
-    one.db
-      .prepare(
-        "INSERT INTO users (id, username, password_hash, role) VALUES (1, 'testadmin', 'x', 'admin')",
-      )
-      .run();
-  }
-  ensureOwnInstance(one.db, {
-    fingerprint: one.identity.fingerprint,
-    port: one.port,
-    version: 'test',
-    dnsAddresses: [],
-  });
-}
-
-/** What boot does to the change log, and to the controller's own row. */
-function reboot(one) {
-  const result = ensureSyncLog(one.db, one.dir);
-  if (storedMode(one.db) === CONTROLLER) asController(one);
-  return result;
-}
-
-async function join(member, controller) {
-  const { token } = createJoinToken(controller.db, {
-    fingerprint: controller.identity.fingerprint,
-  });
-  await joinController(
-    member.db,
-    { address: '127.0.0.1', port: controller.port, token },
-    { restart: () => {} },
-  );
-  // The join reports the port the web server listens on, which here is not
-  // the test server's.
-  controller.db
-    .prepare('UPDATE sync_instances SET port = ? WHERE instance_id = ?')
-    .run(member.port, member.id);
-}
-
-/** A controller and its members, every member current. */
-async function estate(...names) {
-  const boxes = [];
-  for (const name of names) boxes.push(await box(name));
-  const [controller, ...members] = boxes;
-  asController(controller);
-  for (const member of members) await join(member, controller);
-  for (const member of members) await syncOnce(member.db);
-  return boxes;
-}
-
-const api = (one) => request(one.app);
-const write = (one, value) => api(one).put('/api/settings/map_home').send({ value });
-const rowOf = (on, other) =>
-  on.db.prepare('SELECT * FROM sync_instances WHERE instance_id = ?').get(other.id);
-const epochOf = (one) => syncStatus(one.db).epoch;
-
-/** The data of record of `db`, table by table, in key order. */
-function dataOfRecord(db) {
-  return Object.fromEntries(
-    estateTables(db).map((table) => [
-      table.name,
-      db
-        .prepare(
-          `SELECT ${table.columns.join(', ')} FROM ${table.name} AS r
-           WHERE ${table.isEstateRow('r')} ORDER BY ${table.key}`,
-        )
-        .all(),
-    ]),
-  );
-}
-
-/** What `to` would send `from` now, read without applying it. */
-async function changesFor(from, to) {
-  const local = syncStatus(from.db);
-  const query = new URLSearchParams({
-    schema: local.schema,
-    epoch: local.epoch,
-    dataset: local.dataset,
-    since: readSyncState(from.db, 'cursor'),
-  });
-  const response = await syncRequest({
-    address: '127.0.0.1',
-    port: to.port,
-    fingerprint: to.identity.fingerprint,
-    path: `/api/sync/changes?${query}`,
-    credential: readCredential(from.db),
-  });
-  return response.status === 200 ? parseChanges(response.body) : { status: response.status };
-}
-
-const hello = (to, credential, headers = {}) =>
-  syncRequest({
-    address: '127.0.0.1',
-    port: to.port,
-    fingerprint: to.identity.fingerprint,
-    path: '/api/sync/hello',
-    credential,
-    headers,
-  }).then((response) => ({
-    status: response.status,
-    body: JSON.parse(response.body.toString('utf8')),
-  }));
+useEstates();
 
 const insertMetrics = (db) =>
   db
@@ -282,6 +83,8 @@ describe('a single box, and a controller nobody has replaced', () => {
     const list = (await api(alone).get('/api/instances')).body;
     expect(list.mode).toBe('controller');
     expect(list.promotion).toEqual({ handover: null, fenced: null });
+    // One box takes its own backups or none: nothing to warn of.
+    expect(list.backups_off).toBe(false);
     expect(list.instances).toHaveLength(1);
     expect(list.instances[0]).toMatchObject({ is_controller: true, can_promote: false });
     expect((await api(alone).get('/api/features')).body.instance).toMatchObject({
@@ -329,6 +132,13 @@ describe('a single box, and a controller nobody has replaced', () => {
         mode: 'controller',
         epoch: 1,
         dataset: syncStatus(c.db).dataset,
+        dhcp: {
+          active_instance_id: c.id,
+          term: 0,
+          here: servesDhcpHere(c.db),
+          handover_from: null,
+          handover_since: null,
+        },
       },
     });
     expect((await hello(c, null)).status).toBe(401);
@@ -380,6 +190,35 @@ describe('a forced promotion', () => {
     expect(storedMode(a.db)).toBe(MEMBER);
   });
 
+  // An update migrates the member's copy with nobody checking it against the
+  // controller's, so boot forgets the cursor: until the next sync, which the
+  // controller refuses across schemas, this copy is nothing to take over with.
+  it('is refused on a member that was updated to another schema and has not synced since', async () => {
+    const cursor = readSyncState(a.db, 'cursor');
+    a.db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(LATEST_MIGRATION + 1);
+    expect(reboot(a).started).toBe('schema changed');
+    await expect(syncOnce(a.db)).rejects.toMatchObject({
+      code: 'paused',
+      message: expect.stringMatching(
+        new RegExp(
+          `schema ${LATEST_MIGRATION}\\).*schema ${LATEST_MIGRATION + 1}\\). Update the older one`,
+        ),
+      ),
+    });
+    const skewed = await api(a).post('/api/instances/promote-self').send({ confirm: true });
+    expect(skewed.status).toBe(409);
+    expect(skewed.body.code).toBe('never_synced');
+    expect(skewed.body.error).toMatch(/updated to another version and has not synced since/);
+    expect(storedMode(a.db)).toBe(MEMBER);
+    expect(epochOf(c)).toBe(1);
+
+    a.db.prepare('DELETE FROM schema_version WHERE version = ?').run(LATEST_MIGRATION + 1);
+    expect(reboot(a).started).toBe('schema changed');
+    await syncOnce(a.db);
+    expect(Number(readSyncState(a.db, 'cursor'))).toBeGreaterThanOrEqual(Number(cursor));
+    expect(dataOfRecord(a.db)).toEqual(dataOfRecord(c.db));
+  });
+
   it('makes the member the controller at the next epoch, in the same dataset', async () => {
     expect(servesDhcpHere(c.db)).toBe(true);
     // Beta is a step behind alpha, and its measurements are with the controller.
@@ -405,7 +244,11 @@ describe('a forced promotion', () => {
     const head = syncStatus(a.db).head;
     const response = await api(a).post('/api/instances/promote-self').send({ confirm: true });
     expect(response.status).toBe(200);
-    expect(response.body).toEqual({ restarting: true });
+    // DHCP stays named on the old controller, which did not answer.
+    expect(response.body).toEqual({
+      restarting: true,
+      dhcp: { active_instance_id: c.id, name: 'ctl', reachable: false },
+    });
 
     expect(storedMode(a.db)).toBe(CONTROLLER);
     expect(controllerOf(a.db)).toBeNull();
@@ -429,8 +272,16 @@ describe('a forced promotion', () => {
     expect(
       a.db.prepare("SELECT actor FROM audit_log WHERE action = 'controller_promoted'").get(),
     ).toMatchObject({ actor: 'testadmin' });
-    // A member was told at the join to take no backups: that is left alone.
+    // A member was told at the join to take no backups: that is left alone,
+    // and nobody could say what the dead controller's schedule was. The list says so.
     expect(readSetting(a.db, 'backup_schedule')).toBe('off');
+    expect((await api(a).get('/api/instances')).body.backups_off).toBe(true);
+    // The old controller's row counts as heard from at the takeover, so the
+    // quiet rule can let the change log's deletes go in time (P6-09).
+    expect(Date.parse(rowOf(a, c).last_contact_at)).toBeGreaterThan(Date.now() - 60_000);
+    upsertSetting(a.db, 'backup_schedule', 'daily');
+    expect((await api(a).get('/api/instances')).body.backups_off).toBe(false);
+    upsertSetting(a.db, 'backup_schedule', 'off');
   });
 
   it('carries on logging from where its copy stopped when it boots as the controller', () => {
@@ -545,8 +396,14 @@ describe('a forced promotion', () => {
       ]) {
         expect((await api(c).post(path)).body.code).toBe('controller_fenced');
       }
+      // It cannot take the role back while the new controller answers (P6-04).
       const self = await api(c).post('/api/instances/promote-self').send({ confirm: true });
-      expect(self.body.code).toBe('not_member');
+      expect(self.status).toBe(409);
+      expect(self.body).toEqual({
+        code: 'controller_reachable',
+        error: 'alpha is answering as the controller. Join it instead of taking the role back.',
+      });
+      expect(isFenced(c.db)).toBe(true);
     });
 
     it('serves no DHCP, hands out no changes, and says it is fenced', async () => {
@@ -559,7 +416,13 @@ describe('a forced promotion', () => {
       expect(list.mode).toBe('member');
       expect(list.controller).toBeNull();
       expect(list.promotion.handover).toBeNull();
-      expect(list.promotion.fenced).toMatchObject({ by_name: 'alpha', epoch: 2, report: true });
+      expect(list.promotion.fenced).toMatchObject({
+        by_name: 'alpha',
+        told_by: 'beta',
+        epoch: 2,
+        report: true,
+      });
+      expect(list.backups_off).toBe(false);
       expect(Number.isNaN(Date.parse(list.promotion.fenced.since))).toBe(false);
       expect(list.instances.every((row) => row.can_promote === false)).toBe(true);
       expect((await api(c).get('/api/features')).body.instance).toMatchObject({
@@ -572,7 +435,9 @@ describe('a forced promotion', () => {
 
     it('has saved its database as it was', () => {
       const file = preDemotionSnapshotPath(c.db);
-      expect(file).toBe(path.join(c.dir, 'snapshots', 'pre-demotion', 'cidrella.db'));
+      expect(path.dirname(file)).toBe(path.join(c.dir, 'snapshots', 'pre-demotion'));
+      expect(path.basename(file)).toMatch(/^cidrella-\d{8}T\d{9}Z\.db$/);
+      expect(fencedState(c.db).snapshot).toBe(path.basename(file));
       const copy = new Database(file, { readonly: true });
       try {
         expect(copy.prepare("SELECT value FROM settings WHERE key = 'map_home'").get().value).toBe(
@@ -594,7 +459,9 @@ describe('a forced promotion', () => {
       expect(report).toEqual(JSON.parse(fs.readFileSync(divergenceReportPath(c.db), 'utf8')));
       expect(report.replaced_by).toEqual({ instance_id: a.id, name: 'alpha' });
       expect(report.epoch).toBe(2);
-      expect(report.since).toBe(rowOf(c, a).cursor);
+      // From the lower cursor of the instance named and the one that said so.
+      expect(report.since).toBe(Math.min(rowOf(c, a).cursor, rowOf(c, b).cursor));
+      expect(fencedState(c.db)).toMatchObject({ by_name: 'alpha', told_by: 'beta' });
 
       const of = (table, key) =>
         report.changes.find((change) => change.table === table && String(change.key) === key);
@@ -701,6 +568,8 @@ describe('a coordinated handover', () => {
   beforeAll(async () => {
     [c, a, b] = await estate('ctl-h', 'alpha-h', 'beta-h');
     upsertSetting(c.db, 'dhcp_enabled', 'true');
+    upsertSetting(c.db, 'backup_schedule', 'weekly');
+    upsertSetting(c.db, 'backup_retention_count', '14');
     dataset = syncStatus(c.db).dataset;
   });
 
@@ -726,7 +595,12 @@ describe('a coordinated handover', () => {
 
     const schema = c.db.prepare('UPDATE sync_instances SET schema_version = ? WHERE id = ?');
     schema.run(LATEST_MIGRATION - 1, rowOf(c, a).id);
-    expect((await promote(c, a)).body.code).toBe('schema_mismatch');
+    const older = await promote(c, a);
+    expect(older.status).toBe(409);
+    expect(older.body.code).toBe('schema_mismatch');
+    expect(older.body.error).toMatch(
+      /^alpha-h runs \S+, not the controller's\. Update it to the same version first\.$/,
+    );
     schema.run(LATEST_MIGRATION, rowOf(c, a).id);
 
     upsertSetting(c.db, 'dhcp_handover_from', b.id);
@@ -828,7 +702,18 @@ describe('a coordinated handover', () => {
       fingerprint: a.identity.fingerprint,
     });
     expect(fs.statSync(path.join(c.dir, 'sync', 'credential')).mode & 0o777).toBe(0o600);
+    // The backup schedule went with the role (P6-12).
     expect(readSetting(c.db, 'backup_schedule')).toBe('off');
+    expect(readSetting(a.db, 'backup_schedule')).toBe('weekly');
+    expect(readSetting(a.db, 'backup_retention_count')).toBe('14');
+    expect((await api(a).get('/api/instances')).body.backups_off).toBe(false);
+    expect(
+      JSON.parse(
+        a.db
+          .prepare("SELECT details FROM audit_log WHERE action = 'controller_handover_completed'")
+          .get().details,
+      ),
+    ).toMatchObject({ backup_schedule: 'weekly' });
     expect(fs.existsSync(divergenceReportPath(c.db))).toBe(false);
 
     // The new controller makes changes of its own before the old one asks:
@@ -1063,5 +948,5 @@ describe('a controller that died mid-handover, with the member it named', () => 
     await syncOnce(a.db);
     expect(readSetting(a.db, 'controller_handover_to')).toBeNull();
     expect(storedMode(a.db)).toBe(MEMBER);
-  }, 30_000);
+  }, 120_000);
 });

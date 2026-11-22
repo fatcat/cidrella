@@ -13,7 +13,9 @@
      the member takes over and this instance restarts as a member of it. A
      member whose controller is gone for good promotes itself. A controller
      that comes back to find itself replaced takes no changes, and is rejoined
-     to the new one as a member (components/instances/FencedPanel.vue). After
+     to the new one as a member, or takes the controller back when the new one
+     is gone (components/instances/FencedPanel.vue). A member that cannot reach
+     its controller can join one again with a new token (RejoinForm.vue). After
      each of these the box restarts and the page goes to sign-in. -->
 <template>
   <div class="content-card">
@@ -51,14 +53,24 @@
         <span>{{ restartingText(awaiting) }}</span>
       </p>
 
-      <FencedPanel v-if="fenced && !awaiting" :fenced="fenced" @rejoined="onRejoined" />
+      <FencedPanel
+        v-if="fenced && !awaiting"
+        :fenced="fenced"
+        :self-name="selfName"
+        @rejoined="onRejoined"
+        @took-back="onPromoted"
+      />
 
       <p v-if="isController && !fenced" class="field-help intro">
         This instance is the controller: it owns the data, and changes are made here. A member holds
         a read-only copy, kept in sync, and keeps serving DNS when the controller is away.
       </p>
 
-      <section v-if="state?.mode === 'member' && !fenced" class="following" data-track="instances-following">
+      <section
+        v-if="state?.mode === 'member' && !fenced"
+        class="following"
+        data-track="instances-following"
+      >
         <p>
           This instance is a member of <strong>{{ state.controller?.name }}</strong>
           <span v-if="controllerAddress" class="mono muted"> ({{ controllerAddress }})</span>. It
@@ -71,6 +83,26 @@
         <p v-if="state.sync?.last_error" class="field-error" data-track="instances-sync-error">
           {{ state.sync.last_error }}
         </p>
+        <template v-if="canJoinAgain">
+          <Button
+            label="Join a controller again"
+            :icon="joiningAgain ? 'pi pi-chevron-down' : 'pi pi-chevron-right'"
+            severity="secondary"
+            text
+            size="small"
+            :aria-expanded="joiningAgain"
+            data-track="instances-join-again"
+            @click="joiningAgain = !joiningAgain"
+          />
+          <div v-if="joiningAgain" data-track="instances-join-again-form">
+            <p class="field-help">
+              Use this when the controller was replaced and the new one does not know this instance.
+              Make a join token on the controller under Settings &gt; System &gt; Instances &gt; Add
+              member.
+            </p>
+            <RejoinForm @rejoined="onRejoined" />
+          </div>
+        </template>
       </section>
 
       <p v-if="promoHandover" class="status-line" data-track="instances-promote-handover">
@@ -98,6 +130,14 @@
           data-track="instances-dhcp-force"
           @click="forcing = true"
         />
+      </p>
+
+      <p v-if="backupsOff" class="status-line" data-track="instances-backups-off">
+        <StatusDot kind="warn" label="Backups off" />
+        <span>
+          Backups are switched off on this controller. Switch them on under
+          <RouterLink :to="BACKUP_SETTINGS">Settings &gt; Maintenance &gt; Backup &amp; Restore</RouterLink>.
+        </span>
       </p>
 
       <DataTable :value="rows" :loading="loading" size="small" stripedRows data-key="id">
@@ -375,6 +415,7 @@
 
 <script setup>
 import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue';
+import { RouterLink } from 'vue-router';
 import Button from '../../ui/Button.js';
 import Column from '../../ui/Column.js';
 import DataTable from '../../ui/DataTable.js';
@@ -385,6 +426,7 @@ import ConfirmDialog from '../../components/ConfirmDialog.vue';
 import EmptyState from '../../components/EmptyState.vue';
 import StatusDot from '../../components/StatusDot.vue';
 import FencedPanel from '../../components/instances/FencedPanel.vue';
+import RejoinForm from '../../components/instances/RejoinForm.vue';
 import api from '../../api/client.js';
 import { useToast } from '../../ui/useToast.js';
 import { useAuthStore } from '../../stores/auth.js';
@@ -434,6 +476,11 @@ const awaiting = ref(null);
 // The controller's own actions: not while it hands over, and not once replaced.
 const canAct = computed(
   () => isController.value && !promoHandover.value && !fenced.value && !awaiting.value,
+);
+// A controller with backups off has nothing to restore from if it is lost.
+const BACKUP_SETTINGS = '/system?area=maintenance&sec=backup';
+const backupsOff = computed(
+  () => isController.value && !fenced.value && state.value?.backups_off === true,
 );
 const emptyText = computed(() =>
   state.value ? 'No instance is listed.' : 'The list of instances could not be read.',
@@ -571,6 +618,8 @@ async function arrived() {
   }
   const mode = instance?.mode === 'member' ? 'member' : 'controller';
   if (mode !== want.mode) return false;
+  // A replaced controller that is taking the role back is not there yet.
+  if (want.mode === 'controller' && instance?.fenced) return false;
   return leave(want, instance?.controller_name);
 }
 
@@ -653,7 +702,7 @@ async function promoteSelf() {
   promoteSelfBusy.value = true;
   try {
     await api.post('/instances/promote-self', { confirm: true });
-    awaiting.value = { mode: 'controller', reason: 'promoted', name: null };
+    onPromoted();
   } catch (err) {
     fail('Not promoted', err);
     await load();
@@ -663,10 +712,24 @@ async function promoteSelf() {
   }
 }
 
-// A replaced controller was rejoined to the new one and is restarting.
+// This instance was promoted (a member, or a replaced controller taking the
+// role back) and is restarting as the controller.
+function onPromoted() {
+  awaiting.value = { mode: 'controller', reason: 'promoted', name: null };
+}
+
+// This instance joined a controller (a replaced controller, or a member that
+// lost its own) and is restarting as a member of it.
 function onRejoined(name) {
   awaiting.value = { mode: 'member', reason: 'joined', name };
 }
+
+// Join a controller again: for a member whose controller does not answer.
+// The form stays open once opened, whatever the next read says.
+const joiningAgain = ref(false);
+const canJoinAgain = computed(
+  () => !awaiting.value && (state.value?.sync?.state === 'offline' || joiningAgain.value),
+);
 
 const moving = ref(null);
 const moveBusy = ref(false);

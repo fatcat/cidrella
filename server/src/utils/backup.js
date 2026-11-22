@@ -5,7 +5,8 @@ import zlib from 'zlib';
 import { spawn } from 'child_process';
 import Database from 'better-sqlite3';
 import { insertAuditRow } from '../models/audit-log.js';
-import { forgetDataset } from '../sync/log.js';
+import { backupRefusal } from '../sync/mode.js';
+import { detachRestoredDatabase, keepPresentInstances, presentInstances } from '../sync/restore.js';
 import { recordAudit } from '../services/audit.js';
 import { LAST_VERSION_KEY } from '../services/version-audit.js';
 import {
@@ -113,7 +114,22 @@ function isRuntimeArtifact(name) {
  * runs as a child process the loop does not wait on.
  */
 export function createBackup(db, { trigger = 'manual' } = {}) {
-  return exclusive('backup', () => writeBackup(db, trigger));
+  return exclusive('backup', () => {
+    refuseUnlessRecordHolder(db);
+    return writeBackup(db, trigger);
+  });
+}
+
+// Only the controller holds the data of record, so only it takes a backup of
+// it or restores one over it (sync/mode.js backupRefusal). Throws with code
+// BACKUP_NOT_HERE and `reason`, the refusal's own code.
+function refuseUnlessRecordHolder(db) {
+  const refusal = backupRefusal(db);
+  if (!refusal) return;
+  const err = new Error(refusal.error);
+  err.code = 'BACKUP_NOT_HERE';
+  err.reason = refusal.code;
+  throw err;
 }
 
 // The stored template, or the default when it is absent or not valid (a
@@ -719,8 +735,8 @@ async function takePreRestoreSnapshot(db) {
  * check admits, whatever schema it is at. Throws with code
  * RESTORE_DHCP_CHOICE_FAILED; the caller aborts before touching DATA_DIR.
  *
- * Every restore also marks the database as a new dataset (sync/log.js
- * forgetDataset), whatever it was called with.
+ * Every restore also makes the database a controller's and a new dataset
+ * (sync/restore.js detachRestoredDatabase), whatever it was called with.
  *
  * Returns true when a choice, an audit row or a carry-over was written.
  */
@@ -735,6 +751,9 @@ export function stampRestoredSettings(
   try {
     staged = new Database(stagedDbPath);
     const stamp = staged.transaction(() => {
+      // The restored data is not what the change log described a moment ago,
+      // and the standing of the box it was taken on is not this box's.
+      detachRestoredDatabase(staged);
       if (hasChoice) {
         upsertSettingWithConflict(staged, 'dhcp_enabled', dhcpEnabled ? 'true' : 'false');
       }
@@ -745,8 +764,6 @@ export function stampRestoredSettings(
       if (carryover) {
         upsertSettingWithConflict(staged, RESTORE_CARRYOVER_KEY, JSON.stringify(carryover));
       }
-      // The restored data is not what the change log described a moment ago.
-      forgetDataset(staged);
       if (restoredBy) {
         // The backup remembers the version that took it; the next boot would
         // read that as an update. An UPDATE, not an insert: a backup from
@@ -777,6 +794,13 @@ export function stampRestoredSettings(
             backup_created_at: manifest?.created_at ?? null,
             dhcp_after_restore: hasChoice ? dhcpEnabled : null,
             totp_carried_over: !!carryover?.totp,
+            // The instances and the epoch are this box's, not the backup's.
+            ...(carryover?.instances
+              ? {
+                  epoch_kept: carryover.instances.state.epoch,
+                  members_kept: carryover.instances.rows.filter((row) => !row.is_controller).length,
+                }
+              : {}),
           },
         });
       }
@@ -801,7 +825,10 @@ export function stampRestoredSettings(
 }
 
 export function restoreBackup(archivePath, options = {}) {
-  return exclusive('restore', () => applyRestore(archivePath, options));
+  return exclusive('restore', () => {
+    refuseUnlessRecordHolder(getDb());
+    return applyRestore(archivePath, options);
+  });
 }
 
 async function applyRestore(
@@ -985,7 +1012,11 @@ async function applyRestore(
         dhcpEnabled: dhcpAfterRestore,
         restoredBy,
         manifest: inspection.manifest,
-        carryover,
+        // The instances, the epoch and which instance serves DHCP stay this
+        // box's as it runs now, whoever calls and whatever the backup holds
+        // (sync/restore.js). Read here, as late as a failure still leaves
+        // DATA_DIR untouched.
+        carryover: { ...carryover, instances: presentInstances(db) },
       });
       if (carryover?.totp) {
         console.log(`Restore: two-factor enrolment for ${carryover.totp.username} will carry over`);
@@ -1373,6 +1404,10 @@ export function startBackupScheduler() {
       if (operationRunning) return;
       try {
         const db = getDb();
+        // A member, a replaced controller and one handing over take none,
+        // whatever the schedule says (the process restarts on a change of
+        // mode, so this is for the handover freeze and for a stray start).
+        if (backupRefusal(db)) return;
         const scheduleValue = getSetting('backup_schedule');
         if (!scheduleValue || scheduleValue === 'off') return;
 
@@ -1444,9 +1479,12 @@ export function collectRestoreCarryover(db, userId) {
 
 /**
  * First boot after a restore: apply what stampRestoredSettings parked, once
- * migrations have given the restored database the columns. Keyed by username;
- * an account that already has two-factor on in the backup keeps its own.
- * The parked setting is removed either way so this runs once.
+ * migrations have given the restored database the columns and tables. The
+ * two-factor enrolment is keyed by username; an account that already has
+ * two-factor on in the backup keeps its own. The instances, the epoch and
+ * the DHCP assignment become what this box had (sync/restore.js). One
+ * transaction, and the parked setting goes with it, so this runs once: when
+ * it throws nothing is applied and the next boot tries again.
  */
 export function applyRestoreCarryover(db) {
   const row = db.prepare('SELECT value FROM settings WHERE key = ?').get(RESTORE_CARRYOVER_KEY);
@@ -1459,6 +1497,7 @@ export function applyRestoreCarryover(db) {
   }
   const outcome = { totp: 'none' };
   const apply = db.transaction(() => {
+    if (parked?.instances) outcome.instances = keepPresentInstances(db, parked.instances);
     const totp = parked?.totp;
     if (totp?.username && totp.secret) {
       const user = db
@@ -1483,5 +1522,9 @@ export function applyRestoreCarryover(db) {
   });
   apply();
   console.log(`Restore carry-over: two-factor ${outcome.totp}`);
+  if (outcome.instances) {
+    const { epoch, members } = outcome.instances;
+    console.log(`Restore carry-over: kept this box's ${members} member(s) at epoch ${epoch}`);
+  }
   return outcome;
 }

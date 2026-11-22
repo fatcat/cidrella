@@ -12,7 +12,7 @@ import path from 'path';
 
 const { setupTestDb, cleanupTestDb, enableIpv6 } = await import('../helpers/test-db.js');
 const { databaseThrough, LATEST_MIGRATION } = await import('../helpers/migrations.js');
-const { freePort } = await import('../helpers/free-port.js');
+const { listenLocal } = await import('../helpers/free-port.js');
 const { default: syncRoutes } = await import('../../src/routes/sync.js');
 const { ensureSyncIdentity } = await import('../../src/sync/identity.js');
 const { estateTables, GUARD_MESSAGE, MEMBER, storedMode, syncStatus } =
@@ -44,8 +44,7 @@ beforeAll(async () => {
     { key: fs.readFileSync(identity.keyPath), cert: fs.readFileSync(identity.certPath) },
     app,
   );
-  port = await freePort();
-  await new Promise((resolve) => server.listen(port, '127.0.0.1', resolve));
+  port = await listenLocal(server);
 });
 afterAll(async () => {
   await new Promise((resolve) => server.close(resolve));
@@ -102,7 +101,12 @@ describe('joining a controller', () => {
     const box = newBox();
     box.db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(LATEST_MIGRATION + 1);
     const joinToken = token();
-    await expect(join(box, joinToken)).rejects.toMatchObject({ code: 'schema_mismatch' });
+    await expect(join(box, joinToken)).rejects.toMatchObject({
+      code: 'schema_mismatch',
+      message: expect.stringMatching(
+        /^This CIDRella is at version \S+ and the one joining is at \S+\. Update both/,
+      ),
+    });
     box.db.prepare('DELETE FROM schema_version WHERE version = ?').run(LATEST_MIGRATION + 1);
     await expect(join(box, joinToken)).resolves.toMatchObject({ controller: {} });
   });

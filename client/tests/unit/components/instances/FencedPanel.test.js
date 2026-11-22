@@ -1,7 +1,8 @@
 /**
  * The panel a replaced controller shows on Settings > Instances: what
- * happened, the report of changes the new controller never received, and the
- * rejoin as a member. Against mocked API calls.
+ * happened, the report of changes the new controller never received, the
+ * rejoin as a member (RejoinForm.vue, tested through the panel), and taking
+ * the controller back. Against mocked API calls.
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { flushPromises, mount } from '@vue/test-utils';
@@ -16,9 +17,9 @@ vi.mock('../../../../src/ui/useToast.js', () => ({ useToast: () => toast }));
 vi.mock('../../../../src/utils/download.js', () => ({ saveBlob }));
 vi.mock('../../../../src/ui/Button.js', () => ({
   default: {
-    props: ['label', 'disabled', 'loading', 'type'],
+    props: ['label', 'disabled', 'loading', 'type', 'severity'],
     template:
-      '<button :type="type || \'button\'" :disabled="disabled || loading">{{ label }}</button>',
+      '<button :type="type || \'button\'" :disabled="disabled || loading" :data-severity="severity">{{ label }}</button>',
   },
 }));
 const input = (cast) => ({
@@ -34,17 +35,18 @@ vi.mock('../../../../src/ui/InputNumber.js', () => ({
 }));
 vi.mock('../../../../src/components/ConfirmDialog.vue', () => ({
   default: {
-    props: ['visible', 'header', 'severity', 'confirmLabel'],
+    props: ['visible', 'header', 'severity', 'confirmLabel', 'typeToConfirm'],
     emits: ['confirm', 'update:visible'],
     template:
-      '<div v-if="visible" class="confirm" :data-severity="severity || \'danger\'"><h2>{{ header }}</h2><slot /><button type="button" class="go" @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
+      '<div v-if="visible" class="confirm" :data-severity="severity || \'danger\'" :data-typed="typeToConfirm"><h2>{{ header }}</h2><slot /><button type="button" class="go" @click="$emit(\'confirm\')">{{ confirmLabel }}</button></div>',
   },
 }));
 
 const FencedPanel = (await import('../../../../src/components/instances/FencedPanel.vue')).default;
 
 const FENCED = { by_name: 'ns2', epoch: 4, since: '2026-11-21T11:00:00Z', report: true };
-const show = (fenced = FENCED) => mount(FencedPanel, { props: { fenced } });
+const show = (fenced = FENCED, selfName = 'ns1') =>
+  mount(FencedPanel, { props: { fenced, selfName } });
 const field = (w, name) => w.find(`[data-track="instances-rejoin-${name}"]`);
 async function fill(w, { address = 'ns2.example.net', port, token = 'tok-1' } = {}) {
   await field(w, 'address').setValue(address);
@@ -64,6 +66,19 @@ describe('what happened', () => {
     );
     expect(what.find('.cid-status-dot').classes()).toContain('sd-err');
     expect(w.text()).toContain('Make a join token on ns2 under Settings > System > Instances');
+  });
+
+  it('names the instance that reported it when that is not the new controller', () => {
+    expect(
+      show({ ...FENCED, told_by: 'ns3' })
+        .find('.fenced-what')
+        .text(),
+    ).toMatch(/and its data is out of date\. ns3 reported it\.$/);
+    expect(
+      show({ ...FENCED, told_by: 'ns2' })
+        .find('.fenced-what')
+        .text(),
+    ).not.toContain('reported it');
   });
 
   it('copes with a controller it cannot name', () => {
@@ -189,5 +204,97 @@ describe('Rejoin as a member', () => {
     await submit(w);
     expect(w.find('.confirm').text()).toContain('Rejoin as a member?');
     expect(w.find('.confirm').text()).not.toContain('Download the report first');
+  });
+});
+
+describe('Take the controller back', () => {
+  const open = (w) => w.find('[data-track="instances-take-back"]').trigger('click');
+
+  it('is offered below the rejoin, with when to use it', () => {
+    const w = show();
+    expect(w.text()).toContain('No other controller?');
+    expect(w.text()).toContain(
+      'If the instance that replaced this one is gone, this instance can take the controller back.',
+    );
+    const button = w.find('[data-track="instances-take-back"]');
+    expect(button.text()).toBe('Take the controller back');
+    expect(button.attributes('data-severity')).toBe('danger');
+  });
+
+  it('asks with a danger confirmation gated on this instance name, then promotes', async () => {
+    api.post.mockResolvedValue({
+      data: {
+        restarting: true,
+        dhcp: { active_instance_id: 'i-m3', name: 'ns3', reachable: true },
+      },
+    });
+    const w = show();
+    await open(w);
+    const dialog = w.find('.confirm');
+    expect(dialog.attributes('data-severity')).toBe('danger');
+    expect(dialog.attributes('data-typed')).toBe('ns1');
+    expect(dialog.find('h2').text()).toBe('Take the controller back?');
+    expect(dialog.text()).toContain('Do this only when no other instance is the controller.');
+    expect(dialog.text()).toMatch(
+      /Changes made on ns2 since .+ are lost unless it comes back and you enter them again\./,
+    );
+    expect(dialog.text()).toContain(
+      'The other members follow this instance within about a minute.',
+    );
+    expect(dialog.text()).toContain('This instance restarts, and you sign in again.');
+    expect(dialog.find('.go').text()).toBe('Take the controller back');
+    expect(api.post).not.toHaveBeenCalled();
+
+    await dialog.find('.go').trigger('click');
+    await flushPromises();
+    expect(api.post).toHaveBeenCalledWith('/instances/promote-self', { confirm: true });
+    expect(w.emitted('took-back')).toHaveLength(1);
+    expect(w.find('.confirm').exists()).toBe(false);
+    expect(toast.add).not.toHaveBeenCalled();
+  });
+
+  it('leaves out what is lost when it knows neither the controller nor the time', async () => {
+    const w = show({ by_name: null, epoch: 4, since: null, report: false });
+    await open(w);
+    expect(w.find('.confirm').text()).not.toContain('are lost');
+  });
+
+  it('shows a refusal under the button, not as a toast, and stays put', async () => {
+    const error = 'ns2 is the controller and answers. Rejoin it as a member.';
+    api.post.mockRejectedValue({
+      response: { status: 409, data: { error, code: 'controller_reachable' } },
+    });
+    const w = show();
+    await open(w);
+    await w.find('.confirm .go').trigger('click');
+    await flushPromises();
+    expect(w.find('[data-track="instances-take-back-error"]').text()).toBe(error);
+    expect(toast.add).not.toHaveBeenCalled();
+    expect(w.emitted('took-back')).toBeUndefined();
+    expect(w.find('.confirm').exists()).toBe(false);
+
+    // Asking again clears the old refusal.
+    await open(w);
+    expect(w.find('[data-track="instances-take-back-error"]').exists()).toBe(false);
+  });
+});
+
+describe('the rejoin form without a header of its own', () => {
+  it('names the address entered, and has no paragraph about changes made here', async () => {
+    const RejoinForm = (await import('../../../../src/components/instances/RejoinForm.vue'))
+      .default;
+    api.post.mockResolvedValue({ data: { restarting: true } });
+    const w = mount(RejoinForm);
+    await fill(w, { address: ' ns3.example.net ' });
+    await submit(w);
+    const dialog = w.find('.confirm');
+    expect(dialog.find('h2').text()).toBe('Join ns3.example.net as a member?');
+    expect(dialog.text()).toContain(
+      "The data on this instance is replaced by the new controller's",
+    );
+    expect(dialog.text()).not.toContain('never received');
+    await dialog.find('.go').trigger('click');
+    await flushPromises();
+    expect(w.emitted('rejoined')).toEqual([[null]]);
   });
 });

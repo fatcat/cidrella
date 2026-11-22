@@ -291,7 +291,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   for sync state, which instance serves DHCP, the header chip, how far behind, and the wording
   of a handover, a restart and a replaced controller), `useFeatures().instance`/`isMember`/`frozen`
   (`frozen`: a controller that is replaced or handing over; `usePermissions` treats it as
-  read-only), `components/instances/FencedPanel.vue`, `composables/useJoinTarget.js` with
+  read-only), `components/instances/FencedPanel.vue`, `components/instances/RejoinForm.vue`
+  (joining a controller from a box that is already set up: the replaced controller and a member
+  that lost its controller), `composables/useJoinTarget.js` with
   `components/instances/JoinTargetFields.vue` (the controller a box joins: first run and
   rejoin), `composables/useSignInAgain.js` (leave for sign-in after the box changed what it
   is), `saveBlob` in `utils/download.js` (every file the browser saves from a Blob), the
@@ -300,6 +302,13 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `startHandover`, `cancelHandover`, `receiveFence`, `receiveHandoverDone`, `fenceSelf`,
   `promotionView`; nothing else writes the epoch or the mode of a running estate),
   `sync/promotion-state.js` (`fencedState`, `handoverFreeze`, the takeover notice),
+  `askEveryone` and `hello` in `sync/find-controller.js` (ask every listed instance what it is:
+  every promotion does first), `sync/identity-proof.js` (a box with no credential proving which
+  instance it is, for hello only), `backupRefusal` in `sync/mode.js` (may this box take or
+  restore a backup: only a controller that is not frozen), `sync/restore.js` (what a restore
+  keeps of the running estate: the instance list, the epoch, the DHCP assignment;
+  `exportInstances`/`replaceInstances` in `models/sync-instance.js`), tests'
+  `tests/helpers/instance-estate.js` (a controller and joined members for a test),
   `callController`/`callInstance` in `sync/controller-call.js` (every request from one instance
   to another after the join: they carry the epoch, so never call `syncRequest` directly for
   one), `findController` in `sync/find-controller.js`, `isFenced` and `handoverTarget` in
@@ -350,7 +359,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   then backup, and On failure or Load balance; nothing else joins the two lists),
   `utils/plain-dns.js` (`plainUdpQuery`, `plainTcpQuery`: one plain query, either family;
   tests stand up a server with `plainDnsServer` in `tests/helpers/plain-dns-server.js`, and take a
-  port with `freePort` in `tests/helpers/free-port.js`), `utils/dns-wire.js` (TCP framing, and
+  port with `freePort` in `tests/helpers/free-port.js` (`{ tcp: true }` for a TCP port; a test's own HTTP or HTTPS server starts with `listenLocal(server)` there, which lets the system pick)), `utils/dns-wire.js` (TCP framing, and
   `addEdns`/`removeOpt`: the OPT record the proxy adds for a client without EDNS and strips again),
   `timeQuery` in `utils/upstream-probe.js` (one timed query over plain, DoT or DoH) and
   `services/resolver-benchmark.js` (the one-minute resolver performance test),

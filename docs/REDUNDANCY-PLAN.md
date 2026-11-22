@@ -1,7 +1,10 @@
 # Controller and members: redundant CIDRella instances
 
-Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 6 are done on `dev/0.7.0`
-(2026-11-21); phase 7 is not started. Phase 6 (promotion) differs from section 7 in these ways:
+Status: design accepted 2026-11-11, target 0.7.0. Phases 0 to 7 are done on `dev/0.7.0`
+(2026-11-22). Not yet run on two separate hosts. Phase 7 decided that the instance list, the
+epoch and the DHCP assignment belong to the running estate, not to a backup: a restore keeps
+the box's present ones (`sync/restore.js`), and a dead controller is recovered by promoting a
+member. Phase 6 (promotion) differs from section 7 in these ways:
 a fenced controller runs as a member with no controller, so the member rules apply to it
 unchanged; there is no marker file, the handover is the estate setting `controller_handover_to`
 plus a host freeze flag; a coordinated handover does not move DHCP, which stays where it was;
@@ -199,12 +202,13 @@ deciding setting written last, recovery at boot.
   to 0.7.0 again does not bring the members back: it refuses their credentials, and they
   refuse its lower epoch, which is the fencing rule doing its job against an older database.
   The members serve DNS read-only throughout, and hold every change made since the upgrade.
-  Recovery is by hand: promote a member (forced), then join the rolled-back box to it as a
-  plain member. Pairing each member again with a new join token also works, and loses those
-  changes. No automatic way back is built.
-  - `cidrella-rollback` warns and asks for confirmation when members are paired, and names
-    the recovery. It is standalone bash, so the controller keeps a small file under
-    `DATA_DIR/sync/` listing its members for it to read.
+  Recovery is by hand: promote a member (forced), then reinstall the rolled-back box and join
+  it as a member (a box whose setup is done cannot join, and Rejoin is only for a replaced
+  controller; see BACKLOG.md). Pairing each member again with a new join token also works, and
+  loses those changes. No automatic way back is built.
+  - Not built: a warning from `cidrella-rollback`. The rollback script that runs is the one
+    from the slot being rolled back to, so a rollback below 0.7.0 runs a script that knows
+    nothing of members. `docs/UPGRADE.md` says so instead.
 
 ### 8. UI
 
@@ -237,8 +241,7 @@ Each leaves the tree shippable with single-box behavior unchanged.
    lifecycle writes arrive late from another host, under the canonical IP model gate.
 6. **Promotion.** Coordinated, then forced, fencing, the divergence report.
 7. **Hardening.** Version and schema skew, restore on the controller, backups on a plain
-   member (off: it holds no record), the rollback warning and the rolled-back controller
-   notice, UPGRADE and README, release notes, harness scenario.
+   member (off: it holds no record), UPGRADE and README, release notes, harness scenario.
 
 ## Verification
 

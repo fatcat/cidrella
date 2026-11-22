@@ -750,7 +750,7 @@ already hold on a single box.
   go in exactly as sent with foreign keys and the tables' other triggers set
   aside, the log rows are mirrored, foreign keys are checked at the end, and
   the applies the changed tables call for (`hooks` in the registry) are
-  queued. Nothing sends this between machines yet.
+  queued. Members ask for it at `GET /api/sync/changes` (`sync/member.js`).
 - **Instance mode.** A box is a controller or a member (`sync_state.mode`,
   read through `server/src/sync/mode.js`). A single box is a controller with
   no members. A member holds a copy of the data of record, serves DNS from
@@ -780,7 +780,7 @@ already hold on a single box.
   (`ensureSyncTriggers` in member mode) abort any write to an estate row or
   column from anything but the sync apply. Boot skips the repairs and
   seeding that change that data, the controller's jobs do not start, what
-  the box observes goes to `memberSink` (dropped until phase 4), and an
+  the box observes goes to `memberSink` (queued for the controller), and an
   audit row waits in `sync_outbox`.
   `tests/integration/member-tripwire.test.js` runs a member's own work
   against the guards.
@@ -844,42 +844,64 @@ already hold on a single box.
   instance to another carries the highest epoch the caller knows
   (`x-cidrella-epoch`) and the controller it follows (`x-cidrella-controller`),
   set in one place, `sync/controller-call.js`; every answer carries the
-  controller's.
+  controller's. An epoch more than 1000 above the receiver's own is refused.
+  - *Asking first.* Before any promotion the box says hello to every other
+    instance on its list (`askEveryone` in `sync/find-controller.js`) and is
+    refused with `controller_reachable` while one answers as a controller. The
+    hello answer also says which instance serves DHCP and at what term; the
+    highest term heard is what the new controller writes down, so a member
+    that had missed a DHCP move does not undo it. A box with no credential (a
+    replaced controller) proves who it is with its sync identity key
+    (`sync/identity-proof.js`); that is good for hello only. A hello that is
+    refused still carries the answerer's mode and epoch, so a member the new
+    controller does not know learns there is one and is told to join it.
   - *Forced* (`POST /api/instances/promote-self`, on a member, when the
     controller is gone): in one transaction the member takes epoch + 1,
     controller mode, the log triggers and its own row as the controller's, and
-    remembers the head it took over at (`epoch_base`). It then takes in its own
-    outbox and keeps telling the old controller (`POST /api/sync/fence`, a 0600
-    notice file in `DATA_DIR/sync/` until it is heard).
+    remembers where it took over (`epoch_base`: the head, whose log it carried
+    on from, and that log's epoch). It then takes in its own outbox and keeps
+    telling the old controller (`POST /api/sync/fence`, a 0600 notice file in
+    `DATA_DIR/sync/` until it is heard). The same route on a replaced
+    controller takes the role back when no other instance has it.
   - *Coordinated* (`POST /api/instances/:id/promote`, on the controller): the
     controller writes the estate setting `controller_handover_to` and freezes
     (every write answers `controller_handover`). The named member sees the
     setting in its copy, which means it holds everything, promotes itself and
     calls `POST /api/sync/handover-done` with a credential minted for the old
-    controller, which becomes its member. `POST /api/instances/promote/cancel`
+    controller, which becomes its member and hands on its backup schedule. If
+    the old controller wrote anything after the member's copy it keeps a
+    database copy and a report first, and refuses to finish when it can keep
+    neither. While frozen it waits five minutes for that call before a higher
+    epoch from anyone else fences it. `POST /api/instances/promote/cancel`
     unfreezes; it cannot know whether the member already took over.
   - *Fencing*: a controller that hears a higher epoch from an instance on its
-    list saves its database (`snapshots/pre-demotion/`), writes
-    `sync/divergence-report.json` (every change above the last cursor the new
-    controller reached), and becomes **a member with no controller**
-    (`fenced` in `sync_state`). So every member rule holds without a second
-    set of checks: the write gate, the guard triggers, no controller jobs, no
-    DHCP. `POST /api/instances/rejoin` joins it to the new controller with a
-    join token, like a first-run join.
+    list saves its database (`snapshots/pre-demotion/`, timestamped, newest
+    three kept), writes a divergence report (`sync/divergence-report-*.json`,
+    every change above the lower of the cursors of the instance named as the
+    new controller and the one that said so), and becomes **a member with no
+    controller** (`fenced` in `sync_state`, with who was named and who told
+    it). So every member rule holds without a second set of checks: the write
+    gate, the guard triggers, no controller jobs, no DHCP.
+  - *Joining again*: `POST /api/instances/rejoin` joins any member, replaced
+    controller or not, to a controller with a join token, like a first-run
+    join, after saving a copy of its database.
   - *Members find the controller* by asking every instance on their list
-    `GET /api/sync/hello` (`sync/find-controller.js`) and following the
-    highest epoch, when the one they follow says it is fenced, is not a
-    controller, answers a lower epoch, or has not answered three rounds.
-  - *A cursor only means something within an epoch.* A member's copy is
-    carried on from its cursor when it is of the controller's epoch, or of the
-    epoch before with a cursor at or below `epoch_base`; otherwise it is sent
-    everything. A delta that will not go in also ends in a snapshot.
+    `GET /api/sync/hello` and following the highest epoch, when the one they
+    follow says it is fenced, is not a controller, answers a lower epoch, or
+    has not answered three rounds.
+  - *A cursor means something only in the log it came from.* A member says
+    whose log its copy is from (`copy_from`) and at what epoch. The controller
+    carries it on from its cursor when that is its own log at its own epoch,
+    or the log it took over from, up to the head it took over at; otherwise
+    it is sent everything. A delta that will not go in also ends in a
+    snapshot.
   - `dhcp_active_instance` absent means "the controller" only until the first
     promotion, which writes it: DHCP does not move with the controller role.
   - Not closable without a witness, and said where the choice is made: an old
     controller cut off from the instances but reachable by clients keeps
     taking changes and serving until one of them reaches it; two members
-    forced at once land on the same epoch.
+    forced at once while they cannot reach each other land on the same epoch
+    (a member that moves between them is sent everything).
 
 ## Security and Operations Boundaries
 
