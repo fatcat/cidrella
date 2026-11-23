@@ -6,6 +6,7 @@ import { requireRole } from '../auth/roles.js';
 import { isValidAddress } from '../utils/ip.js';
 import { canonicalizeIp } from '../utils/address.js';
 import { MAC_RE } from '../utils/mac.js';
+import { sqlTime } from '../utils/sql-time.js';
 import { enrichWithHostnames } from '../utils/hostnames.js';
 import {
   queryClientWindowEvidence,
@@ -268,9 +269,7 @@ function windowToUtcMs(value) {
 }
 
 function windowToDuckTimestamp(value) {
-  const ms = windowToUtcMs(value);
-  if (!Number.isFinite(ms)) return String(value);
-  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
+  return sqlTime(windowToUtcMs(value)) ?? String(value);
 }
 
 // An anomaly identity is either a MAC (survives an IP renewal) or, when

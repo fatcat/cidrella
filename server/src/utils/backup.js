@@ -6,7 +6,12 @@ import { spawn } from 'child_process';
 import Database from 'better-sqlite3';
 import { insertAuditRow } from '../models/audit-log.js';
 import { backupRefusal } from '../sync/mode.js';
-import { detachRestoredDatabase, keepPresentInstances, presentInstances } from '../sync/restore.js';
+import {
+  detachRestoredDatabase,
+  keepPresentInstances,
+  presentInstances,
+  setRestoreUnderWay,
+} from '../sync/restore.js';
 import { recordAudit } from '../services/audit.js';
 import { LAST_VERSION_KEY } from '../services/version-audit.js';
 import {
@@ -24,6 +29,7 @@ import { APP_VERSION } from './version.js';
 import { compareSemver } from './semver.js';
 import { runCommand } from './run-command.js';
 import { runDbTask } from './db-worker/index.js';
+import { sqlTime } from './sql-time.js';
 import { releaseProxyDatabase } from './dns-proxy.js';
 import { stackName } from '../backends/index.js';
 import {
@@ -825,9 +831,18 @@ export function stampRestoredSettings(
 }
 
 export function restoreBackup(archivePath, options = {}) {
-  return exclusive('restore', () => {
+  return exclusive('restore', async () => {
     refuseUnlessRecordHolder(getDb());
-    return applyRestore(archivePath, options);
+    // From the moment the instance list is read until the restart, a member
+    // that joined would be missing from the restored list: joins are refused
+    // (routes/sync.js). A restore that fails before the swap lets them in again.
+    setRestoreUnderWay(getDb());
+    try {
+      return await applyRestore(archivePath, options);
+    } catch (err) {
+      if (!err.restarting) setRestoreUnderWay(null);
+      throw err;
+    }
   });
 }
 
@@ -1123,6 +1138,7 @@ async function applyRestore(
       `Restore failed during file swap: ${copyErr.message}. Service will restart. Recover from /var/lib/cidrella/snapshots/pre-restore/ if needed.`,
     );
     wrapped.cause = copyErr;
+    wrapped.restarting = true;
     throw wrapped;
   }
 
@@ -1235,10 +1251,6 @@ export function readLeadingManifest(archivePath) {
 // this name alone, the one place the old name still counts.
 const LEGACY_ARCHIVE_NAME = /^cidrella-backup-.+\.tar\.gz$/;
 
-function sqliteTimestamp(date) {
-  return date.toISOString().slice(0, 19).replace('T', ' ');
-}
-
 /**
  * List all backups, verifying files exist on disk
  */
@@ -1269,7 +1281,7 @@ function adoptUnlistedArchives(db) {
     const manifest = readLeadingManifest(filePath);
     if (!manifest && !LEGACY_ARCHIVE_NAME.test(name)) continue;
     const taken = new Date(manifest?.created_at ?? Number.NaN);
-    const createdAt = sqliteTimestamp(Number.isNaN(taken.getTime()) ? stat.mtime : taken);
+    const createdAt = sqlTime(Number.isNaN(taken.getTime()) ? stat.mtime : taken);
     adopted += insert.run(name, stat.size, createdAt).changes;
   }
   return adopted;

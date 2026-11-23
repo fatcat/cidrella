@@ -294,6 +294,11 @@ describe('a forced promotion', () => {
     // The old controller's row counts as heard from at the takeover, so the
     // quiet rule can let the change log's deletes go in time (P6-09).
     expect(Date.parse(rowOf(a, c).last_contact_at)).toBeGreaterThan(Date.now() - 60_000);
+    // The page does not show that stamp as a contact (PROMOTE-LAST-CONTACT-01).
+    const listed = (await api(a).get('/api/instances')).body.instances.find(
+      (row) => row.instance_id === c.id,
+    );
+    expect(listed).toMatchObject({ last_contact_at: null, silent_since_takeover: true });
     upsertSetting(a.db, 'backup_schedule', 'daily');
     expect((await api(a).get('/api/instances')).body.backups_off).toBe(false);
     upsertSetting(a.db, 'backup_schedule', 'off');

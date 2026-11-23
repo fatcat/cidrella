@@ -220,6 +220,18 @@ describe('on the controller', () => {
     w.unmount();
   });
 
+  it('says the controller it took over from has not been heard from since', async () => {
+    const w = await mountPage({
+      ...CONTROLLER,
+      instances: [
+        ...CONTROLLER.instances,
+        memberRow(9, { name: 'old-ctl', last_contact_at: null, silent_since_takeover: true }),
+      ],
+    });
+    expect(cells(w, 'Last contact').at(-1)).toBe('Not heard from since the takeover');
+    w.unmount();
+  });
+
   it('re-reads the features when the list holds a member the header does not know', async () => {
     membersOf.value = 0;
     const w = await mountPage(CONTROLLER);
@@ -371,6 +383,26 @@ describe('backups on the controller', () => {
     ]) {
       const w = await mountPage(state);
       expect(w.find('[data-track="instances-backups-off"]').exists()).toBe(false);
+      w.unmount();
+    }
+  });
+});
+
+describe('a restore that could not finish at boot', () => {
+  it('says the box talks to no other instance and that a restart finishes it', async () => {
+    const w = await mountPage({ ...CONTROLLER, restore_unfinished: true });
+    const line = w.find('[data-track="instances-restore-unfinished"]');
+    expect(line.text().replace(/\s+/g, ' ')).toBe(
+      "The restore could not keep this box's instance list and epoch at boot, so it talks to no other instance and runs no scheduled jobs. Restart CIDRella to finish it; the service log says what failed.",
+    );
+    expect(line.find('.cid-status-dot').classes()).toContain('sd-err');
+    w.unmount();
+  });
+
+  it('says nothing after a restore that finished, or on an older server', async () => {
+    for (const state of [{ ...CONTROLLER, restore_unfinished: false }, CONTROLLER]) {
+      const w = await mountPage(state);
+      expect(w.find('[data-track="instances-restore-unfinished"]').exists()).toBe(false);
       w.unmount();
     }
   });

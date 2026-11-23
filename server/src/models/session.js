@@ -20,15 +20,11 @@ import crypto from 'crypto';
 import { getSetting } from '../db/init.js';
 import { insertAuditRow } from './audit-log.js';
 import { canonicalizeIp } from '../utils/address.js';
+import { sqlTime } from '../utils/sql-time.js';
 
 export const SESSION_LIFETIME_MS = 24 * 60 * 60 * 1000;
 export const IDLE_TIMEOUT_CHOICES = [0, 15, 30, 60];
 const USER_AGENT_MAX = 256;
-
-/** SQLite's datetime('now') shape, UTC, so stored times compare as text. */
-function sqlTime(ms) {
-  return new Date(ms).toISOString().slice(0, 19).replace('T', ' ');
-}
 
 function parseSqlTime(text) {
   return new Date(`${text.replace(' ', 'T')}Z`).getTime();

@@ -11,7 +11,7 @@ import { ingestLeases } from '../services/dhcp-lease-ingest.js';
 import { addressFamily, canonicalizeIp } from '../utils/address.js';
 import { isValidRecordName } from '../utils/config-value-validation.js';
 import { normalizeDuid } from '../utils/duid.js';
-import { isValidMac } from '../utils/ip.js';
+import { isLeaseHardwareAddress } from '../utils/mac.js';
 import { clearHandover, dhcpState } from './dhcp-active.js';
 import { releasesFor } from './dhcp-release-queue.js';
 import { NOT_DHCP_ACTIVE } from './lease-wire.js';
@@ -49,10 +49,16 @@ export function cleanLease(raw) {
     clientId = raw.clientId;
   }
 
+  // A DHCPv4 lease is the client's hardware address: one without it is not a
+  // lease, and could not be written into a lease file at a handover. The
+  // forms are the adapters' own (utils/mac.js). A DHCPv6 lease is keyed by
+  // its DUID and carries no MAC.
   let mac = null;
   if (raw.mac !== null && raw.mac !== undefined) {
-    if (typeof raw.mac !== 'string' || !isValidMac(raw.mac)) return null;
+    if (!isLeaseHardwareAddress(raw.mac)) return null;
     mac = raw.mac.toLowerCase();
+  } else if (dhcpVersion === 4) {
+    return null;
   }
   let duid = null;
   if (raw.duid !== null && raw.duid !== undefined) {

@@ -59,6 +59,42 @@ describe('cleanLease', () => {
     expect(cleanLease(bare6).dhcpVersion).toBe(6);
   });
 
+  it('takes a DHCPv4 hardware address in every form the adapters write', () => {
+    for (const mac of [
+      // dnsmasq, an Ethernet address.
+      'aa:bb:cc:00:00:20',
+      // dnsmasq, another hardware type: InfiniBand (32) with its 16 octets,
+      // a token ring (6), and a client with no hardware address at all.
+      `20-${Array.from({ length: 16 }, (_, i) => (i + 0x10).toString(16)).join(':')}`,
+      '06-aa:bb:cc:00:00:20',
+      '01-',
+      // Kea, any length up to its 20 octets.
+      'aa:bb:cc:dd',
+      Array.from({ length: 20 }, () => 'ab').join(':'),
+    ]) {
+      expect(cleanLease({ ...v4, mac }), mac).toEqual({ ...v4, mac });
+    }
+    expect(cleanLease({ ...v4, mac: '20-AA:BB' }).mac).toBe('20-aa:bb');
+  });
+
+  it('refuses a DHCPv4 lease with no hardware address, and keeps a DHCPv6 one without', () => {
+    expect(cleanLease({ ...v4, mac: null })).toBeNull();
+    expect(cleanLease({ ...v4, mac: undefined })).toBeNull();
+    expect(cleanLease({ ...v6, mac: undefined })).toEqual(v6);
+  });
+
+  it.each([
+    ['an empty MAC', { ...v4, mac: '' }],
+    ['a MAC past 20 octets', { ...v4, mac: Array.from({ length: 21 }, () => 'ab').join(':') }],
+    ['a typed MAC past 16 octets', { ...v4, mac: `20-${Array(17).fill('ab').join(':')}` }],
+    ['a MAC with a line break', { ...v4, mac: 'aa:bb:cc:00:00:20\n0 aa:bb 10.1.0.9' }],
+    ['a MAC with a space', { ...v4, mac: '01- aa:bb' }],
+    ['a MAC with two types', { ...v4, mac: '01-01-aa:bb' }],
+    ['a MAC with a stray separator', { ...v4, mac: 'aa:bb:' }],
+  ])('refuses %s', (_what, raw) => {
+    expect(cleanLease(raw)).toBeNull();
+  });
+
   it.each([
     ['not an object', 'lease'],
     ['an array', [v4]],
@@ -68,7 +104,7 @@ describe('cleanLease', () => {
     ['an over-long address', { ...v4, ip: '1'.repeat(100) }],
     ['an IPv6 address on a DHCPv4 lease', { ...v4, ip: 'fd00:1::20' }],
     ['an IPv4 address on a DHCPv6 lease', { ...v6, ip: '10.1.0.20' }],
-    ['a MAC that is not one', { ...v4, mac: 'aa:bb:cc' }],
+    ['a MAC that is not one', { ...v4, mac: 'aa:bb:cc:zz' }],
     ['a MAC that is an object', { ...v4, mac: { $ne: null } }],
     ['a DUID that is not one', { ...v6, duid: 'zz' }],
     ['a name that is not text', { ...v4, hostname: 42 }],

@@ -11,7 +11,10 @@
  * skips anything at or below it. So a batch that arrives twice, because the
  * answer to the first was lost, is stored once. A mark belongs to an epoch,
  * a random id the member renews when its ids start over (a rebuilt analytics
- * database, a restored backup); a new epoch starts the mark at 0.
+ * database, a restored backup); a new epoch starts the mark at 0. Rows a
+ * restored member sends again under its new epoch are ones the controller
+ * holds already: each stream's store skips a row it has (same minute and key
+ * for metrics, same time, client, name and type for a DNS query).
  *
  * Everything a member sends is checked here before it is stored: a value of
  * the wrong type or size refuses its row, and the rest of the batch stands.
@@ -88,9 +91,12 @@ function metricsStream(table, columns) {
         .all(after, limit),
     // AUTOINCREMENT: the highest id ever given, kept through every prune.
     head: (db) => db.prepare('SELECT seq FROM sqlite_sequence WHERE name = ?').get(table)?.seq || 0,
+    // A member's row is one per minute and key (migration 101). One the
+    // controller holds already, sent again under a new epoch after a restore
+    // on the member, is skipped.
     store(db, instanceId, epoch, accept) {
       const insert = db.prepare(
-        `INSERT INTO ${table} (${names.join(', ')}, instance_id)
+        `INSERT OR IGNORE INTO ${table} (${names.join(', ')}, instance_id)
          VALUES (${names.map(() => '?').join(', ')}, ?)`,
       );
       return db.transaction(() => {
@@ -100,7 +106,12 @@ function metricsStream(table, columns) {
           )
           .get(instanceId, table);
         const accepted = accept(mark && mark.epoch === epoch ? mark.position : 0);
-        for (const row of accepted.rows) insert.run(...row, instanceId);
+        for (const row of accepted.rows) {
+          if (insert.run(...row, instanceId).changes === 0) {
+            accepted.taken--;
+            accepted.skipped++;
+          }
+        }
         db.prepare(
           `INSERT INTO sync_collected_marks (instance_id, stream, epoch, position)
            VALUES (?, ?, ?, ?)

@@ -137,6 +137,19 @@
         <span>{{ dnsLine }}</span>
       </p>
 
+      <p
+        v-if="state?.restore_unfinished === true"
+        class="status-line"
+        data-track="instances-restore-unfinished"
+      >
+        <StatusDot kind="err" label="Restore not finished" />
+        <span>
+          The restore could not keep this box's instance list and epoch at boot, so it talks to no
+          other instance and runs no scheduled jobs. Restart CIDRella to finish it; the service log
+          says what failed.
+        </span>
+      </p>
+
       <p v-if="backupsOff" class="status-line" data-track="instances-backups-off">
         <StatusDot kind="warn" label="Backups off" />
         <span>
@@ -520,6 +533,7 @@ const controllerAddress = computed(() =>
 // The controller's own row has no last contact: it is the one being called.
 function lastContact(row) {
   if (row.is_controller) return EMPTY_CELL;
+  if (row.silent_since_takeover) return 'Not heard from since the takeover';
   return row.last_contact_at ? formatRelativeTime(row.last_contact_at) : 'Never';
 }
 

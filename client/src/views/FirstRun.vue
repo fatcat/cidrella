@@ -68,6 +68,7 @@ import StepJoin from '../components/first-run/StepJoin.vue';
 import StepTwoFactor from '../components/first-run/StepTwoFactor.vue';
 import StepDeployment from '../components/first-run/StepDeployment.vue';
 import StepImport from '../components/first-run/StepImport.vue';
+import { waitForRestart } from '../utils/restart-wait.js';
 import StepReview from '../components/first-run/StepReview.vue';
 
 // The first-run wizard. Six screens, one job each: replace the installer's
@@ -151,24 +152,6 @@ onMounted(async () => {
   }
   step.value = firstUnfinishedStep();
 });
-
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
-
-// The service exits after a restore and systemd brings it back. Any HTTP
-// answer means it is up again, including a 401 from a token the restored
-// database does not know, so this uses fetch rather than the API client and
-// its 401 interceptor.
-async function waitForRestart() {
-  await sleep(3000);
-  for (let i = 0; i < 60; i++) {
-    try {
-      await fetch('/api/health', { cache: 'no-store' });
-      return;
-    } catch {
-      await sleep(2000);
-    }
-  }
-}
 
 async function restoreAndRestart() {
   progress.value = 'Restoring the backup';

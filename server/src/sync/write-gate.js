@@ -94,6 +94,8 @@ export const MEMBER_ALLOWED = [
     path: '/api/backend-stack',
     reason: 'which DNS and DHCP servers this box runs',
   },
+  // A box that became a member keeps the archives it took as a controller.
+  { method: 'DELETE', path: '/api/operations/backups/:id', reason: "this box's backup archives" },
   { method: 'POST', path: '/api/operations/certs/upload', reason: 'this box: web certificate' },
   { method: 'POST', path: '/api/operations/certs/csr', reason: 'this box: web certificate' },
   { method: 'POST', path: '/api/operations/certs/reset', reason: 'this box: web certificate' },

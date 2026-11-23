@@ -12,6 +12,7 @@ import { APP_VERSION } from '../utils/version.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { syncFingerprint } from '../sync/identity.js';
 import { syncHead } from '../sync/log.js';
+import { restoreCarryoverFailed } from '../sync/restore.js';
 import { controllerOf, instanceMode, isMember, writeRefusal } from '../sync/mode.js';
 import { joinController, JoinError, memberSyncStatus } from '../sync/member.js';
 import {
@@ -27,6 +28,7 @@ import {
   startHandover,
 } from '../services/controller-promotion.js';
 import { clearHandover, dhcpState, dhcpStateChanged } from '../sync/dhcp-active.js';
+import { takeoverNotice } from '../sync/promotion-state.js';
 import {
   DhcpMoveError,
   dhcpRole,
@@ -73,6 +75,13 @@ function serviceStatesOf(row, { self, member, own }) {
   return { dns: row.dns_state, dhcp: row.dhcp_state };
 }
 
+// The row of the controller this box took over from, while the word owed to
+// it is still pending and nothing has been heard from it since the takeover.
+function silentSinceTakeover(row, notice) {
+  if (!notice || row.instance_id !== notice.to?.instance_id) return false;
+  return !(Date.parse(row.last_contact_at || '') > Date.parse(notice.since));
+}
+
 function dnsHandedOut(db) {
   const instances = dnsInstances(db);
   const served = servedInstances(instances);
@@ -92,6 +101,7 @@ router.get('/', async (req, res) => {
   const head = syncHead(db);
   const controller = controllerOf(db);
   const dhcp = dhcpState(db);
+  const notice = takeoverNotice(db);
   res.json({
     mode: instanceMode(),
     self: {
@@ -115,6 +125,9 @@ router.get('/', async (req, res) => {
     // Nobody takes scheduled backups: the role changed hands and the
     // schedule did not come along.
     backups_off: backupsOff(db),
+    // This boot followed a restore and could not write back the instance
+    // list and the epoch: it talks to no other instance until a restart.
+    restore_unfinished: restoreCarryoverFailed(),
     // Which DNS-serving instances DHCP clients are given (at most
     // MAX_SERVED_INSTANCES per family) and which answer DNS but are not.
     dns_handed_out: dnsHandedOut(db),
@@ -132,7 +145,13 @@ router.get('/', async (req, res) => {
       dns_addresses: JSON.parse(row.dns_addresses || '[]'),
       version: row.instance_id === self ? APP_VERSION : row.version,
       // What a controller heard from each member is its own knowledge.
-      last_contact_at: member || row.is_controller ? null : row.last_contact_at,
+      last_contact_at:
+        member || row.is_controller || silentSinceTakeover(row, notice)
+          ? null
+          : row.last_contact_at,
+      // The controller this box took over from, not heard from since: the
+      // takeover stamped its row (takeControllerRow), which is no contact.
+      silent_since_takeover: !member && silentSinceTakeover(row, notice),
       behind:
         member || row.is_controller || row.cursor === null ? null : Math.max(0, head - row.cursor),
       dhcp: dhcpRole(dhcp, row),

@@ -45,6 +45,13 @@
 
     <Message v-if="error" severity="error" :closable="false">{{ error }}</Message>
 
+    <div v-if="restarting" class="fr-progress" aria-live="polite">
+      <i class="pi pi-spinner pi-spin"></i>
+      <span
+        >Joined. This box is restarting as a member; the sign-in page opens when it is back.</span
+      >
+    </div>
+
     <div class="fr-actions">
       <Button
         label="Back"
@@ -78,6 +85,7 @@ import JoinTargetFields from '../instances/JoinTargetFields.vue';
 import api from '../../api/client.js';
 import { useJoinTarget } from '../../composables/useJoinTarget.js';
 import { useSignInAgain } from '../../composables/useSignInAgain.js';
+import { waitForRestart } from '../../utils/restart-wait.js';
 import { useSetupStore } from '../../stores/setup.js';
 import { apiError } from '../../utils/format.js';
 
@@ -88,6 +96,7 @@ const signInAgain = useSignInAgain();
 const { address, port, token, blocker: targetBlocker, body } = useJoinTarget();
 const understood = ref(false);
 const joining = ref(false);
+const restarting = ref(false);
 const error = ref('');
 
 const blocker = computed(() => {
@@ -104,6 +113,9 @@ async function submit() {
     const { data } = await api.post('/setup/join', body());
     // The controller's accounts replaced this box's, so the session here
     // speaks for an account that is gone. The sign-in page says what happened.
+    // The box restarts as a member: sign-in waits until it is back.
+    restarting.value = true;
+    await waitForRestart();
     setup.reset();
     await signInAgain('joined', data?.controller?.name || null);
   } catch (err) {

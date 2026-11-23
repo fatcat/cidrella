@@ -222,6 +222,18 @@ export function forgetDataset(db) {
   if (hasSyncState(db)) db.prepare("DELETE FROM sync_state WHERE key = 'dataset'").run();
 }
 
+// sync_state keys a member keeps about its copy. LAST_SYNC: when it last
+// reached its controller's head. COPY_COMPLETE: the copy was complete when a
+// migration made the cursor count for nothing (`{ at, schema }`), so the
+// member can still take over with it (controller-promotion.js).
+export const LAST_SYNC = 'last_sync_at';
+export const COPY_COMPLETE = 'copy_complete';
+// The term at which this box's DHCP server last loaded the leases
+// (sync/dhcp-active.js). A term counts only within the dataset it was
+// reached in, so applying a snapshot of another dataset drops it
+// (sync/changes.js).
+export const DHCP_READY_TERM = 'dhcp_ready_term';
+
 /**
  * Boot, after the migrations: put the triggers right, and start over when the
  * log cannot vouch for this database. That is when it has never had a dataset
@@ -235,13 +247,6 @@ export function forgetDataset(db) {
  * is its controller's, it is forgetting the cursor: the next sync is a
  * snapshot. Returns { dataset, started } where started says why.
  */
-// sync_state keys a member keeps about its copy. LAST_SYNC: when it last
-// reached its controller's head. COPY_COMPLETE: the copy was complete when a
-// migration made the cursor count for nothing (`{ at, schema }`), so the
-// member can still take over with it (controller-promotion.js).
-export const LAST_SYNC = 'last_sync_at';
-export const COPY_COMPLETE = 'copy_complete';
-
 export function ensureSyncLog(db, dataDir) {
   const mode = storedMode(db);
   const triggersChanged = ensureSyncTriggers(db, mode) > 0;

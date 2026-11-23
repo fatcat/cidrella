@@ -26,7 +26,14 @@ import crypto from 'crypto';
 import fs from 'fs';
 import path from 'path';
 import { queueRegen } from '../utils/after-commit.js';
-import { estateTables, isEstateSetting, readSyncState, syncStatus, writeSyncState } from './log.js';
+import {
+  DHCP_READY_TERM,
+  estateTables,
+  isEstateSetting,
+  readSyncState,
+  syncStatus,
+  writeSyncState,
+} from './log.js';
 
 const FORMAT = 1;
 const NEWLINE = 0x0a;
@@ -457,16 +464,20 @@ export function applyChanges(db, { header, changes }) {
         // is read back from its spool file, never held): first every row
         // that goes, then every row as sent, so a row never collides with
         // one that is about to leave.
-        // The keys a snapshot sends for each table that keeps host columns.
+        // The keys a snapshot sends for each table that keeps host columns,
+        // an empty set for one it sends no rows of: those rows go too.
         const sent = new Map();
+        if (header.snapshot) {
+          for (const table of tables.values()) {
+            if (table.keepsHostColumns) sent.set(table, new Set());
+          }
+        }
         for (const change of changes) {
           const table = tableOf(change);
           rows += 1;
           touched.add(table);
           if (header.snapshot) {
-            if (!table.keepsHostColumns) continue;
-            if (!sent.has(table)) sent.set(table, new Set());
-            sent.get(table).add(change.row[table.key]);
+            if (table.keepsHostColumns) sent.get(table).add(change.row[table.key]);
             continue;
           }
           const key = change.row ? change.row[table.key] : change.del;
@@ -477,7 +488,9 @@ export function applyChanges(db, { header, changes }) {
         for (const [table, keys] of sent) {
           const { remove } = statementsOf(table);
           for (const { key } of db.prepare(`SELECT ${table.key} AS key FROM ${table.name}`).all()) {
-            if (!keys.has(key)) remove.run(key);
+            if (keys.has(key)) continue;
+            remove.run(key);
+            touched.add(table);
           }
         }
         for (const change of changes) {
@@ -493,6 +506,11 @@ export function applyChanges(db, { header, changes }) {
       // The log continues from the sender's head, so a seq never runs backwards.
       db.prepare("DELETE FROM sqlite_sequence WHERE name = 'sync_log'").run();
       db.prepare("INSERT INTO sqlite_sequence (name, seq) VALUES ('sync_log', ?)").run(header.head);
+      // The DHCP terms of another dataset are another count: a mark of term
+      // n here says nothing of term n there.
+      if (header.dataset !== local.dataset) {
+        db.prepare('DELETE FROM sync_state WHERE key = ?').run(DHCP_READY_TERM);
+      }
       writeSyncState(db, 'dataset', header.dataset);
       writeSyncState(db, 'epoch', header.epoch);
       writeSyncState(db, 'cursor', header.head);

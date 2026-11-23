@@ -70,6 +70,70 @@ describe('migration 098: the metrics tables', () => {
   });
 });
 
+describe('migration 101: a member’s row is stored once', () => {
+  const member = 'aaaaaaaa-0000-4000-8000-000000000001';
+
+  it('keeps the first of each member row already stored twice, and every own row', () => {
+    const { db, migrate } = databaseThrough(100, { tmpDirs });
+    const metrics = db.prepare(
+      'INSERT INTO metrics (ts, dns_queries, instance_id) VALUES (?, ?, ?)',
+    );
+    metrics.run(60, 1, null);
+    metrics.run(60, 2, null);
+    metrics.run(60, 3, member);
+    metrics.run(60, 3, member);
+    metrics.run(120, 4, member);
+    const geo = db.prepare(
+      'INSERT INTO metrics_geoip_hits (ts, country, count, instance_id) VALUES (?, ?, ?, ?)',
+    );
+    geo.run(60, 'ZZ', 1, member);
+    geo.run(60, 'ZZ', 1, member);
+    geo.run(60, 'YY', 1, member);
+    const forwarder = db.prepare(
+      `INSERT INTO metrics_forwarder (ts, provider, address, protocol, queries, instance_id)
+       VALUES (60, 'dns.example', ?, 'dot', 1, ?)`,
+    );
+    forwarder.run('', member);
+    forwarder.run('', member);
+    forwarder.run('2001:db8::53', member);
+    forwarder.run('192.0.2.53', member);
+
+    expect(() => migrate(101)).not.toThrow();
+
+    expect(
+      db.prepare('SELECT id, ts, dns_queries, instance_id FROM metrics ORDER BY id').all(),
+    ).toEqual([
+      { id: 1, ts: 60, dns_queries: 1, instance_id: null },
+      { id: 2, ts: 60, dns_queries: 2, instance_id: null },
+      { id: 3, ts: 60, dns_queries: 3, instance_id: member },
+      { id: 5, ts: 120, dns_queries: 4, instance_id: member },
+    ]);
+    expect(db.prepare('SELECT country FROM metrics_geoip_hits ORDER BY id').pluck().all()).toEqual([
+      'ZZ',
+      'YY',
+    ]);
+    expect(db.prepare('SELECT address FROM metrics_forwarder ORDER BY id').pluck().all()).toEqual([
+      '',
+      '2001:db8::53',
+      '192.0.2.53',
+    ]);
+
+    // A member row a second time is refused; an own row is not.
+    expect(() => metrics.run(60, 9, member)).toThrow(/UNIQUE/);
+    expect(
+      db
+        .prepare('INSERT OR IGNORE INTO metrics (ts, dns_queries, instance_id) VALUES (60, 9, ?)')
+        .run(member).changes,
+    ).toBe(0);
+    expect(() => metrics.run(60, 9, null)).not.toThrow();
+  });
+
+  it('runs on a new install', () => {
+    const { migrate } = databaseThrough(100, { tmpDirs });
+    expect(() => migrate(101)).not.toThrow();
+  });
+});
+
 describe('the analytics database', () => {
   it('opens one from before the instance column, and numbers only new rows', async () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-duckdb-instance-'));

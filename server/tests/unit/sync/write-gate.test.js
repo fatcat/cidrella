@@ -71,7 +71,6 @@ describe('on a member', () => {
       ['POST', '/api/auth/change-password'],
       ['PUT', '/api/auth/preferences'],
       ['POST', '/api/auth/totp/enable'],
-      ['DELETE', '/api/operations/backups/3'],
       ['POST', '/api/dhcp/scopes/bulk-options/preview'],
       ['POST', '/api/no/such/route'],
     ]) {
@@ -189,6 +188,9 @@ describe('on a member', () => {
       (await send('PUT', '/api/interfaces/config', { https_port: 8443, ipv6_enabled: true }))
         .status,
     ).toBe(409);
+    // Its own backup archives, kept from when it was a controller, are its to delete.
+    expect((await send('DELETE', '/api/operations/backups/4')).body).toEqual(ok);
+    expect((await send('POST', '/api/operations/backup', {})).status).toBe(409);
     // DHCP stays the controller's, and the refusal says how it moves.
     const dhcpOn = await send('PUT', '/api/interfaces/config', {
       https_port: 8443,

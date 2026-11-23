@@ -531,6 +531,45 @@ export async function ownQueriesHead() {
   return rows[0]?.head || 0;
 }
 
+// A query row by what makes it one query: time, client, name and type.
+const heldKey = (ts, clientIp, domain, queryType) =>
+  JSON.stringify([ts, clientIp, domain, queryType]);
+
+/**
+ * Take out of `accepted` the member's rows this box stores already, counting
+ * them as skipped. A member restored from a backup sends the rows past its
+ * restored cursor again under a new epoch, and its mark starts over with it.
+ * Rows of one batch are not checked against each other: two queries alike to
+ * the millisecond are two queries.
+ */
+async function dropHeldQueries(instanceId, accepted) {
+  if (accepted.rows.length === 0) return;
+  // ts is first and an ISO string (collected-streams.js queryTime), so it sorts.
+  const times = accepted.rows.map((row) => row[0]).sort();
+  const reader = await ingest.runAndReadAll(
+    `SELECT ts, client_ip, domain, query_type FROM dns_queries
+     WHERE instance_id = ? AND ts BETWEEN ?::TIMESTAMP AND ?::TIMESTAMP`,
+    [instanceId, times[0], times.at(-1)],
+  );
+  const held = new Set(
+    reader
+      .getRowObjectsJS()
+      .map((row) =>
+        heldKey(
+          row.ts instanceof Date ? row.ts.toISOString() : String(row.ts),
+          row.client_ip,
+          row.domain,
+          row.query_type,
+        ),
+      ),
+  );
+  if (held.size === 0) return;
+  const fresh = accepted.rows.filter((row) => !held.has(heldKey(row[0], row[1], row[2], row[3])));
+  accepted.skipped += accepted.rows.length - fresh.length;
+  accepted.taken -= accepted.rows.length - fresh.length;
+  accepted.rows = fresh;
+}
+
 /**
  * Store a member's rows. `accept(position)` is handed how far into this
  * member's rows the store already is (0 for a new epoch) and returns
@@ -550,6 +589,7 @@ export function storeMemberQueries(instanceId, epoch, accept) {
     const accepted = accept(mark && mark.epoch === epoch ? Number(mark.position) : 0);
     await ingest.run('BEGIN TRANSACTION');
     try {
+      await dropHeldQueries(instanceId, accepted);
       // In pieces: one statement's parameters are bounded.
       for (let i = 0; i < accepted.rows.length; i += 500) {
         const piece = accepted.rows.slice(i, i + 500);

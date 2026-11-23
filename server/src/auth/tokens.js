@@ -5,6 +5,7 @@
 
 import crypto from 'crypto';
 import { MEMBER, storedMode } from '../sync/mode.js';
+import { sqlTime } from '../utils/sql-time.js';
 
 // Recognisable on sight, so a leaked string can be identified as a CIDRella
 // credential in a log or a paste without having to try it.
@@ -45,8 +46,11 @@ export function expiryFromDays(days) {
     throw new Error('expires_in_days must be a whole number of days, or 0 for never');
   }
   if (n === 0) return null;
-  const d = new Date(Date.now() + n * 86_400_000);
-  return d.toISOString().slice(0, 19).replace('T', ' ');
+  // A count of days past the last date JavaScript can hold is refused, never
+  // read as "never" (sqlTime says null for it).
+  const expiresAt = sqlTime(Date.now() + n * 86_400_000);
+  if (expiresAt === null) throw new Error('expires_in_days is too large');
+  return expiresAt;
 }
 
 function isExpired(row, now) {

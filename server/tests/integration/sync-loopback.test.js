@@ -24,6 +24,7 @@ const {
 const { replaceLeases } = await import('../../src/models/dhcp-lease.js');
 const { recordAudit } = await import('../../src/services/audit.js');
 const { setSetting } = await import('../../src/db/init.js');
+const { dhcpState, markDhcpReady } = await import('../../src/sync/dhcp-active.js');
 
 let source;
 let sourceDir;
@@ -460,6 +461,44 @@ describe('change log loopback', () => {
         .get().n,
     ).toBe(0);
     expect(copy.db.pragma('foreign_key_check')).toEqual([]);
+  });
+
+  it('removes every row of a table with host columns that a snapshot sends none of', () => {
+    source.prepare("INSERT OR IGNORE INTO blocklist_categories (slug) VALUES ('kept-list')").run();
+    sync(copy);
+    expect(copy.db.prepare('SELECT count(*) AS n FROM blocklist_categories').get().n).toBe(
+      source.prepare('SELECT count(*) AS n FROM blocklist_categories').get().n,
+    );
+    // A controller whose blocklist_categories is empty: its snapshot has no rows of it.
+    const { header, changes } = parseChanges(exportChanges(source, {}));
+    expect(header.snapshot).toBe(true);
+    const result = applyChanges(copy.db, {
+      header,
+      changes: changes.filter((change) => change.t !== 'blocklist_categories'),
+    });
+    expect(result.tables).toContain('blocklist_categories');
+    expect(copy.db.prepare('SELECT count(*) AS n FROM blocklist_categories').get().n).toBe(0);
+    // Back to the source's rows for the tests after.
+    applyChanges(copy.db, parseChanges(exportChanges(source, {})));
+    expectSame(copy.db);
+  });
+
+  it('drops the DHCP ready mark when it applies a snapshot of another dataset, only then', () => {
+    const mark = () =>
+      copy.db.prepare("SELECT value FROM sync_state WHERE key = 'dhcp_ready_term'").get()?.value ??
+      null;
+    markDhcpReady(copy.db, 1);
+    // A snapshot of the same dataset (a copy that lost its cursor) keeps it.
+    applyChanges(copy.db, parseChanges(exportChanges(source, {})));
+    expect(mark()).toBe('1');
+    // One of a new dataset (a join, a controller restored) has its own terms.
+    const { header, changes } = parseChanges(exportChanges(source, {}));
+    applyChanges(copy.db, { header: { ...header, dataset: 'another-dataset' }, changes });
+    expect(mark()).toBeNull();
+    expect(dhcpState(copy.db).readyTerm).toBeNull();
+    // Back to the source's dataset for the tests after.
+    applyChanges(copy.db, parseChanges(exportChanges(source, {})));
+    expect(syncStatus(copy.db).dataset).toBe(syncStatus(source).dataset);
   });
 
   it('takes no setting about the box itself from the wire, in a row or a delete', () => {

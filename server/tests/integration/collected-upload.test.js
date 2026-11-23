@@ -398,6 +398,35 @@ describe('a member sends its rows up', () => {
         .all(memberId),
     ).toEqual([{ dns_queries: 40 }, { dns_queries: 20 }]);
   });
+
+  it('stores a row once when a restored member sends it again under a new epoch', async () => {
+    const tables = [
+      'metrics',
+      'metrics_blocklist_hits',
+      'metrics_geoip_hits',
+      'metrics_proxy_perf',
+      'metrics_forwarder',
+    ];
+    const held = () =>
+      Object.fromEntries(
+        tables.map((table) => [table, count(controller, table, `instance_id = '${memberId}'`)]),
+      );
+    const before = held();
+    const queries = await storedQueries(memberId);
+    // As after a restore on the member: every cursor back at the start and
+    // every epoch new, so the controller's marks start over too.
+    box.db
+      .prepare(
+        "DELETE FROM sync_state WHERE key LIKE 'collected_cursor:%' OR key LIKE 'collected_epoch:%'",
+      )
+      .run();
+    await uploadCollectedOnce(box.db);
+    expect(held()).toEqual(before);
+    await expect(storedQueries(memberId)).resolves.toBe(queries);
+    // The controller's own rows are not keyed: a restart inside one minute
+    // still leaves two.
+    expect(count(controller, 'metrics', `instance_id IS NULL AND ts = ${NOW}`)).toBe(2);
+  });
 });
 
 describe('analytics by instance', () => {

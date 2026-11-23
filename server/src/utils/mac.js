@@ -29,6 +29,19 @@ export function isNullMac(mac) {
   );
 }
 
+// A DHCPv4 client's hardware address as the DHCP adapters report it. Kea
+// writes colon-separated octets of any length up to its limit of 20.
+// dnsmasq writes an Ethernet address as six octets, and any other hardware
+// type (or an empty address) with the type first, `tt-xx:xx:...`, up to the
+// 16 octets a DHCP packet's chaddr holds (lease.c, lease_update_file).
+const LEASE_HWADDR =
+  /^(?:[0-9a-f]{2}(?::[0-9a-f]{2}){0,19}|[0-9a-f]{2}-(?:[0-9a-f]{2}(?::[0-9a-f]{2}){0,15})?)$/i;
+
+/** True when `value` is a hardware address a DHCPv4 lease may carry, in either adapter's form. */
+export function isLeaseHardwareAddress(value) {
+  return typeof value === 'string' && LEASE_HWADDR.test(value);
+}
+
 /**
  * First real MAC in `text`, lowercased, or null.
  * Returns null for the all-zero MAC: it parses fine and means nothing.

@@ -95,6 +95,11 @@ import {
   sweepStaleRestoreArtifacts,
   applyRestoreCarryover,
 } from './utils/backup.js';
+import {
+  refuseAfterFailedCarryover,
+  restoreCarryoverFailed,
+  setCarryoverFailed,
+} from './sync/restore.js';
 import { clearBypassAtBoot, listenAddresses, startProxyIfEnabled } from './utils/dns-proxy.js';
 import { startGeoipScheduler } from './services/geoip-update.js';
 import { startRogueDhcpScheduler } from './utils/rogue-detection.js';
@@ -287,10 +292,18 @@ async function main() {
   // sync/restore.js) in the restored database; apply it now that the schema
   // is current, before anything asks which instance this is. No-op on every
   // boot that did not follow a restore.
+  // If it fails, the instance list and the epoch are the backup's: a lower
+  // epoch would let any member fence this box. This boot then talks to no
+  // other instance and runs no controller jobs, Settings > Instances says so,
+  // and the next boot tries again (the parked carry-over stays).
   try {
     applyRestoreCarryover(getDb());
   } catch (err) {
-    console.error('Restore carry-over failed:', err.message);
+    setCarryoverFailed(true);
+    console.error(
+      'Restore carry-over failed; no sync and no controller jobs until a restart:',
+      err.message,
+    );
   }
   console.log('Database initialized');
   // An update or rollback run from the shell leaves its only trace here.
@@ -426,7 +439,7 @@ async function main() {
       startMemberSync(getDb(), { onCurrent: takeOverIfNamed });
       startCollectedUpload(getDb());
     }
-  } else {
+  } else if (!restoreCarryoverFailed()) {
     startControllerJobs(getDb());
     // A box that took over as the controller tells the one it replaced.
     if (speaks) startTakeoverNotices(getDb());
@@ -572,7 +585,9 @@ async function main() {
   app.use('/api/internal/analytics', internalAnalyticsRoutes);
 
   // What instances say to each other, by a member's credential or a join
-  // token rather than a user's session.
+  // token rather than a user's session. Refused whole on a boot whose restore
+  // carry-over failed.
+  app.use('/api/sync', refuseAfterFailedCarryover);
   const { default: collectedRoutes } = await import('./routes/sync-collected.js');
   app.use('/api/sync/collected', collectedRoutes);
   const { default: syncRoutes } = await import('./routes/sync.js');

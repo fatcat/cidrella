@@ -56,6 +56,50 @@ const KEPT_SETTINGS = [
 ];
 const DROPPED_SETTINGS = ['controller_handover_to', 'controller_handover_since'];
 
+// The database a restore in this process is replacing, from the restore's
+// start until the process exits for the restart. Set by utils/backup.js; a
+// restore that fails before the swap clears it and the box goes on. Kept by
+// handle, so a database opened after it (the next boot) is not restoring.
+let restoring = null;
+
+export function setRestoreUnderWay(db) {
+  restoring = db ?? null;
+}
+
+/** Whether a restore is replacing `db`: a join now would not be in the restored list. */
+export function restoreUnderWay(db) {
+  return restoring !== null && restoring === db;
+}
+
+// The first boot after a restore could not write back what was kept
+// (applyRestoreCarryover): the instance list and the epoch are the backup's.
+// This boot talks to no other instance; the next one tries again.
+let carryoverFailed = false;
+
+export function setCarryoverFailed(value) {
+  carryoverFailed = Boolean(value);
+}
+
+export function restoreCarryoverFailed() {
+  return carryoverFailed;
+}
+
+export const CARRYOVER_FAILED_CODE = 'restore_unfinished';
+
+/**
+ * Mounted ahead of every /api/sync route (src/index.js): on a boot whose
+ * carry-over failed, no other instance is answered.
+ */
+export function refuseAfterFailedCarryover(req, res, next) {
+  if (!carryoverFailed) return next();
+  res.status(503).json({
+    error:
+      'This CIDRella was restored from a backup and could not finish the restore at boot. ' +
+      'It answers no other instance until a restart finishes it.',
+    code: CARRYOVER_FAILED_CODE,
+  });
+}
+
 /** What the running database says of the estate today, to park in the one restored over it. */
 export function presentInstances(db) {
   return {

@@ -706,7 +706,12 @@ describe('import step and start', () => {
     expect(stepOf(w)).toBe(6);
     expect(w.text()).toContain('Ready to restore');
 
-    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 401 }));
+    // The service goes away, then answers (a 401: the restored database
+    // does not know this session).
+    vi.stubGlobal(
+      'fetch',
+      vi.fn().mockRejectedValueOnce(new Error('down')).mockResolvedValue({ status: 401 }),
+    );
     vi.useFakeTimers();
     await w.find('[data-track="first-run-start"]').trigger('click');
     await flushPromises();
@@ -790,14 +795,23 @@ describe('join an existing CIDRella', () => {
     w.unmount();
   });
 
-  it('on success signs out with the controller named and lands on the sign-in page', async () => {
+  it('on success waits for the restart, signs out with the controller named and lands on the sign-in page', async () => {
     api.post.mockResolvedValue({ data: { controller: { name: 'ns1' } } });
+    // Still up for a moment, then gone, then back.
+    const health = vi
+      .fn()
+      .mockResolvedValueOnce({ status: 200 })
+      .mockRejectedValueOnce(new Error('down'))
+      .mockRejectedValueOnce(new Error('down'))
+      .mockResolvedValue({ status: 401 });
+    vi.stubGlobal('fetch', health);
     const { useFeaturesStore } = await import('../../../src/stores/features.js');
     const features = useFeaturesStore();
     features.set({ ipv6: false });
     const w = await atJoin();
     await fill(w);
     await setInput(w, '#fr-join-port', '8443');
+    vi.useFakeTimers();
     await w.find('form#first-run-join').trigger('submit');
     await flushPromises();
     expect(api.post).toHaveBeenCalledWith('/setup/join', {
@@ -805,10 +819,18 @@ describe('join an existing CIDRella', () => {
       port: 8443,
       token: 'tok-123',
     });
+    // Not before the box is back: sign-in would be refused.
+    expect(w.text()).toContain('restarting as a member');
+    expect(auth.logout).not.toHaveBeenCalled();
+    await vi.advanceTimersByTimeAsync(5000);
+    await flushPromises();
+    expect(health.mock.calls.length).toBeGreaterThanOrEqual(4);
     expect(auth.logout).toHaveBeenCalledWith('joined', 'ns1');
     // The mode changed under the open page: the next sign-in reads it again.
     expect(features.loaded).toBe(false);
     expect(router.push).toHaveBeenCalledWith({ name: 'Login' });
+    vi.useRealTimers();
+    vi.unstubAllGlobals();
     w.unmount();
   });
 });

@@ -24,6 +24,7 @@ import { epochBase } from '../sync/promotion-state.js';
 import { EPOCH_HEADER, MODE_HEADER } from '../sync/controller-call.js';
 import { fenceSelf, receiveFence, receiveHandoverDone } from '../services/controller-promotion.js';
 import { takeOutboxRows } from '../sync/outbox-intake.js';
+import { restoreUnderWay } from '../sync/restore.js';
 import { controllerOnly, epochGate, requireListed, requireMember } from '../sync/require-member.js';
 import { acceptLeaseReport } from '../sync/lease-intake.js';
 import {
@@ -160,17 +161,26 @@ router.post('/join', joinLimiter, (req, res) => {
   if (instance_id === ownInstanceId(db)) {
     return res.status(400).json({ error: 'A CIDRella cannot join itself.', code: 'token_refused' });
   }
+  // Once a restore has swapped the files the database stays closed until the
+  // restart: no token can be read, and none made before it survives.
+  if (restoreUnderWay(db) && !db.open) return refuseWhileRestoring(res);
   // The token first: nothing is told to a caller without one. It is used up
-  // with the member's row or not at all, so another schema leaves it good.
+  // with the member's row or not at all, so another schema or a restore
+  // leaves it good.
   const mismatch = Symbol('schema');
+  const restoring = Symbol('restoring');
   let credential;
   try {
     credential = db.transaction(() => {
       if (!redeemJoinToken(db, token)) return null;
       if (schema !== syncStatus(db).schema) throw mismatch;
+      // The restore has read the instance list or is about to: a member
+      // added now would be missing from the restored one (sync/restore.js).
+      if (restoreUnderWay(db)) throw restoring;
       return addJoiningMember();
     })();
   } catch (err) {
+    if (err === restoring) return refuseWhileRestoring(res);
     if (err !== mismatch) throw err;
     return res.status(409).json({
       error:
@@ -209,6 +219,15 @@ router.post('/join', joinLimiter, (req, res) => {
     });
   }
 });
+
+// The join screen shows the error as is (sync/member.js joinController).
+function refuseWhileRestoring(res) {
+  return res.status(503).json({
+    error:
+      'This CIDRella is restoring a backup. Wait for it to restart, make a new join token there, then join.',
+    code: 'restoring',
+  });
+}
 
 // Everything below is a member's, by its credential, and subject to the
 // fencing rule.

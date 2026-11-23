@@ -15,7 +15,10 @@
  * instance that became active at a later term has not taken the leases yet
  * and does not answer until it has (services/dhcp-follow.js), so a crash
  * between "the settings say this box" and "its server has the leases" comes
- * back in the same place.
+ * back in the same place. The mark is a term of the dataset it was reached in:
+ * a box that applies a snapshot of another dataset (a join, a controller
+ * restored or put back from before) drops it, since that dataset's terms can
+ * repeat a number this box already holds (sync/changes.js).
  *
  * A single box has none of these: it is the controller, at term 0, and
  * `dhcp_enabled` alone decides, as it always has.
@@ -30,10 +33,8 @@ import { DEFAULTS } from '../config/defaults.js';
 import { getDb } from '../db/init.js';
 import { deleteSetting, readSetting } from '../models/setting.js';
 import { settingValue } from '../models/setting-value.js';
-import { MEMBER, readSyncState, storedMode, writeSyncState } from './log.js';
+import { DHCP_READY_TERM, MEMBER, readSyncState, storedMode, writeSyncState } from './log.js';
 import { fencedState } from './promotion-state.js';
-
-const READY_KEY = 'dhcp_ready_term';
 
 function controllerId(db) {
   try {
@@ -55,7 +56,7 @@ export function dhcpState(db = getDb()) {
   const self = readSyncState(db, 'instance_id');
   const stored = readSetting(db, 'dhcp_active_instance');
   const term = Number.parseInt(readSetting(db, 'dhcp_term'), 10);
-  const ready = Number.parseInt(readSyncState(db, READY_KEY), 10);
+  const ready = Number.parseInt(readSyncState(db, DHCP_READY_TERM), 10);
   const fenced = fencedState(db) !== null;
   return {
     self,
@@ -109,8 +110,8 @@ export function servesDhcpHere(db = getDb()) {
 
 /** This box's DHCP server holds the leases as of `term` (null: it holds none). */
 export function markDhcpReady(db, term) {
-  if (term === null) db.prepare('DELETE FROM sync_state WHERE key = ?').run(READY_KEY);
-  else writeSyncState(db, READY_KEY, String(term));
+  if (term === null) db.prepare('DELETE FROM sync_state WHERE key = ?').run(DHCP_READY_TERM);
+  else writeSyncState(db, DHCP_READY_TERM, String(term));
 }
 
 const followers = new Set();

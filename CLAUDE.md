@@ -296,7 +296,8 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   that lost its controller), `composables/useJoinTarget.js` with
   `components/instances/JoinTargetFields.vue` (the controller a box joins: first run and
   rejoin), `composables/useSignInAgain.js` (leave for sign-in after the box changed what it
-  is), `saveBlob` in `utils/download.js` (every file the browser saves from a Blob), the
+  is), `utils/restart-wait.js` (`waitForRestart`: until the service has gone and answers again,
+  before a restore or a join sends anyone to sign in), `saveBlob` in `utils/download.js` (every file the browser saves from a Blob), the
   `ownSessionEnd` request option in `api/client.js` (a poll that expects its session to end),
   server `services/controller-promotion.js` (every step of a change of controller: `promoteSelf`,
   `startHandover`, `cancelHandover`, `receiveFence`, `receiveHandoverDone`, `fenceSelf`,

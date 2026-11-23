@@ -208,6 +208,17 @@ router.post('/login', loginLimiter, async (req, res) => {
       return res.status(401).json({ error: 'Invalid credentials' });
     }
 
+    // A new password is written to the data of record, which a member cannot
+    // do, and the account can do nothing else until it has one. Refused here
+    // rather than leaving the user stuck on the change-password screen.
+    if (user.must_change_password && isMember()) {
+      const controller = controllerOf(db)?.name || 'the controller';
+      return res.status(409).json({
+        error: `Set your password on ${controller} first, then sign in here.`,
+        code: 'member_read_only',
+      });
+    }
+
     // Two-factor: the password alone earns a short-lived challenge, not a
     // session. The code (or a backup code) turns it into one at /login/totp.
     if (user.totp_enabled) {

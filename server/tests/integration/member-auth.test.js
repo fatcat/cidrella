@@ -229,6 +229,26 @@ describe('on a member', () => {
     expect(outbox()).toEqual([]);
   });
 
+  it('sends an account that must change its password to the controller', async () => {
+    const id = addUser('m-newpw');
+    db.prepare('UPDATE users SET must_change_password = 1 WHERE id = ?').run(id);
+    makeMember(db, { name: 'rack-a' });
+    const before = estate();
+    const res = await login('m-newpw');
+    expect(res.status).toBe(409);
+    expect(res.body).toEqual({
+      error: 'Set your password on rack-a first, then sign in here.',
+      code: 'member_read_only',
+    });
+    expect(res.body.token).toBeUndefined();
+    expect(estate()).toBe(before);
+    // A wrong password still answers as one: nothing is said about the account.
+    expect((await login('m-newpw', 'wrong')).status).toBe(401);
+    // On the controller the same account signs in and is sent to change it.
+    makeController(db);
+    expect((await login('m-newpw')).body.user).toMatchObject({ must_change_password: true });
+  });
+
   it('takes an API token without stamping it', async () => {
     const token = addToken('m-svc');
     makeMember(db);
