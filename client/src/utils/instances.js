@@ -169,6 +169,26 @@ export function dhcpState(row, handover = null) {
   return row?.dhcp_state === 'off' ? { ...known } : null;
 }
 
+const listFormat = new Intl.ListFormat('en', { style: 'long', type: 'conjunction' });
+
+/**
+ * The line saying which instances DHCP clients are given as DNS servers, from
+ * GET /api/instances `dns_handed_out`; null while none is left out (or from a
+ * server that does not say).
+ */
+export function dnsHandoutLine(handedOut) {
+  const leftOut = handedOut?.left_out || [];
+  if (leftOut.length === 0) return null;
+  const served = handedOut.served || [];
+  const verb = leftOut.length === 1 ? 'answers' : 'answer';
+  return (
+    `DHCP clients are given ${countOf(served.length, 'instance')} as DNS servers: ` +
+    `${listFormat.format(served)}. ${listFormat.format(leftOut)} ${verb} DNS but ` +
+    `${leftOut.length === 1 ? 'is' : 'are'} not handed out, since clients use only the first ` +
+    `${handedOut.limit}.`
+  );
+}
+
 /** The row serving DHCP now, of a list of instances; null when none says so. */
 export function dhcpServer(rows) {
   return rows.find((row) => row.dhcp === 'serving') || null;

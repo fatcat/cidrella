@@ -8,6 +8,7 @@ import {
   behindText,
   dhcpServer,
   dhcpState,
+  dnsHandoutLine,
   dnsState,
   fencedText,
   handoverNames,
@@ -153,6 +154,20 @@ describe('DHCP wording', () => {
     // A server older than moving DHCP says nothing, and so does a new word.
     expect(dhcpState({})).toBeNull();
     expect(dhcpState({ dhcp: 'paused' })).toBeNull();
+  });
+
+  it('names who DHCP clients are given as DNS servers, only when someone is left out', () => {
+    expect(
+      dnsHandoutLine({ limit: 3, served: ['ns1', 'ns2', 'ns3'], left_out: ['ns4', 'ns5'] }),
+    ).toBe(
+      'DHCP clients are given 3 instances as DNS servers: ns1, ns2, and ns3. ns4 and ns5 ' +
+        'answer DNS but are not handed out, since clients use only the first 3.',
+    );
+    expect(
+      dnsHandoutLine({ limit: 3, served: ['ns1', 'ns2', 'ns3'], left_out: ['ns4'] }),
+    ).toContain('ns4 answers DNS but is not handed out');
+    expect(dnsHandoutLine({ limit: 3, served: ['ns1'], left_out: [] })).toBeNull();
+    expect(dnsHandoutLine(undefined)).toBeNull();
   });
 
   it('has words for DNS, and nothing when it is not known', () => {

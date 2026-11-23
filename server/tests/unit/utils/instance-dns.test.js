@@ -3,7 +3,12 @@
  * CIDRella's entry in a scope's list becomes every instance, both families.
  */
 import { describe, it, expect } from 'vitest';
-import { instanceAddressFor, instanceDnsServers } from '../../../src/utils/instance-dns.js';
+import {
+  instanceAddressFor,
+  instanceDnsServers,
+  MAX_SERVED_INSTANCES,
+  servedInstances,
+} from '../../../src/utils/instance-dns.js';
 
 const controller = { addresses: ['10.60.0.2', '192.0.2.2', 'fd00:63::2', '2001:db8::2'] };
 const memberOnNet = { addresses: ['10.60.0.3', 'fd00:63::3'] };
@@ -94,5 +99,45 @@ describe('instanceDnsServers', () => {
         instances: [controller, v4only],
       }),
     ).toBe('fd00:63::2');
+  });
+
+  it('serves three instances at most, in order, and keeps a person’s resolvers (both families)', () => {
+    const five = [
+      controller,
+      memberOnNet,
+      memberElsewhere,
+      { addresses: ['10.60.0.4', 'fd00:63::4'] },
+      { addresses: ['10.60.0.5', 'fd00:63::5'] },
+    ];
+    expect(MAX_SERVED_INSTANCES).toBe(3);
+    expect(
+      instanceDnsServers('9.9.9.9,10.60.0.2,1.1.1.1', {
+        family: 4,
+        cidr: '10.60.0.0/24',
+        instances: five,
+      }),
+    ).toBe('9.9.9.9,10.60.0.2,10.60.0.3,172.16.9.9,1.1.1.1');
+    expect(
+      instanceDnsServers('fd00:63::2', { family: 6, cidr: 'fd00:63::/64', instances: five }),
+    ).toBe('fd00:63::2,fd00:63::3,2001:db8:9::9');
+    // A left-out instance's address a person listed is not served either.
+    expect(
+      instanceDnsServers('10.60.0.2,10.60.0.5', {
+        family: 4,
+        cidr: '10.60.0.0/24',
+        instances: five,
+      }),
+    ).toBe('10.60.0.2,10.60.0.3,172.16.9.9');
+  });
+
+  it('counts an instance with no address in a family out of that family only', () => {
+    const v4only = (n) => ({ addresses: [`10.60.0.${n}`] });
+    const v6only = { addresses: ['fd00:63::9'] };
+    const list = [v4only(2), v4only(3), v4only(4), v4only(5), v6only];
+    const served = servedInstances(list);
+    expect(list.map((instance) => served.has(instance))).toEqual([true, true, true, false, true]);
+    expect(
+      instanceDnsServers('fd00:63::9', { family: 6, cidr: 'fd00:63::/64', instances: list }),
+    ).toBe('fd00:63::9');
   });
 });

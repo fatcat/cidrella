@@ -113,6 +113,49 @@ describe('the DNS servers a scope serves', () => {
     expect(served(v6Scope, 23)).toBe('fd00:63::2,fd00:63::3');
   });
 
+  it('gives clients three instances at most, both families and both adapters’ input', () => {
+    // Members c, d and e join member-b: five answer DNS.
+    const ids = [];
+    for (const [n, host] of [
+      ['c', 4],
+      ['d', 5],
+      ['e', 6],
+    ]) {
+      addMember(db, {
+        instanceId: `${String(host).repeat(8)}-0000-4000-8000-000000000000`,
+        name: `member-${n}`,
+        address: `10.60.0.${host}`,
+        port: 443,
+        fingerprint: n.repeat(64),
+        version: 'test',
+        schema: 1,
+      });
+      const id = db.prepare('SELECT id FROM sync_instances WHERE name = ?').get(`member-${n}`).id;
+      setDnsAddresses(db, id, [`10.60.0.${host}`, `fd00:63::${host}`]);
+      ids.push(id);
+    }
+    try {
+      expect(dnsInstances(db)).toHaveLength(5);
+      expect(served(v4Scope, 6)).toBe('10.60.0.2,10.60.0.3,10.60.0.4');
+      expect(served(v6Scope, 23)).toBe('fd00:63::2,fd00:63::3,fd00:63::4');
+      expect(rendered('10.60.0.0/24')).toContain('"10.60.0.2","10.60.0.3","10.60.0.4"');
+      expect(rendered('10.60.0.0/24')).not.toContain('10.60.0.5');
+      expect(rendered('fd00:63::/64')).not.toContain('fd00:63::5');
+      // The instance serving DHCP is always among them.
+      upsertSetting(
+        db,
+        'dhcp_active_instance',
+        db.prepare('SELECT instance_id FROM sync_instances WHERE name = ?').get('member-e')
+          .instance_id,
+      );
+      expect(served(v4Scope, 6)).toBe('10.60.0.6,10.60.0.2,10.60.0.3');
+      expect(served(v6Scope, 23)).toBe('fd00:63::6,fd00:63::2,fd00:63::3');
+    } finally {
+      deleteSetting(db, 'dhcp_active_instance');
+      for (const id of ids) db.prepare('DELETE FROM sync_instances WHERE id = ?').run(id);
+    }
+  });
+
   it('leaves a scope pointed at other resolvers alone', () => {
     db.prepare("UPDATE dhcp_scope_options SET value = '9.9.9.9' WHERE option_code = 6").run();
     db.prepare("UPDATE dhcp_scope_options SET value = '2620:fe::fe' WHERE option_code = 23").run();

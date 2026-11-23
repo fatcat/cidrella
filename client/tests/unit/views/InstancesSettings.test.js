@@ -376,6 +376,30 @@ describe('backups on the controller', () => {
   });
 });
 
+describe('DNS servers DHCP clients are given', () => {
+  it('names who is left out when more instances answer DNS than are handed out', async () => {
+    const w = await mountPage({
+      ...CONTROLLER,
+      dns_handed_out: { limit: 3, served: ['ns1', 'ns2', 'ns3'], left_out: ['ns4'] },
+    });
+    expect(w.find('[data-track="instances-dns-handout"]').text()).toContain(
+      'ns4 answers DNS but is not handed out',
+    );
+    w.unmount();
+  });
+
+  it('says nothing while every DNS server is handed out, or on an older server', async () => {
+    for (const state of [
+      { ...CONTROLLER, dns_handed_out: { limit: 3, served: ['ns1'], left_out: [] } },
+      CONTROLLER,
+    ]) {
+      const w = await mountPage(state);
+      expect(w.find('[data-track="instances-dns-handout"]').exists()).toBe(false);
+      w.unmount();
+    }
+  });
+});
+
 describe('DHCP on the controller', () => {
   it('says which instance serves DHCP and offers the move only where the server allows it', async () => {
     const w = await mountPage(SERVED_BY_CONTROLLER);

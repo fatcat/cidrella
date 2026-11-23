@@ -38,12 +38,14 @@ import {
 import {
   createJoinToken,
   CURRENT_MS,
+  dnsInstances,
   listInstances,
   ownInstanceId,
   ownInstanceName,
   removeMember,
 } from '../models/sync-instance.js';
 import { ownServiceStates } from '../services/instance-services.js';
+import { MAX_SERVED_INSTANCES, servedInstances } from '../utils/instance-dns.js';
 
 const router = Router();
 router.use(requireRole('admin'));
@@ -69,6 +71,16 @@ function serviceStatesOf(row, { self, member, own }) {
   const heard = Date.parse(row.last_contact_at || '');
   if (Number.isNaN(heard) || Date.now() - heard > CURRENT_MS) return null;
   return { dns: row.dns_state, dhcp: row.dhcp_state };
+}
+
+function dnsHandedOut(db) {
+  const instances = dnsInstances(db);
+  const served = servedInstances(instances);
+  return {
+    limit: MAX_SERVED_INSTANCES,
+    served: instances.filter((i) => served.has(i)).map((i) => i.name),
+    left_out: instances.filter((i) => !served.has(i)).map((i) => i.name),
+  };
 }
 
 // GET /api/instances
@@ -103,6 +115,9 @@ router.get('/', async (req, res) => {
     // Nobody takes scheduled backups: the role changed hands and the
     // schedule did not come along.
     backups_off: backupsOff(db),
+    // Which DNS-serving instances DHCP clients are given (at most
+    // MAX_SERVED_INSTANCES per family) and which answer DNS but are not.
+    dns_handed_out: dnsHandedOut(db),
     instances: listInstances(db).map((row) => ({
       id: row.id,
       instance_id: row.instance_id,

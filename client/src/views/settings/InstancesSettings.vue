@@ -132,6 +132,11 @@
         />
       </p>
 
+      <p v-if="dnsLine" class="status-line" data-track="instances-dns-handout">
+        <StatusDot kind="info" label="Not every DNS server is handed out" />
+        <span>{{ dnsLine }}</span>
+      </p>
+
       <p v-if="backupsOff" class="status-line" data-track="instances-backups-off">
         <StatusDot kind="warn" label="Backups off" />
         <span>
@@ -453,6 +458,7 @@ import {
   behindText,
   dhcpServer,
   dhcpState,
+  dnsHandoutLine,
   dnsState,
   handoverNames,
   handoverText,
@@ -495,6 +501,8 @@ const canAct = computed(
 );
 // A controller with backups off has nothing to restore from if it is lost.
 const BACKUP_SETTINGS = '/system?area=maintenance&sec=backup';
+// More instances answer DNS than DHCP clients are given.
+const dnsLine = computed(() => dnsHandoutLine(state.value?.dns_handed_out));
 const backupsOff = computed(
   () => isController.value && !fenced.value && state.value?.backups_off === true,
 );

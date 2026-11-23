@@ -790,7 +790,9 @@ already hold on a single box.
   address; when the scope's options are resolved
   (`resolveEffectiveScopeOptions`), that entry is served as every DNS-serving
   instance, the one serving DHCP first and then the controller, each by its address inside the scope's
-  network when it has one (`utils/instance-dns.js`). Other resolvers a person
+  network when it has one (`utils/instance-dns.js`). At most three are served per
+  family (`MAX_SERVED_INSTANCES`): clients use the first few and ignore the rest
+  (glibc reads three), and the Instances page names any instance left out. Other resolvers a person
   listed stay where they are, a list naming no instance is served as it is,
   and nothing stored changes. A change to the instances re-renders DHCP.
 - **A member reports what it observes.** Its facts sink is the remote one

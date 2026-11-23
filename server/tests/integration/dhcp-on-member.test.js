@@ -35,6 +35,7 @@ const { createJoinToken, ensureOwnInstance, ownInstanceId } =
   await import('../../src/models/sync-instance.js');
 const { upsertSetting } = await import('../../src/models/setting.js');
 const { SERVICE_STATES } = await import('../../src/services/instance-services.js');
+const { dnsInstances: dnsInstancesOf } = await import('../../src/models/sync-instance.js');
 const { memberSink, setFactsSink } = await import('../../src/sync/facts.js');
 const { localSink } = await import('../../src/sync/local-sink.js');
 const { stopRemoteSink } = await import('../../src/sync/remote-sink.js');
@@ -269,6 +270,17 @@ describe('what each instance serves', () => {
     } finally {
       upsertSetting(controller, 'dhcp_enabled', 'true');
     }
+  });
+
+  it('says which DNS-serving instances DHCP clients are given', async () => {
+    const { dns_handed_out: handedOut } = (await admin().get('/api/instances')).body;
+    expect(handedOut.limit).toBe(3);
+    expect(handedOut.left_out).toEqual([]);
+    expect(handedOut.served).toEqual(
+      dnsInstancesOf(controller)
+        .slice(0, 3)
+        .map((instance) => instance.name),
+    );
   });
 
   it('keeps what a member reports with its sync, and drops it once the member is out of contact', async () => {

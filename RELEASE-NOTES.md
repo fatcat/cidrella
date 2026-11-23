@@ -81,10 +81,11 @@ members that keep serving DNS and DHCP from a synced copy.
 - **Backups and restore belong to the controller.** A member takes none. A restore brings the
   data back and keeps the instances, which then each take a full copy. To replace a dead
   controller, promote a member; do not restore its backup onto a new box.
-- **DHCP clients are given every instance.** Where a scope's DNS servers option names
-  CIDRella, clients get the controller and every member, so they keep resolving when one is
-  away. Other resolvers you listed stay in the list, and a scope pointed elsewhere is untouched.
-  IPv4 and IPv6 scopes both.
+- **DHCP clients are given the instances.** Where a scope's DNS servers option names
+  CIDRella, clients get the instance serving DHCP, the controller and the members, so they keep
+  resolving when one is away. At most three per family: clients use only the first few, and the
+  Instances page names any instance left out. Other resolvers you listed stay in the list, and a
+  scope pointed elsewhere is untouched. IPv4 and IPv6 scopes both.
 - A single CIDRella is a controller with no members and looks as it did.
 
 ### Changed

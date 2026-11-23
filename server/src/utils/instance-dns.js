@@ -16,6 +16,12 @@ import { networkContains } from './cidr.js';
 
 const canonical = (address) => canonicalizeIp(String(address).trim());
 
+// Clients use the first few DNS servers they are given and ignore the rest
+// (glibc reads three, MAXNS), and a DHCPv4 option holds 255 bytes. So at most
+// this many instances are served per family, in dnsInstances order: the one
+// serving DHCP, the controller, then the members by name.
+export const MAX_SERVED_INSTANCES = 3;
+
 /** The one address of `family` an instance is reached at from `cidr`: one inside it, else its first. */
 export function instanceAddressFor(addresses, { family, cidr }) {
   const mine = (addresses || [])
@@ -42,7 +48,8 @@ export function instanceDnsServers(value, { family, cidr, instances }) {
   const every = new Set(instances.flatMap((instance) => instance.addresses.map(canonical)));
   const served = instances
     .map((instance) => instanceAddressFor(instance.addresses, { family, cidr }))
-    .filter(Boolean);
+    .filter(Boolean)
+    .slice(0, MAX_SERVED_INSTANCES);
   const entries = String(value)
     .split(',')
     .map((entry) => entry.trim())
@@ -60,4 +67,21 @@ export function instanceDnsServers(value, { family, cidr, instances }) {
     }
   }
   return [...new Set(out)].join(',');
+}
+
+/**
+ * The instances clients are given, in either family: the first
+ * MAX_SERVED_INSTANCES with an address of that family. A Set of the entries of
+ * `instances` (as dnsInstances lists them), for the Instances page to say who
+ * is left out.
+ */
+export function servedInstances(instances) {
+  const served = new Set();
+  for (const family of [4, 6]) {
+    instances
+      .filter((instance) => instanceAddressFor(instance.addresses, { family }))
+      .slice(0, MAX_SERVED_INSTANCES)
+      .forEach((instance) => served.add(instance));
+  }
+  return served;
 }

@@ -73,13 +73,13 @@ export function setOwnDnsAddresses(db, addresses) {
  * The instances that answer DNS, in the order their addresses are served:
  * the one that serves DHCP (sync/dhcp-active.js: its clients reach it for
  * sure), then the controller, then the members by name.
- * [{ name, addresses }].
+ * [{ instance_id, name, addresses }].
  */
 export function dnsInstances(db) {
   let statement;
   try {
     statement = db.prepare(
-      `SELECT name, dns_addresses FROM sync_instances WHERE serves_dns = 1
+      `SELECT instance_id, name, dns_addresses FROM sync_instances WHERE serves_dns = 1
        ORDER BY COALESCE(instance_id = (
          SELECT value FROM settings WHERE key = 'dhcp_active_instance'), 0) DESC,
          is_controller DESC, name, id`,
@@ -89,9 +89,11 @@ export function dnsInstances(db) {
     // at an old schema): one box, nothing to add.
     return [];
   }
-  return statement
-    .all()
-    .map((row) => ({ name: row.name, addresses: JSON.parse(row.dns_addresses || '[]') }));
+  return statement.all().map((row) => ({
+    instance_id: row.instance_id,
+    name: row.name,
+    addresses: JSON.parse(row.dns_addresses || '[]'),
+  }));
 }
 
 /**
