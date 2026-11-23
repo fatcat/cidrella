@@ -119,6 +119,7 @@ async function submit() {
     setup.reset();
     await signInAgain('joined', data?.controller?.name || null);
   } catch (err) {
+    restarting.value = false;
     error.value = apiError(err);
   } finally {
     joining.value = false;
