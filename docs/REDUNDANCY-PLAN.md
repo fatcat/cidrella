@@ -190,7 +190,12 @@ deciding setting written last, recovery at boot.
 
 - **Move DHCP**: quiesce the old instance, hand its leases over (the `handover/` snapshot and
   `importLeases` the stack switch uses), bump `dhcp_term`, start the new one. A stale instance
-  that reports leases gets a refusal that tells it to stop DHCP.
+  that reports leases gets a refusal that tells it to stop DHCP. A member serves DHCP only on
+  the interfaces its own Interfaces page switches on: with no saved interface config (a member
+  never ran the first-run interface step) that is none, unlike a fresh controller, which serves
+  on every interface. Each member reports how many interfaces would serve DHCP
+  (`sync_instances.dhcp_interfaces`), and a move to one with none is refused
+  (`no_dhcp_interface`); one that holds DHCP with none reports its DHCP as `no_interface`.
 - **Coordinated handover** (old controller reachable): freeze writes, wait for the target to
   reach head, move DHCP if needed, target becomes controller at epoch+1 in one transaction
   (mode written last), the old controller becomes a plain member of it.

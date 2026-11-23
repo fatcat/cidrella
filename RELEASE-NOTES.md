@@ -63,7 +63,9 @@ members that keep serving DNS and DHCP from a synced copy.
   and the member keeps serving while the controller is away. If the instance that had DHCP is
   gone for good, **Start without the old leases** starts the new one with the leases the
   controller last heard about. The new instance must be where the clients can reach it: the same
-  segments, or the relays pointed at it.
+  segments, or the relays pointed at it. A member serves DHCP only on the interfaces switched on
+  for DHCP in its own **Settings > General > Interfaces**, and DHCP cannot move to a member with
+  none.
 - **Changing the controller.** On the controller, **Make controller** beside a member hands the
   role over: changes are refused on both for the few seconds it takes, the member takes over,
   and the old controller restarts as its member. On a member, **Promote this instance** is for

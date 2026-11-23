@@ -29,6 +29,7 @@ import { holdHooks } from '../utils/after-commit.js';
 import { recordAudit } from './audit.js';
 import { applyDhcpServing, followDhcp } from './dhcp-follow.js';
 import { holdLeaseSync, syncLeasesNow } from './dhcp-lease-sync.js';
+import { dhcpInterfaceCount } from './instance-services.js';
 
 const SETTLE_ATTEMPTS = 5;
 
@@ -102,8 +103,10 @@ export function moveRefusal(db, row, state = dhcpState(db)) {
         error: `DHCP is switched off on ${row.name}. Switch it on in Settings > Interfaces first.`,
       };
     }
-    return null;
+    return dhcpInterfaceCount() === 0 ? noInterface(row) : null;
   }
+  // As the member last said; an older member says nothing, and is not refused.
+  if (row.dhcp_interfaces === 0) return noInterface(row);
   return followingRefusal(
     db,
     row,
@@ -111,12 +114,20 @@ export function moveRefusal(db, row, state = dhcpState(db)) {
   );
 }
 
+// Moved there, DHCP would serve nobody: no interface of that box has it on.
+const noInterface = (row) => ({
+  code: 'no_dhcp_interface',
+  error:
+    `No interface on ${row.name} has DHCP switched on, so it would serve nobody. ` +
+    `Switch DHCP on for an interface in Settings > General > Interfaces on ${row.name} first.`,
+});
+
 const instanceRow = (db, id) =>
   Number.isInteger(id)
     ? db
         .prepare(
           `SELECT id, instance_id, name, is_controller, version, schema_version, last_contact_at,
-             cursor
+             cursor, dhcp_interfaces
            FROM sync_instances WHERE id = ?`,
         )
         .get(id)

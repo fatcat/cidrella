@@ -308,12 +308,17 @@ describe('what each instance serves', () => {
     expect(SERVICE_STATES).toContain(reported.dns_state);
     expect(SERVICE_STATES).toContain(reported.dhcp_state);
     const stored = controller
-      .prepare('SELECT dns_state, dhcp_state, last_contact_at FROM sync_instances WHERE name = ?')
+      .prepare(
+        `SELECT dns_state, dhcp_state, dhcp_interfaces, last_contact_at
+         FROM sync_instances WHERE name = ?`,
+      )
       .get('member-a');
     expect(stored).toMatchObject({
       dns_state: reported.dns_state,
       dhcp_state: reported.dhcp_state,
     });
+    // How many interfaces would serve DHCP there, for the move's check.
+    expect(Number.isInteger(stored.dhcp_interfaces)).toBe(true);
     controller
       .prepare('UPDATE sync_instances SET last_contact_at = ? WHERE name = ?')
       .run(new Date(Date.now() - 10 * 60_000).toISOString(), 'member-a');
@@ -386,6 +391,33 @@ describe('moving DHCP from the controller to a member', () => {
       expect(response.body.code).toBe('not_current');
       expect(response.body.error).toMatch(/has not caught up/);
     }
+  });
+
+  it('refuses a member with no interface that would serve DHCP (MEMBER-DHCP-ALL-IFACES-01)', async () => {
+    const said = controller.prepare('UPDATE sync_instances SET dhcp_interfaces = ? WHERE id = ?');
+    said.run(0, a.row);
+    try {
+      const none = await move(a.row);
+      expect(none.status).toBe(409);
+      expect(none.body.code).toBe('no_dhcp_interface');
+      expect(none.body.error).toBe(
+        'No interface on member-a has DHCP switched on, so it would serve nobody. ' +
+          'Switch DHCP on for an interface in Settings > General > Interfaces on member-a first.',
+      );
+      const rows = Object.fromEntries(
+        (await admin().get('/api/instances')).body.instances.map((row) => [row.name, row]),
+      );
+      expect(rows['member-a'].can_take_dhcp).toBe(false);
+      expect(dhcpState(controller).term).toBe(0);
+    } finally {
+      // An older member says nothing: not refused for it.
+      said.run(null, a.row);
+    }
+    reportIn();
+    const rows = Object.fromEntries(
+      (await admin().get('/api/instances')).body.instances.map((row) => [row.name, row]),
+    );
+    expect(rows['member-a'].can_take_dhcp).toBe(true);
   });
 
   it('moves nothing when the controller cannot read its own final leases', async () => {

@@ -117,12 +117,20 @@ export function behindText(row) {
 // What a row's DNS or DHCP server is doing, as GET /api/instances reports it
 // (`dns_state`, `dhcp_state`): null when the server cannot vouch for it, a
 // member out of contact or another instance seen from a member.
-// One wording for DNS and DHCP on every instance: On or Off, and Not running
-// for a server that is on but whose daemon is down.
+// One wording for DNS and DHCP on every instance: On or Off, Not running for
+// a server that is on but whose daemon is down, and for DHCP, No interface
+// when the instance holds it but has DHCP on for none of its interfaces.
 const SERVER_STATES = {
   serving: { tone: 'ok', words: 'On' },
   off: { tone: 'muted', words: 'Off' },
   down: { tone: 'err', words: 'Not running' },
+  no_interface: {
+    tone: 'err',
+    words: 'No interface',
+    title:
+      'DHCP is assigned to this instance, but none of its interfaces has DHCP switched on, ' +
+      'so no client is answered. Switch one on under Settings > General > Interfaces there.',
+  },
 };
 const NOT_SERVED_TITLE =
   'DHCP is assigned to this instance and switched off under Settings > General > ' +

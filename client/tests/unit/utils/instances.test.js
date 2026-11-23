@@ -136,6 +136,12 @@ describe('DHCP wording', () => {
       tone: 'muted',
       words: 'Off',
     });
+    // Assigned, but no interface of the box has DHCP on: nobody is answered.
+    expect(dhcpState({ dhcp: 'serving', dhcp_state: 'no_interface' })).toMatchObject({
+      tone: 'err',
+      words: 'No interface',
+      title: expect.stringContaining('Settings > General > Interfaces'),
+    });
     expect(dhcpState({ dhcp: null, dhcp_state: 'off' })).toEqual({ tone: 'muted', words: 'Off' });
     expect(dhcpState({ dhcp: null, dhcp_state: 'serving' })).toMatchObject({
       tone: 'err',

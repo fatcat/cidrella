@@ -53,6 +53,8 @@ const { syncLeasesNow } = await import('../../../src/services/dhcp-lease-sync.js
 (await import('../../../src/services/dhcp-lease-ingest.js')).startDhcpNameSync();
 const { getDnsBackend } = await import('../../../src/backends/index.js');
 const { ESTATE_INTERFACES, seedBackendEstate } = await import('../../helpers/backend-estate.js');
+const { makeController, makeMember } = await import('../../helpers/member-mode.js');
+const { writeSyncState } = await import('../../../src/sync/log.js');
 
 let db;
 let tmpDir;
@@ -254,5 +256,33 @@ describe('dnsmasq backend golden output', () => {
     db.prepare("DELETE FROM settings WHERE key = 'interface_config'").run();
     await applyPaths.boot();
     await expect(snapshot()).toMatchFileSnapshot(golden('10-boot-fresh'));
+  });
+
+  // MEMBER-DHCP-ALL-IFACES-01: with no interface config, a controller with DHCP
+  // on serves it on every interface, as a fresh install always has. A member
+  // never set its interfaces up; given DHCP it serves on none of them.
+  it('11 serves DHCP on no interface of a member with no interface config', async () => {
+    const dhcpLines = () =>
+      fs
+        .readFileSync(path.join(DNSMASQ_DIR, 'dnsmasq.conf'), 'utf-8')
+        .split('\n')
+        .filter((line) => /^(interface|no-dhcp-interface)=/.test(line));
+    setSetting('dhcp_enabled', 'true');
+    try {
+      await applyPaths.boot();
+      expect(dhcpLines()).toEqual(['interface=eth0', 'interface=eth1']);
+
+      writeSyncState(db, 'instance_id', 'member-self');
+      makeMember(db);
+      setSetting('dhcp_active_instance', 'member-self');
+      await applyPaths.boot();
+      expect(dhcpLines()).toEqual(['no-dhcp-interface=eth0', 'no-dhcp-interface=eth1']);
+    } finally {
+      makeController(db);
+      db.prepare(
+        "DELETE FROM settings WHERE key IN ('dhcp_enabled', 'dhcp_active_instance')",
+      ).run();
+      db.prepare("DELETE FROM sync_state WHERE key = 'instance_id'").run();
+    }
   });
 });

@@ -139,7 +139,7 @@ export function ensureOwnInstance(db, { fingerprint, port, version, dnsAddresses
 
 const PUBLIC_COLUMNS = `id, instance_id, name, address, port, fingerprint, is_controller,
   serves_dns, dns_addresses, created_at, last_contact_at, cursor, version, schema_version,
-  dns_state, dhcp_state`;
+  dns_state, dhcp_state, dhcp_interfaces`;
 
 export function listInstances(db) {
   return db
@@ -352,13 +352,20 @@ export function memberByInstanceId(db, instanceId) {
 export function noteContact(
   db,
   id,
-  { cursor = null, version = null, schema = null, services = null, duid = null } = {},
+  {
+    cursor = null,
+    version = null,
+    schema = null,
+    services = null,
+    duid = null,
+    dhcpInterfaces = null,
+  } = {},
 ) {
   db.prepare(
     `UPDATE sync_instances SET last_contact_at = ?, cursor = COALESCE(?, cursor),
        version = COALESCE(?, version), schema_version = COALESCE(?, schema_version),
        dns_state = COALESCE(?, dns_state), dhcp_state = COALESCE(?, dhcp_state),
-       dhcpv6_duid = COALESCE(?, dhcpv6_duid)
+       dhcpv6_duid = COALESCE(?, dhcpv6_duid), dhcp_interfaces = COALESCE(?, dhcp_interfaces)
      WHERE id = ?`,
   ).run(
     new Date().toISOString(),
@@ -368,6 +375,7 @@ export function noteContact(
     services?.dns ?? null,
     services?.dhcp ?? null,
     normalizeDuid(duid),
+    dhcpInterfaces,
     id,
   );
 }

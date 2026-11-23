@@ -188,6 +188,9 @@ router.use(controllerOnly);
 
 const isUuid = (value) => /^[0-9a-f-]{36}$/.test(String(value || ''));
 const isFingerprint = (value) => /^[0-9a-f]{64}$/.test(String(value || ''));
+// A count a member sent (dif): a small whole number, or null when absent or not one.
+const interfaceCountParam = (value) =>
+  typeof value === 'string' && /^\d{1,4}$/.test(value) ? Number(value) : null;
 
 // POST /api/sync/join: a join token for a credential.
 router.post('/join', joinLimiter, (req, res) => {
@@ -331,6 +334,7 @@ router.get('/changes', async (req, res) => {
     services: parseServiceStates(req.query.svc),
     // Kept only when it is a DUID (noteContact normalizes it).
     duid: typeof req.query.duid === 'string' ? req.query.duid.slice(0, 400) : null,
+    dhcpInterfaces: interfaceCountParam(req.query.dif),
   });
   if (typeof req.query.addr === 'string') {
     const addresses = req.query.addr.slice(0, 2048).split(',').filter(Boolean);

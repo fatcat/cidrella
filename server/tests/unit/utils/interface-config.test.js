@@ -76,6 +76,35 @@ describe('selectInterfaceNames with no config (fresh deploy)', () => {
   });
 });
 
+describe('selectInterfaceNames on a member (MEMBER-DHCP-ALL-IFACES-01)', () => {
+  it('serves DHCP on no interface without a saved config', () => {
+    const r = selectInterfaceNames('dhcp', { config: {}, sysIfaces: SYS, member: true });
+    expect(r).toEqual({ explicit: false, names: [], dhcpFallback: false });
+  });
+
+  it("still lists every interface for DNS and for dnsmasq's 'any', with DHCP off", () => {
+    expect(selectInterfaceNames('dns', { config: {}, sysIfaces: SYS, member: true }).names).toEqual(
+      ['eth0', 'eth1', 'eth2'],
+    );
+    const any = selectInterfaceNames('any', { config: {}, sysIfaces: SYS, member: true });
+    expect(any.names).toEqual(['eth0', 'eth1', 'eth2']);
+    expect(any.dhcpFallback).toBe(false);
+  });
+
+  it('follows a saved config like any box', () => {
+    const config = { eth0: { dns: true, dhcp: true }, eth1: { dns: true, dhcp: false } };
+    expect(selectInterfaceNames('dhcp', { config, sysIfaces: SYS, member: true }).names).toEqual([
+      'eth0',
+    ]);
+  });
+
+  it('keeps the fresh-deploy fallback on a box that is not a member', () => {
+    const r = selectInterfaceNames('dhcp', { config: {}, sysIfaces: SYS, member: false });
+    expect(r.names).toEqual(['eth0', 'eth1', 'eth2']);
+    expect(r.dhcpFallback).toBe(true);
+  });
+});
+
 describe('readInterfaceConfig', () => {
   it('returns {} for missing, malformed, or non-object settings', () => {
     for (const v of [null, '', 'not json', '[1,2]', '"a string"', '42']) {

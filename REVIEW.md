@@ -14,6 +14,23 @@ Entries under **Will not fix** are decided: the maintainer chose to leave them. 
 the behavior they describe is explained when someone runs into it. Do not raise or fix them
 again unless the maintainer reopens one.
 
+#### MEMBER-CONTROLLER-URL-PORT-01: The controller link carries the default port
+
+**low**, seen on two hosts (2026-11-23). `server/src/routes/features.js` (`controller_url`)
+
+- **What happens:** The mode chip on a member links to `https://10.0.0.8:443`, and the Instances
+  page reads `10.0.0.8:443`.
+- **Fix:** Drop `:443` from the URL (and from the displayed address if wanted).
+
+#### MEMBER-LEASES-WORDING-01: The member's lease list says "handed out" over reservations
+
+**low**, seen on two hosts (2026-11-23). `client/src/components/instances/MemberLeases.vue`
+
+- **What happens:** The help line says "What this member has handed out", but the rows are the
+  unified leases and reservations (`GET /api/dhcp/leases`), so reservations it never handed out
+  are listed, some marked Active.
+- **Fix:** Reword to "Leases and reservations this member serves", or filter to dynamic leases.
+
 ---
 
 ## Will not fix

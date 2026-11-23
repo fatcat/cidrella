@@ -1,6 +1,7 @@
 import os from 'os';
 import { getSetting } from '../db/init.js';
 import { ipv6Enabled } from './ipv6-support.js';
+import { isMember } from '../sync/mode.js';
 
 /**
  * One reading of the `interface_config` setting.
@@ -44,20 +45,27 @@ function enabledFor(entry, service) {
 /**
  * Which host interfaces should this service act on?
  *
- * Returns { explicit, names }. `explicit` says whether the operator has a
- * stored interface_config at all, which callers need because the fallback
- * shape differs from the configured one.
+ * Returns { explicit, names, dhcpFallback }. `explicit` says whether the
+ * operator has a stored interface_config at all, which callers need because
+ * the fallback shape differs from the configured one.
  *
  * With a config: the interfaces it enables for `service` that also exist on
  * this host. Without one: every real interface, loopback excluded, matching
  * what dnsmasq itself does on a fresh deploy.
  *
+ * DHCP takes that fallback only on a box that is not a member
+ * (`dhcpFallback`). A member never went through the first run's interface
+ * step, its Interfaces page shows DHCP off everywhere, and DHCP can be moved
+ * to it: without a saved config it serves DHCP on no interface, and 'dhcp'
+ * selects none.
+ *
  * @param {'dns'|'dhcp'|'any'} service
  */
-export function selectInterfaceNames(service, { config, sysIfaces } = {}) {
+export function selectInterfaceNames(service, { config, sysIfaces, member } = {}) {
   const cfg = config || readInterfaceConfig();
   const ifaces = sysIfaces || os.networkInterfaces();
   const explicit = Object.keys(cfg).length > 0;
+  const dhcpFallback = !explicit && !(member ?? memberMode());
   const names = [];
 
   if (explicit) {
@@ -71,14 +79,23 @@ export function selectInterfaceNames(service, { config, sysIfaces } = {}) {
       if (!Object.hasOwn(ifaces, ifName)) continue;
       names.push(ifName);
     }
-  } else {
+  } else if (service !== 'dhcp' || dhcpFallback) {
     for (const ifName of Object.keys(ifaces)) {
       if (ifName === 'lo') continue;
       names.push(ifName);
     }
   }
 
-  return { explicit, names };
+  return { explicit, names, dhcpFallback };
+}
+
+function memberMode() {
+  try {
+    return isMember();
+  } catch {
+    // No database yet (a unit test of the selection alone): not a member.
+    return false;
+  }
 }
 
 // The addresses of one interface a resolver should bind: every IPv4 address

@@ -68,6 +68,7 @@ import {
   formatServiceStates,
   ownDhcpv6Duid,
   ownServiceStates,
+  dhcpInterfaceCount,
 } from '../services/instance-services.js';
 
 const WAIT_SECONDS = 25;
@@ -112,6 +113,8 @@ function changesPath(db, { wait = 0, services = null } = {}) {
   // What its DNS and DHCP servers are doing, for the controller's Instances page.
   const svc = formatServiceStates(services);
   if (svc) query.set('svc', svc);
+  // How many interfaces would serve DHCP here: a move to none is refused.
+  query.set('dif', String(dhcpInterfaceCount()));
   // Its DHCPv6 server's DUID: the controller's rogue probe trusts it.
   const duid = ownDhcpv6Duid();
   if (duid) query.set('duid', duid);

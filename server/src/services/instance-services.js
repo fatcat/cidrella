@@ -1,14 +1,16 @@
 /**
  * What an instance's DNS and DHCP servers are doing, as the Instances page
  * shows it: 'serving', 'off' (switched off in CIDRella, or for DHCP, held by
- * another instance) or 'down' (on, but the server is not running). A member
+ * another instance), 'down' (on, but the server is not running) or, for DHCP,
+ * 'no_interface' (this box holds DHCP but no interface has it on). A member
  * sends its own with every sync (sync/member.js); the controller stores it
  * (noteContact) and reads its own live (routes/instances.js).
  */
 import { backendStatuses, getDhcpBackend } from '../backends/index.js';
 import { roleSwitchedOff } from '../utils/role-switches.js';
+import { selectInterfaceNames } from '../utils/interface-config.js';
 
-export const SERVICE_STATES = ['serving', 'off', 'down'];
+export const SERVICE_STATES = ['serving', 'off', 'down', 'no_interface'];
 const ROLES = ['dns', 'dhcp'];
 
 /** `{ dns, dhcp }` for this box. roleSwitchedOff is the one rule for 'off'. */
@@ -16,9 +18,20 @@ export async function ownServiceStates() {
   const statuses = await backendStatuses();
   const of = (role) => {
     if (roleSwitchedOff(role)) return 'off';
+    if (role === 'dhcp' && dhcpInterfaceCount() === 0) return 'no_interface';
     return statuses[role]?.running ? 'serving' : 'down';
   };
   return { dns: of('dns'), dhcp: of('dhcp') };
+}
+
+/**
+ * How many of this box's interfaces would serve DHCP if it held DHCP
+ * (Settings > General > Interfaces). A member sends it with every sync, so
+ * the controller can refuse to move DHCP to an instance with none
+ * (services/dhcp-move.js).
+ */
+export function dhcpInterfaceCount() {
+  return selectInterfaceNames('dhcp').names.length;
 }
 
 /** `{ dns, dhcp }` as one query value: `dns:serving,dhcp:off`. */

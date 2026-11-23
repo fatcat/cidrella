@@ -99,6 +99,7 @@ export const TABLES = {
       'dns_state',
       'dhcp_state',
       'dhcpv6_duid',
+      'dhcp_interfaces',
     ],
     hooks: [DHCP],
   }),

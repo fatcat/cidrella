@@ -517,7 +517,11 @@ export function applyInterfaceConfig(_db) {
   // three cannot disagree about which interfaces are in play (audit #9). The
   // directive emission below is dnsmasq's alone and stays here. 'any' because
   // dnsmasq needs an interface= line for a DNS-only interface too.
-  const { explicit: hasExplicitConfig, names: selectedIfNames } = selectInterfaceNames('any', {
+  const {
+    explicit: hasExplicitConfig,
+    names: selectedIfNames,
+    dhcpFallback,
+  } = selectInterfaceNames('any', {
     config: ifaceConfig,
     sysIfaces,
   });
@@ -538,10 +542,12 @@ export function applyInterfaceConfig(_db) {
       }
     }
   } else {
-    // Fresh deploy, bind DHCP to all real interfaces
+    // Fresh deploy, bind DHCP to all real interfaces. Never on a member
+    // (selectInterfaceNames, dhcpFallback): it serves DHCP on no interface
+    // until one is switched on under Settings > General > Interfaces.
     for (const ifName of selectedIfNames) {
       const addrs = sysIfaces[ifName] || [];
-      if (dhcpEnabled) {
+      if (dhcpEnabled && dhcpFallback) {
         newDirectives.push(`interface=${ifName}`);
       } else {
         newDirectives.push(`no-dhcp-interface=${ifName}`);
