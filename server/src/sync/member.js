@@ -56,6 +56,7 @@ import { controllerOf } from './mode.js';
 import { fencedState, setFenced } from './promotion-state.js';
 import { restartSoon } from './restart.js';
 import { flushSeen } from './remote-sink.js';
+import { formatServiceStates, ownServiceStates } from '../services/instance-services.js';
 
 const WAIT_SECONDS = 25;
 const RETRY_MIN_MS = 5_000;
@@ -85,7 +86,7 @@ export class JoinError extends Error {
   }
 }
 
-function changesPath(db, { wait = 0 } = {}) {
+function changesPath(db, { wait = 0, services = null } = {}) {
   const local = syncStatus(db);
   const query = new URLSearchParams({
     schema: local.schema,
@@ -96,6 +97,9 @@ function changesPath(db, { wait = 0 } = {}) {
     // Where this box answers DNS, for the list DHCP clients are given.
     addr: listenAddresses().join(','),
   });
+  // What its DNS and DHCP servers are doing, for the controller's Instances page.
+  const svc = formatServiceStates(services);
+  if (svc) query.set('svc', svc);
   const cursor = readSyncState(db, 'cursor');
   if (cursor !== null && local.dataset) {
     query.set('dataset', local.dataset);
@@ -388,8 +392,10 @@ export async function syncOnce(db, { wait = 0 } = {}) {
   const cursorIsTheirs = () => {
     if (asked) writeSyncState(db, COPY_FROM, asked);
   };
+  // A status that cannot be read is left out: the controller keeps the last one.
+  const services = await ownServiceStates().catch(() => null);
   const response = await callController(db, {
-    path: changesPath(db, { wait }),
+    path: changesPath(db, { wait, services }),
     timeoutMs: (wait + 60) * 1000,
   });
   const lost = doubtIn(db, response);

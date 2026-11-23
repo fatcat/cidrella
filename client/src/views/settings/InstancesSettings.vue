@@ -169,14 +169,27 @@
         <Column v-if="isController" header="Sync">
           <template #body="{ data }">{{ behindText(data) }}</template>
         </Column>
-        <Column v-if="showDhcp" header="DHCP">
+        <Column header="DNS">
           <template #body="{ data }">
             <StatusDot
-              v-if="dhcpState(data, handover)"
-              :kind="dhcpState(data, handover).tone"
-              :label="dhcpState(data, handover).words"
+              v-if="dnsState(data)"
+              :kind="dnsState(data).tone"
+              :label="dnsState(data).words"
               show-label
             />
+            <span v-else class="muted">{{ EMPTY_CELL }}</span>
+          </template>
+        </Column>
+        <Column header="DHCP">
+          <template #body="{ data }">
+            <span v-if="dhcpState(data, handover)" :title="dhcpState(data, handover).title">
+              <StatusDot
+                :kind="dhcpState(data, handover).tone"
+                :label="dhcpState(data, handover).words"
+                show-label
+              />
+            </span>
+            <span v-else class="muted">{{ EMPTY_CELL }}</span>
           </template>
         </Column>
         <Column v-if="canAct" header="">
@@ -440,6 +453,7 @@ import {
   behindText,
   dhcpServer,
   dhcpState,
+  dnsState,
   handoverNames,
   handoverText,
   handoverWaited,
@@ -531,7 +545,6 @@ onMounted(() => load());
 // DHCP. A server that says nothing about it predates moving DHCP: the
 // controller serves, and the page shows nothing new.
 const handover = computed(() => state.value?.dhcp?.handover || null);
-const showDhcp = computed(() => Boolean(state.value?.dhcp) || rows.value.some((row) => row.dhcp));
 const servingName = computed(
   () =>
     (dhcpServer(rows.value) || rows.value.find((row) => row.is_controller))?.name ||

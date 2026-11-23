@@ -2,7 +2,8 @@
 // members, which hold a synced read-only copy of it. One place for the sync
 // state words and tones, the header chip, and how far behind a member is, so
 // the header and Settings > Instances say the same thing. Also which instance
-// serves DHCP: exactly one does, and an admin can move it. And a change of
+// holds DHCP (exactly one, and an admin can move it) and what each instance's
+// DNS and DHCP servers are doing. And a change of
 // controller: a handover in progress, and a controller that was replaced.
 
 import { formatDateTime, formatRelativeTime } from './dateFormat.js';
@@ -112,11 +113,29 @@ export function behindText(row) {
   return row.last_contact_at ? 'Unknown' : 'Not heard from yet';
 }
 
-// The DHCP state of a row of GET /api/instances. One instance serves DHCP at
-// a time; while it moves, the new one is starting and the old one still owes
-// its final leases.
-const DHCP_STATES = {
-  serving: { tone: 'ok', words: () => 'Serving' },
+// What a row's DNS or DHCP server is doing, as GET /api/instances reports it
+// (`dns_state`, `dhcp_state`): null when the server cannot vouch for it, a
+// member out of contact or another instance seen from a member.
+// One wording for DNS and DHCP on every instance: On or Off, and Not running
+// for a server that is on but whose daemon is down.
+const SERVER_STATES = {
+  serving: { tone: 'ok', words: 'On' },
+  off: { tone: 'muted', words: 'Off' },
+  down: { tone: 'err', words: 'Not running' },
+};
+const NOT_SERVED_TITLE =
+  'DHCP is assigned to this instance and switched off under Settings > General > ' +
+  'Interfaces, so no instance serves it.';
+
+/** `{ tone, words }` for a row's DNS server, or null when it is not known. */
+export function dnsState(row) {
+  const known = SERVER_STATES[row?.dns_state];
+  return known ? { ...known } : null;
+}
+
+// One instance holds DHCP at a time; while it moves, the new one is starting
+// and the old one still owes its final leases.
+const DHCP_MOVES = {
   starting: {
     tone: 'warn',
     words: (from) => (from ? `Starting, waiting for ${from}` : 'Starting'),
@@ -125,15 +144,29 @@ const DHCP_STATES = {
 };
 
 /**
- * `{ tone, words }` for a row's DHCP state, or null for an instance that has
- * no part in DHCP (and for every row from a server that does not say).
- * `handover` is the list's `dhcp.handover`, which names what a starting
- * instance waits for.
+ * `{ tone, words, title? }` for a row's DHCP, or null for nothing to say.
+ * `row.dhcp` is the instance's part in DHCP (assigned: 'serving', or a move);
+ * `row.dhcp_state` what its server does. Assigned and switched off, nobody
+ * serves DHCP, and the row says Off rather than On. `handover` is the
+ * list's `dhcp.handover`, which names what a starting instance waits for.
  */
 export function dhcpState(row, handover = null) {
-  const known = DHCP_STATES[row?.dhcp];
-  if (!known) return null;
-  return { tone: known.tone, words: known.words(handover?.from_name || '') };
+  const move = DHCP_MOVES[row?.dhcp];
+  if (move) return { tone: move.tone, words: move.words(handover?.from_name || '') };
+  const known = SERVER_STATES[row?.dhcp_state];
+  if (row?.dhcp === 'serving') {
+    if (!known) return { tone: 'info', words: 'Assigned' };
+    return row.dhcp_state === 'off' ? { ...known, title: NOT_SERVED_TITLE } : { ...known };
+  }
+  // Not assigned: off is the rule here, and serving would be a second server.
+  if (row?.dhcp_state === 'serving') {
+    return {
+      tone: 'err',
+      words: 'On, not assigned',
+      title: 'This instance answers DHCP though another one holds it.',
+    };
+  }
+  return row?.dhcp_state === 'off' ? { ...known } : null;
 }
 
 /** The row serving DHCP now, of a list of instances; null when none says so. */

@@ -34,6 +34,7 @@ const { syncHead, writeSyncState } = await import('../../src/sync/log.js');
 const { createJoinToken, ensureOwnInstance, ownInstanceId } =
   await import('../../src/models/sync-instance.js');
 const { upsertSetting } = await import('../../src/models/setting.js');
+const { SERVICE_STATES } = await import('../../src/services/instance-services.js');
 const { memberSink, setFactsSink } = await import('../../src/sync/facts.js');
 const { localSink } = await import('../../src/sync/local-sink.js');
 const { stopRemoteSink } = await import('../../src/sync/remote-sink.js');
@@ -243,6 +244,56 @@ afterEach(() => {
   vi.restoreAllMocks();
   vi.useRealTimers();
   stopLeaseReports();
+});
+
+describe('what each instance serves', () => {
+  const rowsByName = async () =>
+    Object.fromEntries(
+      (await admin().get('/api/instances')).body.instances.map((row) => [row.name, row]),
+    );
+
+  const controllerListRow = async () =>
+    (await admin().get('/api/instances')).body.instances.find((row) => row.is_controller);
+
+  it('shows the controller its own servers live, DHCP off once it is switched off', async () => {
+    expect(await controllerListRow()).toMatchObject({
+      dns_state: 'serving',
+      dhcp_state: 'serving',
+    });
+    upsertSetting(controller, 'dhcp_enabled', 'false');
+    try {
+      expect(await controllerListRow()).toMatchObject({
+        dhcp: 'serving',
+        dhcp_state: 'off',
+      });
+    } finally {
+      upsertSetting(controller, 'dhcp_enabled', 'true');
+    }
+  });
+
+  it('keeps what a member reports with its sync, and drops it once the member is out of contact', async () => {
+    await syncOnce(a.db);
+    const reported = (await rowsByName())['member-a'];
+    expect(SERVICE_STATES).toContain(reported.dns_state);
+    expect(SERVICE_STATES).toContain(reported.dhcp_state);
+    const stored = controller
+      .prepare('SELECT dns_state, dhcp_state, last_contact_at FROM sync_instances WHERE name = ?')
+      .get('member-a');
+    expect(stored).toMatchObject({
+      dns_state: reported.dns_state,
+      dhcp_state: reported.dhcp_state,
+    });
+    controller
+      .prepare('UPDATE sync_instances SET last_contact_at = ? WHERE name = ?')
+      .run(new Date(Date.now() - 10 * 60_000).toISOString(), 'member-a');
+    try {
+      expect((await rowsByName())['member-a']).toMatchObject({ dns_state: null, dhcp_state: null });
+    } finally {
+      controller
+        .prepare('UPDATE sync_instances SET last_contact_at = ? WHERE name = ?')
+        .run(stored.last_contact_at, 'member-a');
+    }
+  });
 });
 
 describe('moving DHCP from the controller to a member', () => {

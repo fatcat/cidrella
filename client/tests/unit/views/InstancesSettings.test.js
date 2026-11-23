@@ -315,15 +315,26 @@ const withDhcp = (rows, handover = null, active = 'i-ctl') => ({
   instances: rows,
 });
 const SERVED_BY_CONTROLLER = withDhcp([
-  controllerRow({ dhcp: 'serving', can_take_dhcp: false }),
-  memberRow(2, { dhcp: null, can_take_dhcp: true }),
+  controllerRow({
+    dhcp: 'serving',
+    can_take_dhcp: false,
+    dns_state: 'serving',
+    dhcp_state: 'serving',
+  }),
+  memberRow(2, { dhcp: null, can_take_dhcp: true, dns_state: 'serving', dhcp_state: 'off' }),
+  // Out of contact: the server does not vouch for what it does.
   memberRow(3, { dhcp: null, can_take_dhcp: false, behind: 3 }),
 ]);
 const SERVED_BY_MEMBER = withDhcp(
   [
-    controllerRow({ dhcp: null, can_take_dhcp: true }),
-    memberRow(2, { dhcp: 'serving', can_take_dhcp: false }),
-    memberRow(3, { dhcp: null, can_take_dhcp: true }),
+    controllerRow({ dhcp: null, can_take_dhcp: true, dns_state: 'serving', dhcp_state: 'off' }),
+    memberRow(2, {
+      dhcp: 'serving',
+      can_take_dhcp: false,
+      dns_state: 'down',
+      dhcp_state: 'serving',
+    }),
+    memberRow(3, { dhcp: null, can_take_dhcp: true, dns_state: 'off', dhcp_state: 'off' }),
   ],
   null,
   'i-m2',
@@ -368,7 +379,8 @@ describe('backups on the controller', () => {
 describe('DHCP on the controller', () => {
   it('says which instance serves DHCP and offers the move only where the server allows it', async () => {
     const w = await mountPage(SERVED_BY_CONTROLLER);
-    expect(cells(w, 'DHCP')).toEqual(['Serving', '', '']);
+    expect(cells(w, 'DHCP')).toEqual(['On', 'Off', '—']);
+    expect(cells(w, 'DNS')).toEqual(['On', 'On', '—']);
     expect(w.find('td[data-col="DHCP"] .cid-status-dot').classes()).toContain('sd-ok');
     const rowsWithMove = w
       .findAll('tr')
@@ -378,9 +390,25 @@ describe('DHCP on the controller', () => {
     w.unmount();
   });
 
+  it('says DHCP is switched off where it is assigned and off, instead of serving', async () => {
+    const w = await mountPage({
+      ...SERVED_BY_CONTROLLER,
+      instances: [
+        controllerRow({ dhcp: 'serving', dns_state: 'serving', dhcp_state: 'off' }),
+        memberRow(2, { dhcp: null, dns_state: 'serving', dhcp_state: 'serving' }),
+      ],
+    });
+    expect(cells(w, 'DHCP')).toEqual(['Off', 'On, not assigned']);
+    const [assigned, stray] = w.findAll('td[data-col="DHCP"]');
+    expect(assigned.find('[title]').attributes('title')).toContain('no instance serves it');
+    expect(stray.find('.cid-status-dot').classes()).toContain('sd-err');
+    w.unmount();
+  });
+
   it('offers the move back to the controller while a member serves', async () => {
     const w = await mountPage(SERVED_BY_MEMBER);
-    expect(cells(w, 'DHCP')).toEqual(['', 'Serving', '']);
+    expect(cells(w, 'DHCP')).toEqual(['Off', 'On', 'Off']);
+    expect(cells(w, 'DNS')).toEqual(['On', 'Not running', 'Off']);
     const rowsWithMove = w
       .findAll('tr')
       .map((tr) => tr.find('[data-track="instances-dhcp-move"]').exists());
@@ -489,7 +517,7 @@ describe('DHCP on the controller', () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] });
     vi.setSystemTime(new Date('2026-11-21T12:00:00Z'));
     const w = await mountPage(CONTROLLER);
-    expect(cells(w, 'DHCP')).toEqual([]);
+    expect(cells(w, 'DHCP').every((cell) => cell === '—')).toBe(true);
     expect(w.find('[data-track="instances-dhcp-move"]').exists()).toBe(false);
     expect(w.find('[data-track="instances-dhcp-handover"]').exists()).toBe(false);
     expect(w.find('[data-track="instances-dhcp-force"]').exists()).toBe(false);
@@ -515,7 +543,7 @@ describe('while DHCP is moving', () => {
       'DHCP is moving to ns2. Waiting for ns1 to hand over its leases, 10 seconds so far.',
     );
     expect(line.find('.cid-status-dot').classes()).toContain('sd-warn');
-    expect(cells(w, 'DHCP')).toEqual(['Handing over', 'Starting, waiting for ns1', '']);
+    expect(cells(w, 'DHCP')).toEqual(['Handing over', 'Starting, waiting for ns1', '—']);
     expect(api.get).toHaveBeenCalledTimes(1);
 
     // The wait counts up between reads.
@@ -528,7 +556,10 @@ describe('while DHCP is moving', () => {
     // The old instance handed over: the line goes and the reads stop.
     api.get.mockResolvedValue({
       data: withDhcp(
-        [controllerRow({ dhcp: null, can_take_dhcp: true }), memberRow(2, { dhcp: 'serving' })],
+        [
+          controllerRow({ dhcp: null, can_take_dhcp: true, dhcp_state: 'off' }),
+          memberRow(2, { dhcp: 'serving', dhcp_state: 'serving' }),
+        ],
         null,
         'i-m2',
       ),
@@ -536,7 +567,7 @@ describe('while DHCP is moving', () => {
     await vi.advanceTimersByTimeAsync(5000);
     expect(api.get).toHaveBeenCalledTimes(3);
     expect(w.find('[data-track="instances-dhcp-handover"]').exists()).toBe(false);
-    expect(cells(w, 'DHCP')).toEqual(['', 'Serving']);
+    expect(cells(w, 'DHCP')).toEqual(['Off', 'On']);
     await vi.advanceTimersByTimeAsync(30_000);
     expect(api.get).toHaveBeenCalledTimes(3);
     w.unmount();

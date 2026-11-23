@@ -37,11 +37,13 @@ import {
 } from '../services/dhcp-move.js';
 import {
   createJoinToken,
+  CURRENT_MS,
   listInstances,
   ownInstanceId,
   ownInstanceName,
   removeMember,
 } from '../models/sync-instance.js';
+import { ownServiceStates } from '../services/instance-services.js';
 
 const router = Router();
 router.use(requireRole('admin'));
@@ -57,8 +59,21 @@ function controllerOnly(req, res, next) {
   res.status(409).json(refusal);
 }
 
+// What a row's DNS and DHCP servers are doing ({ dns, dhcp }, see
+// services/instance-services.js): this box's own, read now; what a member
+// told the controller in its last sync, while it is still in contact; nothing
+// for the rest, which this box cannot vouch for.
+function serviceStatesOf(row, { self, member, own }) {
+  if (row.instance_id === self) return own;
+  if (member || row.is_controller) return null;
+  const heard = Date.parse(row.last_contact_at || '');
+  if (Number.isNaN(heard) || Date.now() - heard > CURRENT_MS) return null;
+  return { dns: row.dns_state, dhcp: row.dhcp_state };
+}
+
 // GET /api/instances
-router.get('/', (req, res) => {
+router.get('/', async (req, res) => {
+  const own = await ownServiceStates().catch(() => null);
   const db = getDb();
   const member = isMember();
   const self = ownInstanceId(db);
@@ -106,6 +121,8 @@ router.get('/', (req, res) => {
       behind:
         member || row.is_controller || row.cursor === null ? null : Math.max(0, head - row.cursor),
       dhcp: dhcpRole(dhcp, row),
+      dns_state: serviceStatesOf(row, { self, member, own })?.dns ?? null,
+      dhcp_state: serviceStatesOf(row, { self, member, own })?.dhcp ?? null,
       // Only the controller moves DHCP.
       can_take_dhcp: !member && moveRefusal(db, row, dhcp) === null,
       // Only the controller hands itself over.

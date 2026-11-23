@@ -8,6 +8,7 @@ import {
   behindText,
   dhcpServer,
   dhcpState,
+  dnsState,
   fencedText,
   handoverNames,
   handoverText,
@@ -120,7 +121,25 @@ describe('DHCP wording', () => {
   ];
 
   it('has words and a tone for each state, and nothing for the rest', () => {
-    expect(dhcpState({ dhcp: 'serving' })).toEqual({ tone: 'ok', words: 'Serving' });
+    expect(dhcpState({ dhcp: 'serving', dhcp_state: 'serving' })).toEqual({
+      tone: 'ok',
+      words: 'On',
+    });
+    // Assigned, but the server did not say what it does.
+    expect(dhcpState({ dhcp: 'serving' })).toEqual({ tone: 'info', words: 'Assigned' });
+    expect(dhcpState({ dhcp: 'serving', dhcp_state: 'down' })).toEqual({
+      tone: 'err',
+      words: 'Not running',
+    });
+    expect(dhcpState({ dhcp: 'serving', dhcp_state: 'off' })).toMatchObject({
+      tone: 'muted',
+      words: 'Off',
+    });
+    expect(dhcpState({ dhcp: null, dhcp_state: 'off' })).toEqual({ tone: 'muted', words: 'Off' });
+    expect(dhcpState({ dhcp: null, dhcp_state: 'serving' })).toMatchObject({
+      tone: 'err',
+      words: 'On, not assigned',
+    });
     expect(dhcpState({ dhcp: 'starting' }, handover)).toEqual({
       tone: 'warn',
       words: 'Starting, waiting for ns1',
@@ -134,6 +153,14 @@ describe('DHCP wording', () => {
     // A server older than moving DHCP says nothing, and so does a new word.
     expect(dhcpState({})).toBeNull();
     expect(dhcpState({ dhcp: 'paused' })).toBeNull();
+  });
+
+  it('has words for DNS, and nothing when it is not known', () => {
+    expect(dnsState({ dns_state: 'serving' })).toEqual({ tone: 'ok', words: 'On' });
+    expect(dnsState({ dns_state: 'off' })).toEqual({ tone: 'muted', words: 'Off' });
+    expect(dnsState({ dns_state: 'down' })).toEqual({ tone: 'err', words: 'Not running' });
+    expect(dnsState({ dns_state: null })).toBeNull();
+    expect(dnsState({})).toBeNull();
   });
 
   it('finds the instance that serves', () => {

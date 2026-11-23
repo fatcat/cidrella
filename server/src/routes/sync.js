@@ -31,6 +31,7 @@ import {
 } from '../sync/lease-wire.js';
 import { followDhcp } from '../services/dhcp-follow.js';
 import { clearHandover, dhcpState, dhcpStateChanged, servesDhcpHere } from '../sync/dhcp-active.js';
+import { parseServiceStates } from '../services/instance-services.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
 import {
   addMember,
@@ -254,7 +255,12 @@ router.get('/changes', async (req, res) => {
   // A cursor counts only where it could be true: it decides which deletes
   // the log may forget.
   const believable = sameLine && dataset === local.dataset && since !== null && since <= local.head;
-  noteContact(db, req.member.id, { cursor: believable ? since : null, version, schema });
+  noteContact(db, req.member.id, {
+    cursor: believable ? since : null,
+    version,
+    schema,
+    services: parseServiceStates(req.query.svc),
+  });
   if (typeof req.query.addr === 'string') {
     const addresses = req.query.addr.slice(0, 2048).split(',').filter(Boolean);
     if (setDnsAddresses(db, req.member.id, addresses)) {

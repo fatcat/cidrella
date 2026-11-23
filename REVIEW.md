@@ -181,6 +181,21 @@ again unless the maintainer reopens one.
   sentence. Archives it took as a controller stay until removed by hand; download works.
 - **Fix:** Allow that route on a member: it is about this box's files.
 
+#### INSTANCE-DNS-LIST-01: The DHCP DNS server list grows with every DNS-serving instance
+
+**low**, read in the code (2026-11-23). `instanceDnsServers` in
+`server/src/utils/instance-dns.js:40`
+
+- **What happens:** Every DNS-serving instance's address replaces CIDRella's entry in a scope's
+  DNS option, the DHCP instance first, then the controller, then the members by name. Nothing
+  trims the list. glibc clients read only the first 3 nameservers (`MAXNS`), so a 4th instance
+  and beyond is handed out and never used by them, and the DHCPv4 option holds at most 63 IPv4
+  addresses (255 bytes) before it needs the long-option split.
+- **Why:** The projection was written for two or three boxes and takes every instance.
+- **Fix:** Cap the instances served at 3 per family (DHCP instance and controller first), keep
+  entries a person added after them, and say on the Instances page which instances clients
+  are given when there are more.
+
 ---
 
 ## Will not fix

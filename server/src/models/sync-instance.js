@@ -135,7 +135,8 @@ export function ensureOwnInstance(db, { fingerprint, port, version, dnsAddresses
 }
 
 const PUBLIC_COLUMNS = `id, instance_id, name, address, port, fingerprint, is_controller,
-  serves_dns, dns_addresses, created_at, last_contact_at, cursor, version, schema_version`;
+  serves_dns, dns_addresses, created_at, last_contact_at, cursor, version, schema_version,
+  dns_state, dhcp_state`;
 
 export function listInstances(db) {
   return db
@@ -335,12 +336,25 @@ export function memberByInstanceId(db, instanceId) {
 }
 
 /** What the controller just heard from a member. Host columns: not data of record. */
-export function noteContact(db, id, { cursor = null, version = null, schema = null } = {}) {
+export function noteContact(
+  db,
+  id,
+  { cursor = null, version = null, schema = null, services = null } = {},
+) {
   db.prepare(
     `UPDATE sync_instances SET last_contact_at = ?, cursor = COALESCE(?, cursor),
-       version = COALESCE(?, version), schema_version = COALESCE(?, schema_version)
+       version = COALESCE(?, version), schema_version = COALESCE(?, schema_version),
+       dns_state = COALESCE(?, dns_state), dhcp_state = COALESCE(?, dhcp_state)
      WHERE id = ?`,
-  ).run(new Date().toISOString(), cursor, version, schema, id);
+  ).run(
+    new Date().toISOString(),
+    cursor,
+    version,
+    schema,
+    services?.dns ?? null,
+    services?.dhcp ?? null,
+    id,
+  );
 }
 
 /** Remove a member. False when the row is the controller's or is not there. */
