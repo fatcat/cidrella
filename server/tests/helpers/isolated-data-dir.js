@@ -8,9 +8,15 @@
 import fs from 'fs';
 import os from 'os';
 import path from 'path';
+import { afterAll } from 'vitest';
 
 export const DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'cidrella-test-'));
 process.env.DATA_DIR = DATA_DIR;
 for (const dir of ['dnsmasq/hosts.d', 'dnsmasq/dhcp-hosts.d', 'dnsmasq/conf.d', 'certs']) {
   fs.mkdirSync(path.join(DATA_DIR, dir), { recursive: true });
 }
+
+// Imported at the top of a test file, so this joins that file's hooks: the
+// directory goes when the file's tests are done. A file whose tests are all
+// skipped (the live backend checks) runs no hooks and leaves its empty one.
+afterAll(() => fs.rmSync(DATA_DIR, { recursive: true, force: true }));

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb, enableIpv6 } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
@@ -55,7 +55,8 @@ beforeEach(async () => {
     .prepare("INSERT INTO dns_zones (name, type, enabled) VALUES ('mix.lan','forward',1)")
     .run().lastInsertRowid;
 });
-afterAll(() => cleanupTestDb(tmpDir));
+// Every test has its own database: remove each one, not only the last.
+afterEach(() => cleanupTestDb(tmpDir));
 
 const post = (body) =>
   request(app)

@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, afterAll, vi } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { createTestApp } from '../../helpers/test-app.js';
 
@@ -38,7 +38,8 @@ let zoneId;
 beforeEach(async () => {
   zoneId = await freshDb();
 });
-afterAll(() => cleanupTestDb(tmpDir));
+// Every test has its own database: remove each one, not only the last.
+afterEach(() => cleanupTestDb(tmpDir));
 
 const post = (body) =>
   request(app)
