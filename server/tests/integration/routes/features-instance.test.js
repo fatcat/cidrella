@@ -47,8 +47,15 @@ describe('controller_url', () => {
   });
 
   it('brackets an IPv6 controller address', async () => {
+    followController('2001:db8::10', 8443);
+    expect((await instance()).controller_url).toBe('https://[2001:db8::10]:8443');
+  });
+
+  it('leaves out the HTTPS port 443, both families (MEMBER-CONTROLLER-URL-PORT-01)', async () => {
+    followController('192.0.2.10', 443);
+    expect((await instance()).controller_url).toBe('https://192.0.2.10');
     followController('2001:db8::10', 443);
-    expect((await instance()).controller_url).toBe('https://[2001:db8::10]:443');
+    expect((await instance()).controller_url).toBe('https://[2001:db8::10]');
   });
 
   it('is null when the stored controller has no address', async () => {

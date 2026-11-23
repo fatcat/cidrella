@@ -14,22 +14,32 @@ Entries under **Will not fix** are decided: the maintainer chose to leave them. 
 the behavior they describe is explained when someone runs into it. Do not raise or fix them
 again unless the maintainer reopens one.
 
-#### MEMBER-CONTROLLER-URL-PORT-01: The controller link carries the default port
+#### TEST-FLAKE-PROMOTION-01: Promotion tests time out now and then under the full suite
 
-**low**, seen on two hosts (2026-11-23). `server/src/routes/features.js` (`controller_url`)
+**low**, test only, seen 2026-11-23. `server/tests/integration/controller-promotion-findings.test.js`,
+`server/tests/helpers/instance-estate.js:139` (`unplug`)
 
-- **What happens:** The mode chip on a member links to `https://10.0.0.8:443`, and the Instances
-  page reads `10.0.0.8:443`.
-- **Fix:** Drop `:443` from the URL (and from the displayed address if wanted).
+- **What happens:** In two of four full runs from the commit hook, one test there hit its timeout:
+  "is waited for: a member naming the handover's target does not fence the old controller"
+  (30 s) and "sends everything to a member that moves between two controllers of one epoch"
+  (60 s). The file passes alone, 3 of 3, and 6 of 6 copies run at once; two plain
+  `npm run test:server` runs did not reproduce it. The same runs took 110 to 154 s against 72 s
+  earlier in the day.
+- **Why (unconfirmed):** `unplug` resolves on `server.close()`, which waits for every open
+  connection to end. A request still in flight to the instance being unplugged would hold it to
+  the timeout.
+- **Fix:** Make `unplug` call `server.closeAllConnections()` after `close()`, then check that the
+  file still passes and the timeouts stop.
 
-#### MEMBER-LEASES-WORDING-01: The member's lease list says "handed out" over reservations
+#### TEST-FLAKE-BACKUP-LOOP-01: The backup event-loop check fails on a busy machine
 
-**low**, seen on two hosts (2026-11-23). `client/src/components/instances/MemberLeases.vue`
+**low**, test only, seen 2026-11-23. `server/tests/integration/backup-event-loop.test.js:56`
 
-- **What happens:** The help line says "What this member has handed out", but the rows are the
-  unified leases and reservations (`GET /api/dhcp/leases`), so reservations it never handed out
-  are listed, some marked Active.
-- **Fix:** Reword to "Leases and reservations this member serves", or filter to dynamic leases.
+- **What happens:** The worst event-loop gap during a backup is checked against 200 ms. It
+  measured 296 ms in two full runs on a loaded machine, and passes alone.
+- **Why:** It measures wall time, and the rest of the suite runs beside it.
+- **Fix:** Run the file on its own (a separate vitest project or `--no-file-parallelism` for it),
+  or raise the limit with a note on what it still catches.
 
 ---
 

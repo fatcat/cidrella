@@ -7,7 +7,7 @@ import { controllerOf, handoverTarget, instanceMode, isFenced, isMember } from '
 import { memberSyncStatus } from '../sync/member.js';
 import { servesDhcpHere } from '../sync/dhcp-active.js';
 import { fencedState } from '../sync/promotion-state.js';
-import { formatHostPort } from '../utils/address.js';
+import { addressFamily, formatHostPort } from '../utils/address.js';
 
 // GET /api/features: the switches the UI needs before it renders anything.
 // Any signed-in user may read it; a viewer hides the same IPv6 affordances an
@@ -46,8 +46,14 @@ router.get('/', (req, res) => {
   });
 });
 
+// HTTPS's own port is left out of the link, as a browser would show it.
 function controllerUrl(controller) {
   if (!controller?.address || !controller.port) return null;
+  if (Number(controller.port) === 443) {
+    const host =
+      addressFamily(controller.address) === 6 ? `[${controller.address}]` : controller.address;
+    return `https://${host}`;
+  }
   return `https://${formatHostPort(controller.address, controller.port)}`;
 }
 

@@ -18,8 +18,9 @@
       </IconField>
     </div>
     <p class="field-help help-line">
-      What this member has handed out, as of its last lease report to {{ controllerName }} and the
-      sync after it. Scopes and reservations are managed on {{ controllerName }}.
+      The leases this member has handed out and the reservations it serves, as of its last lease
+      report to {{ controllerName }} and the sync after it. Scopes and reservations are managed on
+      {{ controllerName }}.
     </p>
     <p v-if="error" class="status-line" data-track="member-leases-error">
       <StatusDot kind="err" label="Not loaded" />
@@ -41,7 +42,9 @@
           icon="pi-server"
           :title="search ? 'No leases match' : 'No leases'"
           :description="
-            search ? `Nothing matches “${search}”.` : 'This member has handed out no addresses yet.'
+            search
+              ? `Nothing matches “${search}”.`
+              : 'This member has no leases or reservations yet.'
           "
         />
       </template>
