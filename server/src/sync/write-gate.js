@@ -58,6 +58,12 @@ export const MEMBER_ALLOWED = [
       delete req.body.ipv6_enabled;
       return false;
     },
+    // Why, when it is the DHCP switch: the generic sentence does not say.
+    refusal: (req) =>
+      req.body?.dhcp_enabled === true
+        ? 'The controller decides which instance serves DHCP, so nothing was saved. ' +
+          'Use Move DHCP here on its Instances page (Settings > System > Instances).'
+        : null,
   },
   {
     method: 'PUT',
@@ -175,5 +181,18 @@ export function memberWriteGate(req, res, next) {
   if (READS.has(req.method) || !req.path.startsWith('/api/')) return next();
   const refusal = writeRefusal();
   if (!refusal || memberAllows(req)) return next();
-  res.status(409).json(BACKUP_ROUTES.has(req.path) ? backupRefusal() : refusal);
+  if (BACKUP_ROUTES.has(req.path)) return res.status(409).json(backupRefusal());
+  // A plain member may say more about a route it takes in part. A fenced or
+  // handing-over controller keeps its own sentence: that is the reason then.
+  const own = refusal.code === MEMBER_READ_ONLY ? routeRefusal(req) : null;
+  res.status(409).json(own ? { ...refusal, error: own } : refusal);
+}
+
+// The sentence of the MEMBER_ALLOWED entry that refused `req`, if it has one.
+function routeRefusal(req) {
+  for (const entry of MEMBER_ALLOWED) {
+    if (!entry.refusal || (entry.method !== '*' && entry.method !== req.method)) continue;
+    if (matchRoute(entry.path, req.path)) return entry.refusal(req);
+  }
+  return null;
 }

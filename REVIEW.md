@@ -141,17 +141,6 @@ again unless the maintainer reopens one.
 - **Fix:** Start no sync-facing work (the sync routes, controller jobs) on a boot whose
   carry-over failed, and say so on the Instances page.
 
-#### MEMBER-DHCP-SWITCH-WORDING-01: A member's refused DHCP switch gets the generic sentence
-
-**low**, seen on two hosts with 0.7.0-pre.1 (2026-11-22). `server/src/sync/write-gate.js` (the
-`estate` check of `PUT /api/interfaces/config`)
-
-- **What happens:** On a member, saving Interfaces with `dhcp_enabled: true` answers "This is a
-  member of <controller>. Make changes there." The interfaces in the same request are refused
-  with it. Nothing says the DHCP switch is the reason, or that Move DHCP here is the way.
-- **Fix:** A sentence of its own for that case: "The controller decides which instance serves
-  DHCP. Use Move DHCP here on its Instances page."
-
 #### PROMOTE-LAST-CONTACT-01: The dead controller's row says "just now" after a forced promotion
 
 **low**, seen on two hosts with 0.7.0-pre.1 (2026-11-22). `takeControllerRow` in

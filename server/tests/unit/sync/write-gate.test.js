@@ -6,7 +6,8 @@ import { setupTestDb, cleanupTestDb } from '../../helpers/test-db.js';
 import { makeController, makeMember } from '../../helpers/member-mode.js';
 
 const { default: request } = await import('supertest');
-const { memberWriteGate, MEMBER_ALLOWED } = await import('../../../src/sync/write-gate.js');
+const { memberWriteGate, MEMBER_ALLOWED, MEMBER_READ_ONLY } =
+  await import('../../../src/sync/write-gate.js');
 const { setFenced, setHandoverFreeze } = await import('../../../src/sync/promotion-state.js');
 
 let tmpDir;
@@ -188,11 +189,22 @@ describe('on a member', () => {
       (await send('PUT', '/api/interfaces/config', { https_port: 8443, ipv6_enabled: true }))
         .status,
     ).toBe(409);
-    // DHCP stays the controller's.
+    // DHCP stays the controller's, and the refusal says how it moves.
+    const dhcpOn = await send('PUT', '/api/interfaces/config', {
+      https_port: 8443,
+      dhcp_enabled: true,
+    });
+    expect(dhcpOn.status).toBe(409);
+    expect(dhcpOn.body).toMatchObject({ code: MEMBER_READ_ONLY });
+    expect(dhcpOn.body.error).toBe(
+      'The controller decides which instance serves DHCP, so nothing was saved. ' +
+        'Use Move DHCP here on its Instances page (Settings > System > Instances).',
+    );
+    // Another refusal on the same route keeps the member sentence.
     expect(
-      (await send('PUT', '/api/interfaces/config', { https_port: 8443, dhcp_enabled: true }))
-        .status,
-    ).toBe(409);
+      (await send('PUT', '/api/interfaces/config', { https_port: 8443, ipv6_enabled: true })).body
+        .error,
+    ).toMatch(/^This is a member of /);
     expect(
       (await send('PUT', '/api/interfaces/config', { https_port: 8443, dhcp_enabled: false })).body,
     ).toEqual(ok);
@@ -236,6 +248,10 @@ describe('on a controller that was replaced', () => {
       'ctl-2 took over as the controller, so this CIDRella no longer takes changes. ' +
         'Make them there, or join it from Settings > System > Instances.',
     );
+    // Switching DHCP on gets the takeover sentence: that is the reason here.
+    expect(
+      (await send('PUT', '/api/interfaces/config', { dhcp_enabled: true })).body.error,
+    ).toMatch(/^ctl-2 took over/);
     expect((await send('POST', '/api/instances/rejoin', {})).body).toEqual({ reached: true });
     expect((await send('GET', '/api/subnets')).body).toEqual({ reached: true });
   });
