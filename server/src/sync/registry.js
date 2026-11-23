@@ -98,6 +98,7 @@ export const TABLES = {
       'schema_version',
       'dns_state',
       'dhcp_state',
+      'dhcpv6_duid',
     ],
     hooks: [DHCP],
   }),

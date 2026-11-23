@@ -11,6 +11,7 @@
  * request line, a header or the credential.
  */
 import http from 'http';
+import { PassThrough } from 'stream';
 import tls from 'tls';
 import zlib from 'zlib';
 import { SYNC_SERVER_NAME, fingerprintOfCert } from '../sync/identity.js';
@@ -39,6 +40,14 @@ function fail(code, message, cause) {
  * followed. Rejects with an Error whose `code` is `pin_mismatch`,
  * `unreachable` (no connection, or one that dropped), `timeout`, `too_large`,
  * or `bad_response` (a gzip body that does not decode).
+ *
+ * `consume`, when given, takes a 200 answer as it arrives instead: it is
+ * called with the body as a stream of Buffers (gunzipped, `maxBytes` still
+ * the cap), and the request resolves with what it resolves to as `body`. A
+ * fault of the stream reaches it as an error with one of the codes above;
+ * whatever it rejects with, the request rejects with, and only once it has
+ * finished, so a file it writes is closed by then. Any other status is read
+ * as usual.
  */
 export function syncRequest({
   address,
@@ -51,6 +60,7 @@ export function syncRequest({
   credential = null,
   timeoutMs = 30000,
   maxBytes = DEFAULT_MAX_BYTES,
+  consume = null,
 }) {
   const peer = formatHostPort(address, port);
   const pin = String(fingerprint ?? '').toLowerCase();
@@ -67,15 +77,22 @@ export function syncRequest({
 
     let socket = null;
     let req = null;
+    let consuming = null;
     let settled = false;
     const settle = (fn, value) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      fn(value);
       if (fn === reject) {
         req?.destroy();
         socket?.destroy();
+      }
+      // A consumer still reading is let finish before the caller hears.
+      if (consuming) {
+        const tell = () => fn(value);
+        consuming.then(tell, tell);
+      } else {
+        fn(value);
       }
     };
     const timer = setTimeout(
@@ -154,6 +171,7 @@ export function syncRequest({
           fail('too_large', `The response from ${peer} is larger than ${maxBytes} bytes`),
         );
       if (Number(res.headers['content-length']) > maxBytes) return tooLarge();
+      if (consume && res.statusCode === 200) return stream(res);
 
       const chunks = [];
       let size = 0;
@@ -183,6 +201,64 @@ export function syncRequest({
             fail('bad_response', `Unreadable gzip response from ${peer}: ${err.message}`, err),
           );
         });
+      });
+    }
+
+    // The body of `res` to `consume` as it arrives, read no faster than it
+    // is taken.
+    function stream(res) {
+      const out = new PassThrough();
+      // A fault before the consumer starts reading waits in `out` for it.
+      out.on('error', () => {});
+      const fault = (err) => {
+        if (!out.destroyed) out.destroy(err);
+      };
+      const tooLarge = () =>
+        fault(fail('too_large', `The response from ${peer} is larger than ${maxBytes} bytes`));
+      const lost = (why) => fault(fail('unreachable', `Lost the connection to ${peer}: ${why}`));
+
+      let source = res;
+      if (String(res.headers['content-encoding'] || '').toLowerCase() === 'gzip') {
+        source = res.pipe(zlib.createGunzip());
+        source.on('error', (err) =>
+          fault(fail('bad_response', `Unreadable gzip response from ${peer}: ${err.message}`, err)),
+        );
+        let raw = 0;
+        res.on('data', (chunk) => {
+          raw += chunk.length;
+          if (raw > maxBytes) tooLarge();
+        });
+      }
+      let size = 0;
+      source.on('data', (chunk) => {
+        if (out.destroyed) return;
+        size += chunk.length;
+        if (size > maxBytes) return tooLarge();
+        if (!out.write(chunk)) source.pause();
+      });
+      out.on('drain', () => source.resume());
+      source.once('end', () => out.end());
+      res.on('error', (err) => lost(err.message));
+      res.once('close', () => {
+        if (!res.complete) lost('response cut short');
+      });
+
+      consuming = Promise.resolve()
+        .then(() => consume(out))
+        .then(
+          (value) => {
+            out.destroy();
+            return { value };
+          },
+          (error) => {
+            out.destroy();
+            return { error };
+          },
+        );
+      void consuming.then(({ value, error }) => {
+        if (error) return settle(reject, error);
+        settle(resolve, { status: res.statusCode, headers: res.headers, body: value });
+        socket.destroy();
       });
     }
   });

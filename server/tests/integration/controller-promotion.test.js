@@ -40,7 +40,7 @@ const { CONTROLLER, MEMBER, readSyncState, storedMode, syncStatus, writeSyncStat
 const { controllerOf, isFenced } = await import('../../src/sync/mode.js');
 const { fencedState, handoverFreeze, setTakeoverNotice, takeoverNotice } =
   await import('../../src/sync/promotion-state.js');
-const { followNewController, sendOutbox, startMemberSync, syncOnce } =
+const { followNewController, memberSyncStatus, sendOutbox, startMemberSync, syncOnce } =
   await import('../../src/sync/member.js');
 const { findController } = await import('../../src/sync/find-controller.js');
 const { EPOCH_HEADER } = await import('../../src/sync/controller-call.js');
@@ -190,11 +190,14 @@ describe('a forced promotion', () => {
     expect(storedMode(a.db)).toBe(MEMBER);
   });
 
-  // An update migrates the member's copy with nobody checking it against the
-  // controller's, so boot forgets the cursor: until the next sync, which the
-  // controller refuses across schemas, this copy is nothing to take over with.
-  it('is refused on a member that was updated to another schema and has not synced since', async () => {
+  // An update migrates the member's copy, so boot forgets the cursor, and the
+  // controller refuses a sync across schemas. The copy was complete before the
+  // update, so it can still take over (PROMOTE-NEWER-MEMBER-01): here only the
+  // controller answering stands in the way.
+  it('lets a member updated before its controller take over with the copy it had', async () => {
     const cursor = readSyncState(a.db, 'cursor');
+    const lastSync = '2026-11-23T08:00:00.000Z';
+    writeSyncState(a.db, 'last_sync_at', lastSync);
     a.db.prepare('INSERT INTO schema_version (version) VALUES (?)').run(LATEST_MIGRATION + 1);
     expect(reboot(a).started).toBe('schema changed');
     await expect(syncOnce(a.db)).rejects.toMatchObject({
@@ -205,10 +208,14 @@ describe('a forced promotion', () => {
         ),
       ),
     });
+    expect(readSyncState(a.db, 'cursor')).toBeNull();
+    expect(JSON.parse(readSyncState(a.db, 'copy_complete'))).toEqual({
+      at: lastSync,
+      schema: LATEST_MIGRATION + 1,
+    });
     const skewed = await api(a).post('/api/instances/promote-self').send({ confirm: true });
     expect(skewed.status).toBe(409);
-    expect(skewed.body.code).toBe('never_synced');
-    expect(skewed.body.error).toMatch(/updated to another version and has not synced since/);
+    expect(skewed.body.code).toBe('controller_reachable');
     expect(storedMode(a.db)).toBe(MEMBER);
     expect(epochOf(c)).toBe(1);
 
@@ -217,6 +224,14 @@ describe('a forced promotion', () => {
     await syncOnce(a.db);
     expect(Number(readSyncState(a.db, 'cursor'))).toBeGreaterThanOrEqual(Number(cursor));
     expect(dataOfRecord(a.db)).toEqual(dataOfRecord(c.db));
+
+    // A database put back from before is not known to be complete.
+    fs.writeFileSync(path.join(a.dir, 'sync', 'incarnation'), 'another\n');
+    expect(reboot(a).started).toBe('database replaced');
+    expect(readSyncState(a.db, 'copy_complete')).toBeNull();
+    const replaced = await api(a).post('/api/instances/promote-self').send({ confirm: true });
+    expect(replaced.body.code).toBe('never_synced');
+    await syncOnce(a.db);
   });
 
   it('makes the member the controller at the next epoch, in the same dataset', async () => {
@@ -949,4 +964,27 @@ describe('a controller that died mid-handover, with the member it named', () => 
     expect(readSetting(a.db, 'controller_handover_to')).toBeNull();
     expect(storedMode(a.db)).toBe(MEMBER);
   }, 120_000);
+});
+
+describe('the last sync', () => {
+  it('keeps the time of the last sync across a restart of the sync loop', async () => {
+    const [, m] = await estate('ctl-s', 'alpha-s');
+    let stop = startMemberSync(m.db);
+    let synced;
+    try {
+      await vi.waitFor(() => {
+        synced = readSyncState(m.db, 'last_sync_at');
+        expect(synced).not.toBeNull();
+      });
+    } finally {
+      stop();
+    }
+    // Restarted, it says when it last synced before it has synced again.
+    stop = startMemberSync(m.db);
+    try {
+      expect(memberSyncStatus(m.db).last_sync_at).toBe(synced);
+    } finally {
+      stop();
+    }
+  });
 });

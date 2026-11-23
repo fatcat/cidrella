@@ -64,6 +64,7 @@ import { askEveryone } from '../sync/find-controller.js';
 import { dhcpState, dhcpStateChanged } from '../sync/dhcp-active.js';
 import {
   CONTROLLER,
+  COPY_COMPLETE,
   ensureSyncTriggers,
   estateTables,
   MEMBER,
@@ -400,13 +401,16 @@ export function promoteSelfRefusal(db) {
     return { code: 'not_member', error: 'This instance is the controller already.' };
   }
   if (fencedState(db)) return null;
-  if (readSyncState(db, 'cursor') === null || !controllerOf(db)) {
+  // A copy is complete with a cursor, or when it had one before a migration
+  // took it (this member was updated before its controller).
+  const complete =
+    readSyncState(db, 'cursor') !== null || readSyncState(db, COPY_COMPLETE) !== null;
+  if (!complete || !controllerOf(db)) {
     return {
       code: 'never_synced',
       error:
         'This member holds no complete copy of the controller’s data, so it has nothing to ' +
-        'take over with: it has not finished a first copy, or it was updated to another ' +
-        'version and has not synced since.',
+        'take over with: it has not finished a first copy.',
     };
   }
   return null;

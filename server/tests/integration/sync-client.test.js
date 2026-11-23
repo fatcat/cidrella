@@ -321,6 +321,110 @@ describe('syncRequest', () => {
   });
 });
 
+describe('syncRequest with consume', () => {
+  // Reads the stream to the end: its pieces, then whether it finished.
+  const trace = [];
+  const collect = async (stream) => {
+    const pieces = [];
+    try {
+      for await (const piece of stream) pieces.push(piece);
+      return Buffer.concat(pieces).toString();
+    } finally {
+      trace.push('consumer done');
+    }
+  };
+  beforeEach(() => {
+    trace.length = 0;
+  });
+
+  it('hands a 200 body over as it arrives, gunzipped', async () => {
+    const text = 'line\n'.repeat(50000);
+    handler = (req, res) => {
+      res.writeHead(200, { 'content-encoding': 'gzip' });
+      const gzip = zlib.createGzip();
+      gzip.pipe(res);
+      gzip.write(text.slice(0, 1000));
+      setTimeout(() => gzip.end(text.slice(1000)), 20);
+    };
+    let pieces = 0;
+    const res = await call({
+      consume: async (stream) => {
+        const got = [];
+        for await (const piece of stream) {
+          pieces += 1;
+          got.push(piece);
+        }
+        return Buffer.concat(got).toString();
+      },
+    });
+    expect(res.status).toBe(200);
+    expect(res.body).toBe(text);
+    expect(pieces).toBeGreaterThan(1);
+  });
+
+  it('reads any other status as usual', async () => {
+    handler = (req, res) => {
+      res.statusCode = 409;
+      res.end('{"code":"x"}');
+    };
+    const consume = vi.fn();
+    const res = await call({ consume });
+    expect(consume).not.toHaveBeenCalled();
+    expect(res.body.toString()).toBe('{"code":"x"}');
+  });
+
+  it('says unreachable when the connection drops, once the consumer is done', async () => {
+    handler = (req, res) => {
+      res.writeHead(200, { 'content-length': '100000' });
+      res.write('partial');
+      setTimeout(() => res.destroy(), 50);
+    };
+    const err = await call({ consume: collect }).catch((e) => e);
+    trace.push('caller told');
+    expect(err.code).toBe('unreachable');
+    expect(trace).toEqual(['consumer done', 'caller told']);
+  });
+
+  it('says timeout, once the consumer is done', async () => {
+    handler = (req, res) => {
+      res.writeHead(200);
+      res.write('slow');
+    };
+    const err = await call({ consume: collect, timeoutMs: 300 }).catch((e) => e);
+    trace.push('caller told');
+    expect(err.code).toBe('timeout');
+    expect(trace).toEqual(['consumer done', 'caller told']);
+  });
+
+  it('says bad_response for gzip that does not decode, and too_large past the cap', async () => {
+    handler = (req, res) => {
+      res.writeHead(200, { 'content-encoding': 'gzip' });
+      res.end('not gzip at all');
+    };
+    expect((await call({ consume: collect }).catch((e) => e)).code).toBe('bad_response');
+
+    handler = (req, res) => {
+      res.writeHead(200, { 'content-encoding': 'gzip' });
+      res.end(zlib.gzipSync(Buffer.alloc(200000)));
+    };
+    expect((await call({ consume: collect, maxBytes: 10000 }).catch((e) => e)).code).toBe(
+      'too_large',
+    );
+  });
+
+  it('rejects with what the consumer rejects with', async () => {
+    handler = (req, res) => res.end('fine');
+    const mine = new Error('not for me');
+    expect(
+      await call({
+        consume: async () => {
+          throw mine;
+        },
+      }).catch((e) => e),
+    ).toBe(mine);
+  });
+});
+
 describe('after a port change', () => {
   it('the new server presents both certificates the same way', async () => {
     const moved = await freePort({ tcp: true });

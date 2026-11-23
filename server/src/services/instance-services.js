@@ -5,7 +5,7 @@
  * sends its own with every sync (sync/member.js); the controller stores it
  * (noteContact) and reads its own live (routes/instances.js).
  */
-import { backendStatuses } from '../backends/index.js';
+import { backendStatuses, getDhcpBackend } from '../backends/index.js';
 import { roleSwitchedOff } from '../utils/role-switches.js';
 
 export const SERVICE_STATES = ['serving', 'off', 'down'];
@@ -40,4 +40,16 @@ export function parseServiceStates(text) {
     if (ROLES.includes(role) && SERVICE_STATES.includes(state)) states[role] = state;
   }
   return Object.keys(states).length ? states : null;
+}
+
+/**
+ * The DUID this box's DHCPv6 server answers with, or null (it has served no
+ * DHCPv6 yet, or it cannot be read). A member sends it with every sync.
+ */
+export function ownDhcpv6Duid() {
+  try {
+    return getDhcpBackend().serverIdentity().duid || null;
+  } catch {
+    return null;
+  }
 }

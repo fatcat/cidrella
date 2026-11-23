@@ -14,20 +14,20 @@ Entries under **Will not fix** are decided: the maintainer chose to leave them. 
 the behavior they describe is explained when someone runs into it. Do not raise or fix them
 again unless the maintainer reopens one.
 
-#### SYNC-SNAPSHOT-SIZE-01: A snapshot is built, sent and parsed as one string
+#### SYNC-HOSTCOL-EMPTY-01: A snapshot with no rows of a table that keeps host columns leaves the copy's rows
 
-**medium**, confirmed in the code (review of 63d815d, 2026-11-21). `server/src/sync/changes.js`
-(`exportChanges`, `parseChanges`), `server/src/utils/sync-client.js` (`syncRequest`)
+**low**, confirmed in the code (2026-11-23). `server/src/sync/changes.js` (`applyChanges`, the
+`sent` map)
 
-- **What happens:** A member's first copy, and every restart from a snapshot, holds the whole
-  data of record in memory several times over: the export joins every row into one string, the
-  client buffers the response, and the parse turns it back into one string. A data of record
-  past Node's string limit (about 512 MB of NDJSON; `audit_log`, `ip_events`, `scan_results` and
-  `dhcp_leases` are all in it) cannot be exported or applied at all, and a smaller one costs the
-  controller and the member that much memory.
-- **Why:** Phase 1 wrote the wire format as a Buffer in and a Buffer out.
-- **Fix:** Stream it: the worker writes gzip to a file or a stream, the route pipes it, the
-  client hands lines to the apply as they arrive, with the trailer hash checked before commit.
+- **What happens:** A snapshot clears every estate table first, except the ones with host
+  columns (`blocklist_categories`, `sync_instances`), whose rows are kept and updated in place;
+  the rows the snapshot does not name are removed afterwards. That removal only runs for a table
+  the snapshot sends at least one row of. A controller whose `blocklist_categories` is empty
+  sends none, and the member keeps every category it had.
+- **Why:** The keys sent are gathered per table as the rows go by, so a table with no rows has
+  no entry.
+- **Fix:** In a snapshot, run the removal for every table with host columns, an empty key set
+  for one that sent nothing.
 
 #### MEMBER-PWCHANGE-01: A user who must change their password cannot use a member
 
@@ -53,20 +53,6 @@ again unless the maintainer reopens one.
 - **Why:** Each was written before a shared helper existed.
 - **Fix:** Import `sqlTime` in the four files, after checking each copy rounds and rejects bad
   input the same way.
-
-#### ROGUE-V6-MEMBER-01: Rogue DHCPv6 detection can flag the member that serves DHCP
-
-**medium**, confirmed in the code (2026-11-21). `server/src/utils/dhcpv6-probe.js`
-(`classifyAdvertise`)
-
-- **What happens:** With DHCP moved to a member, the controller's DHCPv6 probe hears that
-  member's advertisement from its link-local address. `instanceAddressSet` holds no link-local
-  addresses (they are dropped from `dns_addresses`) and the member's server DUID is not the
-  controller's, so the advertisement is recorded as a rogue server. DHCPv4 is fine: the member's
-  addresses are trusted.
-- **Why:** An instance's link-local addresses and DHCPv6 DUID are not in the data of record.
-- **Fix:** Have each instance report its DHCPv6 server DUID (and move the DUID with DHCP, see
-  BACKLOG.md), and trust an advertisement carrying a known instance's DUID.
 
 #### DHCP-READY-TERM-01: The "leases loaded" mark is a bare term number
 
@@ -106,20 +92,6 @@ again unless the maintainer reopens one.
   handover.
 - **Why:** The validator accepts six colon-separated octets or nothing.
 - **Fix:** Require a MAC on a DHCPv4 lease and accept the forms the adapters emit.
-
-#### PROMOTE-NEWER-MEMBER-01: A member updated before its controller cannot be promoted
-
-**medium**, read in the code (2026-11-22). `server/src/services/controller-promotion.js`
-(`promoteSelfRefusal`), `server/src/sync/log.js` (`ensureSyncLog`)
-
-- **What happens:** Update a member to a release with a migration, and the controller dies
-  before the two are on the same version. The member's cursor was forgotten at boot (a migration
-  ran) and it cannot take a snapshot from another schema, so `promote-self` answers
-  `never_synced` for good, though the member holds a complete copy from before its update.
-- **Why:** "Holds a complete copy" is read from the cursor, which a migration clears.
-- **Fix:** Keep a separate mark that the copy was complete before the migration, and let a
-  promotion go ahead on it with the last sync time shown. The upgrade guide says to update the
-  controller first.
 
 #### RESTORE-JOIN-RACE-01: A join during a restore is lost
 

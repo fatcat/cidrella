@@ -119,7 +119,9 @@ tables and the blocklist cache).
 - **Mode-gated starts** in `server/src/index.js`: estate repairs at boot and controller jobs
   (scan scheduler, rogue detection, backup scheduler, audit prune, anomaly sidecar, shared
   defaults) run on the controller only. Scanning and rogue detection stay on the controller's
-  host in 0.7.0; scanning from another member's segment is later work.
+  host in 0.7.0; scanning from another member's segment is later work. Rogue detection
+  trusts the other instances' DHCP: their addresses, and for DHCPv6 the server DUID each
+  reports with its sync (a member is heard from a link-local address no list holds).
 - **`syncDhcpDnsRecords` moves** out of `applyDhcp` (`services/backend-apply.js:52`) into the
   controller's lease ingest, so an apply is a pure render.
 - **Write gate**: one middleware after `authMiddleware` refuses non-GET requests on a member

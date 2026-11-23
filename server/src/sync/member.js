@@ -35,7 +35,7 @@ import {
   refreshProxyConfig,
 } from '../utils/dns-proxy.js';
 import { recordAudit } from '../services/audit.js';
-import { applyChanges, parseChanges, SyncError } from './changes.js';
+import { applyChanges, receiveChanges, spoolFile, SyncError } from './changes.js';
 import {
   callController,
   doubtIn,
@@ -51,12 +51,24 @@ import { CREDENTIAL_FILE, readCredential, syncDirOf } from './credential.js';
 import { dhcpStateChanged } from './dhcp-active.js';
 import { findController } from './find-controller.js';
 import { syncFingerprint } from './identity.js';
-import { ensureSyncTriggers, MEMBER, readSyncState, syncStatus, writeSyncState } from './log.js';
+import {
+  COPY_COMPLETE,
+  ensureSyncTriggers,
+  LAST_SYNC,
+  MEMBER,
+  readSyncState,
+  syncStatus,
+  writeSyncState,
+} from './log.js';
 import { controllerOf } from './mode.js';
 import { fencedState, setFenced } from './promotion-state.js';
 import { restartSoon } from './restart.js';
 import { flushSeen } from './remote-sink.js';
-import { formatServiceStates, ownServiceStates } from '../services/instance-services.js';
+import {
+  formatServiceStates,
+  ownDhcpv6Duid,
+  ownServiceStates,
+} from '../services/instance-services.js';
 
 const WAIT_SECONDS = 25;
 const RETRY_MIN_MS = 5_000;
@@ -100,6 +112,9 @@ function changesPath(db, { wait = 0, services = null } = {}) {
   // What its DNS and DHCP servers are doing, for the controller's Instances page.
   const svc = formatServiceStates(services);
   if (svc) query.set('svc', svc);
+  // Its DHCPv6 server's DUID: the controller's rogue probe trusts it.
+  const duid = ownDhcpv6Duid();
+  if (duid) query.set('duid', duid);
   const cursor = readSyncState(db, 'cursor');
   if (cursor !== null && local.dataset) {
     query.set('dataset', local.dataset);
@@ -193,6 +208,7 @@ export async function joinController(
     .prepare(`SELECT key, value FROM sync_state WHERE key IN (${kept.map(() => '?')})`)
     .all(...kept);
   let applied = false;
+  const spool = spoolFile(syncDirOf(db));
   const pinned = {
     ...controller,
     // The address, port and fingerprint are the ones this box checked, never
@@ -204,12 +220,15 @@ export async function joinController(
     // This box starts over as a copy of that controller: what it held, and
     // the epoch it was at, count for nothing there. (No epoch is sent with
     // the request either: the fencing rule is for instances of one estate.)
-    db.prepare("DELETE FROM sync_state WHERE key IN ('cursor', 'copy_from', 'epoch')").run();
+    db.prepare(
+      `DELETE FROM sync_state WHERE key IN ('cursor', 'copy_from', 'epoch', '${LAST_SYNC}', '${COPY_COMPLETE}')`,
+    ).run();
     const response = await syncRequest({
       ...controller,
       path: changesPath(db),
       credential: answer.credential,
       timeoutMs: 10 * 60_000,
+      ...intoSpool(spool),
     });
     if (response.status !== 200) {
       const body = jsonBody(response);
@@ -218,7 +237,7 @@ export async function joinController(
         body.error || `The controller answered ${response.status}.`,
       );
     }
-    const changes = parseChanges(response.body);
+    const changes = response.body;
 
     fs.mkdirSync(syncDirOf(db), { recursive: true, mode: 0o700 });
     fs.writeFileSync(credentialPath, `${answer.credential}\n`, { mode: 0o600 });
@@ -241,11 +260,13 @@ export async function joinController(
       writeSyncState(db, 'controller', JSON.stringify(pinned));
     })();
     applyChanges(db, changes);
+    fs.rmSync(spool, { force: true });
     applied = true;
     if (pinned.instance_id) writeSyncState(db, COPY_FROM, pinned.instance_id);
     // A box that was replaced as the controller follows the new one now.
     if (fencedState(db)) setFenced(db, null);
   } catch (err) {
+    fs.rmSync(spool, { force: true });
     // Whatever the undo itself runs into, the box still leaves the list.
     try {
       db.transaction(() => {
@@ -380,13 +401,34 @@ export function memberSyncStatus(db) {
   return status && { ...status, cursor: Number(readSyncState(db, 'cursor') ?? 0) };
 }
 
+// The changes come from a pinned controller and go to disk, not memory: the
+// cap only stops one that never ends.
+const MAX_CHANGES_BYTES = 64 * 1024 ** 3;
+
+// What a request for the changes adds: the answer taken in as it arrives,
+// checked and spooled to `spool` (sync/changes.js receiveChanges). The
+// caller removes the file after the apply.
+const intoSpool = (spool) => ({
+  maxBytes: MAX_CHANGES_BYTES,
+  consume: (stream) => receiveChanges(stream, spool),
+});
+
 /**
  * Ask the controller once and apply what comes. Resolves 'current' when this
  * copy is at the head. Throws on anything else, with `code` 'paused' when the
  * two sides run different schemas, and 'fenced', 'not_controller' or
  * 'stale_epoch' when the instance asked is not the controller to follow.
  */
-export async function syncOnce(db, { wait = 0 } = {}) {
+export async function syncOnce(db, options = {}) {
+  const spool = spoolFile(syncDirOf(db));
+  try {
+    return await syncOnceThrough(db, spool, options);
+  } finally {
+    fs.rmSync(spool, { force: true });
+  }
+}
+
+async function syncOnceThrough(db, spool, { wait = 0 } = {}) {
   // Whose log the answer is from. The pointer can move while the request waits.
   const asked = controllerOf(db)?.instance_id;
   const cursorIsTheirs = () => {
@@ -397,6 +439,7 @@ export async function syncOnce(db, { wait = 0 } = {}) {
   const response = await callController(db, {
     path: changesPath(db, { wait, services }),
     timeoutMs: (wait + 60) * 1000,
+    ...intoSpool(spool),
   });
   const lost = doubtIn(db, response);
   if (lost) {
@@ -424,7 +467,7 @@ export async function syncOnce(db, { wait = 0 } = {}) {
   }
   let delta = false;
   try {
-    const changes = parseChanges(response.body);
+    const changes = response.body;
     delta = !changes.header.snapshot;
     const result = applyChanges(db, changes);
     cursorIsTheirs();
@@ -485,7 +528,8 @@ export function startMemberSync(db, { onCurrent = null } = {}) {
   let timer = null;
   let failures = 0;
   let looking = null;
-  status = { state: 'starting', last_sync_at: null, last_error: null };
+  // The last sync survives a restart: a promotion shows how old the copy is.
+  status = { state: 'starting', last_sync_at: readSyncState(db, LAST_SYNC), last_error: null };
   const pause = (ms) =>
     new Promise((resolve) => {
       timer = setTimeout(resolve, ms);
@@ -517,7 +561,9 @@ export function startMemberSync(db, { onCurrent = null } = {}) {
         await syncOnce(db, { wait: status.state === 'current' ? WAIT_SECONDS : 0 });
         await sendOutbox(db).catch((err) => console.warn(`[sync] ${err.message}`));
         if (stopped) break;
-        status = { state: 'current', last_sync_at: new Date().toISOString(), last_error: null };
+        const syncedAt = new Date().toISOString();
+        writeSyncState(db, LAST_SYNC, syncedAt);
+        status = { state: 'current', last_sync_at: syncedAt, last_error: null };
         retryMs = RETRY_MIN_MS;
         failures = 0;
         if (onCurrent && (await onCurrent(db))) break;

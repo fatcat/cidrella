@@ -235,6 +235,13 @@ export function forgetDataset(db) {
  * is its controller's, it is forgetting the cursor: the next sync is a
  * snapshot. Returns { dataset, started } where started says why.
  */
+// sync_state keys a member keeps about its copy. LAST_SYNC: when it last
+// reached its controller's head. COPY_COMPLETE: the copy was complete when a
+// migration made the cursor count for nothing (`{ at, schema }`), so the
+// member can still take over with it (controller-promotion.js).
+export const LAST_SYNC = 'last_sync_at';
+export const COPY_COMPLETE = 'copy_complete';
+
 export function ensureSyncLog(db, dataDir) {
   const mode = storedMode(db);
   const triggersChanged = ensureSyncTriggers(db, mode) > 0;
@@ -255,6 +262,19 @@ export function ensureSyncLog(db, dataDir) {
   fs.writeFileSync(incarnationFile(dataDir), `${incarnation}\n`, { mode: 0o600 });
   if (!started) return { dataset, started };
   if (mode === MEMBER) {
+    // A migration changed the copy's schema, not its rows: a copy that was
+    // complete is still everything the controller had at the last sync. A
+    // database put back from before is not known to be.
+    const complete = started === 'schema changed' && readSyncState(db, 'cursor') !== null;
+    if (complete) {
+      writeSyncState(
+        db,
+        COPY_COMPLETE,
+        JSON.stringify({ at: readSyncState(db, LAST_SYNC), schema: schemaVersion(db) }),
+      );
+    } else if (started !== 'schema changed') {
+      db.prepare('DELETE FROM sync_state WHERE key = ?').run(COPY_COMPLETE);
+    }
     db.prepare("DELETE FROM sync_state WHERE key = 'cursor'").run();
     writeSyncState(db, 'schema', schemaVersion(db));
     return { dataset, started };

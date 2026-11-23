@@ -7,6 +7,7 @@ import crypto from 'crypto';
 import os from 'os';
 import { readSyncState, syncHead, syncStatus, writeSyncState } from '../sync/log.js';
 import { canonicalizeIp } from '../utils/address.js';
+import { normalizeDuid } from '../utils/duid.js';
 
 export const JOIN_TOKEN_MINUTES = 15;
 const JOIN_PREFIX = 'cj1';
@@ -341,12 +342,13 @@ export function memberByInstanceId(db, instanceId) {
 export function noteContact(
   db,
   id,
-  { cursor = null, version = null, schema = null, services = null } = {},
+  { cursor = null, version = null, schema = null, services = null, duid = null } = {},
 ) {
   db.prepare(
     `UPDATE sync_instances SET last_contact_at = ?, cursor = COALESCE(?, cursor),
        version = COALESCE(?, version), schema_version = COALESCE(?, schema_version),
-       dns_state = COALESCE(?, dns_state), dhcp_state = COALESCE(?, dhcp_state)
+       dns_state = COALESCE(?, dns_state), dhcp_state = COALESCE(?, dhcp_state),
+       dhcpv6_duid = COALESCE(?, dhcpv6_duid)
      WHERE id = ?`,
   ).run(
     new Date().toISOString(),
@@ -355,7 +357,22 @@ export function noteContact(
     schema,
     services?.dns ?? null,
     services?.dhcp ?? null,
+    normalizeDuid(duid),
     id,
+  );
+}
+
+/**
+ * The DHCPv6 server DUIDs the instances reported (noteContact): an
+ * advertisement carrying one is this CIDRella's own DHCP, whichever instance
+ * serves it (utils/dhcpv6-probe.js).
+ */
+export function instanceDuidSet(db) {
+  return new Set(
+    db
+      .prepare('SELECT dhcpv6_duid FROM sync_instances WHERE dhcpv6_duid IS NOT NULL')
+      .all()
+      .map((row) => row.dhcpv6_duid),
   );
 }
 

@@ -794,7 +794,8 @@ this instance**. It asks you to type the instance's name and shows when it last 
   controller.
 - The data is as of the last sync. Changes made on the old controller after that are not
   on this box and do not come back by themselves.
-- A member that has never synced cannot be promoted.
+- A member that has never synced cannot be promoted. One updated before its controller can:
+  it takes over with the copy it had at its last sync before the update.
 - The box restarts as the controller and you sign in again. The other members find it and
   follow it within about a minute.
 - A member that joined after this box's last sync is unknown to it. Make a join token on

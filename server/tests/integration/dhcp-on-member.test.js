@@ -35,7 +35,11 @@ const { createJoinToken, ensureOwnInstance, ownInstanceId } =
   await import('../../src/models/sync-instance.js');
 const { upsertSetting } = await import('../../src/models/setting.js');
 const { SERVICE_STATES } = await import('../../src/services/instance-services.js');
-const { dnsInstances: dnsInstancesOf } = await import('../../src/models/sync-instance.js');
+const {
+  dnsInstances: dnsInstancesOf,
+  instanceDuidSet,
+  noteContact,
+} = await import('../../src/models/sync-instance.js');
 const { memberSink, setFactsSink } = await import('../../src/sync/facts.js');
 const { localSink } = await import('../../src/sync/local-sink.js');
 const { stopRemoteSink } = await import('../../src/sync/remote-sink.js');
@@ -281,6 +285,21 @@ describe('what each instance serves', () => {
         .slice(0, 3)
         .map((instance) => instance.name),
     );
+  });
+
+  it('keeps the DHCPv6 DUID a member reports, and only a well-formed one', async () => {
+    const duid = '00:01:00:01:2e:aa:bb:cc:00:16:3e:00:00:07';
+    const rowId = controller
+      .prepare("SELECT id FROM sync_instances WHERE name = 'member-a'")
+      .get().id;
+    noteContact(controller, rowId, { duid: 'not a duid' });
+    expect(instanceDuidSet(controller).has('not a duid')).toBe(false);
+    noteContact(controller, rowId, { duid: duid.toUpperCase() });
+    expect(instanceDuidSet(controller).has(duid)).toBe(true);
+    // A report without one keeps it.
+    noteContact(controller, rowId, {});
+    expect(instanceDuidSet(controller).has(duid)).toBe(true);
+    controller.prepare('UPDATE sync_instances SET dhcpv6_duid = NULL WHERE id = ?').run(rowId);
   });
 
   it('keeps what a member reports with its sync, and drops it once the member is out of contact', async () => {

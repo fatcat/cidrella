@@ -190,6 +190,23 @@ describe('classifyAdvertise', () => {
     });
   });
 
+  it('trusts another instance serving DHCP by the DUID it reported, from a link-local address', () => {
+    const member = '00:01:00:01:2e:aa:bb:cc:00:16:3e:00:00:07';
+    const adv = { sourceIp: 'fe80::216:3eff:fe00:7', serverDuid: member };
+    expect(classifyAdvertise(adv, ctx)).toEqual({ rogue: true, reason: 'unauthorized' });
+    expect(classifyAdvertise(adv, { ...ctx, instanceDuids: new Set([member]) })).toEqual({
+      rogue: false,
+      reason: 'self',
+    });
+    // Another DUID from the same link-local address is still a rogue server.
+    expect(
+      classifyAdvertise(
+        { ...adv, serverDuid: '00:03:00:01:de:ad:be:ef:00:01' },
+        { ...ctx, instanceDuids: new Set([member]) },
+      ).rogue,
+    ).toBe(true);
+  });
+
   it("trusts dnsmasq's own DUID wherever it answers from", () => {
     expect(classifyAdvertise({ sourceIp: 'fe80::99', serverDuid: selfDuid }, ctx).reason).toBe(
       'self',

@@ -8,13 +8,16 @@
  */
 import express, { Router } from 'express';
 import rateLimit from 'express-rate-limit';
+import fs from 'fs';
+import { pipeline } from 'stream/promises';
 import zlib from 'zlib';
 import { getDb } from '../db/init.js';
 import { APP_VERSION } from '../utils/version.js';
 import { queueRegen } from '../utils/after-commit.js';
 import { runDbTask } from '../utils/db-worker/index.js';
 import { recordAudit } from '../services/audit.js';
-import { exportChanges, needsSnapshot } from '../sync/changes.js';
+import { exportChanges, needsSnapshot, spoolFile } from '../sync/changes.js';
+import { syncDirOf } from '../sync/credential.js';
 import { syncHead, syncStatus } from '../sync/log.js';
 import { instanceMode, isFenced, isMember } from '../sync/mode.js';
 import { epochBase } from '../sync/promotion-state.js';
@@ -260,6 +263,8 @@ router.get('/changes', async (req, res) => {
     version,
     schema,
     services: parseServiceStates(req.query.svc),
+    // Kept only when it is a DUID (noteContact normalizes it).
+    duid: typeof req.query.duid === 'string' ? req.query.duid.slice(0, 400) : null,
   });
   if (typeof req.query.addr === 'string') {
     const addresses = req.query.addr.slice(0, 2048).split(',').filter(Boolean);
@@ -298,15 +303,27 @@ router.get('/changes', async (req, res) => {
     if (closed) return;
     if (syncHead(db) === since) return res.status(204).end();
   }
-  // A snapshot reads and compresses every row: off the event loop, on a
-  // connection of its own. No cursor is passed: the export decides between
-  // a snapshot and a delta by it, and this one is a snapshot.
-  const payload = snapshot
-    ? Buffer.from(await runDbTask('syncExport', { dbPath: db.name, dataset: null, since: null }))
-    : zlib.gzipSync(exportChanges(db, { dataset, since }));
-  res.set('Content-Type', 'application/x-ndjson');
-  res.set('Content-Encoding', 'gzip');
-  res.send(payload);
+  const asChanges = () =>
+    res.set({ 'Content-Type': 'application/x-ndjson', 'Content-Encoding': 'gzip' });
+  if (!snapshot) return asChanges().send(zlib.gzipSync(exportChanges(db, { dataset, since })));
+
+  // A snapshot reads every row: off the event loop, on a connection of its
+  // own, into a file a piece at a time, which goes out compressed as it is
+  // read (zlib works on the thread pool). Nothing holds the whole dataset.
+  // No cursor is passed: the export decides between a snapshot and a delta
+  // by it, and this one is a snapshot.
+  const file = spoolFile(syncDirOf(db));
+  try {
+    await runDbTask('syncExport', { dbPath: db.name, dataset: null, since: null, file });
+    if (closed) return;
+    asChanges();
+    await pipeline(fs.createReadStream(file), zlib.createGzip(), res).catch((err) => {
+      // The response is cut short, which the member reads as a lost connection.
+      if (!closed) console.warn(`[sync] could not send a snapshot: ${err.message}`);
+    });
+  } finally {
+    fs.rmSync(file, { force: true });
+  }
 });
 
 const MAX_OUTBOX_ROWS = 500;

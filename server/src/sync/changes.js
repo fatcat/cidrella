@@ -13,14 +13,27 @@
  * A response is always everything up to `head`: the log keeps only the newest
  * change to a row, so part of a delta is not a state the dataset was ever in.
  *
+ * A snapshot can be larger than memory, or than a string can hold, so it moves
+ * as a stream: exportChangesToFile writes it a piece at a time, and
+ * receiveChanges takes it in line by line, spooled to a file and checked
+ * against the trailer before anything is applied. exportChanges and
+ * parseChanges do the same in one Buffer, for a delta.
+ *
  * applyChanges makes a database match: the rows exactly as sent, the log rows
  * mirrored (so this copy can serve others after a promotion), and the cursor.
  */
 import crypto from 'crypto';
+import fs from 'fs';
+import path from 'path';
 import { queueRegen } from '../utils/after-commit.js';
 import { estateTables, isEstateSetting, readSyncState, syncStatus, writeSyncState } from './log.js';
 
 const FORMAT = 1;
+const NEWLINE = 0x0a;
+// Lines go to and come from a spool file in pieces about this big.
+const CHUNK_BYTES = 1 << 20;
+const SPOOL_PREFIX = 'changes-';
+const STALE_SPOOL_MS = 24 * 60 * 60 * 1000;
 
 // A BLOB crosses as {"$b": base64}; everything else SQLite stores is JSON already.
 const encode = (row) => {
@@ -40,33 +53,40 @@ export function needsSnapshot(status, { dataset = null, since = null } = {}) {
 }
 
 /**
- * What a copy holding `dataset` at cursor `since` needs to reach the head, as
- * one Buffer. A snapshot when the copy has no cursor, holds another dataset,
- * or is behind the log's floor (or ahead of its head: a copy of something
- * else).
+ * Hand `write` every line of what a copy holding `dataset` at cursor `since`
+ * needs to reach the head, newline included, the trailer last. All of it is
+ * read in one transaction. A snapshot when the copy has no cursor, holds
+ * another dataset, or is behind the log's floor (or ahead of its head: a copy
+ * of something else). Returns { snapshot, rows }.
  */
-export function exportChanges(db, { dataset = null, since = null } = {}) {
+function writeChanges(db, { dataset = null, since = null }, write) {
   return db.transaction(() => {
     const status = syncStatus(db);
     const snapshot = needsSnapshot(status, { dataset, since });
     const tables = new Map(estateTables(db).map((table) => [table.name, table]));
-    const lines = [
-      JSON.stringify({
-        v: FORMAT,
-        dataset: status.dataset,
-        epoch: status.epoch,
-        schema: status.schema,
-        snapshot,
-        since: snapshot ? null : since,
-        head: status.head,
-      }),
-    ];
+    const hash = crypto.createHash('sha256');
+    let rows = 0;
+    const line = (entry) => {
+      const text = `${JSON.stringify(entry)}\n`;
+      hash.update(text);
+      write(text);
+    };
+    line({
+      v: FORMAT,
+      dataset: status.dataset,
+      epoch: status.epoch,
+      schema: status.schema,
+      snapshot,
+      since: snapshot ? null : since,
+      head: status.head,
+    });
     const select = (table, where) =>
       db.prepare(`SELECT ${table.columns.join(', ')} FROM ${table.name} AS r WHERE ${where}`);
     if (snapshot) {
       for (const table of tables.values()) {
         for (const row of select(table, table.isEstateRow('r')).iterate()) {
-          lines.push(JSON.stringify({ t: table.name, row: encode(row) }));
+          line({ t: table.name, row: encode(row) });
+          rows += 1;
         }
       }
     } else {
@@ -80,15 +100,65 @@ export function exportChanges(db, { dataset = null, since = null } = {}) {
         if (!table) continue;
         if (!byKey.has(tbl)) byKey.set(tbl, select(table, `r.${table.key} = ?`));
         const row = op === 'u' ? byKey.get(tbl).get(pk) : null;
-        lines.push(
-          JSON.stringify(row ? { t: tbl, s: seq, row: encode(row) } : { t: tbl, s: seq, del: pk }),
-        );
+        line(row ? { t: tbl, s: seq, row: encode(row) } : { t: tbl, s: seq, del: pk });
+        rows += 1;
       }
     }
-    const body = `${lines.join('\n')}\n`;
-    const sha256 = crypto.createHash('sha256').update(body).digest('hex');
-    return Buffer.from(`${body}${JSON.stringify({ end: true, rows: lines.length - 1, sha256 })}\n`);
+    write(`${JSON.stringify({ end: true, rows, sha256: hash.digest('hex') })}\n`);
+    return { snapshot, rows };
   })();
+}
+
+/** What a copy holding `dataset` at cursor `since` needs to reach the head, as one Buffer. */
+export function exportChanges(db, options = {}) {
+  const parts = [];
+  writeChanges(db, options, (text) => parts.push(text));
+  return Buffer.from(parts.join(''));
+}
+
+/**
+ * The same, written to `file` a piece at a time, so a snapshot of any size
+ * never sits in memory whole. Returns { snapshot, rows }.
+ */
+export function exportChangesToFile(db, options, file) {
+  const fd = fs.openSync(file, 'wx', 0o600);
+  try {
+    let held = [];
+    let size = 0;
+    const writeHeld = () => {
+      if (held.length > 0) fs.writeSync(fd, held.join(''));
+      held = [];
+      size = 0;
+    };
+    const result = writeChanges(db, options, (text) => {
+      held.push(text);
+      size += text.length;
+      if (size >= CHUNK_BYTES) writeHeld();
+    });
+    writeHeld();
+    return result;
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * A new file name in `dir` for one copy of the changes on its way out or in.
+ * The caller removes it. One left behind by a process that died is removed
+ * here a day later.
+ */
+export function spoolFile(dir) {
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  for (const name of fs.readdirSync(dir)) {
+    if (!name.startsWith(SPOOL_PREFIX)) continue;
+    const file = path.join(dir, name);
+    try {
+      if (Date.now() - fs.statSync(file).mtimeMs > STALE_SPOOL_MS) fs.rmSync(file, { force: true });
+    } catch {
+      /* gone already */
+    }
+  }
+  return path.join(dir, `${SPOOL_PREFIX}${crypto.randomUUID()}.ndjson`);
 }
 
 /** A failure that means "do not retry this: start over" or "wait", named by `code`. */
@@ -99,6 +169,8 @@ export class SyncError extends Error {
     this.code = code;
   }
 }
+
+const damaged = (why) => new SyncError('damaged', `The changes arrived damaged: ${why}`);
 
 /** Check and read what exportChanges wrote. Throws SyncError('damaged') on anything off. */
 export function parseChanges(buffer) {
@@ -120,13 +192,117 @@ export function parseChanges(buffer) {
       .filter(Boolean)
       .map((line) => JSON.parse(line));
   } catch (err) {
-    throw new SyncError('damaged', `The changes arrived damaged: ${err.message}`);
+    throw damaged(err.message);
   }
   const [header, ...changes] = entries;
   if (!header || header.v !== FORMAT || changes.length !== trailer.rows) {
-    throw new SyncError('damaged', 'The changes arrived damaged: the header or row count is off');
+    throw damaged('the header or row count is off');
   }
   return { header, changes };
+}
+
+// The complete lines of `rest` then `chunk`, without their newlines, and the
+// bytes after the last one. A newline byte never occurs inside a UTF-8
+// character, so lines are split before they are decoded.
+function splitLines(rest, chunk) {
+  const data = rest.length > 0 ? Buffer.concat([rest, chunk]) : chunk;
+  const lines = [];
+  let start = 0;
+  for (let end = data.indexOf(NEWLINE); end !== -1; end = data.indexOf(NEWLINE, start)) {
+    lines.push(data.subarray(start, end));
+    start = end + 1;
+  }
+  return { lines, rest: data.subarray(start) };
+}
+
+function parseLine(line) {
+  try {
+    return JSON.parse(line.toString('utf8'));
+  } catch (err) {
+    throw damaged(err.message);
+  }
+}
+
+// The change lines of a spool file, one at a time, read with the file
+// already checked (receiveChanges).
+function* spooledChanges(file) {
+  const fd = fs.openSync(file, 'r');
+  try {
+    let rest = Buffer.alloc(0);
+    for (;;) {
+      // A fresh buffer each time: `rest` and the lines point into it.
+      const buffer = Buffer.allocUnsafe(CHUNK_BYTES);
+      const read = fs.readSync(fd, buffer, 0, CHUNK_BYTES, null);
+      if (read === 0) break;
+      const split = splitLines(rest, buffer.subarray(0, read));
+      rest = split.rest;
+      for (const line of split.lines) yield parseLine(line);
+    }
+    if (rest.length > 0) yield parseLine(rest);
+  } finally {
+    fs.closeSync(fd);
+  }
+}
+
+/**
+ * Take changes as they arrive on `stream` (the lines exportChanges writes, in
+ * Buffers of any size) into `file`, checked as parseChanges checks them.
+ * Resolves { header, changes } for applyChanges, `changes` reading the rows
+ * back from the file one at a time (as often as it is iterated), so a
+ * snapshot never sits in memory whole. Rejects with SyncError('damaged') when
+ * the hash, the header or the row count is off; an error of the stream itself
+ * goes through as it is. The caller removes the file after the apply.
+ */
+export async function receiveChanges(stream, file) {
+  const out = await fs.promises.open(file, 'wx', 0o600);
+  const hash = crypto.createHash('sha256');
+  let header = null;
+  let last = null;
+  let rows = 0;
+  let held = [];
+  let size = 0;
+  // Every line before the last is hashed and kept; the last is the trailer.
+  const take = (line) => {
+    if (last !== null) {
+      hash.update(last).update('\n');
+      if (header === null) header = last;
+      else {
+        held.push(last, Buffer.from('\n'));
+        size += last.length + 1;
+        rows += 1;
+      }
+    }
+    last = line;
+  };
+  const flush = async () => {
+    if (held.length > 0) await out.write(Buffer.concat(held));
+    held = [];
+    size = 0;
+  };
+  try {
+    let rest = Buffer.alloc(0);
+    for await (const chunk of stream) {
+      const split = splitLines(rest, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
+      rest = split.rest;
+      split.lines.forEach(take);
+      if (size >= CHUNK_BYTES) await flush();
+    }
+    if (rest.length > 0) take(rest);
+    await flush();
+  } finally {
+    await out.close();
+  }
+
+  if (last === null) throw damaged('nothing arrived');
+  const trailer = parseLine(last);
+  if (!trailer?.end || hash.digest('hex') !== trailer.sha256) {
+    throw damaged('the hash does not match');
+  }
+  const parsed = header === null ? null : parseLine(header);
+  if (parsed?.v !== FORMAT || rows !== trailer.rows) {
+    throw damaged('the header or row count is off');
+  }
+  return { header: parsed, changes: { [Symbol.iterator]: () => spooledChanges(file) } };
 }
 
 // Every trigger on an estate table, set aside while rows are put in exactly
@@ -187,7 +363,8 @@ function settleHostRows(db, estate) {
 const quoteName = (name) => `"${String(name).replaceAll('"', '""')}"`;
 
 /**
- * Make `db` match what parseChanges read. One transaction; nothing changes if
+ * Make `db` match what parseChanges or receiveChanges read: `changes` is
+ * anything that can be iterated twice. One transaction; nothing changes if
  * it throws. Refuses (SyncError) a different schema version ('schema'),
  * changes from an epoch before this copy's ('stale_epoch'), and a delta that
  * does not start at this copy's cursor or belongs to another dataset
@@ -216,8 +393,7 @@ export function applyChanges(db, { header, changes }) {
   }
 
   const tables = new Map(estateTables(db).map((table) => [table.name, table]));
-  const byTable = new Map();
-  for (const change of changes) {
+  const tableOf = (change) => {
     const table = tables.get(change.t);
     if (!table) throw new SyncError('damaged', `The changes name an unknown table: ${change.t}`);
     // Only the settings that are data of record: a key about this box (its
@@ -228,9 +404,11 @@ export function applyChanges(db, { header, changes }) {
         throw new SyncError('damaged', `The changes name a setting that is not shared: ${key}`);
       }
     }
-    if (!byTable.has(table)) byTable.set(table, []);
-    byTable.get(table).push(change);
-  }
+    if (header.snapshot && !change.row) throw damaged('a snapshot names a row that is gone');
+    return table;
+  };
+  const touched = new Set();
+  let rows = 0;
 
   // Rows go in exactly as sent, in no particular order, so foreign keys are
   // checked once at the end instead of acting on each write. The pragma is
@@ -251,46 +429,65 @@ export function applyChanges(db, { header, changes }) {
         }
         const mirror = db.prepare('INSERT INTO sync_log (seq, tbl, pk, op) VALUES (?, ?, ?, ?)');
         const forget = db.prepare('DELETE FROM sync_log WHERE tbl = ? AND pk = ?');
-        for (const [table, list] of byTable) {
-          const remove = db.prepare(`DELETE FROM ${table.name} WHERE ${table.key} = ?`);
+        const statements = new Map();
+        const statementsOf = (table) => {
+          if (statements.has(table)) return statements.get(table);
           const columns = table.columns;
           const values = columns.map((column) => `@${column}`).join(', ');
           // Delete then insert takes a row whatever it collides with here
           // (two rows that swapped a unique value). A row with host columns
           // is updated in place so those survive.
-          const put = db.prepare(
-            table.keepsHostColumns
-              ? `INSERT INTO ${table.name} (${columns.join(', ')}) VALUES (${values})
-                 ON CONFLICT(${table.key}) DO UPDATE SET ${columns
-                   .filter((column) => column !== table.key)
-                   .map((column) => `${column} = excluded.${column}`)
-                   .join(', ')}`
-              : `INSERT INTO ${table.name} (${columns.join(', ')}) VALUES (${values})`,
+          const made = {
+            remove: db.prepare(`DELETE FROM ${table.name} WHERE ${table.key} = ?`),
+            put: db.prepare(
+              table.keepsHostColumns
+                ? `INSERT INTO ${table.name} (${columns.join(', ')}) VALUES (${values})
+                   ON CONFLICT(${table.key}) DO UPDATE SET ${columns
+                     .filter((column) => column !== table.key)
+                     .map((column) => `${column} = excluded.${column}`)
+                     .join(', ')}`
+                : `INSERT INTO ${table.name} (${columns.join(', ')}) VALUES (${values})`,
+            ),
+          };
+          statements.set(table, made);
+          return made;
+        };
+
+        // Two passes over the changes, each reading them afresh (a snapshot
+        // is read back from its spool file, never held): first every row
+        // that goes, then every row as sent, so a row never collides with
+        // one that is about to leave.
+        // The keys a snapshot sends for each table that keeps host columns.
+        const sent = new Map();
+        for (const change of changes) {
+          const table = tableOf(change);
+          rows += 1;
+          touched.add(table);
+          if (header.snapshot) {
+            if (!table.keepsHostColumns) continue;
+            if (!sent.has(table)) sent.set(table, new Set());
+            sent.get(table).add(change.row[table.key]);
+            continue;
+          }
+          const key = change.row ? change.row[table.key] : change.del;
+          if (!change.row || !table.keepsHostColumns) statementsOf(table).remove.run(key);
+          forget.run(table.name, key);
+          mirror.run(change.s, table.name, key, change.row ? 'u' : 'd');
+        }
+        for (const [table, keys] of sent) {
+          const { remove } = statementsOf(table);
+          for (const { key } of db.prepare(`SELECT ${table.key} AS key FROM ${table.name}`).all()) {
+            if (!keys.has(key)) remove.run(key);
+          }
+        }
+        for (const change of changes) {
+          if (!change.row) continue;
+          const table = tables.get(change.t);
+          statementsOf(table).put.run(
+            Object.fromEntries(
+              table.columns.map((column) => [column, decodeValue(change.row[column] ?? null)]),
+            ),
           );
-          if (header.snapshot && table.keepsHostColumns) {
-            const sent = new Set(list.map((change) => change.row[table.key]));
-            for (const { key } of db
-              .prepare(`SELECT ${table.key} AS key FROM ${table.name}`)
-              .all()) {
-              if (!sent.has(key)) remove.run(key);
-            }
-          }
-          if (!header.snapshot) {
-            for (const change of list) {
-              const key = change.row ? change.row[table.key] : change.del;
-              if (!change.row || !table.keepsHostColumns) remove.run(key);
-              forget.run(table.name, key);
-              mirror.run(change.s, table.name, key, change.row ? 'u' : 'd');
-            }
-          }
-          for (const change of list) {
-            if (!change.row) continue;
-            put.run(
-              Object.fromEntries(
-                columns.map((column) => [column, decodeValue(change.row[column] ?? null)]),
-              ),
-            );
-          }
         }
       });
       // The log continues from the sender's head, so a seq never runs backwards.
@@ -313,12 +510,12 @@ export function applyChanges(db, { header, changes }) {
     db.pragma('foreign_keys = ON');
   }
 
-  const hooks = new Set([...byTable.keys()].flatMap((table) => table.hooks));
+  const hooks = new Set([...touched].flatMap((table) => table.hooks));
   for (const hook of hooks) queueRegen(hook);
   return {
     snapshot: header.snapshot,
-    rows: changes.length,
+    rows,
     head: header.head,
-    tables: [...byTable.keys()].map((table) => table.name),
+    tables: [...touched].map((table) => table.name),
   };
 }

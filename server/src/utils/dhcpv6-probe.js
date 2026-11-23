@@ -30,7 +30,7 @@ import { canonicalizeIp, formatIp, IPV6_BITS } from './address.js';
 import { duidFromBytes } from './duid.js';
 import { getDhcpBackend } from '../backends/index.js';
 import { upsertRogueEvent, authorizedSets } from '../models/rogue-dhcp.js';
-import { instanceAddressSet } from '../models/sync-instance.js';
+import { instanceAddressSet, instanceDuidSet } from '../models/sync-instance.js';
 
 const DHCPV6_SERVER_PORT = 547;
 const DHCPV6_CLIENT_PORT = 546;
@@ -235,13 +235,19 @@ export function parseAdvertise(buf) {
 
 // Decide whether an advertisement comes from an unauthorized server. `selfIps`
 // holds this host's own addresses, `selfDuid` is the DHCP backend's own DUID
-// (null before it has served DHCPv6), `authorized` is the allowlist as
+// (null before it has served DHCPv6), `instanceDuids` the DUIDs the other
+// instances of this CIDRella reported (a member serving DHCP is heard from a
+// link-local address no list holds), `authorized` is the allowlist as
 // { ips, duids, macs }. `mac` is what the neighbor table knows about the source.
-export function classifyAdvertise(adv, { selfIps, selfDuid, authorized, mac = null }) {
+export function classifyAdvertise(
+  adv,
+  { selfIps, selfDuid, instanceDuids = new Set(), authorized, mac = null },
+) {
   const source = adv.sourceIp ? String(adv.sourceIp).toLowerCase() : null;
   const duid = adv.serverDuid ? String(adv.serverDuid).toLowerCase() : null;
   if (source && selfIps.has(source)) return { rogue: false, reason: 'self' };
   if (duid && selfDuid && duid === selfDuid) return { rogue: false, reason: 'self' };
+  if (duid && instanceDuids.has(duid)) return { rogue: false, reason: 'self' };
   if (source && authorized.ips.has(source)) return { rogue: false, reason: 'authorized' };
   if (duid && authorized.duids.has(duid)) return { rogue: false, reason: 'authorized' };
   if (mac && authorized.macs.has(String(mac).toLowerCase())) {
@@ -325,12 +331,13 @@ export function runProbe6(
   probeInProgress = true;
   probeStartedAt = Date.now();
 
-  let ifaces, selfIps, selfDuid, authorized;
+  let ifaces, selfIps, selfDuid, instanceDuids, authorized;
   try {
     ifaces = interfaces || getProbeInterfaces();
     // DHCP may be served by another instance of this CIDRella.
     selfIps = new Set([...localAddressSet(), ...instanceAddressSet(db)]);
     selfDuid = serverDuid !== undefined ? serverDuid : getDhcpBackend().serverIdentity().duid;
+    instanceDuids = instanceDuidSet(db);
     authorized = authorizedSets(db);
   } catch (err) {
     probeInProgress = false;
@@ -385,7 +392,13 @@ export function runProbe6(
         for (const adv of seen.values()) {
           // A server answers from its link-local address, unique only per link.
           const mac = findNeighbor(neighbors, adv.sourceIp, adv.iface)?.mac || null;
-          const verdict = classifyAdvertise(adv, { selfIps, selfDuid, authorized, mac });
+          const verdict = classifyAdvertise(adv, {
+            selfIps,
+            selfDuid,
+            instanceDuids,
+            authorized,
+            mac,
+          });
           if (!verdict.rogue) continue;
           rogues.push({
             kind: 'dhcpv6',
