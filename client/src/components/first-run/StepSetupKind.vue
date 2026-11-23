@@ -3,7 +3,7 @@
 <template>
   <section class="fr-screen" data-track="first-run-step-kind">
     <div>
-      <div class="fr-eyebrow">This box</div>
+      <StepEyebrow />
       <h1>Set up this box, or join another?</h1>
       <p class="fr-lede">
         A CIDRella runs on its own, or as a member of another one. A member holds a read-only copy
@@ -54,6 +54,7 @@
 </template>
 
 <script setup>
+import StepEyebrow from './StepEyebrow.vue';
 import { ref } from 'vue';
 import Button from '../../ui/Button.js';
 

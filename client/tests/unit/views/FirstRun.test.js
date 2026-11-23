@@ -165,8 +165,7 @@ function mountWizard(state, { servers = null } = {}) {
 }
 
 const stepOf = (w) => Number(w.find('.fr-steps li.active').attributes('data-step'));
-// After the password comes the question outside the numbered steps: set this
-// box up, or join a controller.
+// Step 2, after the password: set this box up, or join a controller.
 const atKindQuestion = (w) => w.find('[data-track="first-run-step-kind"]').exists();
 async function pickKind(w, kind) {
   await w.find(`[data-track="first-run-kind-${kind}"]`).trigger('click');
@@ -235,7 +234,7 @@ describe('resume', () => {
       }),
     );
     await flushPromises();
-    expect(stepOf(w)).toBe(4);
+    expect(stepOf(w)).toBe(5);
     expect(useSetupStore().draft.role).toBe('dns');
     w.unmount();
   });
@@ -245,10 +244,11 @@ describe('resume', () => {
     const w = mountWizard(serverState({ password: true }));
     await flushPromises();
     expect(atKindQuestion(w)).toBe(true);
-    expect(w.find('.fr-steps li.active').exists()).toBe(false);
+    expect(stepOf(w)).toBe(2);
+    expect(w.text()).toContain('Step 2 of 6');
     expect(w.find('[data-track="first-run-kind-continue"]').attributes('disabled')).toBeDefined();
     await pickKind(w, 'setup');
-    expect(stepOf(w)).toBe(2);
+    expect(stepOf(w)).toBe(3);
     w.unmount();
   });
 
@@ -341,7 +341,7 @@ describe('password step', () => {
     expect(api.put).toHaveBeenCalledWith('/setup/state', { password: true });
     expect(atKindQuestion(w)).toBe(true);
     await pickKind(w, 'setup');
-    expect(stepOf(w)).toBe(2);
+    expect(stepOf(w)).toBe(3);
     w.unmount();
   });
 
@@ -369,7 +369,7 @@ describe('two-factor step', () => {
     const w = mountWizard(serverState({ password: true }));
     await flushPromises();
     await pickKind(w, 'setup');
-    expect(stepOf(w)).toBe(2);
+    expect(stepOf(w)).toBe(3);
     return w;
   }
 
@@ -383,7 +383,7 @@ describe('two-factor step', () => {
     await flushPromises();
     expect(api.put).toHaveBeenCalledWith('/setup/state', { totp: 'skipped' });
     expect(auth.totpSetup).not.toHaveBeenCalled();
-    expect(stepOf(w)).toBe(3);
+    expect(stepOf(w)).toBe(4);
     w.unmount();
   });
 
@@ -416,7 +416,7 @@ describe('two-factor step', () => {
     await cont().trigger('click');
     await flushPromises();
     expect(api.put).toHaveBeenCalledWith('/setup/state', { totp: 'enabled' });
-    expect(stepOf(w)).toBe(3);
+    expect(stepOf(w)).toBe(4);
     w.unmount();
   });
 
@@ -432,7 +432,7 @@ describe('two-factor step', () => {
     await flushPromises();
     expect(w.text()).toContain('That code did not match.');
     expect(w.find('.codes').exists()).toBe(false);
-    expect(stepOf(w)).toBe(2);
+    expect(stepOf(w)).toBe(3);
     w.unmount();
   });
 
@@ -443,7 +443,7 @@ describe('two-factor step', () => {
     await w.find('[data-track="first-run-totp-continue"]').trigger('click');
     await flushPromises();
     expect(api.put).toHaveBeenCalledWith('/setup/state', { totp: 'enabled' });
-    expect(stepOf(w)).toBe(3);
+    expect(stepOf(w)).toBe(4);
     w.unmount();
   });
 });
@@ -453,7 +453,7 @@ describe('deployment step', () => {
     auth.mustChangePassword = false;
     const w = mountWizard(serverState({ password: true, totp: 'skipped' }), opts);
     await flushPromises();
-    expect(stepOf(w)).toBe(3);
+    expect(stepOf(w)).toBe(4);
     return w;
   }
 
@@ -497,7 +497,7 @@ describe('deployment step', () => {
         gateway_position: 'first',
       },
     });
-    expect(stepOf(w)).toBe(4);
+    expect(stepOf(w)).toBe(5);
     w.unmount();
   });
 
@@ -571,7 +571,7 @@ describe('import step and start', () => {
       opts,
     );
     await flushPromises();
-    expect(stepOf(w)).toBe(4);
+    expect(stepOf(w)).toBe(5);
     return w;
   }
 
@@ -580,7 +580,7 @@ describe('import step and start', () => {
     await w.find('[data-track="first-run-import-continue"]').trigger('click');
     await flushPromises();
     expect(api.put).toHaveBeenCalledWith('/setup/state', { import: { kind: 'fresh' } });
-    expect(stepOf(w)).toBe(5);
+    expect(stepOf(w)).toBe(6);
     expect(w.text()).toContain('Ready to start');
 
     await w.find('[data-track="first-run-start"]').trigger('click');
@@ -663,7 +663,7 @@ describe('import step and start', () => {
     expect(cont.attributes('disabled')).toBeUndefined();
     await cont.trigger('click');
     await flushPromises();
-    expect(stepOf(w)).toBe(5);
+    expect(stepOf(w)).toBe(6);
     expect(w.text()).toContain('Last address of each new network');
 
     pihole.executeImport.mockImplementation(async () => {
@@ -690,7 +690,7 @@ describe('import step and start', () => {
     w.unmount();
   });
 
-  it('backup: needs a file, and Start restores with the DHCP answer from step 2 and nothing else', async () => {
+  it('backup: needs a file, and Start restores with the DHCP answer from the deployment step and nothing else', async () => {
     const w = await atImport('dns');
     await w.find('[data-track="first-run-import-cidrella"]').trigger('click');
     expect(w.find('[data-track="first-run-import-continue"]').attributes('disabled')).toBeDefined();
@@ -703,7 +703,7 @@ describe('import step and start', () => {
     await input.trigger('change');
     await w.find('[data-track="first-run-import-continue"]').trigger('click');
     await flushPromises();
-    expect(stepOf(w)).toBe(5);
+    expect(stepOf(w)).toBe(6);
     expect(w.text()).toContain('Ready to restore');
 
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ status: 401 }));
@@ -730,6 +730,9 @@ describe('join an existing CIDRella', () => {
     await flushPromises();
     await pickKind(w, 'join');
     expect(w.find('[data-track="first-run-step-join"]').exists()).toBe(true);
+    // The join form is still step 2: the rail and the eyebrow say so.
+    expect(stepOf(w)).toBe(2);
+    expect(w.text()).toContain('Step 2 of 6');
     return w;
   }
   const join = (w) => w.find('[data-track="first-run-join-submit"]');

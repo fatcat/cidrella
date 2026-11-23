@@ -10,7 +10,7 @@
           <li
             v-for="s in STEPS"
             :key="s.n"
-            :class="{ active: !branch && step === s.n, done: step > s.n }"
+            :class="{ active: step === s.n, done: step > s.n }"
             :data-step="s.n"
           >
             <span class="fr-step-n">{{ s.n }}</span>
@@ -30,19 +30,19 @@
           <i class="pi pi-spinner pi-spin"></i>
         </div>
         <template v-else>
-          <StepSetupKind v-if="branch === 'choose'" @setup="go(2)" @join="branch = 'join'" />
-          <StepJoin v-else-if="branch === 'join'" @back="branch = 'choose'" />
-          <StepPassword v-else-if="step === 1" @next="chooseKind" />
-          <StepTwoFactor v-else-if="step === 2" @next="go(3)" />
-          <StepDeployment v-else-if="step === 3" @next="go(4)" @back="go(2)" />
-          <StepImport v-else-if="step === 4" @next="go(5)" @back="go(3)" />
+          <StepPassword v-if="step === 1" @next="go(2)" />
+          <StepJoin v-else-if="step === 2 && joining" @back="joining = false" />
+          <StepSetupKind v-else-if="step === 2" @setup="go(3)" @join="joining = true" />
+          <StepTwoFactor v-else-if="step === 3" @next="go(4)" />
+          <StepDeployment v-else-if="step === 4" @next="go(5)" @back="go(3)" />
+          <StepImport v-else-if="step === 5" @next="go(6)" @back="go(4)" />
           <StepReview
-            v-else-if="step === 5"
+            v-else-if="step === 6"
             :starting="starting"
             :progress="progress"
             :error="error"
             :restarting="restarting"
-            @back="go(4)"
+            @back="go(5)"
             @start="start"
           />
         </template>
@@ -52,7 +52,7 @@
 </template>
 
 <script setup>
-import { ref, onMounted, provide } from 'vue';
+import { ref, computed, onMounted, provide } from 'vue';
 import { useRouter } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
 import { useSetupStore } from '../stores/setup.js';
@@ -70,23 +70,23 @@ import StepDeployment from '../components/first-run/StepDeployment.vue';
 import StepImport from '../components/first-run/StepImport.vue';
 import StepReview from '../components/first-run/StepReview.vue';
 
-// The first-run wizard. Five screens, one job each: replace the installer's
-// one-time password, optionally add a second factor, say what this appliance
-// does and on which interfaces, say what it brings with it, then Start
-// applies the lot and opens the workspace. Nothing but the password touches the appliance before Start, so
-// closing the tab halfway through leaves it exactly as installed. Between the
-// password and the second factor sits one question outside the numbered
-// steps: set this box up, or join it to a controller as a member (which ends
-// the wizard: the controller's data and accounts replace this box's). The server
-// keeps a marker per finished step (stores/setup.js) so a return visit
-// resumes at the step that was not finished.
+// The first-run wizard. Six screens, one job each: replace the installer's
+// one-time password, set this box up or join it to a controller as a member,
+// optionally add a second factor, say what this appliance does and on which
+// interfaces, say what it brings with it, then Start applies the lot and opens
+// the workspace. Joining ends the wizard at step 2: the controller's data and
+// accounts replace this box's. Nothing but the password touches the appliance
+// before Start, so closing the tab halfway through leaves it exactly as
+// installed. The server keeps a marker per finished step (stores/setup.js) so
+// a return visit resumes at the step that was not finished.
 
 const STEPS = [
   { n: 1, label: 'Admin password' },
-  { n: 2, label: 'Two-factor' },
-  { n: 3, label: 'Deployment' },
-  { n: 4, label: 'Import' },
-  { n: 5, label: 'Review & start' },
+  { n: 2, label: 'Set up or join' },
+  { n: 3, label: 'Two-factor' },
+  { n: 4, label: 'Deployment' },
+  { n: 5, label: 'Import' },
+  { n: 6, label: 'Review & start' },
 ];
 const ROLE_LABEL = { both: 'DNS & DHCP', dns: 'DNS only', dhcp: 'DHCP only' };
 const IMPORT_LABEL = { fresh: 'start fresh', pihole: 'Pi-hole', cidrella: 'restore backup' };
@@ -105,10 +105,14 @@ const pihole = usePiholeImport({ toast, fallbackZoneName: () => setup.draft.netw
 provide('firstRunPihole', pihole);
 
 const step = ref(1);
-// The question after the password: 'choose' asks it, 'join' is the join form,
-// null is the numbered steps. Nothing is saved for it, so a setup resumed
-// before its two-factor answer is asked again.
-const branch = ref(null);
+// Step 2 shows the join form instead of the question once Join is picked.
+// Nothing is saved for the question, so a setup resumed before its
+// two-factor answer is asked it again.
+const joining = ref(false);
+provide(
+  'firstRunStepLabel',
+  computed(() => `Step ${step.value} of ${STEPS.length}`),
+);
 const starting = ref(false);
 const restarting = ref(false);
 const progress = ref('');
@@ -118,29 +122,25 @@ function firstUnfinishedStep() {
   const s = setup.state;
   if (!s.password || auth.mustChangePassword) return 1;
   if (!s.totp) return 2;
-  if (!s.deployment) return 3;
-  if (!s.import) return 4;
-  return 5;
+  if (!s.deployment) return 4;
+  if (!s.import) return 5;
+  return 6;
 }
 
 function subtitleFor(n) {
   if (n === 1) return auth.user?.username || '';
-  if (n === 2) return auth.totpEnabled ? 'on' : 'skipped';
-  if (n === 3) return ROLE_LABEL[setup.draft.role] || '';
-  if (n === 4) return IMPORT_LABEL[setup.draft.importKind] || '';
+  if (n === 2) return 'set up';
+  if (n === 3) return auth.totpEnabled ? 'on' : 'skipped';
+  if (n === 4) return ROLE_LABEL[setup.draft.role] || '';
+  if (n === 5) return IMPORT_LABEL[setup.draft.importKind] || '';
   return '';
 }
 
 function go(n) {
   error.value = '';
-  branch.value = null;
+  joining.value = false;
   step.value = n;
   window.scrollTo({ top: 0 });
-}
-
-function chooseKind() {
-  go(2);
-  branch.value = 'choose';
 }
 
 onMounted(async () => {
@@ -150,7 +150,6 @@ onMounted(async () => {
     error.value = apiError(err);
   }
   step.value = firstUnfinishedStep();
-  if (step.value === 2) branch.value = 'choose';
 });
 
 const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));

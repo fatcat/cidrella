@@ -1,7 +1,7 @@
 <template>
   <section class="fr-screen" data-track="first-run-step-review">
     <div>
-      <div class="fr-eyebrow">Step 5 of 5</div>
+      <StepEyebrow />
       <h1>{{ restore ? 'Ready to restore' : 'Ready to start' }}</h1>
       <p class="fr-lede">
         <template v-if="restore">
@@ -83,6 +83,7 @@
 </template>
 
 <script setup>
+import StepEyebrow from './StepEyebrow.vue';
 import StatusDot from '../StatusDot.vue';
 import { computed, onMounted } from 'vue';
 import Button from '../../ui/Button.js';

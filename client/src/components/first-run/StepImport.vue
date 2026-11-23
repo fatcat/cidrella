@@ -1,7 +1,7 @@
 <template>
   <section class="fr-screen" data-track="first-run-step-import">
     <div>
-      <div class="fr-eyebrow">Step 4 of 5</div>
+      <StepEyebrow />
       <h1>Bringing anything with you?</h1>
       <p class="fr-lede">
         Local DNS records, DHCP reservations and networks can come from a Pi-hole or from another
@@ -206,6 +206,7 @@
 </template>
 
 <script setup>
+import StepEyebrow from './StepEyebrow.vue';
 import StatusDot from '../StatusDot.vue';
 import { ref, computed, inject, watch } from 'vue';
 import Button from '../../ui/Button.js';

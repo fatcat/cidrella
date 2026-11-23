@@ -1,7 +1,7 @@
 <template>
   <section class="fr-screen" data-track="first-run-step-password">
     <div>
-      <div class="fr-eyebrow">Step 1 of 5</div>
+      <StepEyebrow />
       <h1>Set the admin password</h1>
       <p class="fr-lede">
         The password printed by the installer is a one-time key. Replace it now; nothing else on
@@ -104,6 +104,7 @@
 </template>
 
 <script setup>
+import StepEyebrow from './StepEyebrow.vue';
 import { ref, computed } from 'vue';
 import InputText from '../../ui/InputText.js';
 import Password from '../../ui/Password.js';

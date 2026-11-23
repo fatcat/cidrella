@@ -78,7 +78,7 @@ See [**INSTALL-DOCKER.md**](docs/INSTALL-DOCKER.md) for full details. Note: in-a
 
 ### First run
 
-The installer prints a one-time admin password. The first sign-in opens a five-step setup: replace that password, optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes (strongly encouraged), choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start. A new install can instead join an existing CIDRella as a member: see [Running more than one instance](docs/UPGRADE.md#running-more-than-one-instance).
+The installer prints a one-time admin password. The first sign-in opens a six-step setup: replace that password, choose whether this box is set up on its own or joins an existing CIDRella as a member, optionally add two-factor sign-in with an authenticator app and receive ten one-time backup codes (strongly encouraged), choose what the appliance does (DNS and DHCP, DNS only, or DHCP only) and on which interfaces, optionally bring in a Pi-hole's records and reservations or restore a CIDRella backup, then review and start. Joining ends the setup there: see [Running more than one instance](docs/UPGRADE.md#running-more-than-one-instance).
 
 ## Upgrading
 

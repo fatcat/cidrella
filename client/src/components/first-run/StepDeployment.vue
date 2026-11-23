@@ -1,7 +1,7 @@
 <template>
   <section class="fr-screen" data-track="first-run-step-deployment">
     <div>
-      <div class="fr-eyebrow">Step 3 of 5</div>
+      <StepEyebrow />
       <h1>What should this appliance do?</h1>
       <p class="fr-lede">
         DHCP is off until a role that serves it is chosen and applied at the last step. Choose the
@@ -146,6 +146,7 @@
 </template>
 
 <script setup>
+import StepEyebrow from './StepEyebrow.vue';
 import StatusDot from '../StatusDot.vue';
 import { ref, computed, onMounted } from 'vue';
 import Button from '../../ui/Button.js';

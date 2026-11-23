@@ -4,7 +4,7 @@
 <template>
   <section class="fr-screen" data-track="first-run-step-join">
     <div>
-      <div class="fr-eyebrow">Join</div>
+      <StepEyebrow />
       <h1>Join an existing CIDRella</h1>
       <p class="fr-lede">
         This box becomes a member of the controller named here. Make a join token on the controller
@@ -68,6 +68,7 @@
 </template>
 
 <script setup>
+import StepEyebrow from './StepEyebrow.vue';
 import { computed, ref } from 'vue';
 import Button from '../../ui/Button.js';
 import Checkbox from '../../ui/Checkbox.js';

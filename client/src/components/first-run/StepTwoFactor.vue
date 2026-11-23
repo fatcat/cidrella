@@ -1,7 +1,7 @@
 <template>
   <section class="fr-screen" data-track="first-run-step-totp">
     <div>
-      <div class="fr-eyebrow">Step 2 of 5</div>
+      <StepEyebrow />
       <h1>Add a second factor?</h1>
       <p class="fr-lede">
         Optional. With it on, signing in as {{ auth.user?.username }} takes the password and a
@@ -75,6 +75,7 @@
 </template>
 
 <script setup>
+import StepEyebrow from './StepEyebrow.vue';
 import StatusDot from '../StatusDot.vue';
 import { ref, computed } from 'vue';
 import Button from '../../ui/Button.js';
