@@ -14,6 +14,7 @@ export function singleBox() {
   return {
     mode: 'controller',
     controller_name: null,
+    controller_url: null,
     members: 0,
     sync: null,
     serves_dhcp: true,

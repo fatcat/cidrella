@@ -1,9 +1,31 @@
 <!-- Logging: a tab per role (DNS, DHCP) showing the log of the server filling
      it (GET /api/logs/sources, LogViewer), and an Audit Log tab (DataTable +
-     filters + pagination). Loads the sources, audit filter options and audit
-     log on mount. -->
+     filters + pagination). On a controller with members an instance select
+     above the tabs picks whose daemon logs they show. A member shows its
+     daemon logs alone: the controller holds the audit log. Loads the sources,
+     audit filter options and audit log on mount. -->
 <template>
   <div class="fill-panel">
+    <div v-if="logInstances.length > 1" class="log-instance">
+      <label for="log-instance" class="text-sm muted">Instance</label>
+      <Select
+        input-id="log-instance"
+        :model-value="selectedInstance"
+        :options="logInstances"
+        option-label="name"
+        option-value="instance_id"
+        size="small"
+        data-track="logs-instance"
+        @update:model-value="pickInstance"
+      />
+    </div>
+    <EmptyState
+      v-if="sourcesError"
+      icon="pi-exclamation-triangle"
+      :title="sourcesError"
+      description="Its logs show here once it answers."
+      :actions="retryActions"
+    />
     <Tabs v-model:value="activeTab" class="logging-subtabs">
       <TabList>
         <Tab
@@ -13,14 +35,15 @@
           :data-track="`logs-tab-${source.role}`"
           >{{ ROLE_TITLE[source.role] }} ({{ source.label }})</Tab
         >
-        <Tab value="audit" data-track="logs-tab-audit">Audit Log</Tab>
+        <Tab v-if="!isMember" value="audit" data-track="logs-tab-audit">Audit Log</Tab>
       </TabList>
       <TabPanels>
         <TabPanel v-for="source in logSources" :key="source.role" :value="source.role">
           <LogViewer
             v-if="source.available"
-            :key="`${source.role}-${source.label}`"
+            :key="`${viewedMember ?? 'here'}-${source.role}-${source.label}`"
             :role="source.role"
+            :instance="viewedMember"
             :clearable="source.clearable"
           />
           <EmptyState
@@ -30,7 +53,7 @@
             description="Queries and leases are under Analytics and the Networks workspace."
           />
         </TabPanel>
-        <TabPanel value="audit">
+        <TabPanel v-if="!isMember" value="audit">
           <div class="audit-section">
             <div class="audit-filters">
               <MultiSelect
@@ -152,7 +175,7 @@
 </template>
 
 <script setup>
-import { ref, watch, onMounted, defineAsyncComponent } from 'vue';
+import { computed, ref, watch, onMounted, defineAsyncComponent } from 'vue';
 import { useToast } from '../../ui/useToast.js';
 import Tabs from '../../ui/Tabs.js';
 import TabList from '../../ui/TabList.js';
@@ -164,6 +187,8 @@ import Button from '../../ui/Button.js';
 import DataTable from '../../ui/DataTable.js';
 import Column from '../../ui/Column.js';
 import MultiSelect from '../../ui/MultiSelect.js';
+import Select from '../../ui/Select.js';
+import { useFeatures } from '../../composables/useFeatures.js';
 import { formatDateTime } from '../../utils/dateFormat.js';
 import { apiError, EMPTY_CELL } from '../../utils/format.js';
 import api from '../../api/client.js';
@@ -172,17 +197,55 @@ const LogViewer = defineAsyncComponent(() => import('../../components/LogViewer.
 
 const toast = useToast();
 
+const { isMember } = useFeatures();
+
 const ROLE_TITLE = { dns: 'DNS', dhcp: 'DHCP' };
 const logSources = ref([]);
 const activeTab = ref('dns');
+// The instances whose logs this box can show, itself first; one or none
+// means there is nothing to pick.
+const logInstances = ref([]);
+const selectedInstance = ref(null);
+const sourcesError = ref(null);
+// The member whose logs are shown, or null for this box's own.
+const viewedMember = computed(() => {
+  const own = logInstances.value[0]?.instance_id;
+  return selectedInstance.value && selectedInstance.value !== own ? selectedInstance.value : null;
+});
 
 async function loadLogSources() {
   try {
-    logSources.value = (await api.get('/logs/sources')).data;
+    const params = viewedMember.value ? { instance: viewedMember.value } : undefined;
+    const { data } = await api.get('/logs/sources', { params });
+    sourcesError.value = null;
+    logSources.value = data.sources;
+    logInstances.value = data.instances;
+    selectedInstance.value ??= data.instances[0]?.instance_id ?? null;
   } catch (err) {
-    activeTab.value = 'audit';
+    logSources.value = [];
+    // A member that does not answer is said in place of its tabs.
+    if (viewedMember.value) {
+      sourcesError.value = apiError(err);
+      return;
+    }
+    if (!isMember.value) activeTab.value = 'audit';
     toast.add({ severity: 'error', summary: 'Error', detail: apiError(err), life: 5000 });
   }
+}
+
+const retryActions = [
+  {
+    label: 'Try again',
+    icon: 'pi-refresh',
+    severity: 'secondary',
+    dataTrack: 'logs-instance-retry',
+    onClick: () => void loadLogSources(),
+  },
+];
+
+function pickInstance(instanceId) {
+  selectedInstance.value = instanceId;
+  void loadLogSources();
 }
 
 // Audit Log
@@ -350,12 +413,19 @@ function formatDetails(details) {
 
 onMounted(() => {
   loadLogSources();
+  if (isMember.value) return;
   loadAuditFilterOptions();
   loadAuditLog();
 });
 </script>
 
 <style scoped>
+.log-instance {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 0.5rem;
+}
 .content-card {
   margin: 0;
   padding: 1.25rem;

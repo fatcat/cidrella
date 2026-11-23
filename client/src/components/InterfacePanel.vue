@@ -73,12 +73,20 @@
         </div>
         <div class="field field-inline">
           <label>IPv6 Support</label>
-          <ToggleSwitch v-model="ipv6Enabled" data-track="iface-ipv6-global" />
+          <ToggleSwitch
+            v-model="ipv6Enabled"
+            :disabled="isMember"
+            aria-label="IPv6 Support"
+            data-track="iface-ipv6-global"
+          />
         </div>
       </div>
       <small v-if="!dnsEnabled" class="field-help warn-text"
         >DNS is disabled globally. DHCP requires DNS and is also disabled.</small
       >
+      <small v-if="isMember" class="field-help" data-track="iface-ipv6-member">
+        Set on {{ controllerName }}, for every instance.
+      </small>
       <small
         class="field-help"
         style="display: block; margin-top: 0.5rem"
@@ -214,7 +222,11 @@ import Tag from '../ui/Tag.js';
 import { useFeatures } from '../composables/useFeatures.js';
 
 const toast = useToast();
-const { reload: reloadFeatures } = useFeatures();
+const { reload: reloadFeatures, isMember, instance } = useFeatures();
+// IPv6 Support is the estate's (server/src/sync/registry.js), so a member
+// shows it and the controller sets it. Everything else on this page is the
+// box's own.
+const controllerName = computed(() => instance.value.controller_name || 'the controller');
 const loading = ref(false);
 const saving = ref(false);
 const dnsEnabled = ref(true);

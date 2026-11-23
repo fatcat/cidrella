@@ -878,12 +878,6 @@ async function removeMember() {
   align-items: center;
   gap: 0.75rem;
 }
-.status-line {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0 0 0.75rem;
-}
 .row-actions {
   justify-content: flex-end;
   align-items: center;

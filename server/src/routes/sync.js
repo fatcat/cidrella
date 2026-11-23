@@ -25,7 +25,23 @@ import { EPOCH_HEADER, MODE_HEADER } from '../sync/controller-call.js';
 import { fenceSelf, receiveFence, receiveHandoverDone } from '../services/controller-promotion.js';
 import { takeOutboxRows } from '../sync/outbox-intake.js';
 import { restoreUnderWay } from '../sync/restore.js';
-import { controllerOnly, epochGate, requireListed, requireMember } from '../sync/require-member.js';
+import {
+  controllerOnly,
+  epochGate,
+  fromOwnController,
+  requireListed,
+  requireMember,
+} from '../sync/require-member.js';
+import {
+  LOG_PURPOSE,
+  LOG_ROLES,
+  logFor,
+  logSources,
+  noLog,
+  readBacklog,
+  readSince,
+  roleFilter,
+} from '../utils/log-source.js';
 import { acceptLeaseReport } from '../sync/lease-intake.js';
 import {
   LEASE_REPORT_TYPE,
@@ -135,6 +151,37 @@ router.post('/fence', requireListed, (req, res) => {
 router.post('/handover-done', requireMember, (req, res) => {
   const outcome = receiveHandoverDone(getDb(), req.member, notice(req.body));
   res.status(outcome.status).json(outcome.body);
+});
+
+// The controller reading this member's DNS and DHCP daemon logs for its Logs
+// page (routes/logs.js). Short requests: the controller polls with the offset
+// it was last given, so no stream stays open between instances.
+// What one answer carries at most; the controller asks again for the rest.
+const LOG_READ_BYTES = 256 * 1024;
+const readsLogs = fromOwnController(LOG_PURPOSE);
+
+// GET /api/sync/logs/sources: what /api/logs/sources says, nothing clearable.
+router.get('/logs/sources', readsLogs, (req, res) => {
+  res.json(logSources({ clearable: false }));
+});
+
+// GET /api/sync/logs?role=dns|dhcp[&after=<offset>]: without `after`, the
+// last lines of the role's log; with it, the complete lines written since.
+// Either way `{ lines, offset }`, `offset` the place to ask from next.
+router.get('/logs', readsLogs, (req, res) => {
+  const role = req.query.role || 'dns';
+  if (!LOG_ROLES.includes(role)) {
+    return res.status(400).json({ error: 'role must be dns or dhcp', code: 'bad_request' });
+  }
+  const log = logFor(role);
+  if (!log) return res.status(404).json({ ...noLog(role), code: 'no_log' });
+  const filter = roleFilter(log, role);
+  if (req.query.after === undefined) return res.json(readBacklog(log, filter));
+  const after = Number(req.query.after);
+  if (!Number.isSafeInteger(after) || after < 0) {
+    return res.status(400).json({ error: 'after must be a byte offset', code: 'bad_request' });
+  }
+  res.json(readSince(log, after, filter, LOG_READ_BYTES));
 });
 
 router.use(controllerOnly);

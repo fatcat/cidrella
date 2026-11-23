@@ -132,22 +132,32 @@ describe('GET /api/logs/sources', () => {
   it('names the backend of each role, and whether it has a log to show and clear', async () => {
     let res = await request(app).get('/api/logs/sources');
     expect(res.status).toBe(200);
-    expect(res.body).toEqual([
-      { role: 'dns', label: 'fake', available: true, clearable: true, message: null },
-      { role: 'dhcp', label: 'fake', available: true, clearable: true, message: null },
-    ]);
+    // A single box has no other instance to pick.
+    expect(res.body).toEqual({
+      sources: [
+        { role: 'dns', label: 'fake', available: true, clearable: true, message: null },
+        { role: 'dhcp', label: 'fake', available: true, clearable: true, message: null },
+      ],
+      instances: [],
+    });
     const source = backend.logSource();
     backend.logSource = () => ({ ...source, clearable: false });
     res = await request(app).get('/api/logs/sources');
-    expect(res.body.map((s) => s.clearable)).toEqual([false, false]);
+    expect(res.body.sources.map((s) => s.clearable)).toEqual([false, false]);
     backend.logSource = () => null;
     res = await request(app).get('/api/logs/sources');
-    expect(res.body[1]).toEqual({
+    expect(res.body.sources[1]).toEqual({
       role: 'dhcp',
       label: 'fake',
       available: false,
       clearable: false,
       message: 'fake keeps no DHCP log to show',
     });
+  });
+
+  it('knows no instance but this one on a single box', async () => {
+    expect((await request(app).get('/api/logs/sources?instance=nobody')).status).toBe(404);
+    expect((await backlog('role=dns&instance=nobody')).status).toBe(404);
+    expect((await request(app).post('/api/logs/clear?instance=nobody')).status).toBe(404);
   });
 });

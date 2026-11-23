@@ -19,6 +19,19 @@
     </aside>
 
     <div class="ana-content">
+      <p v-if="elsewhere" class="status-line elsewhere-line" data-track="ana-managed-elsewhere">
+        <StatusDot kind="info" label="Managed on the controller" />
+        <span>{{ elsewhere }} is managed on {{ controllerName }}.</span>
+        <a
+          v-if="controllerUrl"
+          :href="controllerUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          data-track="ana-open-controller"
+          >Open {{ controllerName }}</a
+        >
+      </p>
+
       <DashboardPanel v-if="activeTab === 'dashboard'" />
 
       <PerformancePanel v-if="activeTab === 'performance'" />
@@ -33,8 +46,11 @@
 </template>
 
 <script setup>
-import { computed, defineAsyncComponent, watch } from 'vue';
+import { computed, defineAsyncComponent, ref, watch } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
+import StatusDot from '../components/StatusDot.vue';
+import { useFeatures } from '../composables/useFeatures.js';
+import { analyticsSections, defaultAnalyticsView } from '../utils/member-ui.js';
 
 const AsyncLoader = defineAsyncComponent(() => import('../components/AsyncLoader.vue'));
 
@@ -52,58 +68,64 @@ const IntelligencePanel = asyncTab(() => import('./Intelligence.vue'));
 const AnomaliesPanel = asyncTab(() => import('./AnomaliesWorkspace.vue'));
 const ResolutionMapPanel = asyncTab(() => import('./ResolutionMap.vue'));
 
-const menuItems = [
-  {
-    id: 'dashboard',
-    label: 'Dashboard',
-    icon: 'pi pi-objects-column',
-    dataTrack: 'ana-tab-dashboard',
-  },
-  {
-    id: 'performance',
-    label: 'Performance',
-    icon: 'pi pi-chart-bar',
-    dataTrack: 'ana-tab-performance',
-  },
-  {
-    id: 'intelligence',
-    label: 'Intelligence',
-    icon: 'pi pi-microchip-ai',
-    dataTrack: 'ana-tab-intelligence',
-  },
-  {
-    id: 'anomalies',
-    label: 'Anomalies',
-    icon: 'pi pi-exclamation-triangle',
-    dataTrack: 'ana-tab-anomalies',
-  },
-  {
-    id: 'map',
-    label: 'Resolution Map',
-    icon: 'pi pi-globe',
-    dataTrack: 'ana-tab-map',
-  },
-];
-
 const route = useRoute();
 const router = useRouter();
-const tabIds = new Set(menuItems.map((item) => item.id));
-const legacyTabs = ['dashboard', 'performance', 'intelligence', 'anomalies', 'map'];
+const features = useFeatures();
 
-const savedTab = legacyTabs[Number(localStorage.getItem('cidrella_analytics_tab'))] || 'dashboard';
+// The sections this box shows: a member has no Dashboard or Anomalies, and
+// opens on Performance (utils/member-ui.js).
+const menuItems = computed(() => analyticsSections(features.isMember.value));
+const tabIds = computed(() => new Set(menuItems.value.map((item) => item.id)));
+// The saved tab is stored by its index in this list, so its order is fixed.
+const legacyTabs = ['dashboard', 'performance', 'intelligence', 'anomalies', 'map'];
+const TAB_KEY = 'cidrella_analytics_tab';
+
+function readSavedTab() {
+  try {
+    return legacyTabs[Number(localStorage.getItem(TAB_KEY))] || '';
+  } catch {
+    return '';
+  }
+}
+const savedTab = readSavedTab();
+
 const activeTab = computed(() => {
   const requested = typeof route.query.view === 'string' ? route.query.view : '';
-  return tabIds.has(requested) ? requested : savedTab;
+  if (tabIds.value.has(requested)) return requested;
+  return tabIds.value.has(savedTab) ? savedTab : defaultAnalyticsView(features.isMember.value);
 });
 
+// A member sent here for a page it does not show (router/index.js) names that
+// page once, with a link to the controller, and drops the query so a reload
+// or a bookmark of this page does not repeat it.
+const elsewhere = ref('');
+const controllerName = computed(() => features.instance.value.controller_name || 'the controller');
+const controllerUrl = computed(() => features.instance.value.controller_url);
 function selectTab(id) {
-  if (!tabIds.has(id) || id === activeTab.value) return;
+  if (!tabIds.value.has(id) || id === activeTab.value) return;
+  elsewhere.value = '';
   router.push({ query: { ...route.query, view: id } });
 }
 
 watch(activeTab, (val) => {
-  localStorage.setItem('cidrella_analytics_tab', String(legacyTabs.indexOf(val)));
+  try {
+    localStorage.setItem(TAB_KEY, String(legacyTabs.indexOf(val)));
+  } catch {
+    // A browser that keeps nothing opens on the default next time.
+  }
 });
+
+watch(
+  () => route.query.elsewhere,
+  (label) => {
+    if (typeof label !== 'string' || !label) return;
+    elsewhere.value = label;
+    const rest = { ...route.query };
+    delete rest.elsewhere;
+    void router.replace({ query: rest });
+  },
+  { immediate: true },
+);
 </script>
 
 <style scoped>
@@ -179,6 +201,10 @@ watch(activeTab, (val) => {
 .ana-content {
   flex: 1;
   overflow: auto;
+}
+
+.elsewhere-line {
+  margin: 0.75rem 1rem 0;
 }
 
 @media (max-width: 768px) {

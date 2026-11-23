@@ -101,3 +101,64 @@ describe('header mode chip', () => {
     wrapper.unmount();
   });
 });
+
+describe('header on a member', () => {
+  const MEMBER_WITH_URL = { ...MEMBER, controller_url: 'https://[2001:db8::10]:8443' };
+  const fetched = (url) => api.get.mock.calls.some(([called]) => called === url);
+
+  it("links the mode chip to the controller's UI", async () => {
+    const { wrapper } = await mountHeader(MEMBER_WITH_URL);
+    expect(chip(wrapper).element.tagName).toBe('A');
+    expect(chip(wrapper).attributes('href')).toBe('https://[2001:db8::10]:8443');
+    expect(chip(wrapper).attributes('target')).toBe('_blank');
+    expect(chip(wrapper).attributes('rel')).toContain('noopener');
+    expect(chip(wrapper).attributes('title')).toContain('Open ns1');
+    wrapper.unmount();
+  });
+
+  it('hides IP Management, the scanner and the anomaly chip, and asks for neither', async () => {
+    featuresPayload = { instance: MEMBER_WITH_URL };
+    const { wrapper } = await mountHeader(MEMBER_WITH_URL);
+    expect(wrapper.find('[data-track="nav-networks"]').exists()).toBe(false);
+    expect(wrapper.find('[data-track="nav-analytics"]').exists()).toBe(true);
+    expect(wrapper.find('[data-track="nav-system"]').exists()).toBe(true);
+    expect(wrapper.find('[data-track="header-chip-scan"]').exists()).toBe(false);
+    expect(wrapper.find('[data-track="header-chip-anomaly"]').exists()).toBe(false);
+    expect(wrapper.find('[data-track="user-classic-networks"]').exists()).toBe(false);
+    expect(wrapper.find('[data-track="user-classic-anomalies"]').exists()).toBe(false);
+    expect(wrapper.find('[data-track="user-classic-settings"]').exists()).toBe(true);
+    await vi.advanceTimersByTimeAsync(120000);
+    expect(featureReads()).toBe(2);
+    expect(fetched('/scans')).toBe(false);
+    expect(fetched('/scans/next')).toBe(false);
+    expect(fetched('/anomalies/summary')).toBe(false);
+    wrapper.unmount();
+  });
+
+  it('shows no rogue DHCP badge on a member, and does on a controller', async () => {
+    const rogue = { rogueDhcp: { enabled: true, supported: true, unacknowledged: 2 } };
+    api.get.mockClear();
+    featuresPayload = { instance: MEMBER_WITH_URL };
+    const respond = (url) => {
+      if (url === '/features') return Promise.resolve({ data: featuresPayload });
+      if (url === '/health/system') return Promise.resolve({ data: rogue });
+      if (url === '/scans') return Promise.resolve({ data: [] });
+      return Promise.resolve({ data: {} });
+    };
+    const member = await mountHeader(MEMBER_WITH_URL);
+    api.get.mockImplementation(respond);
+    await vi.advanceTimersByTimeAsync(60000);
+    await flushPromises();
+    expect(member.wrapper.find('.status-chip-badge').exists()).toBe(false);
+    member.wrapper.unmount();
+
+    const box = await mountHeader({ mode: 'controller', members: 0, sync: null });
+    api.get.mockImplementation(respond);
+    await vi.advanceTimersByTimeAsync(60000);
+    await flushPromises();
+    expect(box.wrapper.find('[data-track="header-chip-ops"] .status-chip-badge').text()).toBe('2');
+    expect(box.wrapper.find('[data-track="nav-networks"]').exists()).toBe(true);
+    expect(box.wrapper.find('[data-track="header-chip-scan"]').exists()).toBe(true);
+    box.wrapper.unmount();
+  });
+});

@@ -1,10 +1,13 @@
 <!-- Backup & Restore. Extracted from System.vue tab 3 (1:1): manual backup, schedule,
      backups table + row context menu, restore, delete-backup dialog, and admin-gated
-     Database Reset. Loads on mount. -->
+     Database Reset. Loads on mount.
+
+     A member takes no backups of data it does not own, so it shows the backups list
+     alone: what is on its disk, to download or delete. -->
 <template>
   <div class="content-card">
     <div class="backup-section">
-      <div class="setting-group">
+      <div v-if="!isMember" class="setting-group">
         <h3>Manual Backup</h3>
         <p class="field-help" style="margin-bottom: 0.75rem">
           Creates a backup of the database, certificates, and DNS and DHCP server configuration.
@@ -19,7 +22,7 @@
         />
       </div>
 
-      <div class="setting-group">
+      <div v-if="!isMember" class="setting-group">
         <h3>Schedule</h3>
         <div class="field">
           <label>Automatic Backups</label>
@@ -119,6 +122,13 @@
         >
           <template #empty>
             <EmptyState
+              v-if="isMember"
+              icon="pi-database"
+              title="No backups"
+              :description="`This member takes no backups. They are taken on ${controllerName}.`"
+            />
+            <EmptyState
+              v-else
               icon="pi-database"
               title="No backups yet"
               description="Create a backup now or enable the schedule below."
@@ -158,7 +168,7 @@
         </DataTable>
       </div>
 
-      <div class="setting-group">
+      <div v-if="!isMember" class="setting-group">
         <h3>Restore from Backup</h3>
         <p class="field-help restore-warning">
           Warning: Restoring will replace all current data. A server restart will be required.
@@ -180,7 +190,7 @@
         </div>
       </div>
 
-      <div class="setting-group" v-if="authStore.user?.role === 'admin'">
+      <div class="setting-group" v-if="!isMember && authStore.user?.role === 'admin'">
         <h3 style="color: var(--cid-red-500)">Database Reset</h3>
         <p class="field-help" style="margin-bottom: 0.75rem">
           Reset the application to a fresh state. This will delete all networks, DNS zones, DHCP
@@ -296,6 +306,7 @@ import { useToast } from '../../ui/useToast.js';
 import { useSubnetStore } from '../../stores/subnets.js';
 import { useOperationsStore } from '../../stores/operations.js';
 import { useAuthStore } from '../../stores/auth.js';
+import { useFeatures } from '../../composables/useFeatures.js';
 import { apiError } from '../../utils/format.js';
 import { formatDateTime } from '../../utils/dateFormat.js';
 import api from '../../api/client.js';
@@ -315,6 +326,8 @@ const store = useSubnetStore();
 const opsStore = useOperationsStore();
 const authStore = useAuthStore();
 const toast = useToast();
+const { isMember, instance } = useFeatures();
+const controllerName = computed(() => instance.value.controller_name || 'the controller');
 
 const formatDate = formatDateTime;
 
@@ -553,6 +566,7 @@ async function doResetDatabase() {
 }
 
 onMounted(async () => {
+  if (isMember.value) return opsStore.fetchBackups();
   await Promise.all([opsStore.fetchBackups(), loadBackupSettings(), loadNameValues()]);
 });
 </script>

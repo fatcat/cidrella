@@ -14,8 +14,10 @@
  * box has seen, puts the controller in doubt: the member looks for the one
  * to follow (sync/find-controller.js).
  */
+import path from 'path';
 import { syncRequest } from '../utils/sync-client.js';
 import { readCredential } from './credential.js';
+import { CALL_PROOF_HEADER, callProof } from './identity-proof.js';
 import { readSyncState } from './log.js';
 import { controllerOf } from './mode.js';
 
@@ -79,6 +81,19 @@ export function callInstance(db, peer, { headers = {}, ...request }) {
       [EPOCH_HEADER]: String(knownEpoch(db)),
       [CONTROLLER_HEADER]: controllerOf(db)?.instance_id || readSyncState(db, 'instance_id') || '',
     },
+  });
+}
+
+/**
+ * One request from a controller to a member it holds no credential for, made
+ * with a call proof for `purpose` (sync/identity-proof.js), which the member
+ * checks with `fromOwnController` (sync/require-member.js).
+ */
+export function callMemberAsController(db, peer, purpose, { headers = {}, ...request }) {
+  const proof = callProof(path.dirname(db.name), peer.fingerprint, purpose);
+  return callInstance(db, peer, {
+    ...request,
+    headers: { ...headers, [CALL_PROOF_HEADER]: proof },
   });
 }
 

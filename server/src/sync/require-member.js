@@ -13,11 +13,18 @@ import {
   EPOCH_LEAP,
   FENCED,
   NOT_CONTROLLER,
+  STALE_EPOCH,
+  knownEpoch,
 } from './controller-call.js';
 import { syncFingerprint } from './identity.js';
-import { IDENTITY_HEADER, provenFingerprint } from './identity-proof.js';
+import {
+  CALL_PROOF_HEADER,
+  IDENTITY_HEADER,
+  provenCall,
+  provenFingerprint,
+} from './identity-proof.js';
 import { syncStatus } from './log.js';
-import { isFenced, isMember } from './mode.js';
+import { controllerOf, isFenced, isMember } from './mode.js';
 import { handoverFreeze } from './promotion-state.js';
 
 // How long a controller frozen for a handover waits for the member it named
@@ -92,6 +99,48 @@ export function requireListed(req, res, next) {
   }
   req.listed = listed;
   next();
+}
+
+/**
+ * The caller is the controller this member follows, proven by a call proof
+ * for `purpose` (sync/identity-proof.js): the controller holds no credential
+ * of a member's, and its row has none to check. The proof's certificate must
+ * be the one this member follows, so another member of the estate, which is
+ * on the list too, is refused. A controller naming an epoch below the one
+ * this member knows has been replaced, and is refused as well. Read-only
+ * requests only: nothing behind this changes what the member holds.
+ */
+export function fromOwnController(purpose) {
+  return (req, res, next) => {
+    const db = getDb();
+    const controller = controllerOf(db);
+    let fingerprint = null;
+    try {
+      fingerprint = controller
+        ? provenCall(
+            req.headers[CALL_PROOF_HEADER],
+            syncFingerprint(path.dirname(db.name)),
+            purpose,
+          )
+        : null;
+    } catch {
+      /* this box has no sync identity to be asked by */
+    }
+    if (!fingerprint || fingerprint !== controller.fingerprint) {
+      return res.status(401).json({
+        error: 'Only the controller this instance follows may ask this.',
+        code: 'not_own_controller',
+      });
+    }
+    const epoch = epochOfRequest(req);
+    if (epoch === null || epoch < knownEpoch(db)) {
+      return res.status(409).json({
+        error: 'The caller speaks for an older epoch than this instance knows of.',
+        code: STALE_EPOCH,
+      });
+    }
+    next();
+  };
 }
 
 /** The epoch a request names, or null. */

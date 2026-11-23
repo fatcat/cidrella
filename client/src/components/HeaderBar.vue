@@ -23,6 +23,7 @@
           Analytics
         </router-link>
         <router-link
+          v-if="showsPage('Networks')"
           to="/networks"
           class="nav-link"
           :class="{ active: route.path.startsWith('/networks') || route.path === '/' }"
@@ -40,8 +41,23 @@
     </div>
 
     <div class="header-status">
+      <!-- A member's chip opens its controller's UI, where what it does not
+           show is managed. -->
+      <a
+        v-if="modeChip && controllerUrl"
+        :href="controllerUrl"
+        target="_blank"
+        rel="noopener noreferrer"
+        class="status-chip status-chip-instance"
+        data-track="header-chip-instance"
+        :title="`${modeChip.title}\nOpen ${features.instance.value.controller_name || 'the controller'}`"
+      >
+        <StatusDot :kind="modeChip.tone" :label="modeChip.state" />
+        <span class="status-chip-label">{{ modeChip.label }}</span>
+        <i class="pi pi-external-link status-chip-link" aria-hidden="true"></i>
+      </a>
       <button
-        v-if="modeChip"
+        v-else-if="modeChip"
         class="status-chip status-chip-instance"
         data-track="header-chip-instance"
         :title="modeChip.title"
@@ -51,6 +67,7 @@
         <span class="status-chip-label">{{ modeChip.label }}</span>
       </button>
       <button
+        v-if="showsChip('scan')"
         class="status-chip status-chip-scan"
         :class="scanChipClass"
         data-track="header-chip-scan"
@@ -71,7 +88,7 @@
       >
         <StatusDot :kind="backendDotKind(unit)" :label="hostDotLabel(backendDotKind(unit))" />
         <span class="status-chip-label">{{ unit.name }}</span>
-        <span v-if="rogueDhcpCount > 0 && unit.roles.includes('dhcp')" class="status-chip-badge">{{
+        <span v-if="rogueShown && unit.roles.includes('dhcp')" class="status-chip-badge">{{
           rogueDhcpCount
         }}</span>
       </button>
@@ -114,9 +131,10 @@
       >
         <StatusDot :kind="opsDotKind" :label="dotLabel(opsDotKind)" />
         <span class="status-chip-label">Ops</span>
-        <span v-if="rogueDhcpCount > 0" class="status-chip-badge">{{ rogueDhcpCount }}</span>
+        <span v-if="rogueShown" class="status-chip-badge">{{ rogueDhcpCount }}</span>
       </button>
       <button
+        v-if="showsChip('anomaly')"
         class="status-chip status-chip-anomaly"
         :class="anomalyChipClass"
         data-track="header-chip-anomaly"
@@ -140,6 +158,7 @@
           <span class="status-popover-val">{{ backendDisplay(unit) }}</span>
         </div>
         <div
+          v-if="showsChip('rogue-dhcp')"
           class="status-popover-row status-popover-clickable"
           @click="goToRogueDhcp"
           title="Open Rogue DHCP Server detection"
@@ -166,7 +185,7 @@
           <span class="status-popover-label">Disk</span>
           <span class="status-popover-val">{{ diskDisplay }}</span>
         </div>
-        <div class="status-popover-row">
+        <div v-if="showsChip('scan')" class="status-popover-row">
           <StatusDot :kind="scanState.dot" :label="scanState.dotLabel" />
           <span class="status-popover-label">Scanner</span>
           <span class="status-popover-val">{{ scanDisplay }}</span>
@@ -176,7 +195,7 @@
           <span class="status-popover-label">Backend Restart</span>
           <span class="status-popover-val">{{ serviceCrashLabel }}</span>
         </div>
-        <div class="status-popover-footer">
+        <div v-if="showsChip('scan')" class="status-popover-footer">
           {{ nextScanTime ? `next scan ${nextScanTimeOnly}` : 'scheduled scanning disabled' }}
         </div>
       </div>
@@ -298,6 +317,7 @@
             <label class="user-menu-label">Classic interface</label>
             <div class="user-menu-links">
               <router-link
+                v-if="showsPage('NetworksClassic')"
                 :to="CLASSIC_PATHS.networks"
                 class="user-menu-link"
                 data-track="user-classic-networks"
@@ -312,6 +332,7 @@
                 >Settings</router-link
               >
               <router-link
+                v-if="showsPage('AnomaliesClassic')"
                 :to="CLASSIC_PATHS.anomalies"
                 class="user-menu-link"
                 data-track="user-classic-anomalies"
@@ -364,6 +385,7 @@ import Select from '../ui/Select.js';
 import StatusDot from './StatusDot.vue';
 import { anyBackendDown, backendUnits, unitState } from '../utils/backend-status.js';
 import { instanceChip } from '../utils/instances.js';
+import { allowedOnMember, headerShows } from '../utils/member-ui.js';
 import { useFeatures } from '../composables/useFeatures.js';
 import { useAuthStore } from '../stores/auth.js';
 import { useThemeStore, themes } from '../stores/theme.js';
@@ -492,7 +514,7 @@ const serviceCrashLabel = computed(() => {
 // service-down condition exists; otherwise an unacknowledged rogue turns the
 // Ops chip yellow.
 const rogueDhcpCount = computed(() => health.value?.rogueDhcp?.unacknowledged || 0);
-const opsWarn = computed(() => !opsIssue.value && rogueDhcpCount.value > 0);
+const opsWarn = computed(() => !opsIssue.value && rogueShown.value);
 const opsChipClass = computed(() =>
   opsIssue.value ? 'chip-err' : opsWarn.value ? 'chip-warn' : '',
 );
@@ -516,6 +538,15 @@ const opsTitle = computed(() => {
 // chip. What the chip says moves, so it follows the 60 s poll.
 const features = useFeatures();
 const modeChip = computed(() => instanceChip(features.instance.value));
+const controllerUrl = computed(() =>
+  features.isMember.value ? features.instance.value.controller_url : null,
+);
+
+// A member shows only what is about the box (utils/member-ui.js): no IP
+// Management, no scanner, no anomaly sidecar, no rogue DHCP warnings.
+const showsPage = (name) => !features.isMember.value || allowedOnMember({ name });
+const showsChip = (id) => headerShows(id, features.isMember.value);
+const rogueShown = computed(() => showsChip('rogue-dhcp') && rogueDhcpCount.value > 0);
 function goToInstances() {
   router.push('/system?area=instances');
 }
@@ -671,7 +702,7 @@ function resourceChip(statusClass) {
 function backendDotKind(unit) {
   if (!healthKnown.value) return 'muted';
   if (!unit.running) return 'err';
-  if (rogueDhcpCount.value > 0 && unit.roles.includes('dhcp')) return 'warn';
+  if (rogueShown.value && unit.roles.includes('dhcp')) return 'warn';
   return unitState(unit).tone;
 }
 const BACKEND_CHIP_CLASS = {
@@ -683,7 +714,7 @@ const BACKEND_CHIP_CLASS = {
 const backendChipClass = (unit) => BACKEND_CHIP_CLASS[backendDotKind(unit)];
 function backendTitle(unit) {
   const base = `${unit.name}: ${backendDisplay(unit)}`;
-  return rogueDhcpCount.value > 0 && unit.roles.includes('dhcp')
+  return rogueShown.value && unit.roles.includes('dhcp')
     ? `${base}, ${rogueDhcpCount.value} rogue DHCP server(s) detected`
     : base;
 }
@@ -728,7 +759,9 @@ async function fetchNextScan() {
   }
 }
 
+// A member has no scanner chip and no anomaly chip, so it asks for neither.
 function refreshScanHeader() {
+  if (!showsChip('scan')) return;
   fetchActiveScan();
   fetchNextScan();
 }
@@ -744,6 +777,7 @@ async function fetchHealth() {
 }
 
 async function fetchAnomalySummary() {
+  if (!showsChip('anomaly')) return;
   // Swallowed on purpose: this is a background poll for a header badge, and a
   // transient failure should not surface as an error toast.
   try {
@@ -890,6 +924,13 @@ onUnmounted(() => {
   font-weight: 700;
   font-size: var(--app-fs-xs);
   letter-spacing: 0.02em;
+}
+.status-chip-instance[href] {
+  text-decoration: none;
+}
+.status-chip-link {
+  font-size: 0.6rem;
+  opacity: 0.7;
 }
 
 /* Status is conveyed by the dot only. Chip text stays the default color.

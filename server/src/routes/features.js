@@ -7,6 +7,7 @@ import { controllerOf, handoverTarget, instanceMode, isFenced, isMember } from '
 import { memberSyncStatus } from '../sync/member.js';
 import { servesDhcpHere } from '../sync/dhcp-active.js';
 import { fencedState } from '../sync/promotion-state.js';
+import { formatHostPort } from '../utils/address.js';
 
 // GET /api/features: the switches the UI needs before it renders anything.
 // Any signed-in user may read it; a viewer hides the same IPv6 affordances an
@@ -20,6 +21,9 @@ const router = Router();
 // reports as a member with no controller, and `fenced_by` names who
 // replaced it when it knows. `handover_to` names the member a
 // controller is handing over to, while it refuses changes.
+// `controller_url` is where a member's header sends someone for the pages a
+// member does not show: the controller's web UI, on the port the member
+// joined and syncs through.
 router.get('/', (req, res) => {
   const db = getDb();
   const controller = controllerOf(db);
@@ -29,6 +33,7 @@ router.get('/', (req, res) => {
     instance: {
       mode: instanceMode(),
       controller_name: controller?.name ?? null,
+      controller_url: controllerUrl(controller),
       members: isMember(db) ? 0 : countMembers(db),
       sync: memberSyncStatus(db),
       // Does this box answer DHCP: exactly one instance does.
@@ -40,5 +45,10 @@ router.get('/', (req, res) => {
     },
   });
 });
+
+function controllerUrl(controller) {
+  if (!controller?.address || !controller.port) return null;
+  return `https://${formatHostPort(controller.address, controller.port)}`;
+}
 
 export default router;

@@ -50,6 +50,7 @@ describe('features store', () => {
     expect(store.instance).toEqual({
       mode: 'controller',
       controller_name: null,
+      controller_url: null,
       members: 0,
       sync: null,
       serves_dhcp: true,
@@ -63,6 +64,15 @@ describe('features store', () => {
     store.set({ ipv6: true });
     expect(store.instance.mode).toBe('controller');
     expect(store.isMember).toBe(false);
+  });
+
+  it("keeps a member's controller URL only when it is https", () => {
+    const store = useFeaturesStore();
+    const url = 'https://[2001:db8::10]:443';
+    store.set({ instance: { mode: 'member', controller_name: 'ns1', controller_url: url } });
+    expect(store.instance.controller_url).toBe(url);
+    store.set({ instance: { mode: 'member', controller_url: 'javascript:alert(1)' } });
+    expect(store.instance.controller_url).toBeNull();
   });
 
   it('reads whether this box serves DHCP, and the old rule from a server that does not say', () => {

@@ -2,6 +2,7 @@ import { createRouter, createWebHistory } from 'vue-router';
 import { useAuthStore } from '../stores/auth.js';
 import { useFeaturesStore } from '../stores/features.js';
 import { rememberView } from '../utils/landing.js';
+import { elsewhereRedirect, pageManagedElsewhere } from '../utils/member-ui.js';
 
 import Login from '../views/Login.vue';
 import ChangePassword from '../views/ChangePassword.vue';
@@ -173,6 +174,14 @@ router.beforeEach(async (to) => {
   // Force password change
   if (auth.mustChangePassword && to.name !== 'ChangePassword') {
     return { name: 'ChangePassword' };
+  }
+
+  // A member shows only what is about the box (utils/member-ui.js). A page
+  // it does not show, a bookmark or the remembered last view after sign-in
+  // included, lands on Analytics, which says where that page is managed.
+  if (features.isMember) {
+    const elsewhere = pageManagedElsewhere(to);
+    if (elsewhere) return elsewhereRedirect(elsewhere);
   }
 
   return true;

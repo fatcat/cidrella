@@ -17,14 +17,17 @@ vi.mock('vue-router', () => ({
 
 // The feature switches the shell gates sub-tabs on. Off by default, as in a
 // component test without Pinia; a test flips one on.
-const features = reactive({ ipv6: false });
+const features = reactive({ ipv6: false, isMember: false, instance: { mode: 'controller' } });
+const refOf = (key) => ({
+  get value() {
+    return features[key];
+  },
+});
 vi.mock('../../../../src/composables/useFeatures.js', () => ({
   useFeatures: () => ({
-    ipv6: {
-      get value() {
-        return features.ipv6;
-      },
-    },
+    ipv6: refOf('ipv6'),
+    isMember: refOf('isMember'),
+    instance: refOf('instance'),
   }),
 }));
 
@@ -58,6 +61,7 @@ vi.mock('../../../../src/config/settingsAreas.js', () => {
           id: 'vlans',
           label: 'VLANs',
           dataTrack: 'settings-sec-vlans',
+          member: true,
           fill: true,
           component: leaf('Vlans'),
         },
@@ -105,7 +109,16 @@ vi.mock('../../../../src/config/settingsAreas.js', () => {
           id: 'backup',
           label: 'Backup',
           dataTrack: 'settings-sec-backup',
+          member: true,
           component: leaf('Backup'),
+        },
+        {
+          id: 'leases',
+          label: 'Leases',
+          dataTrack: 'settings-sec-leases',
+          memberOnly: true,
+          when: (state) => state.instance?.serves_dhcp === true,
+          component: leaf('Leases'),
         },
         {
           id: 'updates',
@@ -160,6 +173,8 @@ describe('Settings workspace shell', () => {
   beforeEach(() => {
     route.query = {};
     features.ipv6 = false;
+    features.isMember = false;
+    features.instance = { mode: 'controller' };
     push.mockClear();
     replace.mockClear();
     globalThis.document.body.innerHTML = '';
@@ -292,6 +307,53 @@ describe('Settings workspace shell', () => {
     expect(push).toHaveBeenLastCalledWith({ query: { area: 'general', sec: 'vlans' } });
     await tabs[1].trigger('keydown', { key: 'ArrowRight' });
     expect(push).toHaveBeenLastCalledWith({ query: { area: 'general', sec: 'naming' } });
+    wrapper.unmount();
+  });
+
+  it('on a member lists only the member sections, and the lease list only while it serves DHCP', async () => {
+    features.isMember = true;
+    features.instance = { mode: 'member', serves_dhcp: false };
+    route.query = { area: 'maintenance' };
+    const wrapper = mountShell();
+    expect(wrapper.findAll('.area-row strong').map((el) => el.text())).toEqual([
+      'General',
+      'Maintenance',
+    ]);
+    // The count and the blurb are what the member lists.
+    expect(wrapper.findAll('.area-count').map((el) => el.text())).toEqual(['1', '1']);
+    expect(wrapper.findAll('.area-row small').map((el) => el.text())).toEqual(['VLANs', 'Backup']);
+    // One section: no tablist.
+    expect(wrapper.find('[role="tab"]').exists()).toBe(false);
+    expect(wrapper.find('.leaf').text()).toBe('Backup');
+
+    features.instance = { mode: 'member', serves_dhcp: true };
+    await nextTick();
+    expect(wrapper.findAll('[role="tab"]').map((el) => el.text())).toEqual(['Backup', 'Leases']);
+
+    // The search finds only what is listed.
+    await wrapper.find('[data-track="settings-search"]').setValue('rogue');
+    expect(wrapper.find('.explorer-empty').exists()).toBe(true);
+    await wrapper.find('[data-track="settings-search"]').setValue('leases');
+    expect(wrapper.findAll('.area-row strong').map((el) => el.text())).toEqual(['Maintenance']);
+    wrapper.unmount();
+  });
+
+  it('on a member opens the first area it lists for an area it does not', () => {
+    features.isMember = true;
+    features.instance = { mode: 'member', serves_dhcp: false };
+    route.query = { area: 'dhcp' };
+    const wrapper = mountShell();
+    expect(wrapper.find('h2').text()).toBe('General');
+    expect(wrapper.find('.leaf').text()).toBe('Vlans');
+    wrapper.unmount();
+  });
+
+  it('never lists the member-only lease section on a controller', () => {
+    features.instance = { mode: 'controller', serves_dhcp: true };
+    route.query = { area: 'maintenance', sec: 'leases' };
+    const wrapper = mountShell();
+    expect(wrapper.findAll('[role="tab"]').map((el) => el.text())).toEqual(['Backup', 'Updates']);
+    expect(wrapper.find('.leaf').text()).toBe('Backup');
     wrapper.unmount();
   });
 });

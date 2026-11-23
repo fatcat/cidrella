@@ -33,8 +33,8 @@
           :key="a.id"
           type="button"
           class="sa-rail-item"
-          :class="{ active: a.id === areaId }"
-          :aria-current="a.id === areaId ? 'page' : undefined"
+          :class="{ active: a.id === area?.id }"
+          :aria-current="a.id === area?.id ? 'page' : undefined"
           :data-track="a.dataTrack"
           @click="$emit('area', a.id)"
         >
@@ -86,8 +86,9 @@
 
 <script setup>
 import { computed, ref } from 'vue';
-import { SETTINGS_AREAS, SETTINGS_GROUPS, findArea } from '../../config/settingsAreas.js';
+import { SETTINGS_GROUPS } from '../../config/settingsAreas.js';
 import { useFeatures } from '../../composables/useFeatures.js';
+import { matchingAreas, visibleAreas, visibleSections } from '../../utils/member-ui.js';
 
 const props = defineProps({
   areaId: { type: String, required: true },
@@ -95,11 +96,12 @@ const props = defineProps({
 });
 defineEmits(['area', 'sec']);
 
-const area = computed(() => findArea(props.areaId));
+// The areas and sections this box lists come from utils/member-ui.js, the
+// same rule the Settings workspace uses.
 const features = useFeatures();
-const subtabs = computed(() =>
-  (area.value?.subtabs || []).filter((st) => !st.feature || features[st.feature]?.value),
-);
+const areas = computed(() => visibleAreas(features));
+const area = computed(() => areas.value.find((a) => a.id === props.areaId) || areas.value[0]);
+const subtabs = computed(() => visibleSections(area.value, features));
 const activeSecId = computed(() => {
   const ids = subtabs.value.map((s) => s.id);
   return ids.includes(props.sec) ? props.sec : ids[0] || '';
@@ -108,25 +110,11 @@ const activeSubtab = computed(() => subtabs.value.find((s) => s.id === activeSec
 
 const search = ref('');
 
-/**
- * Rail filter. Matches the same three things the card grid's search matched:
- * the area label, its blurb, and the labels of its sub-tabs. The blurb is no
- * longer rendered anywhere, but it stays searchable on purpose: it is the only
- * place a word like "DNSSEC" is associated with the DNS area, which is exactly
- * the lookup this box exists for.
- */
-function areaMatches(a, q) {
-  if (!q) return true;
-  return (
-    a.label.toLowerCase().includes(q) ||
-    a.blurb.toLowerCase().includes(q) ||
-    a.subtabs.some((st) => st.label.toLowerCase().includes(q))
-  );
-}
-
+// Rail filter: the area label, its blurb, and the labels of the sections it
+// lists (matchingAreas in utils/member-ui.js).
+const matched = computed(() => matchingAreas(features, search.value));
 function matchingAreasInGroup(group) {
-  const q = search.value.trim().toLowerCase();
-  return SETTINGS_AREAS.filter((a) => a.group === group && areaMatches(a, q));
+  return matched.value.filter((a) => a.group === group);
 }
 
 // A group header with nothing under it is noise, so groups collapse out of the

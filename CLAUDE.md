@@ -171,7 +171,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   checks the keys against the client catalog), and the client control is
   `components/table/FilterMenu.vue`; never build filter choices from the rows on screen. Shared styles: `assets/utilities.css` (global, loaded by
   `main.js`: `muted`, `text-sm`, `w-full`, `mono`, `sr-only`, `action-buttons`,
-  `dialog-actions`, `card-header`, `field-error`, `field-help`, `input-with-action` (a field's
+  `dialog-actions`, `card-header`, `status-line`, `field-error`, `field-help`, `input-with-action` (a field's
   input with a small action beside it, as Suggest), `fill-panel`: the root of a
   Settings `fill` section or full page, whose inner table or log scrolls instead of the page; a
   `scrollHeight="flex"` DataTable directly inside it takes the height left under its siblings), `assets/analytics-workspace.css` for the
@@ -291,7 +291,7 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   for sync state, which instance serves DHCP, the header chip, how far behind, and the wording
   of a handover, a restart and a replaced controller), `useFeatures().instance`/`isMember`/`frozen`
   (`frozen`: a controller that is replaced or handing over; `usePermissions` treats it as
-  read-only), `components/instances/FencedPanel.vue`, `components/instances/RejoinForm.vue`
+  read-only), `components/instances/FencedPanel.vue`, client `utils/member-ui.js` (what a member shows: `allowedOnMember`/`pageManagedElsewhere` for routes, `headerShows` for the header, and `visibleSections`/`visibleAreas`/`matchingAreas`/`areaBlurb`, which every settings list uses; a settings section carries `member`, `memberOnly` and `when` flags in `config/settingsAreas.js`), `config/analyticsSections.js` (the Analytics sections), `components/instances/MemberLeases.vue` (a member's read-only lease list), `components/instances/RejoinForm.vue`
   (joining a controller from a box that is already set up: the replaced controller and a member
   that lost its controller), `composables/useJoinTarget.js` with
   `components/instances/JoinTargetFields.vue` (the controller a box joins: first run and
@@ -312,7 +312,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `tests/helpers/instance-estate.js` (a controller and joined members for a test),
   `callController`/`callInstance` in `sync/controller-call.js` (every request from one instance
   to another after the join: they carry the epoch, so never call `syncRequest` directly for
-  one), `findController` in `sync/find-controller.js`, `isFenced` and `handoverTarget` in
+  one; `callMemberAsController` for a controller reading from a member, which holds no credential
+  for it: it adds a call proof, `callProof`/`provenCall` in `sync/identity-proof.js`, time and
+  purpose bound, checked by `fromOwnController(purpose)` in `sync/require-member.js`), `reachableMembers` in `models/sync-instance.js` (every member with the address it is called at), `utils/log-source.js` (every daemon-log read for a viewer, here or for the controller: `logFor`, `logSources`, `readBacklog`, `readSince`, `LOG_PURPOSE`), `findController` in `sync/find-controller.js`, `isFenced` and `handoverTarget` in
   `sync/mode.js`, `followingRefusal` in `models/sync-instance.js` (is a member following closely
   enough to be given DHCP or the controller role), `takeOutboxRows` in `sync/outbox-intake.js`,
   tests' `tests/helpers/instances.js` (several instances serving routes in one process),

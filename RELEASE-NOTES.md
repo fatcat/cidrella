@@ -24,8 +24,6 @@ members that keep serving DNS and DHCP from a synced copy.
 - A box that is already set up cannot become a member without a reinstall, unless it is a
   controller that was replaced. That includes a controller rolled back below 0.7.0: its members
   no longer know it. See docs/UPGRADE.md.
-- A member updated to a newer version before its controller cannot be promoted until it has
-  synced again, so update the controller first.
 - After a member is promoted because the controller died, nobody serves DHCP if the old
   controller did. Move DHCP to an instance and use **Start without the old leases**.
 - A member promoted because the controller died takes no backups until you switch them on: it
@@ -35,8 +33,6 @@ members that keep serving DNS and DHCP from a synced copy.
   taking changes and serving DHCP after a forced promotion until one of them reaches it.
 - After DHCP moves to another instance, DHCPv6 clients rebind instead of renewing: the new
   server has its own DUID. DHCPv4 clients renew as usual.
-- Rogue DHCPv6 detection can flag the member that serves DHCP, which answers from a link-local
-  address the controller does not know. Add it under authorized servers.
 - Anomaly detection scores the controller's own clients only; a member's clients are not scored.
 - The Resolution Map shows the queries of the box you are looking at.
 
@@ -47,8 +43,13 @@ members that keep serving DNS and DHCP from a synced copy.
   and a join token from its **Settings > System > Instances** page. The box that was there first
   is the controller: it owns the data and every change is made there. A member keeps a copy that
   follows the controller within seconds, answers DNS from it, and keeps answering when the
-  controller is away. Its pages are read-only, and you sign in to it with the controller's
+  controller is away. A member shows only what is about that box: its interfaces and servers,
+  the Instances page, its own Performance, Intelligence and Resolution Map, its updates and its
+  DNS and DHCP logs, and its leases while it serves DHCP. Everything else is changed on the
+  controller, which the member's header links to. You sign in to it with the controller's
   accounts.
+- **Member logs on the controller.** **Settings > Maintenance > Logs** on the controller picks
+  an instance and follows that member's DNS or DHCP log live.
 - **A member is as sensitive as the controller.** It holds the whole copy, password hashes and
   two-factor secrets included, so that you can sign in to it while the controller is down.
 - **Analytics from every instance.** A member sends the controller its query log and its

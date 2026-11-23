@@ -75,6 +75,14 @@
   color: var(--cid-text-muted-color);
 }
 
+/* One state in a line: a StatusDot, the words, and an action if there is one. */
+.status-line {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  margin: 0 0 0.75rem;
+}
+
 /* The root of a panel that fills its host (a Settings `fill` section, a full
    page): a column at full height whose inner table or log scrolls, never the
    page. */

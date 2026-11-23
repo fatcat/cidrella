@@ -22,7 +22,7 @@
           @click="resumeScroll"
         />
         <Button
-          v-if="clearable"
+          v-if="clearable && !instance"
           icon="pi pi-trash"
           size="small"
           severity="danger"
@@ -34,11 +34,7 @@
       </div>
     </div>
     <div class="log-status">
-      <StatusDot
-        :kind="connected ? 'ok' : 'err'"
-        :label="connected ? 'Live' : 'Disconnected'"
-        show-label
-      />
+      <StatusDot :kind="connected && !unreachable ? 'ok' : 'err'" :label="statusLabel" show-label />
       <span class="log-count">{{ filteredLines.length }} lines</span>
     </div>
     <pre
@@ -58,14 +54,23 @@ import StatusDot from './StatusDot.vue';
 import InputText from '../ui/InputText.js';
 // The log of the backend filling `role` (GET /api/logs/sources). Where one
 // log serves DNS and DHCP (dnsmasq) the server keeps the role's lines.
+// `instance` names a member whose log this box's server reads for us; such a
+// log is cleared on the member, never from here.
 const props = defineProps({
   role: { type: String, required: true },
+  instance: { type: String, default: null },
   clearable: { type: Boolean, default: true },
 });
 
 const logPre = ref(null);
 const lines = ref([]);
 const connected = ref(false);
+// The member does not answer this box's server (event watch-status).
+const unreachable = ref(false);
+const statusLabel = computed(() => {
+  if (unreachable.value) return 'Instance not answering';
+  return connected.value ? 'Live' : 'Disconnected';
+});
 const paused = ref(false);
 const searchText = ref('');
 const MAX_LINES = 5000;
@@ -92,6 +97,13 @@ function lineClass(line) {
   return '';
 }
 
+function streamUrl(ticket) {
+  const query = new URLSearchParams({ role: props.role });
+  if (props.instance) query.set('instance', props.instance);
+  query.set('ticket', ticket);
+  return `/api/logs/stream?${query}`;
+}
+
 async function connect() {
   if (eventSource) {
     eventSource.close();
@@ -105,11 +117,15 @@ async function connect() {
     // proceed without ticket, server will reject unauthenticated SSE
   }
 
-  const url = `/api/logs/stream?role=${encodeURIComponent(props.role)}&ticket=${encodeURIComponent(ticket)}`;
-  eventSource = new EventSource(url);
+  eventSource = new EventSource(streamUrl(ticket));
 
   eventSource.addEventListener('connected', () => {
     connected.value = true;
+  });
+
+  eventSource.addEventListener('watch-status', (event) => {
+    if (event.data === 'unreachable') unreachable.value = true;
+    if (event.data === 'live') unreachable.value = false;
   });
 
   eventSource.addEventListener('backlog-end', () => {
@@ -130,6 +146,7 @@ async function connect() {
 
   eventSource.onerror = () => {
     connected.value = false;
+    unreachable.value = false;
   };
 }
 

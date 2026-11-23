@@ -57,6 +57,9 @@ function readInstance(raw) {
   return {
     mode,
     controller_name: raw.controller_name ?? null,
+    // The controller's web UI, where a member sends someone for what it does
+    // not show. Only an https URL is kept: it becomes a link.
+    controller_url: safeControllerUrl(raw.controller_url),
     members: Number(raw.members) || 0,
     sync: raw.sync ?? null,
     // Whether this box answers DHCP. A server that does not say predates
@@ -67,4 +70,8 @@ function readInstance(raw) {
     fenced_by: raw.fenced_by || null,
     handover_to: raw.handover_to || null,
   };
+}
+
+function safeControllerUrl(url) {
+  return typeof url === 'string' && url.startsWith('https://') ? url : null;
 }

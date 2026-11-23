@@ -7,7 +7,7 @@
  */
 import { computed } from 'vue';
 import { flushPromises, mount } from '@vue/test-utils';
-import { createPinia } from 'pinia';
+import { createPinia, setActivePinia } from 'pinia';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 
 const api = { get: vi.fn(), put: vi.fn() };
@@ -64,10 +64,15 @@ const ButtonStub = {
   template: '<button :disabled="disabled" @click="$emit(\'click\')">{{ label }}</button>',
 };
 
-function mountPanel() {
+function mountPanel(instance) {
+  const pinia = createPinia();
+  if (instance) {
+    setActivePinia(pinia);
+    useFeaturesStore().set({ instance });
+  }
   return mount(InterfacePanel, {
     global: {
-      plugins: [createPinia()],
+      plugins: [pinia],
       stubs: {
         DataTable: DataTableStub,
         Column: ColumnStub,
@@ -159,5 +164,25 @@ describe('InterfacePanel IPv6 switch', () => {
       expect.objectContaining({ ipv6_enabled: false, dhcp_enabled: false }),
     );
     expect(api.get.mock.calls.filter(([url]) => url === '/features')).toHaveLength(0);
+  });
+});
+
+describe('InterfacePanel on a member', () => {
+  it('shows the IPv6 switch as set on the controller, not editable', async () => {
+    const wrapper = mountPanel({ mode: 'member', controller_name: 'ns1', members: 0 });
+    await flushPromises();
+    expect(ipv6Toggle(wrapper).attributes('disabled')).toBeDefined();
+    expect(wrapper.find('[data-track="iface-ipv6-member"]').text()).toBe(
+      'Set on ns1, for every instance.',
+    );
+    // The box's own switches stay editable.
+    expect(wrapper.find('[data-track="iface-dns-global"]').attributes('disabled')).toBeUndefined();
+  });
+
+  it('leaves the switch editable on a controller', async () => {
+    const wrapper = mountPanel({ mode: 'controller', members: 2 });
+    await flushPromises();
+    expect(ipv6Toggle(wrapper).attributes('disabled')).toBeUndefined();
+    expect(wrapper.find('[data-track="iface-ipv6-member"]').exists()).toBe(false);
   });
 });

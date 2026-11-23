@@ -46,3 +46,52 @@ export function provenFingerprint(header, own) {
     return null;
   }
 }
+
+/*
+ * A call proof: the same signature over another text, for a request that
+ * reads something of the instance asked, as a controller reading a member's
+ * log. It names the instance it is for, what it is for and when it was made,
+ * so it opens one kind of request on one instance for CALL_PROOF_MS, and is
+ * never good as an identity proof (the texts differ in their first line).
+ * Inside that window it can be sent again, but only over a connection pinned
+ * to the instance it names, by whoever holds it already.
+ */
+export const CALL_PROOF_HEADER = 'x-cidrella-call-proof';
+export const CALL_PROOF_MS = 60_000;
+
+const callText = (to, purpose, at) => Buffer.from(`cidrella-sync-call\n${to}\n${purpose}\n${at}`);
+
+/** The header value that proves the identity under `dataDir` to `to`, for `purpose`, now. */
+export function callProof(dataDir, to, purpose, now = Date.now()) {
+  const { keyPath, certPath } = identityPaths(dataDir);
+  const cert = fs.readFileSync(certPath, 'utf8');
+  const at = Math.floor(now);
+  const sig = crypto
+    .sign('sha256', callText(to, purpose, at), fs.readFileSync(keyPath))
+    .toString('base64');
+  return Buffer.from(JSON.stringify({ cert, sig, at })).toString('base64');
+}
+
+/**
+ * The fingerprint of the certificate a call proof was made with, when it was
+ * made for the instance with fingerprint `own`, for `purpose`, within
+ * CALL_PROOF_MS of `now` either way. Null for anything else.
+ */
+export function provenCall(header, own, purpose, now = Date.now()) {
+  if (typeof header !== 'string' || header.length > MAX_PROOF_CHARS) return null;
+  try {
+    const { cert, sig, at } = JSON.parse(Buffer.from(header, 'base64').toString('utf8'));
+    if (!Number.isSafeInteger(at) || Math.abs(now - at) > CALL_PROOF_MS) return null;
+    if (typeof sig !== 'string') return null;
+    const key = new X509Certificate(cert).publicKey;
+    const good = crypto.verify(
+      'sha256',
+      callText(own, purpose, at),
+      key,
+      Buffer.from(sig, 'base64'),
+    );
+    return good ? fingerprintOfCert(cert) : null;
+  } catch {
+    return null;
+  }
+}

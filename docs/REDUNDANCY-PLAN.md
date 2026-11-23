@@ -165,6 +165,13 @@ tables and the blocklist cache).
   in on a member while the controller is dead. The pairing dialog says a member is as
   sensitive as the controller. Facts from a member are untrusted input: existing lease
   rejection rules, the active-instance check and rate limits apply.
+- The controller holds no credential for a member (it issues them), so when it reads from a
+  member (a daemon log) it sends a **call proof**: its sync identity signs the member's
+  fingerprint, a purpose and the time (`callProof` in `sync/identity-proof.js`). The member
+  takes it within 60 seconds either side of now, only for that purpose, and only from the
+  certificate of the controller it follows, at an epoch not below its own (`fromOwnController`
+  in `sync/require-member.js`). The hello proof signs different text, so neither stands in for
+  the other.
 
 ### 6. Clients find every member
 
@@ -224,6 +231,14 @@ deciding setting written last, recovery at boot.
   sync API and reports a version below 0.7.0, the page says it was rolled back and that
   Promote is the way forward.
 - `GET /api/features` carries the mode; the client store reads it once, as it does features.
+- **A member shows only what is about that box** (`client/src/utils/member-ui.js`): Analytics
+  Performance, Intelligence and Resolution Map; Settings Interfaces, Servers, Instances, TLS
+  Certificate, Appearance, Updates, Logs (its daemon logs, no audit log) and its old backup
+  archives; a read-only lease list while it serves DHCP. A link to another page lands on
+  Analytics with a line naming the controller, and the mode chip links to the controller. The
+  write gate stays the rule; hiding is presentation.
+- **The controller reads a member's daemon log**: Maintenance > Logs picks an instance, and the
+  controller follows that member's log by asking it every two seconds (`GET /api/sync/logs`).
 
 ## Phases
 

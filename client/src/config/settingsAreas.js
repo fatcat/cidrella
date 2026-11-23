@@ -9,6 +9,12 @@
 //                      sub-tabs (the DHCP defaults editor takes a family).
 //   feature            name of a switch from useFeatures(); the sub-tab is
 //                      listed only while that switch is on.
+//   member: true       a member shows it too. A member shows only what is
+//                      about the box itself; the rest is managed on the
+//                      controller (utils/member-ui.js reads these flags).
+//   memberOnly: true   a member shows it and a controller does not.
+//   when               (features) => boolean, a further condition on the
+//                      unwrapped switches: { ipv6, isMember, instance }.
 //   onEnter           reserved for imperative load-on-enter (e.g. audit log).
 //   badge             () => string|number for a live count chip (reserved).
 
@@ -48,12 +54,14 @@ export const SETTINGS_AREAS = [
         id: 'interfaces',
         label: 'Interfaces',
         dataTrack: 'settings-sec-interfaces',
+        member: true,
         component: defineAsyncComponent(() => import('../components/InterfacePanel.vue')),
       },
       {
         id: 'servers',
         label: 'Servers',
         dataTrack: 'settings-sec-servers',
+        member: true,
         component: defineAsyncComponent(() => import('../views/settings/ServerStackSettings.vue')),
       },
     ],
@@ -209,6 +217,7 @@ export const SETTINGS_AREAS = [
         id: 'certificate',
         label: 'TLS Certificate',
         dataTrack: 'settings-sec-certificates',
+        member: true,
         component: defineAsyncComponent(() => import('../views/settings/CertificateSettings.vue')),
       },
     ],
@@ -225,7 +234,19 @@ export const SETTINGS_AREAS = [
         id: 'instances',
         label: 'Instances',
         dataTrack: 'settings-sec-instances',
+        member: true,
         component: defineAsyncComponent(() => import('../views/settings/InstancesSettings.vue')),
+      },
+      {
+        // A member serving DHCP holds its own lease set in the synced copy:
+        // the list of what it handed out, read-only.
+        id: 'leases',
+        label: 'Leases',
+        dataTrack: 'settings-sec-member-leases',
+        memberOnly: true,
+        when: (features) => features.instance?.serves_dhcp === true,
+        fill: true,
+        component: defineAsyncComponent(() => import('../components/instances/MemberLeases.vue')),
       },
     ],
   },
@@ -241,6 +262,7 @@ export const SETTINGS_AREAS = [
         id: 'appearance',
         label: 'Appearance',
         dataTrack: 'settings-sec-themes',
+        member: true,
         component: defineAsyncComponent(() => import('../views/settings/AppearanceSettings.vue')),
       },
     ],
@@ -257,18 +279,21 @@ export const SETTINGS_AREAS = [
         id: 'backup',
         label: 'Backup & Restore',
         dataTrack: 'settings-sec-backups',
+        member: true,
         component: defineAsyncComponent(() => import('../views/settings/BackupSettings.vue')),
       },
       {
         id: 'updates',
         label: 'Updates',
         dataTrack: 'settings-sec-updates',
+        member: true,
         component: defineAsyncComponent(() => import('../views/UpdatePanel.vue')),
       },
       {
         id: 'logs',
         label: 'Logs',
         dataTrack: 'settings-sec-logging',
+        member: true,
         fill: true,
         component: defineAsyncComponent(() => import('../views/settings/LogsSettings.vue')),
       },

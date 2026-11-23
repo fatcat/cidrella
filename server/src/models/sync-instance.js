@@ -185,6 +185,16 @@ export function replaceInstances(db, rows) {
   for (const row of rows) insert.run(row);
 }
 
+/** Every member with the address it is called at, for callInstance (sync/controller-call.js). */
+export function reachableMembers(db) {
+  return db
+    .prepare(
+      `SELECT instance_id, name, address, port, fingerprint FROM sync_instances
+       WHERE is_controller = 0 AND address IS NOT NULL ORDER BY name, id`,
+    )
+    .all();
+}
+
 export function countMembers(db) {
   return db.prepare('SELECT count(*) AS n FROM sync_instances WHERE is_controller = 0').get().n;
 }

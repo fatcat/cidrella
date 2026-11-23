@@ -26,9 +26,9 @@
             <i :class="entry.icon" />
             <span class="area-copy">
               <strong>{{ entry.label }}</strong>
-              <small>{{ entry.blurb }}</small>
+              <small>{{ areaBlurb(entry, features) }}</small>
             </span>
-            <span class="area-count">{{ entry.subtabs.length }}</span>
+            <span class="area-count">{{ visibleSections(entry, features).length }}</span>
           </button>
         </template>
         <p v-if="!visibleGroups.length" class="explorer-empty">No settings match “{{ search }}”.</p>
@@ -64,7 +64,7 @@
                   <i class="pi pi-globe" /> Appliance-wide
                 </span>
               </div>
-              <p>{{ area.blurb }}</p>
+              <p>{{ areaBlurb(area, features) }}</p>
             </div>
           </div>
         </header>
@@ -125,9 +125,10 @@
 <script setup>
 import { computed, onMounted, ref } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { SETTINGS_AREAS, SETTINGS_GROUPS, findArea } from '../../config/settingsAreas.js';
+import { SETTINGS_GROUPS } from '../../config/settingsAreas.js';
 import { safeInternalPath } from '../../utils/landing.js';
 import { useFeatures } from '../../composables/useFeatures.js';
+import { areaBlurb, matchingAreas, visibleAreas, visibleSections } from '../../utils/member-ui.js';
 
 // P7 settings shell (section 10). The catalog in settingsAreas.js is the
 // single source: areas become explorer rows, sections become a real tablist,
@@ -137,18 +138,16 @@ import { useFeatures } from '../../composables/useFeatures.js';
 const route = useRoute();
 const router = useRouter();
 
-const DEFAULT_AREA_ID = SETTINGS_AREAS[0].id;
-const area = computed(() => {
-  const requested = route.query.area;
-  return (requested && findArea(requested)) || findArea(DEFAULT_AREA_ID);
-});
-// A sub-tab gated on a feature switch is listed only while the switch is on;
-// a deep link to a hidden one falls back to the first sub-tab like any
-// unknown sec value.
+// The areas and sections this box lists (utils/member-ui.js): a feature
+// switch, what a member shows, a section's own condition. A deep link to a
+// hidden area opens the first one, and to a hidden section the area's first
+// section, like any unknown value.
 const features = useFeatures();
-const subtabs = computed(() =>
-  area.value.subtabs.filter((section) => !section.feature || features[section.feature]?.value),
+const areas = computed(() => visibleAreas(features));
+const area = computed(
+  () => areas.value.find((entry) => entry.id === route.query.area) || areas.value[0],
 );
+const subtabs = computed(() => visibleSections(area.value, features));
 const activeSecId = computed(() => {
   const ids = subtabs.value.map((section) => section.id);
   return ids.includes(route.query.sec) ? route.query.sec : ids[0] || '';
@@ -200,20 +199,12 @@ onMounted(() => {
   if (legacy) router.replace({ query: queryWithReturn(legacy) });
 });
 
-// Explorer search matches the area label, its blurb and its section labels,
-// the same three things the current rail matches.
+// Explorer search matches the area label, its blurb and the labels of the
+// sections it lists.
 const search = ref('');
-function areaMatches(entry, needle) {
-  if (!needle) return true;
-  return (
-    entry.label.toLowerCase().includes(needle) ||
-    entry.blurb.toLowerCase().includes(needle) ||
-    entry.subtabs.some((section) => section.label.toLowerCase().includes(needle))
-  );
-}
+const matched = computed(() => matchingAreas(features, search.value));
 function areasInGroup(group) {
-  const needle = search.value.trim().toLowerCase();
-  return SETTINGS_AREAS.filter((entry) => entry.group === group && areaMatches(entry, needle));
+  return matched.value.filter((entry) => entry.group === group);
 }
 const visibleGroups = computed(() =>
   SETTINGS_GROUPS.filter((group) => areasInGroup(group).length > 0),
