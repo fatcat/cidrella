@@ -14,33 +14,6 @@ Entries under **Will not fix** are decided: the maintainer chose to leave them. 
 the behavior they describe is explained when someone runs into it. Do not raise or fix them
 again unless the maintainer reopens one.
 
-#### TEST-FLAKE-PROMOTION-01: Promotion tests time out now and then under the full suite
-
-**low**, test only, seen 2026-11-23. `server/tests/integration/controller-promotion-findings.test.js`,
-`server/tests/helpers/instance-estate.js:139` (`unplug`)
-
-- **What happens:** In two of four full runs from the commit hook, one test there hit its timeout:
-  "is waited for: a member naming the handover's target does not fence the old controller"
-  (30 s) and "sends everything to a member that moves between two controllers of one epoch"
-  (60 s). The file passes alone, 3 of 3, and 6 of 6 copies run at once; two plain
-  `npm run test:server` runs did not reproduce it. The same runs took 110 to 154 s against 72 s
-  earlier in the day.
-- **Why (unconfirmed):** `unplug` resolves on `server.close()`, which waits for every open
-  connection to end. A request still in flight to the instance being unplugged would hold it to
-  the timeout.
-- **Fix:** Make `unplug` call `server.closeAllConnections()` after `close()`, then check that the
-  file still passes and the timeouts stop.
-
-#### TEST-FLAKE-BACKUP-LOOP-01: The backup event-loop check fails on a busy machine
-
-**low**, test only, seen 2026-11-23. `server/tests/integration/backup-event-loop.test.js:56`
-
-- **What happens:** The worst event-loop gap during a backup is checked against 200 ms. It
-  measured 296 ms in two full runs on a loaded machine, and passes alone.
-- **Why:** It measures wall time, and the rest of the suite runs beside it.
-- **Fix:** Run the file on its own (a separate vitest project or `--no-file-parallelism` for it),
-  or raise the limit with a note on what it still catches.
-
 ---
 
 ## Will not fix

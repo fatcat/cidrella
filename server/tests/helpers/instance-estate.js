@@ -125,18 +125,28 @@ export async function box(name) {
   });
 
   const self = { name, db, dir, identity, app, port: null, id: ownInstanceId(db) };
+  // The box is off while `unplugged`: every connection is dropped as it
+  // arrives, so callers see it unreachable. The port stays bound: closed and
+  // bound again, it could be taken in between by another test file running
+  // beside this one, and the box could not come back at its address.
+  self.unplugged = false;
   self.listen = async () => {
+    self.unplugged = false;
+    if (self.server) return;
     self.server = https.createServer(
       { key: fs.readFileSync(identity.keyPath), cert: fs.readFileSync(identity.certPath) },
       app,
     );
+    self.server.on('connection', (socket) => {
+      if (self.unplugged) socket.destroy();
+    });
     servers.push(self.server);
-    // The first time the system picks the port; a box that comes back keeps it.
-    if (self.port === null) self.port = await listenLocal(self.server);
-    else await new Promise((resolve) => self.server.listen(self.port, '127.0.0.1', resolve));
+    self.port = await listenLocal(self.server);
   };
-  // The box is off: nothing reaches it.
-  self.unplug = () => new Promise((resolve) => self.server.close(resolve));
+  self.unplug = async () => {
+    self.unplugged = true;
+    self.server.closeAllConnections();
+  };
   await self.listen();
   return self;
 }

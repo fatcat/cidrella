@@ -7,6 +7,7 @@
 // First: the modules below read DATA_DIR when they load.
 import { DATA_DIR } from '../helpers/isolated-data-dir.js';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
+import Database from 'better-sqlite3';
 import { cleanupTestDb } from '../helpers/test-db.js';
 import { getDb, initDb } from '../../src/db/init.js';
 import { createBackup, backupOperationRunning, restoreBackup } from '../../src/utils/backup.js';
@@ -39,6 +40,31 @@ afterAll(() => {
 });
 
 describe('createBackup', () => {
+  // The copy is the part that held the loop: on the main thread, VACUUM INTO
+  // of this database stalls it for about 300 ms on an idle machine, which is
+  // close to what timer jitter reaches on a busy one. So the copy is checked
+  // directly: no connection on this thread runs it.
+  it('copies the database off the main thread', async () => {
+    const sql = [];
+    const record = (method) => {
+      const original = Database.prototype[method];
+      return vi.spyOn(Database.prototype, method).mockImplementation(function (text, ...rest) {
+        sql.push(String(text));
+        return original.call(this, text, ...rest);
+      });
+    };
+    const spies = [record('prepare'), record('exec')];
+    try {
+      await createBackup(db);
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(sql.filter((text) => /\bVACUUM\b/i.test(text))).toEqual([]);
+  }, 120_000);
+
+  // What is left to time is gross: tar and gzip of this database run on the
+  // main thread would hold it for seconds. The limit leaves room for a busy
+  // machine; the copy is the check above.
   it('keeps the event loop turning while it runs', async () => {
     let last = performance.now();
     let worst = 0;
@@ -53,7 +79,7 @@ describe('createBackup', () => {
     } finally {
       clearInterval(timer);
     }
-    expect(worst).toBeLessThan(200);
+    expect(worst).toBeLessThan(1000);
   }, 120_000);
 
   it('refuses a second backup or a restore while one runs', async () => {
