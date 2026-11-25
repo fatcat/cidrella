@@ -349,6 +349,18 @@ export function memberByInstanceId(db, instanceId) {
 }
 
 /** What the controller just heard from a member. Host columns: not data of record. */
+/**
+ * What a member's DNS and DHCP servers are doing, as it said with its last
+ * sync (noteContact): `{ dns, dhcp }`, or null when it has said nothing or is
+ * out of contact, and so cannot be vouched for.
+ */
+export function reportedServiceStates(row) {
+  const heard = Date.parse(row?.last_contact_at || '');
+  if (Number.isNaN(heard) || Date.now() - heard > CURRENT_MS) return null;
+  if (!row.dns_state && !row.dhcp_state) return null;
+  return { dns: row.dns_state ?? null, dhcp: row.dhcp_state ?? null };
+}
+
 export function noteContact(
   db,
   id,

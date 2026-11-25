@@ -47,7 +47,8 @@ members that keep serving DNS and DHCP from a synced copy.
   the Instances page, its own Performance, Intelligence and Resolution Map, its updates and its
   DNS and DHCP logs, and its leases while it serves DHCP. Everything else is changed on the
   controller, which the member's header links to. You sign in to it with the controller's
-  accounts.
+  accounts. A member's Instances page shows what every instance's DNS and DHCP servers are doing,
+  as the controller last told it.
 - **Member logs on the controller.** **Settings > Maintenance > Logs** on the controller picks
   an instance and follows that member's DNS or DHCP log live.
 - **A member is as sensitive as the controller.** It holds the whole copy, password hashes and

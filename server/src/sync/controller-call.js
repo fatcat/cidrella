@@ -31,6 +31,10 @@ export const CONTROLLER_HEADER = 'x-cidrella-controller';
 // know, and what a member the controller never heard of needs to learn that
 // there is a controller before it takes the role itself.
 export const MODE_HEADER = 'x-cidrella-mode';
+// On every answer to a member's sync: the DNS and DHCP states of each instance
+// the controller can vouch for (services/instance-services.js), so a member's
+// Instances page shows them too.
+export const SERVICES_HEADER = 'x-cidrella-services';
 export const FENCED = 'fenced';
 export const NOT_CONTROLLER = 'not_controller';
 export const STALE_EPOCH = 'stale_epoch';

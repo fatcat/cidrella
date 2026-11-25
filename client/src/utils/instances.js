@@ -116,7 +116,8 @@ export function behindText(row) {
 
 // What a row's DNS or DHCP server is doing, as GET /api/instances reports it
 // (`dns_state`, `dhcp_state`): null when the server cannot vouch for it, a
-// member out of contact or another instance seen from a member.
+// member out of contact, or on a member, anything its controller has not
+// vouched for lately.
 // One wording for DNS and DHCP on every instance: On or Off, Not running for
 // a server that is on but whose daemon is down, and for DHCP, No interface
 // when the instance holds it but has DHCP on for none of its interfaces.

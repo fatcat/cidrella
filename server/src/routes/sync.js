@@ -21,7 +21,7 @@ import { syncDirOf } from '../sync/credential.js';
 import { syncHead, syncStatus } from '../sync/log.js';
 import { instanceMode, isFenced, isMember } from '../sync/mode.js';
 import { epochBase } from '../sync/promotion-state.js';
-import { EPOCH_HEADER, MODE_HEADER } from '../sync/controller-call.js';
+import { EPOCH_HEADER, MODE_HEADER, SERVICES_HEADER } from '../sync/controller-call.js';
 import { fenceSelf, receiveFence, receiveHandoverDone } from '../services/controller-promotion.js';
 import { takeOutboxRows } from '../sync/outbox-intake.js';
 import { restoreUnderWay } from '../sync/restore.js';
@@ -51,7 +51,11 @@ import {
 } from '../sync/lease-wire.js';
 import { followDhcp } from '../services/dhcp-follow.js';
 import { clearHandover, dhcpState, dhcpStateChanged, servesDhcpHere } from '../sync/dhcp-active.js';
-import { parseServiceStates } from '../services/instance-services.js';
+import {
+  formatInstanceStates,
+  instanceStates,
+  parseServiceStates,
+} from '../services/instance-services.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
 import {
   addMember,
@@ -371,8 +375,12 @@ router.get('/changes', async (req, res) => {
   if (!snapshot) {
     while (syncHead(db) === since && Date.now() < waitUntil && !closed) await wait(WAIT_POLL_MS);
     if (closed) return;
-    if (syncHead(db) === since) return res.status(204).end();
   }
+  // Every answer says what each instance's servers are doing, as of now: a
+  // long poll can end well after the request came in.
+  res.set(SERVICES_HEADER, formatInstanceStates(await instanceStates(db)));
+  if (closed) return;
+  if (!snapshot && syncHead(db) === since) return res.status(204).end();
   const asChanges = () =>
     res.set({ 'Content-Type': 'application/x-ndjson', 'Content-Encoding': 'gzip' });
   if (!snapshot) return asChanges().send(zlib.gzipSync(exportChanges(db, { dataset, since })));

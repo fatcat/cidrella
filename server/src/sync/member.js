@@ -45,6 +45,7 @@ import {
   lineageEpoch,
   NOT_CONTROLLER,
   onControllerDoubt,
+  SERVICES_HEADER,
   STALE_EPOCH,
 } from './controller-call.js';
 import { CREDENTIAL_FILE, readCredential, syncDirOf } from './credential.js';
@@ -69,6 +70,7 @@ import {
   ownDhcpv6Duid,
   ownServiceStates,
   dhcpInterfaceCount,
+  noteInstanceStates,
 } from '../services/instance-services.js';
 
 const WAIT_SECONDS = 25;
@@ -453,6 +455,10 @@ async function syncOnceThrough(db, spool, { wait = 0 } = {}) {
     );
     err.code = lost;
     throw err;
+  }
+  // What each instance's servers are doing, as the controller vouches for it.
+  if (response.status === 200 || response.status === 204) {
+    noteInstanceStates(db, response.headers?.[SERVICES_HEADER]);
   }
   if (response.status === 204) {
     // Nothing to send means the controller read this cursor as one of its

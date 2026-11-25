@@ -39,14 +39,14 @@ import {
 } from '../services/dhcp-move.js';
 import {
   createJoinToken,
-  CURRENT_MS,
   dnsInstances,
   listInstances,
   ownInstanceId,
   ownInstanceName,
   removeMember,
+  reportedServiceStates,
 } from '../models/sync-instance.js';
-import { ownServiceStates } from '../services/instance-services.js';
+import { heardInstanceStates, ownServiceStates } from '../services/instance-services.js';
 import { MAX_SERVED_INSTANCES, servedInstances } from '../utils/instance-dns.js';
 
 const router = Router();
@@ -64,15 +64,14 @@ function controllerOnly(req, res, next) {
 }
 
 // What a row's DNS and DHCP servers are doing ({ dns, dhcp }, see
-// services/instance-services.js): this box's own, read now; what a member
-// told the controller in its last sync, while it is still in contact; nothing
-// for the rest, which this box cannot vouch for.
-function serviceStatesOf(row, { self, member, own }) {
+// services/instance-services.js): this box's own, read now. On the
+// controller, what a member told it in its last sync, while it is still in
+// contact. On a member, what the controller last vouched for, while the member
+// is in touch with it. Nothing for the rest.
+function serviceStatesOf(row, { self, member, own, heard }) {
   if (row.instance_id === self) return own;
-  if (member || row.is_controller) return null;
-  const heard = Date.parse(row.last_contact_at || '');
-  if (Number.isNaN(heard) || Date.now() - heard > CURRENT_MS) return null;
-  return { dns: row.dns_state, dhcp: row.dhcp_state };
+  if (member) return heard?.[row.instance_id] ?? null;
+  return row.is_controller ? null : reportedServiceStates(row);
 }
 
 // The row of the controller this box took over from, while the word owed to
@@ -97,6 +96,7 @@ router.get('/', async (req, res) => {
   const own = await ownServiceStates().catch(() => null);
   const db = getDb();
   const member = isMember();
+  const heard = member ? heardInstanceStates(db) : null;
   const self = ownInstanceId(db);
   const head = syncHead(db);
   const controller = controllerOf(db);
@@ -155,8 +155,8 @@ router.get('/', async (req, res) => {
       behind:
         member || row.is_controller || row.cursor === null ? null : Math.max(0, head - row.cursor),
       dhcp: dhcpRole(dhcp, row),
-      dns_state: serviceStatesOf(row, { self, member, own })?.dns ?? null,
-      dhcp_state: serviceStatesOf(row, { self, member, own })?.dhcp ?? null,
+      dns_state: serviceStatesOf(row, { self, member, own, heard })?.dns ?? null,
+      dhcp_state: serviceStatesOf(row, { self, member, own, heard })?.dhcp ?? null,
       // Only the controller moves DHCP.
       can_take_dhcp: !member && moveRefusal(db, row, dhcp) === null,
       // Only the controller hands itself over.

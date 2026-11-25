@@ -232,7 +232,10 @@ deciding setting written last, recovery at boot.
   `StatusDot`; no banner.
 - Settings, System, **Instances** (controller): the list with version, last contact, sync
   lag, DNS and DHCP state; Add member (join token); Move DHCP here; Promote. On a member the
-  same page shows its controller and offers Promote. When the controller answers without the
+  same page shows its controller and offers Promote. Each answer to a member's sync carries
+  every instance's DNS and DHCP state the controller can vouch for (its own, and each member's
+  while in contact: the `x-cidrella-services` header), so a member's page shows them too, for as
+  long as it is in touch with the controller. When the controller answers without the
   sync API and reports a version below 0.7.0, the page says it was rolled back and that
   Promote is the way forward.
 - `GET /api/features` carries the mode; the client store reads it once, as it does features.
