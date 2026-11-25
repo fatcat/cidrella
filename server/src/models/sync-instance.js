@@ -348,7 +348,6 @@ export function memberByInstanceId(db, instanceId) {
   );
 }
 
-/** What the controller just heard from a member. Host columns: not data of record. */
 /**
  * What a member's DNS and DHCP servers are doing, as it said with its last
  * sync (noteContact): `{ dns, dhcp }`, or null when it has said nothing or is
@@ -361,6 +360,7 @@ export function reportedServiceStates(row) {
   return { dns: row.dns_state ?? null, dhcp: row.dhcp_state ?? null };
 }
 
+/** What the controller just heard from a member. Host columns: not data of record. */
 export function noteContact(
   db,
   id,

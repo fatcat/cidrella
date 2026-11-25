@@ -14,6 +14,19 @@ Entries under **Will not fix** are decided: the maintainer chose to leave them. 
 the behavior they describe is explained when someone runs into it. Do not raise or fix them
 again unless the maintainer reopens one.
 
+#### TEST-FLAKE-PORT-CHANGE-01: The HTTPS port change test fails now and then under the full suite
+
+**low**, test only, seen once 2026-11-25. `server/tests/integration/sync-client.test.js:430`
+
+- **What happens:** "after a port change > the new server presents both certificates the same
+  way" failed in 111 ms in the commit hook's full run. It passes alone. The error text was not
+  kept.
+- **Why (unconfirmed):** It takes a port from `freePort({ tcp: true })`, which releases it, and
+  then `applyHttpsPortChange` binds that number. A test file running beside it can take the port
+  in between, as in the DNS proxy tests fixed in a571c1a.
+- **Fix:** Capture the error the next time it fails. If it is the port, let the test retry the
+  change on another port when the bind is refused, or run the file on its own.
+
 ---
 
 ## Will not fix
