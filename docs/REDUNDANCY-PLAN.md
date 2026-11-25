@@ -179,7 +179,11 @@ tables and the blocklist cache).
   `syncServerDnsDefault` (`models/dhcp-option.js`) store one address computed on the writing
   host. This becomes a render-time list of every DNS-serving instance's address from
   `sync_instances`, the DHCP-active instance first. Canonical IP model gate: contract docs
-  first, both families, differential tests.
+  first, both families, differential tests. A member the controller has not heard from for
+  `CURRENT_MS` is left out (`sync_instances.out_of_contact`, set and cleared by the controller's
+  `followMemberContact` every 15 s and cleared as soon as the member syncs). The flag is data of
+  record, not a host column, so a member serving DHCP builds the same list from its copy. A
+  client holds what it got until its lease renews, and that delay is the remaining exposure.
 - **NS records** (PowerDNS stack): one NS per DNS-serving instance with its address records,
   generated in `backends/pdns/render.js`. dnsmasq serves no NS; nothing to do there.
 

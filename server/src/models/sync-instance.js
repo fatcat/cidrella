@@ -73,14 +73,16 @@ export function setOwnDnsAddresses(db, addresses) {
 /**
  * The instances that answer DNS, in the order their addresses are served:
  * the one that serves DHCP (sync/dhcp-active.js: its clients reach it for
- * sure), then the controller, then the members by name.
+ * sure), then the controller, then the members by name. A member out of
+ * contact is left out (markContactLapses).
  * [{ instance_id, name, addresses }].
  */
 export function dnsInstances(db) {
   let statement;
   try {
     statement = db.prepare(
-      `SELECT instance_id, name, dns_addresses FROM sync_instances WHERE serves_dns = 1
+      `SELECT instance_id, name, dns_addresses FROM sync_instances
+       WHERE serves_dns = 1 AND out_of_contact = 0
        ORDER BY COALESCE(instance_id = (
          SELECT value FROM settings WHERE key = 'dhcp_active_instance'), 0) DESC,
          is_controller DESC, name, id`,
@@ -95,6 +97,57 @@ export function dnsInstances(db) {
     name: row.name,
     addresses: JSON.parse(row.dns_addresses || '[]'),
   }));
+}
+
+/** The members that answer DNS but are out of contact, so not handed out: names. */
+export function withdrawnDnsInstances(db) {
+  return db
+    .prepare(
+      'SELECT name FROM sync_instances WHERE serves_dns = 1 AND out_of_contact = 1 ORDER BY name',
+    )
+    .all()
+    .map((row) => row.name);
+}
+
+/**
+ * Mark each member out of contact that the controller has not heard from for
+ * CURRENT_MS (since it was added, for one that never called), and each one it
+ * has heard from since as back. The controller's own row is never out of
+ * contact. Only the controller calls this. Returns the names that changed:
+ * { lapsed, back }.
+ */
+export function markContactLapses(db, now = Date.now()) {
+  const cutoff = new Date(now - CURRENT_MS).toISOString();
+  // julianday: created_at is SQLite's datetime('now'), last_contact_at ISO.
+  const lapsed =
+    'is_controller = 0 AND julianday(COALESCE(last_contact_at, created_at)) < julianday(@cutoff)';
+  return db.transaction(() => {
+    db.prepare(
+      'UPDATE sync_instances SET out_of_contact = 0 WHERE is_controller = 1 AND out_of_contact = 1',
+    ).run();
+    const went = db
+      .prepare(
+        `UPDATE sync_instances SET out_of_contact = 1
+         WHERE out_of_contact = 0 AND ${lapsed} RETURNING name`,
+      )
+      .all({ cutoff });
+    const came = db
+      .prepare(
+        `UPDATE sync_instances SET out_of_contact = 0
+         WHERE out_of_contact = 1 AND NOT (${lapsed}) RETURNING name`,
+      )
+      .all({ cutoff });
+    return { lapsed: went.map((row) => row.name), back: came.map((row) => row.name) };
+  })();
+}
+
+/** A member was just heard from: back in contact. True when it had been out. */
+export function markInContact(db, id) {
+  return (
+    db
+      .prepare('UPDATE sync_instances SET out_of_contact = 0 WHERE id = ? AND out_of_contact = 1')
+      .run(id).changes === 1
+  );
 }
 
 /**
@@ -163,6 +216,7 @@ const ALL_COLUMNS = [
   'last_contact_at',
   'version',
   'schema_version',
+  'out_of_contact',
 ];
 
 /** The whole list as stored, for replaceInstances to put back (sync/restore.js). */

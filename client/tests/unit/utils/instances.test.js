@@ -174,6 +174,25 @@ describe('DHCP wording', () => {
     ).toContain('ns4 answers DNS but is not handed out');
     expect(dnsHandoutLine({ limit: 3, served: ['ns1'], left_out: [] })).toBeNull();
     expect(dnsHandoutLine(undefined)).toBeNull();
+    // Out of contact: named, with when clients see the change.
+    expect(
+      dnsHandoutLine({ limit: 3, served: ['ns1', 'ns2'], left_out: [], withdrawn: ['ns3'] }),
+    ).toBe(
+      'DHCP clients are given 2 instances as DNS servers: ns1 and ns2. ns3 is out of contact ' +
+        'and not handed out until it is back. Clients get the new list when they renew their lease.',
+    );
+    expect(
+      dnsHandoutLine({
+        limit: 1,
+        served: ['ns1'],
+        left_out: ['ns2'],
+        withdrawn: ['ns3', 'ns4'],
+      }),
+    ).toBe(
+      'DHCP clients are given 1 instance as DNS servers: ns1. ns2 answers DNS but is not handed ' +
+        'out, since clients use only the first 1. ns3 and ns4 are out of contact and not handed ' +
+        'out until they are back. Clients get the new list when they renew their lease.',
+    );
   });
 
   it('has words for DNS, and nothing when it is not known', () => {

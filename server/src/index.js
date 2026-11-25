@@ -79,7 +79,9 @@ import { isFenced, isMember } from './sync/mode.js';
 import { takeOwnOutbox } from './sync/outbox-intake.js';
 import { startTakeoverNotices, takeOverIfNamed } from './services/controller-promotion.js';
 import { memberWriteGate } from './sync/write-gate.js';
+import { followMemberContact } from './services/instance-services.js';
 import {
+  CURRENT_MS,
   ensureOwnInstance,
   lowestMemberCursor,
   ownInstanceId,
@@ -133,6 +135,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
 const TOMBSTONE_PRUNE_INTERVAL_MS = 60 * 60 * 1000;
 const OWN_ADDRESS_REFRESH_MS = 60 * 1000;
+const MEMBER_CONTACT_CHECK_MS = 15 * 1000;
 
 // ─── Work on the data of record ───────────────────────────────────
 // The two functions below change the data of record on their own initiative:
@@ -263,6 +266,20 @@ function startControllerJobs(db) {
       console.error('DNS address refresh error:', err.message);
     }
   }, OWN_ADDRESS_REFRESH_MS).unref();
+
+  // A member out of contact is not given to DHCP clients as a DNS server.
+  // Not in the first contact window after a start: a box that was down, or
+  // a member just promoted (which restarts), has not heard from the members
+  // lately, and they call within seconds.
+  const startedAt = Date.now();
+  setInterval(() => {
+    if (Date.now() - startedAt < CURRENT_MS) return;
+    try {
+      followMemberContact(db);
+    } catch (err) {
+      console.error('Member contact check error:', err.message);
+    }
+  }, MEMBER_CONTACT_CHECK_MS).unref();
 }
 
 async function main() {

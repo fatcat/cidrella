@@ -267,7 +267,9 @@ Iterate locally; the test LXC is for release-upgrade validation, not day-to-day 
   `startMemberSync`, `syncOnce`, `sendOutbox`; a table the DNS proxy caches gets an entry in
   its `RELOADS`), `models/sync-instance.js` (instances, join tokens, credentials, `dnsInstances`),
   `instanceDnsServers` in `utils/instance-dns.js` (CIDRella's entry in a DNS server list served
-  as every instance; `resolveEffectiveScopeOptions` applies it, nothing else builds that list),
+  as every instance; `resolveEffectiveScopeOptions` applies it, nothing else builds that list;
+  `dnsInstances` leaves out a member out of contact, which `followMemberContact` and
+  `memberHeardFrom` in `services/instance-services.js` mark and clear),
   `memberWriteGate` and `MEMBER_ALLOWED` in `sync/write-gate.js` (a write route a member may
   serve is listed there with its reason; unlisted is refused), `insertAuditRow` in
   `models/audit-log.js` (on a member the row waits in `sync_outbox`), `memberSink` in

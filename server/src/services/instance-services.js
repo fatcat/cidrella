@@ -12,7 +12,15 @@
 import { backendStatuses, getDhcpBackend } from '../backends/index.js';
 import { roleSwitchedOff } from '../utils/role-switches.js';
 import { selectInterfaceNames } from '../utils/interface-config.js';
-import { CURRENT_MS, listInstances, reportedServiceStates } from '../models/sync-instance.js';
+import {
+  CURRENT_MS,
+  listInstances,
+  markContactLapses,
+  markInContact,
+  reportedServiceStates,
+} from '../models/sync-instance.js';
+import { queueRegen } from '../utils/after-commit.js';
+import { recordAudit } from './audit.js';
 import { readSyncState } from '../sync/log.js';
 
 export const SERVICE_STATES = ['serving', 'off', 'down', 'no_interface'];
@@ -99,6 +107,40 @@ export function noteInstanceStates(db, text) {
 export function heardInstanceStates(db) {
   const last = heard.get(db);
   return last && Date.now() - last.at <= CURRENT_MS ? last.states : null;
+}
+
+/**
+ * On the controller: take the members it has not heard from for CURRENT_MS
+ * off the DNS servers DHCP clients are given, and put back the ones it has
+ * heard from since (markContactLapses). Run every few seconds by the
+ * controller's jobs.
+ */
+export function followMemberContact(db, now = Date.now()) {
+  const { lapsed, back } = markContactLapses(db, now);
+  if (lapsed.length === 0 && back.length === 0) return;
+  queueRegen('regenerate_dhcp');
+  for (const name of lapsed) dnsListAudit(db, 'instance_dns_withdrawn', name);
+  for (const name of back) dnsListAudit(db, 'instance_dns_restored', name);
+}
+
+/** A member just synced: back on the DNS list at once if it was off it. */
+export function memberHeardFrom(db, member) {
+  if (!markInContact(db, member.id)) return;
+  queueRegen('regenerate_dhcp');
+  dnsListAudit(db, 'instance_dns_restored', member.name);
+}
+
+function dnsListAudit(db, action, name) {
+  recordAudit({
+    db,
+    action,
+    entityType: 'instance',
+    source: 'sync',
+    details:
+      action === 'instance_dns_withdrawn'
+        ? { name, reason: `not heard from for ${CURRENT_MS / 1000} seconds` }
+        : { name },
+  });
 }
 
 /**

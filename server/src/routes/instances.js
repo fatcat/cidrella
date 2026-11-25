@@ -45,6 +45,7 @@ import {
   ownInstanceName,
   removeMember,
   reportedServiceStates,
+  withdrawnDnsInstances,
 } from '../models/sync-instance.js';
 import { heardInstanceStates, ownServiceStates } from '../services/instance-services.js';
 import { MAX_SERVED_INSTANCES, servedInstances } from '../utils/instance-dns.js';
@@ -88,6 +89,8 @@ function dnsHandedOut(db) {
     limit: MAX_SERVED_INSTANCES,
     served: instances.filter((i) => served.has(i)).map((i) => i.name),
     left_out: instances.filter((i) => !served.has(i)).map((i) => i.name),
+    // Out of contact: not handed out until it is back.
+    withdrawn: withdrawnDnsInstances(db),
   };
 }
 

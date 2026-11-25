@@ -89,7 +89,9 @@ members that keep serving DNS and DHCP from a synced copy.
   CIDRella, clients get the instance serving DHCP, the controller and the members, so they keep
   resolving when one is away. At most three per family: clients use only the first few, and the
   Instances page names any instance left out. Other resolvers you listed stay in the list, and a
-  scope pointed elsewhere is untouched. IPv4 and IPv6 scopes both.
+  scope pointed elsewhere is untouched. IPv4 and IPv6 scopes both. A member the controller has
+  not heard from for 90 seconds is left out until it calls again; clients pick up the change
+  when they renew their lease.
 - A single CIDRella is a controller with no members and looks as it did.
 
 ### Changed

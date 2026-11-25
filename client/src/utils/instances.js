@@ -184,19 +184,34 @@ const listFormat = new Intl.ListFormat('en', { style: 'long', type: 'conjunction
 /**
  * The line saying which instances DHCP clients are given as DNS servers, from
  * GET /api/instances `dns_handed_out`; null while none is left out (or from a
- * server that does not say).
+ * server that does not say). An instance is left out past the limit, or while
+ * it is out of contact (`withdrawn`).
  */
 export function dnsHandoutLine(handedOut) {
   const leftOut = handedOut?.left_out || [];
-  if (leftOut.length === 0) return null;
+  const withdrawn = handedOut?.withdrawn || [];
+  if (leftOut.length === 0 && withdrawn.length === 0) return null;
   const served = handedOut.served || [];
-  const verb = leftOut.length === 1 ? 'answers' : 'answer';
-  return (
+  const one = (names, singular, plural) => (names.length === 1 ? singular : plural);
+  const parts = [
     `DHCP clients are given ${countOf(served.length, 'instance')} as DNS servers: ` +
-    `${listFormat.format(served)}. ${listFormat.format(leftOut)} ${verb} DNS but ` +
-    `${leftOut.length === 1 ? 'is' : 'are'} not handed out, since clients use only the first ` +
-    `${handedOut.limit}.`
-  );
+      `${listFormat.format(served)}.`,
+  ];
+  if (leftOut.length > 0) {
+    parts.push(
+      `${listFormat.format(leftOut)} ${one(leftOut, 'answers', 'answer')} DNS but ` +
+        `${one(leftOut, 'is', 'are')} not handed out, since clients use only the first ` +
+        `${handedOut.limit}.`,
+    );
+  }
+  if (withdrawn.length > 0) {
+    parts.push(
+      `${listFormat.format(withdrawn)} ${one(withdrawn, 'is', 'are')} out of contact and not ` +
+        `handed out until ${one(withdrawn, 'it is', 'they are')} back. Clients get the new list ` +
+        'when they renew their lease.',
+    );
+  }
+  return parts.join(' ');
 }
 
 /** The row serving DHCP now, of a list of instances; null when none says so. */

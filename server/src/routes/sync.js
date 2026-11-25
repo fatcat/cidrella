@@ -54,6 +54,7 @@ import { clearHandover, dhcpState, dhcpStateChanged, servesDhcpHere } from '../s
 import {
   formatInstanceStates,
   instanceStates,
+  memberHeardFrom,
   parseServiceStates,
 } from '../services/instance-services.js';
 import { loadFilteringOverrides } from '../utils/dns-proxy.js';
@@ -340,6 +341,8 @@ router.get('/changes', async (req, res) => {
     duid: typeof req.query.duid === 'string' ? req.query.duid.slice(0, 400) : null,
     dhcpInterfaces: interfaceCountParam(req.query.dif),
   });
+  // Out of contact a while ago: DHCP clients are given it again.
+  memberHeardFrom(db, req.member);
   if (typeof req.query.addr === 'string') {
     const addresses = req.query.addr.slice(0, 2048).split(',').filter(Boolean);
     if (setDnsAddresses(db, req.member.id, addresses)) {
