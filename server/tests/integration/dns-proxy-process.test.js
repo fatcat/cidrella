@@ -92,8 +92,9 @@ const startClient = () =>
 
 beforeAll(async () => {
   ({ tmpDir } = await setupTestDb());
-  listenPort = await freePort();
-  const internalPort = await freePort();
+  // The proxy and the backend each listen on UDP and TCP.
+  listenPort = await freePort({ both: true });
+  const internalPort = await freePort({ both: true });
   backend = await startBackend(internalPort);
   const { config, dir } = proxyRuntimePaths(tmpDir);
   fs.mkdirSync(dir, { recursive: true });

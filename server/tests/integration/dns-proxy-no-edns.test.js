@@ -79,8 +79,9 @@ const rows = [];
 
 beforeAll(async () => {
   ({ tmpDir } = await setupTestDb());
-  listenPort = await freePort();
-  const internalPort = await freePort();
+  // The proxy and the backend each listen on UDP and TCP.
+  listenPort = await freePort({ both: true });
+  const internalPort = await freePort({ both: true });
   for (const tcp of [false, true]) {
     backends.push(
       await plainDnsServer('127.0.0.1', { rcode: 'SERVFAIL', ede: 6, tcp, port: internalPort }),
