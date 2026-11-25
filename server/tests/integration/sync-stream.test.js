@@ -250,6 +250,19 @@ describe('exportChangesToFile and receiveChanges', () => {
     }
   });
 
+  it('passes on an error the stream emits before it starts reading, and nothing is uncaught', async () => {
+    const spool = spoolFile(dir);
+    const broken = new Readable({ read() {} });
+    const receiving = receiveChanges(broken, spool);
+    // The file is still being opened.
+    broken.destroy(Object.assign(new Error('gone'), { code: 'unreachable' }));
+    try {
+      await expect(receiving).rejects.toMatchObject({ code: 'unreachable' });
+    } finally {
+      fs.rmSync(spool, { force: true });
+    }
+  });
+
   it('passes an error of the stream through as it is', async () => {
     const spool = spoolFile(dir);
     const broken = new Readable({ read() {} });

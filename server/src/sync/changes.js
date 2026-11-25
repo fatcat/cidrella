@@ -261,7 +261,20 @@ function* spooledChanges(file) {
  * goes through as it is. The caller removes the file after the apply.
  */
 export async function receiveChanges(stream, file) {
-  const out = await fs.promises.open(file, 'wx', 0o600);
+  // Nothing listens to the stream until the loop below starts, and an error
+  // it emits meanwhile (the connection dropped) would be uncaught, which ends
+  // the process. Keep it, and throw it once the file is open.
+  let early = null;
+  const keep = (err) => {
+    early = err;
+  };
+  stream.on('error', keep);
+  let out;
+  try {
+    out = await fs.promises.open(file, 'wx', 0o600);
+  } finally {
+    stream.off('error', keep);
+  }
   const hash = crypto.createHash('sha256');
   let header = null;
   let last = null;
@@ -287,6 +300,7 @@ export async function receiveChanges(stream, file) {
     size = 0;
   };
   try {
+    if (early) throw early;
     let rest = Buffer.alloc(0);
     for await (const chunk of stream) {
       const split = splitLines(rest, Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk));
